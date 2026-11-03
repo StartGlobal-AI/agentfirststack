@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AgentFirstStack: analytics, tags and email your agent sets up by itself</title>
-<meta name="description" content="Free, open-source analytics, tag management with server-side conversion tracking, and email inboxes, built so an AI agent can set them up end to end. No signup form, no verification email, no dashboard.">
+<title>AgentFirstStack: analytics, tags, email and replay your agent sets up by itself</title>
+<meta name="description" content="Free, open-source analytics, tag management with server-side conversion tracking, email inboxes and session replay, built so an AI agent can set them up end to end. No signup form, no verification email, no dashboard.">
 <link rel="canonical" href="https://agentfirststack.com/">
 <link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
 <link rel="alternate" type="text/markdown" href="/index.md" title="This page as markdown">
@@ -12,7 +12,7 @@
 <link rel="ai-catalog" href="/.well-known/ai-catalog.json">
 <link rel="mcp-server-card" href="/.well-known/mcp/server-card.json">
 <meta property="og:title" content="AgentFirstStack">
-<meta property="og:description" content="Analytics, tags and email your agent sets up by itself. Free and open source.">
+<meta property="og:description" content="Analytics, tags, email and session replay your agent sets up by itself. Free and open source.">
 <meta property="og:url" content="https://agentfirststack.com/">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#FFFFFF">
@@ -135,7 +135,7 @@
 
 <section class="section section-tint" id="services" aria-labelledby="services-title">
   <div class="wrap">
-    <h2 id="services-title">Three services, one key</h2>
+    <h2 id="services-title">Four services, one key</h2>
     <p class="section-lede">Each has a REST API, an MCP server and a plain-text manual.</p>
     <div class="products">
 
@@ -196,6 +196,21 @@
           <p class="preview-note">signups@agentfirststack.com</p>
         </div>
         <ul class="chips"><li>Codes extracted</li><li>Sending</li><li>Own domain</li></ul>
+      </article>
+
+      <article class="product" style="--c: var(--green)">
+        <p class="product-name"><span class="dot" aria-hidden="true"></span>Replay <span>instead of Hotjar or Clarity</span></p>
+        <h3>Read sessions instead of watching them</h3>
+        <div class="preview" role="img" aria-label="Example session transcript: a visitor opened /pricing, clicked Start free trial four times (rage click), hit a JavaScript error, then went back to the home page">
+          <ol class="transcript">
+            <li><time>0:04</time><span>Opened <code>/pricing</code></span></li>
+            <li><time>0:11</time><span>Clicked “Start free trial” ×4</span><em>rage click</em></li>
+            <li><time>0:12</time><span>Error: <code>plan is undefined</code></span><em>JS error</em></li>
+            <li><time>0:18</time><span>Back to <code>/</code></span><em>quick back</em></li>
+          </ol>
+          <p class="preview-note">Text and form fields are masked in the browser before anything is sent.</p>
+        </div>
+        <ul class="chips"><li>Rage and dead clicks</li><li>Heatmaps as data</li><li>Masked by default</li></ul>
       </article>
 
     </div>
@@ -286,20 +301,23 @@ pnpm afs deploy mystack</pre>
 
 1. Read https://agentfirststack.com/llms.txt. It is the complete manual.
 
-2. Get an API key with one request:
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and skip to step 3; don't sign up again. Otherwise get a key with one request:
    curl -X POST https://agentfirststack.com/v1/signup
    Save api_key in this project's .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
-   The same key works for analytics, tags and mail.
+   The same key works for analytics, tags, mail and replay.
 
 3. Set up what this project needs, and verify each step with the checks the manual describes:
    - Analytics: create a site for the production domain, add the tracking snippet to the site's layout, deploy, then run verify. Set up goals for sign-ups and purchases; send the ones only the server knows about (paid orders) as server events.
    - Conversion tracking: create a tags container, add its snippet, scan the site, define the conversions that matter here (sign-ups, purchases, leads), validate, test and publish. If the backend also reports a conversion the browser tracks, pass the browser's event_id with it as the tags manual explains, so ad platforms count it once.
    - Ad accounts: connect the platforms this business uses (Google Ads, Meta, GA4, TikTok). If you have tools for those platforms, use them to find or create the pixel, measurement and conversion IDs. Otherwise ask me for exactly the IDs and tokens the manual lists, and tell me where to find each one.
    - Email: create an inbox for signing up to third-party services, and use wait_for_email to receive their verification codes.
+   - Replay (optional, ask me first): turn on session replay for the production domain. Text and inputs are masked by default. Later, use search_sessions and get_session_transcript to answer why visitors drop off or what's broken.
 
 4. If you support MCP, add the servers listed in the manual so you can call the tools directly.
 
-5. Last, create a claim link for me with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool). It lets me sign in and see everything you set up in a dashboard.
+5. Write what you set up (site, container and inbox ids, and which env vars hold keys) in AGENTFIRSTSTACK.md at the repo root, so the next run updates it instead of starting over.
+
+6. Last, create a claim link for me with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool). It lets me sign in and see everything you set up in a dashboard.
 
 When you're done, tell me what you set up, how you verified it, anything still waiting on me, and give me the claim link.</template>
 

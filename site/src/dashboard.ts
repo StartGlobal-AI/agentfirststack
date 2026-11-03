@@ -59,7 +59,7 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: get this project its own API key, set up analytics, conversion tracking and an inbox as the project needs, and verify each step. When you're done, send me a claim link for the project.";
+  "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get this project its own key. Set up analytics, conversion tracking and an inbox as the project needs, and verify each step. When you're done, send me a claim link for the project.";
 
 /** The screens an agent can build for a project, one prompt each (see dashboard-prompt.ts). */
 const BUILDS: { kind: BuildKind; title: string; what: string }[] = [

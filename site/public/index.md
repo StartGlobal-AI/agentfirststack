@@ -1,7 +1,7 @@
 # AgentFirstStack
 
 Infrastructure your agent sets up by itself: web analytics, tag management with server-side
-conversion tracking, and email inboxes. No signup form, no verification email, no dashboard to
+conversion tracking, email inboxes and session replay. No signup form, no verification email, no dashboard to
 click through. Free to use, and open source (MIT).
 
 - Manual for agents: https://agentfirststack.com/llms.txt
@@ -26,10 +26,11 @@ click through. Free to use, and open source (MIT).
 | Analytics | Countries, regions and cities from the edge; pages, sources and campaigns including AI assistants; goals, revenue, funnels, realtime; server-side events; no cookies | Google Analytics | https://analytics.agentfirststack.com/llms.txt |
 | Tags | One snippet for every pixel; conversions sent from the browser and your server to GA4, Google Ads, Meta and TikTok with one event id, so each counts it once; click IDs kept; preview, publish, roll back | Google Tag Manager | https://tags.agentfirststack.com/llms.txt |
 | Mail | Inboxes in one request; verification codes and links extracted; read, reply, send; your own domain; webhooks | A Gmail account per project | https://mail.agentfirststack.com/llms.txt |
+| Replay | Session recordings masked in the browser by default; sessions as readable transcripts; rage, dead and error clicks; heatmaps and JS errors as data | Hotjar, Microsoft Clarity | https://replay.agentfirststack.com/llms.txt |
 
 ## MCP
 
-One server for all three services (tools prefixed `analytics_`, `tags_`, `mail_`):
+One server for every service (tools prefixed `analytics_`, `tags_`, `mail_`, `replay_`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -41,9 +42,9 @@ Or one per service at `https://<service>.agentfirststack.com/mcp`.
 
 ```text
 Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt first; it is
-the complete manual. Get an API key with POST https://agentfirststack.com/v1/signup, save it as
-AGENTFIRSTSTACK_API_KEY, then set up analytics, conversion tracking and an inbox, verifying each
-step. Ask me only for ad platform IDs and tokens. Finish with POST
+the complete manual. If .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get a key with
+POST https://agentfirststack.com/v1/signup and save it there. Then set up analytics, conversion
+tracking and an inbox, verifying each step, and note what you set up in AGENTFIRSTSTACK.md. Ask me only for ad platform IDs and tokens. Finish with POST
 https://agentfirststack.com/v1/claim-link and give me the claim link it returns. Tell me what you
 set up and what still needs me.
 ```

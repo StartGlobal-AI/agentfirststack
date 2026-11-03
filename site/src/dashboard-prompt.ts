@@ -25,15 +25,28 @@ const DESIGN =
 const WHERE =
   "Build it where it fits: a protected page in this project's app (behind its existing login), or a small standalone app I run locally if there's no app. When it works, tell me where to open it and how it's protected.";
 
+/** Env var that holds the screen's key: one read-only key for viewing, one full key for editing. */
+const READ_VAR = "AGENTFIRSTSTACK_READ_KEY";
+const ADMIN_VAR = "AGENTFIRSTSTACK_ADMIN_KEY";
+
 function key(base: string, scope: "read" | "full", why: string) {
   return scope === "read"
-    ? `Key: create a read-only key for it with the full-access AGENTFIRSTSTACK_API_KEY from this project's .env:
+    ? `Key: if ${READ_VAR} is already set, use it. Otherwise create a read-only key with the full-access AGENTFIRSTSTACK_API_KEY from this project's .env and save it as ${READ_VAR}:
   POST ${base}/v1/keys {"name":"dashboard","scope":"read"}
-Keep it on the server (an env var). Never put any key in browser code.`
-    : `Key: ${why} needs the full-access key. Use a new one, created with the AGENTFIRSTSTACK_API_KEY from this project's .env:
+Keep it on the server. Never put any key in browser code.`
+    : `Key: ${why} needs a full-access key. If ${ADMIN_VAR} is already set, use it. Otherwise create one with the AGENTFIRSTSTACK_API_KEY from this project's .env and save it as ${ADMIN_VAR}:
   POST ${base}/v1/keys {"name":"admin-panel"}
-Keep it on the server (an env var), only behind the app's login. Never put any key in browser code.`;
+Keep it on the server, only behind the app's login. Never put any key in browser code.`;
 }
+
+/**
+ * Running a prompt twice must update the screen, not add a second one: the agent keeps a note of
+ * what it built in AGENTFIRSTSTACK.md and reuses the env var that holds the key.
+ */
+const before = (screen: string) =>
+  `Before you start: read AGENTFIRSTSTACK.md at the repo root if it exists. If it already has an entry for the ${screen}, update that one in place (same route, same key) instead of building a second.`;
+const after = (screen: string) =>
+  `When it works, add or update the "${screen}" entry in AGENTFIRSTSTACK.md: where it lives (route or folder), how it's protected and which env var holds its key, so running this again updates it.`;
 
 export function buildPrompt(kind: BuildKind, project: Project, r: Resources, base: string): string {
   const head = (what: string, manual: string) =>
@@ -43,6 +56,8 @@ Data comes only from the AgentFirstStack API. Read the manuals first: ${base}/ll
 
   if (kind === "analytics")
     return `${head("an analytics dashboard", "analytics")}
+
+${before("analytics dashboard")}
 
 ${key(base, "read", "")}
 
@@ -58,12 +73,16 @@ What to show:
 
 ${DESIGN}
 
-${WHERE}`;
+${WHERE}
+
+${after("analytics dashboard")}`;
 
   if (kind === "tags")
     return `${head("a conversion tracking panel", "tags")}
 
-${key(base, "full", "Editing tags")} If I only want to look, use a read-only key ({"scope":"read"}) and leave out the editing.
+${before("conversion tracking panel")}
+
+${key(base, "full", "Editing tags")} If I only want to look, use ${READ_VAR} instead and leave out the editing.
 
 Tag containers:
 ${list(r.containers, (c) => `${c.domain} (${c.id})`)}
@@ -77,11 +96,15 @@ Never ask me for ad platform tokens in this panel's UI; connecting platforms sta
 
 ${DESIGN}
 
-${WHERE}`;
+${WHERE}
+
+${after("conversion tracking panel")}`;
 
   return `${head("a small email client", "mail")}
 
-${key(base, "full", "Replying and sending")} If I only want to read, use a read-only key ({"scope":"read"}) and leave out sending.
+${before("inbox client")}
+
+${key(base, "full", "Replying and sending")} If I only want to read, use ${READ_VAR} instead and leave out sending.
 
 Inboxes:
 ${list(r.inboxes, (i) => `${i.address} (${i.id})`)}
@@ -95,5 +118,7 @@ What to show:
 
 ${DESIGN}
 
-${WHERE}`;
+${WHERE}
+
+${after("inbox client")}`;
 }
