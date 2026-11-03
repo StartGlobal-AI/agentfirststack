@@ -48,7 +48,6 @@ export function fmtDay(ms: number | null | undefined): string {
 }
 
 /** 1284 -> "1,284" */
-export const fmtNum = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 /** The three bars of the AgentFirstStack mark: analytics, tags, mail. */
 export const MARK = html`<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>`;
@@ -104,17 +103,11 @@ export interface PageOptions {
    * `form-action 'self'` policy would block in some browsers. Everything else keeps it.
    */
   allowExternalFormRedirect?: boolean;
-  /**
-   * Origins a form on this page may end up at after a redirect, besides 'self'. Browsers apply
-   * form-action to every redirect hop, so "Open analytics dashboard" (POST here, then 303 to the
-   * analytics share page) needs the analytics origin listed.
-   */
-  formActionOrigins?: string[];
   /** Extra response headers (e.g. Set-Cookie). */
   headers?: HeadersInit;
 }
 
-export function pageHeaders(allowExternalFormRedirect = false, formActionOrigins: string[] = []): Record<string, string> {
+export function pageHeaders(allowExternalFormRedirect = false): Record<string, string> {
   return {
     "content-type": "text/html; charset=utf-8",
     "content-security-policy": [
@@ -124,7 +117,7 @@ export function pageHeaders(allowExternalFormRedirect = false, formActionOrigins
       "style-src 'self'",
       "font-src 'self'",
       "img-src 'self' data:",
-      ...(allowExternalFormRedirect ? [] : [["form-action 'self'", ...formActionOrigins].join(" ")]),
+      ...(allowExternalFormRedirect ? [] : ["form-action 'self'"]),
       "base-uri 'none'",
       "frame-ancestors 'none'",
     ].join("; "),
@@ -167,7 +160,7 @@ ${opts.body}
 </body>
 </html>
 `;
-  const headers = new Headers(pageHeaders(opts.allowExternalFormRedirect, opts.formActionOrigins));
+  const headers = new Headers(pageHeaders(opts.allowExternalFormRedirect));
   if (opts.headers) new Headers(opts.headers).forEach((v, k) => headers.append(k, v));
   return new Response(doc.value, { status: opts.status ?? 200, headers });
 }

@@ -72,6 +72,7 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(dash.text).toContain(agent.accountId);
     // One count per service, each in its own cell of the project tile.
     expect(dash.text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("1 site 1 container 1 inbox");
+    expect(dash.text).not.toContain("in the last 7 days");
     expect(serviceCalls.map((s) => [s.service, s.path, s.account, s.internal])).toEqual(
       expect.arrayContaining([
         ["analytics", "/v1/sites", agent.accountId, E.INTERNAL_TOKEN],
@@ -82,31 +83,20 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(serviceCalls.every((s) => s.authorization === null)).toBe(true);
 
     const project = await owner.get(`/dashboard/projects/${agent.accountId}`);
-    expect(project.text).toContain("acme.test");
-    expect(project.text).toContain("version 2 live");
-    expect(project.text).toContain("Open analytics dashboard");
     expect(project.text).toContain("the owner");
-    // Browsers apply form-action to redirects: the share button's 303 to analytics must be allowed.
-    expect(project.headers.get("content-security-policy")).toContain("form-action 'self' https://analytics.afs.test;");
-
-    // "Open analytics dashboard" creates a share link through analytics' API.
-    const share = await owner.post(`/dashboard/projects/${agent.accountId}/sites/site_acme0000000000/share`, {
-      csrf: csrfOf(project.text),
-    });
-    expect(share.status).toBe(303);
-    expect(share.location).toMatch(/^https:\/\/analytics\.afs\.test\/share\/shr_/);
-
-    // Without ANALYTICS_BASE_URL the redirect would be blocked, so the dashboard links to it instead.
-    const noOrigin = testEnv({ ANALYTICS_BASE_URL: "" });
-    const projectNoOrigin = await owner.get(`/dashboard/projects/${agent.accountId}`, { env: noOrigin });
-    expect(projectNoOrigin.headers.get("content-security-policy")).toContain("form-action 'self';");
-    const linked = await owner.post(
-      `/dashboard/projects/${agent.accountId}/sites/site_acme0000000000/share`,
-      { csrf: csrfOf(projectNoOrigin.text) },
-      { env: noOrigin },
-    );
-    expect(linked.status).toBe(200);
-    expect(linked.text).toMatch(/href="https:\/\/analytics\.afs\.test\/share\/shr_k+"/);
+    // An inventory only: where analytics is installed, which containers and inboxes exist.
+    expect(project.text).toContain("acme.test");
+    expect(project.text).toContain("acme-signups@afs.test");
+    // No numbers, no tag publishing state, no analytics share button: the owner's agent does that.
+    expect(project.text).not.toContain("visitors, 7 days");
+    expect(project.text).not.toContain("version 2 live");
+    expect(project.text).not.toContain("Open analytics dashboard");
+    expect(serviceCalls.some((s) => s.path.includes("/stats"))).toBe(false);
+    // Instead, a prompt that has the agent build a dashboard from the API, naming this project's resources.
+    expect(project.text).toContain("Want charts? Have your agent build them.");
+    expect(project.text).toContain(`Build me a dashboard for my AgentFirstStack project`);
+    expect(project.text).toContain(`acme.test (site_acme0000000000)`);
+    expect(project.text).toContain(`{&quot;name&quot;:&quot;dashboard&quot;,&quot;scope&quot;:&quot;read&quot;}`);
 
     // The agent's key keeps working after the claim.
     expect((await call("GET", "/v1/me", { key: agent.key })).status).toBe(200);
@@ -233,7 +223,7 @@ describe("dashboard", () => {
     }
     const dash = await stranger.get("/dashboard");
     const csrf = csrfOf(dash.text);
-    for (const action of ["/rename", "/keys", "/members/invite", "/sites/site_x/share"]) {
+    for (const action of ["/rename", "/keys", "/members/invite"]) {
       expect((await stranger.post(`/dashboard/projects/${agent.accountId}${action}`, { csrf, name: "pwned" })).status).toBe(404);
     }
     const name = await E.DB.prepare("SELECT name FROM accounts WHERE id = ?").bind(agent.accountId).first<{ name: string }>();

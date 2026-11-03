@@ -1,5 +1,4 @@
-import type { Session } from "./env";
-import { type SafeHtml, csrfField, fmtDay, fmtNum, html } from "./html";
+import { type SafeHtml, fmtDay, html } from "./html";
 import type { Resources } from "./services";
 
 /** Pieces of HTML shared by the claim page and the dashboard. */
@@ -25,15 +24,12 @@ const SERVICES = {
 } as const;
 
 /**
- * A project's sites, tag containers and inboxes as three tiles. With `share`, each site gets an
- * "Open analytics dashboard" button (a POST that creates or reuses the site's share link).
- * `visitors` holds unique visitors over the last 7 days per site id, where analytics answered.
+ * What a project has set up, as three tiles: where analytics is installed, which tag containers
+ * exist, which inboxes it uses. No numbers or reports on purpose: those are for the owner's agent
+ * to fetch (or to build into a dashboard of their own, see dashboard-prompt.ts).
+ * With `asks`, empty tiles suggest what to ask the agent.
  */
-export function resourcesView(
-  r: Resources,
-  share?: { projectId: string; session: Session },
-  visitors: Map<string, number> = new Map(),
-): SafeHtml {
+export function resourcesView(r: Resources, opts: { asks?: boolean } = {}): SafeHtml {
   const tile = (svc: keyof typeof SERVICES, list: unknown[] | null, body: SafeHtml, empty: SafeHtml) => {
     const s = SERVICES[svc];
     return html`<section class="tile resource ${s.cls}">
@@ -44,49 +40,28 @@ export function resourcesView(
   ${list === null ? unavailable : list.length ? body : empty}
 </section>`;
   };
+  const item = (main: string, id: string, created: number) => html`<li>
+      <div class="item-main"><b>${main}</b></div>
+      <span class="item-meta"><code>${id}</code><span>Added ${fmtDay(created)}</span></span>
+    </li>`;
 
   const sites = tile(
     "analytics",
     r.sites,
-    html`<ul class="items">${(r.sites ?? []).map((s) => {
-      const v = visitors.get(s.id);
-      return html`<li>
-      <div class="item-main"><b>${s.domain}</b>${
-        v === undefined ? "" : html`<span class="item-stat"><b>${fmtNum(v)}</b> ${v === 1 ? "visitor" : "visitors"}, 7 days</span>`
-      }</div>
-      <span class="item-meta"><code>${s.id}</code><span>Added ${fmtDay(s.created_at)}</span></span>
-      ${
-        share
-          ? html`<form method="post" action="/dashboard/projects/${share.projectId}/sites/${s.id}/share">${csrfField(share.session)}<button class="btn btn-primary btn-small btn-open" type="submit">Open analytics dashboard</button></form>`
-          : ""
-      }
-    </li>`;
-    })}</ul>`,
-    html`<p class="muted small">No sites yet.</p>${share ? askLine("Add analytics to my website.", "Ask your agent") : ""}`,
+    html`<p class="tile-sub">Installed on</p><ul class="items">${(r.sites ?? []).map((s) => item(s.domain, s.id, s.created_at))}</ul>`,
+    html`<p class="muted small">No sites yet.</p>${opts.asks ? askLine("Add analytics to my website.", "Ask your agent") : ""}`,
   );
   const containers = tile(
     "tags",
     r.containers,
-    html`<ul class="items">${(r.containers ?? []).map(
-      (t) => html`<li>
-      <div class="item-main"><b>${t.domain}</b><span class="state ${t.live_version ? "is-live" : ""}">${
-        t.live_version ? `version ${t.live_version} live` : "not published yet"
-      }</span></div>
-      <span class="item-meta"><code>${t.id}</code><span>Added ${fmtDay(t.created_at)}</span></span>
-    </li>`,
-    )}</ul>`,
-    html`<p class="muted small">No tag containers yet.</p>${share ? askLine("Track sign-ups as Meta and Google Ads conversions.") : ""}`,
+    html`<p class="tile-sub">Containers for</p><ul class="items">${(r.containers ?? []).map((t) => item(t.domain, t.id, t.created_at))}</ul>`,
+    html`<p class="muted small">No tag containers yet.</p>${opts.asks ? askLine("Track sign-ups as Meta and Google Ads conversions.") : ""}`,
   );
   const inboxes = tile(
     "mail",
     r.inboxes,
-    html`<ul class="items">${(r.inboxes ?? []).map(
-      (i) => html`<li>
-      <div class="item-main"><b>${i.address}</b></div>
-      <span class="item-meta"><code>${i.id}</code><span>Last mail ${fmtDay(i.last_message_at)}</span></span>
-    </li>`,
-    )}</ul>`,
-    html`<p class="muted small">No inboxes yet.</p>${share ? askLine("Create an inbox for our sign-up emails.") : ""}`,
+    html`<p class="tile-sub">Addresses in use</p><ul class="items">${(r.inboxes ?? []).map((i) => item(i.address, i.id, i.created_at))}</ul>`,
+    html`<p class="muted small">No inboxes yet.</p>${opts.asks ? askLine("Create an inbox for our sign-up emails.") : ""}`,
   );
   return html`<div class="bento resources">
   ${sites}

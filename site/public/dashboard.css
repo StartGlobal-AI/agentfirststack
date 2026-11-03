@@ -1157,28 +1157,6 @@ pre {
   font-size: 12px;
   color: var(--ink-3);
 }
-.headline {
-  margin-top: 18px;
-}
-.headline b {
-  display: block;
-  font-size: 34px;
-  font-weight: 650;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-}
-.headline-none {
-  margin-top: 18px;
-  font-size: 13px;
-  color: var(--ink-3);
-}
-.headline span {
-  display: block;
-  margin-top: 6px;
-  font-size: 13px;
-  color: var(--ink-3);
-}
 .project-bottom {
   display: grid;
   gap: 14px;
@@ -1295,32 +1273,6 @@ pre {
   min-width: 0;
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-.item-stat,
-.state {
-  flex: none;
-  font-size: 13px;
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-.item-stat b {
-  font-weight: 650;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
-.state.is-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--green);
-  font-weight: 550;
-}
-.state.is-live::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 1px;
-  background: currentColor;
 }
 .item-meta {
   display: flex;
@@ -1954,9 +1906,62 @@ body.app .nav {
   }
 }
 
-/* "Open analytics dashboard" fallback, when the share page's origin isn't allowed for a redirect. */
-.open-share {
+/* "Want charts? Have your agent build them": the dashboard prompt, on ink like the home hero. */
+.resource > .tile-sub {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.build-own {
   display: grid;
-  gap: 12px;
-  max-width: 560px;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  align-items: start;
+  gap: 18px 32px;
+  padding: clamp(20px, 2.6vw, 30px);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+.build-own *::selection {
+  background: var(--yellow);
+  color: var(--ink);
+}
+.build-copy h2 {
+  font-size: clamp(21px, 2.1vw, 26px);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+.build-copy p {
+  margin-top: 10px;
+  max-width: 46ch;
+  font-size: 14.5px;
+  color: var(--on-ink-2);
+}
+.build-own > .prompt-block,
+.build-own > .copy-btn {
+  grid-column: 2;
+}
+.build-own > .copy-btn {
+  margin-top: -6px;
+}
+.prompt-block {
+  max-height: 280px;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--r);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 820px) {
+  .build-own {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .build-own > .prompt-block,
+  .build-own > .copy-btn {
+    grid-column: 1;
+  }
 }

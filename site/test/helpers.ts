@@ -51,11 +51,6 @@ function stubService(service: "analytics" | "tags" | "mail"): Fetcher {
   svc.use("/v1/*", requireAuth());
   if (service === "analytics") {
     svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.sites ?? [] }));
-    svc.post("/v1/sites/:id/share", (c) => {
-      const site = fixtures.get(c.var.auth.accountId)?.sites?.find((s) => s.id === c.req.param("id"));
-      if (!site) return c.json({ error: { code: "not_found", message: "Site not found." } }, 404);
-      return c.json({ url: `https://analytics.afs.test/share/shr_${"k".repeat(32)}`, existing: false }, 201);
-    });
   }
   if (service === "tags") svc.get("/v1/containers", (c) => c.json({ containers: fixtures.get(c.var.auth.accountId)?.containers ?? [] }));
   if (service === "mail") svc.get("/v1/inboxes", (c) => c.json({ inboxes: fixtures.get(c.var.auth.accountId)?.inboxes ?? [] }));

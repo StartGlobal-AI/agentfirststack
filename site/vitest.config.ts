@@ -26,8 +26,6 @@ export default defineConfig({
           SIGNUP_HOURLY_LIMIT: "0",
           OAUTH_REGISTER_HOURLY_LIMIT: "",
           DEV_MODE: "true",
-          // Where the analytics stub's share links live (test/helpers.ts).
-          ANALYTICS_BASE_URL: "https://analytics.afs.test",
           INTERNAL_TOKEN: "test-internal-token-0123456789",
           GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",
           GOOGLE_CLIENT_SECRET: "test-google-secret",

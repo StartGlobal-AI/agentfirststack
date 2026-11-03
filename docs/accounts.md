@@ -81,14 +81,15 @@ Sign out is `POST /auth/signout` (with CSRF): the session row is deleted and the
 
 Server-rendered pages in the site Worker, in the landing page's visual language (one stylesheet,
 `dashboard.css`: square tiles on a 12-column grid, CSS-only motion that honours
-`prefers-reduced-motion`). The only script is `public/dashboard.js` (CSP `script-src 'self'`), which
-adds Copy buttons to prompts, new keys, invite links and the MCP URL; without it they stay
-click-to-select:
+`prefers-reduced-motion`). It deliberately shows no analytics, conversion or mail data: people
+ask their agent, or have it build a dashboard of their own. The only script is
+`public/dashboard.js` (CSP `script-src 'self'`), which adds Copy buttons to prompts, new keys,
+invite links and the MCP URL; without it they stay click-to-select:
 
 | Page | What it does |
 |---|---|
-| `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts and visitors in the last 7 days (summed over a project's sites, at most 12 stats calls per page, omitted when analytics doesn't answer); add a project by key; create an empty project |
-| `/dashboard/projects/:id` | Sites (with 7-day visitors), tag containers and inboxes; key and member counts; "Open analytics dashboard" per site (creates or reuses the site's share link through analytics' API, then redirects to it); rename |
+| `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts; add a project by key; create an empty project |
+| `/dashboard/projects/:id` | An inventory, no numbers: where analytics is installed, which tag containers exist, which inboxes the project uses; key and member counts; rename. "Want charts?" gives a prompt (`src/dashboard-prompt.ts`) that names the project's resources and has the owner's agent build a Stripe-style dashboard from the API, inside their own app, with a read-only key kept server-side |
 | `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created, last used); create (shown once) and revoke. OAuth access tokens are listed under connected apps instead |
 | `/dashboard/projects/:id/members` | Members and roles; invite with a claim link (shown once); the owner removes members, anyone can leave. Removing someone revokes the apps they connected to that project |
 | `/dashboard/apps` | Connected apps (OAuth grants): app name, redirect host, project, access, last used; disconnect |

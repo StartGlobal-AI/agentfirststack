@@ -67,6 +67,10 @@
   for (const s of document.querySelectorAll(".secret")) {
     addButton(s, (b) => s.after(b), "Copy", "copy-on-ink copy-wide");
   }
+  // The "build your own dashboard" prompt.
+  for (const s of document.querySelectorAll(".prompt-block")) {
+    addButton(s, (b) => s.after(b), "Copy prompt", "copy-on-ink copy-wide");
+  }
   // URLs such as the MCP endpoint.
   for (const s of document.querySelectorAll(".url-chip .select")) {
     addButton(s, (b) => s.after(b), "Copy");

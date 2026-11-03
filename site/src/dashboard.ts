@@ -3,7 +3,7 @@ import { type Context, Hono } from "hono";
 import { createClaimLink } from "./claims";
 import type { SiteEnv } from "./env";
 import { siteBase } from "./google";
-import { type SafeHtml, csrfField, fmtDate, fmtDay, fmtNum, html, htmlErrorHandler, page } from "./html";
+import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
 import {
   type Project,
   addMember,
@@ -15,7 +15,8 @@ import {
   requireProject,
   revokeGrant,
 } from "./identity";
-import { type Resources, analyticsOrigin, analyticsShareLink, projectResources, visitorsLast7Days } from "./services";
+import { dashboardPrompt } from "./dashboard-prompt";
+import { projectResources } from "./services";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
 import { askLine, askText, plural, resourceCounts, resourcesView } from "./views";
 
@@ -72,55 +73,22 @@ const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; lab
   { text: "Make an invite link so my teammate can see this project.", svc: "projects", label: "Projects" },
 ];
 
-/** At most this many analytics stats calls (one per site) for the headline numbers on /dashboard. */
-const HEADLINE_STATS_BUDGET = 12;
-
-/**
- * Visitors in the last 7 days per project, summed over its sites. Fail soft: a project gets a number
- * only when every one of its sites answered and the call budget allows it.
- */
-async function headlines(c: Context<SiteEnv>, projects: Project[], resources: Resources[]): Promise<(number | null)[]> {
-  let budget = HEADLINE_STATS_BUDGET;
-  const plan = projects.map((p, i) => {
-    const sites = resources[i]?.sites;
-    if (!sites?.length || sites.length > budget) return null;
-    budget -= sites.length;
-    return { id: p.id, siteIds: sites.map((s) => s.id) };
-  });
-  return Promise.all(
-    plan.map(async (q) => {
-      if (!q) return null;
-      const v = await visitorsLast7Days(c.env, q.id, q.siteIds);
-      return v.size === q.siteIds.length ? [...v.values()].reduce((a, b) => a + b, 0) : null;
-    }),
-  );
-}
-
 // ---------- projects ----------
 
 async function projectsPage(c: Context<SiteEnv>, error?: string, status = 200) {
   const s = c.var.session;
   const projects = await listProjects(c.env.DB, s.user.id);
-  // Resources for the first 20 projects (each is three service calls), then a few visitor counts.
+  // Resources for the first 20 projects (each is three service calls).
   const shown = projects.slice(0, 20);
   const resources = await Promise.all(shown.map((p) => projectResources(c.env, p.id)));
-  const visitors = await headlines(c, shown, resources);
   const projectTile = (p: Project, i: number) => {
     const r = resources[i];
-    const v = visitors[i];
     return html`<li class="tile project">
       <div class="project-top">
         <h3><a class="project-link" href="/dashboard/projects/${p.id}">${projectName(p)}</a></h3>
         <span class="role">${p.role}</span>
       </div>
       <code class="project-id">${p.id}</code>
-      ${
-        typeof v === "number"
-          ? html`<p class="headline"><b>${fmtNum(v)}</b><span>${v === 1 ? "visitor" : "visitors"} in the last 7 days</span></p>`
-          : r?.sites?.length === 0
-            ? html`<p class="headline-none">No site analytics yet.</p>`
-            : ""
-      }
       <div class="project-bottom">
         ${r ? resourceCounts(r) : html`<p class="muted small">Open it to see its sites, containers and inboxes.</p>`}
         <p class="project-foot">Created ${fmtDay(p.created_at)}</p>
@@ -214,21 +182,22 @@ dashboard.get("/projects/:id", async (c) => {
       .first<number>("n"),
     c.env.DB.prepare("SELECT count(*) AS n FROM memberships WHERE account_id = ?").bind(p.id).first<number>("n"),
   ]);
-  const visitors = resources.sites?.length
-    ? await visitorsLast7Days(
-        c.env,
-        p.id,
-        resources.sites.slice(0, 20).map((x) => x.id),
-      )
-    : undefined;
-  const analytics = analyticsOrigin(c.env);
+  const prompt = dashboardPrompt({ id: p.id, name: projectName(p) }, resources, siteBase(c));
   return page({
     title: projectName(p),
     session: s,
     nav: "projects",
-    formActionOrigins: analytics ? [analytics] : [],
     body: html`${tabs(p, "overview")}
-${resourcesView(resources, { projectId: p.id, session: s }, visitors)}
+${resourcesView(resources, { asks: true })}
+<div class="bento">
+<section class="tile build-own" aria-labelledby="build-title">
+  <div class="build-copy">
+    <h2 id="build-title">Want charts? Have your agent build them.</h2>
+    <p>This page only lists what's set up. For numbers, ask your agent. For a dashboard, paste this prompt into Claude, Cursor or any coding agent: it builds a Stripe-style dashboard for this project from the API, inside your own app.</p>
+  </div>
+  <pre class="prompt-block select">${prompt}</pre>
+</section>
+</div>
 <div class="bento project-more">
   <a class="tile stat-tile" href="/dashboard/projects/${p.id}/keys">
     <span class="stat-num">${keys ?? 0}</span>
@@ -257,35 +226,6 @@ dashboard.post("/projects/:id/rename", async (c) => {
   const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
   await c.env.DB.prepare("UPDATE accounts SET name = ? WHERE id = ?").bind(cleanName(form.name), p.id).run();
   return redirect(`/dashboard/projects/${p.id}`);
-});
-
-dashboard.post("/projects/:id/sites/:site/share", async (c) => {
-  await readForm(c);
-  const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
-  const site = c.req.param("site");
-  if (!/^site_[0-9a-z]{1,64}$/.test(site)) throw new ApiError(404, "not_found", "Site not found.");
-  const url = await analyticsShareLink(c.env, p.id, site);
-  if (!url)
-    throw new ApiError(
-      502,
-      "unavailable",
-      "Couldn't open the analytics dashboard.",
-      "The analytics service didn't answer. Try again in a moment.",
-    );
-  // The project page's CSP lists analytics' origin in form-action, so the browser may follow this
-  // redirect. If the share page lives elsewhere (ANALYTICS_BASE_URL unset or different), a 303
-  // would be blocked silently; show a link to it instead.
-  if (new URL(url).origin === analyticsOrigin(c.env)) return redirect(url);
-  return page({
-    title: "Analytics dashboard",
-    session: c.var.session,
-    nav: "projects",
-    body: html`<section class="tile open-share">
-  <h1>Your analytics dashboard is ready</h1>
-  <p>It's a private, read-only link. Anyone with it can see this site's numbers, so share it with care.</p>
-  <p><a class="btn btn-primary" href="${url}" rel="noreferrer">Open analytics dashboard</a></p>
-</section>`,
-  });
 });
 
 // ---------- keys ----------
