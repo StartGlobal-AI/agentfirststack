@@ -433,10 +433,6 @@ pre {
 .home-top > .add {
   grid-column: span 4;
 }
-/* Opening "start an empty project" grows only its own tile. */
-.home-top:has(.disclosure[open]) {
-  align-items: start;
-}
 .resources > .resource {
   grid-column: span 4;
 }
@@ -526,16 +522,6 @@ pre {
   from {
     opacity: 0;
     transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes unfold {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
   }
   to {
     opacity: 1;
@@ -1035,56 +1021,6 @@ pre {
 .add > p {
   margin-top: -6px;
 }
-.add-or {
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.disclosure {
-  margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.disclosure summary {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: fit-content;
-  list-style: none;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-2);
-  border-radius: 2px;
-  transition: color 160ms var(--ease);
-}
-.disclosure summary::-webkit-details-marker {
-  display: none;
-}
-.disclosure summary::before {
-  content: "";
-  width: 14px;
-  height: 14px;
-  flex: none;
-  border: 1px solid var(--line-2);
-  border-radius: 3px;
-  background:
-    linear-gradient(currentColor, currentColor) center / 8px 1.5px no-repeat,
-    linear-gradient(currentColor, currentColor) center / 1.5px 8px no-repeat;
-  transition: background-size 200ms var(--ease);
-}
-.disclosure[open] summary::before {
-  background-size:
-    8px 1.5px,
-    1.5px 0;
-}
-.disclosure summary:hover {
-  color: var(--ink);
-}
-.disclosure[open] > form {
-  margin-top: 12px;
-  animation: unfold 260ms var(--ease) both;
-}
-
 .section-head {
   display: flex;
   flex-wrap: wrap;
@@ -1964,4 +1900,9 @@ body.app .nav {
   .build-own > .copy-btn {
     grid-column: 1;
   }
+}
+.add > .add-also {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }

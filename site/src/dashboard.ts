@@ -1,20 +1,10 @@
-import { ApiError, authenticate, createApiKey } from "@afs/shared";
+import { ApiError, createApiKey } from "@afs/shared";
 import { type Context, Hono } from "hono";
 import { createClaimLink } from "./claims";
 import type { SiteEnv } from "./env";
 import { siteBase } from "./google";
 import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
-import {
-  type Project,
-  addMember,
-  createProject,
-  deleteUser,
-  listMembers,
-  listProjects,
-  removeMember,
-  requireProject,
-  revokeGrant,
-} from "./identity";
+import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
 import { dashboardPrompt } from "./dashboard-prompt";
 import { projectResources } from "./services";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
@@ -65,6 +55,13 @@ function tabs(p: Project, active: "overview" | "keys" | "members"): SafeHtml {
 const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
   msg ? html`<p class="notice ${kind === "ok" ? "notice-ok" : "notice-error"}" role="status">${msg}</p>` : "";
 
+/**
+ * What starts a new project: the agent reads the manual and does the rest. Short on purpose; the
+ * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
+ */
+const SETUP_PROMPT =
+  "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: get this project its own API key, set up analytics, conversion tracking and an inbox as the project needs, and verify each step. When you're done, send me a claim link for the project.";
+
 /** Things people ask their agent instead of opening this dashboard, and the service that answers. */
 const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; label: string }[] = [
   { text: "How many visitors did my site get this week, and from which countries?", svc: "analytics", label: "Analytics" },
@@ -75,7 +72,7 @@ const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; lab
 
 // ---------- projects ----------
 
-async function projectsPage(c: Context<SiteEnv>, error?: string, status = 200) {
+async function projectsPage(c: Context<SiteEnv>) {
   const s = c.var.session;
   const projects = await listProjects(c.env.DB, s.user.id);
   // Resources for the first 20 projects (each is three service calls).
@@ -99,9 +96,7 @@ async function projectsPage(c: Context<SiteEnv>, error?: string, status = 200) {
     title: "Projects",
     session: s,
     nav: "projects",
-    status,
-    body: html`${notice(error)}
-<div class="bento home-top">
+    body: html`<div class="bento home-top">
   <section class="tile hero" aria-labelledby="hero-title">
     <div class="hero-copy">
       <h1 id="hero-title">You don't really need this dashboard.</h1>
@@ -118,24 +113,11 @@ async function projectsPage(c: Context<SiteEnv>, error?: string, status = 200) {
     <p class="hero-hint" data-js-text="Copy a question, then paste it into your agent.">Click a question to select it, then copy it into your agent.</p>
   </section>
   <section class="tile add" aria-labelledby="add-title">
-    <h2 id="add-title">Add a project</h2>
-    <p class="muted small">The easy way: ask your agent for a claim link and open it.</p>
+    <h2 id="add-title">Set up a new project</h2>
+    <p class="muted small">Open your agent in the new project's folder and paste this. It gets the project its own key, sets up what it needs, checks each step, and sends you a claim link that adds it here.</p>
+    ${askLine(SETUP_PROMPT, null)}
+    <p class="muted small add-also">Already set up by an agent? Ask it:</p>
     ${askLine("Send me a claim link for our AgentFirstStack project.", null)}
-    <form class="stack add-or" method="post" action="/dashboard/import">
-      <p class="muted small">Or paste a full-access <code>afs_</code> key from your agent or your <code>.env</code>. We only use it to find the project.</p>
-      ${csrfField(s)}
-      <label class="field"><span>API key</span><input type="password" name="key" required autocomplete="off" spellcheck="false" placeholder="afs_..."></label>
-      <button class="btn btn-primary" type="submit">Add project</button>
-    </form>
-    <details class="disclosure">
-      <summary>Or start an empty project</summary>
-      <form class="stack" method="post" action="/dashboard/projects">
-        <p class="muted small">Create a key for it afterwards, or connect a chat app to it.</p>
-        ${csrfField(s)}
-        <label class="field"><span>Name</span><input type="text" name="name" maxlength="200" placeholder="acme.com"></label>
-        <button class="btn btn-quiet" type="submit">Create project</button>
-      </form>
-    </details>
   </section>
 </div>
 <div class="section-head">
@@ -147,7 +129,7 @@ ${
     ? html`<ul class="projects">${projects.map(projectTile)}</ul>`
     : html`<div class="tile empty">
   <h3>No projects yet</h3>
-  <p>When your agent has set something up, ask it for a claim link and open it: the project shows up here. Or add a project with its key.</p>
+  <p>When your agent has set something up, ask it for a claim link and open it: the project shows up here.</p>
   <p class="muted small">Agents create claim links with <code>POST /v1/claim-link</code> or the <code>afs_create_claim_link</code> tool.</p>
 </div>`
 }`,
@@ -155,22 +137,6 @@ ${
 }
 
 dashboard.get("/", (c) => projectsPage(c));
-
-dashboard.post("/import", async (c) => {
-  const form = await readForm(c);
-  const key = (form.key ?? "").trim();
-  const auth = key ? await authenticate(c.env.DB, key) : null;
-  if (!auth) return projectsPage(c, "That key is unknown, revoked or expired.", 400);
-  if (!auth.scopes.includes("*")) return projectsPage(c, "That's a read-only key. Paste a full-access key to add its project.", 400);
-  await addMember(c.env.DB, c.var.session.user.id, auth.accountId);
-  return redirect(`/dashboard/projects/${auth.accountId}`);
-});
-
-dashboard.post("/projects", async (c) => {
-  const form = await readForm(c);
-  const id = await createProject(c.env.DB, c.var.session.user.id, cleanName(form.name));
-  return redirect(`/dashboard/projects/${id}`);
-});
 
 dashboard.get("/projects/:id", async (c) => {
   const s = c.var.session;

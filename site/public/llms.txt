@@ -162,7 +162,8 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 - Give the owner the `url` in your final message. If they already have an account, the link adds
   them to this project; if the project already has an owner, they join as a member.
 - Lost it? Make another. A project can have up to 25 unused links at a time.
-- Owners who already have the key can also paste it under "Add a project by key" in the dashboard.
+- The claim link is the only way a project reaches the owner's dashboard: never ask the owner to
+  paste a key anywhere.
 
 ## 8. MCP
 

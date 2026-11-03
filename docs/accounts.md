@@ -74,8 +74,10 @@ Sign out is `POST /auth/signout` (with CSRF): the session row is deleted and the
     already has an owner. A member of an ownerless project who claims becomes its owner.
   - Only the request that marks the link used gets in; if adding the member then fails, the link
     is given back.
-- **Import by key.** In the dashboard, paste a full-access key to add its project. Read-only keys
-  are refused (a member can mint full keys, so import must not widen a read key).
+- **No other way in.** People never paste keys into the dashboard and can't create empty
+  projects there: a project reaches someone's dashboard only through its claim link (or, for chat
+  apps, the OAuth consent page, which can also create a new project). The dashboard's "Set up a
+  new project" tile is a prompt for the agent, which signs the new project up and sends a link.
 
 ### 3. Dashboard (`/dashboard`)
 
@@ -88,7 +90,7 @@ invite links and the MCP URL; without it they stay click-to-select:
 
 | Page | What it does |
 |---|---|
-| `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts; add a project by key; create an empty project |
+| `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts; "Set up a new project" (a setup prompt for the agent, plus the claim-link prompt for projects an agent already made) |
 | `/dashboard/projects/:id` | An inventory, no numbers: where analytics is installed, which tag containers exist, which inboxes the project uses; key and member counts; rename. "Want charts?" gives a prompt (`src/dashboard-prompt.ts`) that names the project's resources and has the owner's agent build a Stripe-style dashboard from the API, inside their own app, with a read-only key kept server-side |
 | `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created, last used); create (shown once) and revoke. OAuth access tokens are listed under connected apps instead |
 | `/dashboard/projects/:id/members` | Members and roles; invite with a claim link (shown once); the owner removes members, anyone can leave. Removing someone revokes the apps they connected to that project |

@@ -12,6 +12,16 @@ async function claimLink(key: string) {
   return r.json as { url: string; expires_at: number; account_id: string };
 }
 
+/** The only way a project gets into someone's dashboard: the agent's claim link, opened and confirmed. */
+async function claimInto(b: Browser, key: string) {
+  const link = await claimLink(key);
+  const path = new URL(link.url).pathname;
+  const page = await b.get(path);
+  const r = await b.post(path, { csrf: csrfOf(page.text) });
+  expect(r.status).toBe(303);
+  return link.account_id;
+}
+
 describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
   it("lets the owner claim what the agent created and see it in the dashboard", async () => {
     const agent = await signup("acme");
@@ -187,32 +197,36 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
 });
 
 describe("dashboard", () => {
-  it("imports a project by its full-access key, and refuses read or unknown keys", async () => {
-    const agent = await signup("imported");
+  it("adds projects only through claim links: no key pasting, no empty projects", async () => {
+    const agent = await signup("claimed");
     const b = new Browser();
-    await b.signIn(uniqueEmail("importer"));
-    const read = await call("POST", "/v1/keys", { key: agent.key, json: { scope: "read" } });
-
-    const bad = await b.submit("/dashboard", "/dashboard/import", { key: "afs_notarealkey" });
-    expect(bad.status).toBe(400);
-    expect(bad.text).toContain("unknown, revoked or expired");
-    const ro = await b.submit("/dashboard", "/dashboard/import", { key: read.json.api_key });
-    expect(ro.status).toBe(400);
-    expect(ro.text).toContain("read-only");
-
-    const ok = await b.submit("/dashboard", "/dashboard/import", { key: agent.key });
-    expect(ok.status).toBe(303);
-    expect(ok.location).toBe(`/dashboard/projects/${agent.accountId}`);
+    await b.signIn(uniqueEmail("claimer"));
     const dash = await b.get("/dashboard");
-    expect(dash.text).toContain(agent.accountId);
-    expect(dash.text).toContain("imported");
+    // New projects start with the agent (setup prompt); existing ones come in by claim link.
+    expect(dash.text).toContain("Set up a new project");
+    expect(dash.text).toContain("Read https://agentfirststack.com/llms.txt and follow it");
+    expect(dash.text).toContain("Send me a claim link for our AgentFirstStack project.");
+    expect(dash.text).not.toContain('name="key"');
+    expect(dash.text).not.toContain("/dashboard/import");
+    expect(dash.text).not.toContain('action="/dashboard/projects"');
+    const csrf = csrfOf(dash.text);
+    expect((await b.post("/dashboard/import", { csrf, key: agent.key })).status).toBe(404);
+    expect((await b.post("/dashboard/projects", { csrf, name: "x" })).status).toBe(404);
+    expect((await b.get("/dashboard")).text).not.toContain(agent.accountId);
+
+    const id = await claimInto(b, agent.key);
+    expect(id).toBe(agent.accountId);
+    const after = await b.get("/dashboard");
+    expect(after.text).toContain(agent.accountId);
+    expect(after.text).toContain("claimed");
   });
 
   it("gives a non-member a 404 for someone else's project, on every route", async () => {
     const agent = await signup("private");
     const owner = new Browser();
     await owner.signIn(uniqueEmail("owner"));
-    await owner.submit("/dashboard", "/dashboard/import", { key: agent.key });
+    await claimInto(owner, agent.key);
+    const linksBefore = await E.DB.prepare("SELECT count(*) AS n FROM claim_links WHERE account_id = ?").bind(agent.accountId).first("n");
 
     const stranger = new Browser();
     await stranger.signIn(uniqueEmail("stranger"));
@@ -228,16 +242,17 @@ describe("dashboard", () => {
     }
     const name = await E.DB.prepare("SELECT name FROM accounts WHERE id = ?").bind(agent.accountId).first<{ name: string }>();
     expect(name?.name).toBe("private");
-    expect(await E.DB.prepare("SELECT count(*) AS n FROM claim_links WHERE account_id = ?").bind(agent.accountId).first("n")).toBe(0);
+    expect(await E.DB.prepare("SELECT count(*) AS n FROM claim_links WHERE account_id = ?").bind(agent.accountId).first("n")).toBe(
+      linksBefore,
+    );
   });
 
   it("creates (shown once), lists and revokes keys; renames; escapes what it shows", async () => {
     const b = new Browser();
     await b.signIn(uniqueEmail("keys"));
-    const created = await b.submit("/dashboard", "/dashboard/projects", { name: '<script>alert("x")</script>' });
-    expect(created.status).toBe(303);
-    const id = created.location!.split("/").pop()!;
-    const overview = await b.get(created.location!);
+    const id = await claimInto(b, (await signup("keys")).key);
+    await b.submit(`/dashboard/projects/${id}`, `/dashboard/projects/${id}/rename`, { name: '<script>alert("x")</script>' });
+    const overview = await b.get(`/dashboard/projects/${id}`);
     expect(overview.text).not.toContain('<script>alert("x")</script>');
     expect(overview.text).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
 
@@ -246,7 +261,7 @@ describe("dashboard", () => {
     const key = /afs_[0-9a-z]{40}/.exec(made.text)?.[0];
     expect(key).toBeTruthy();
     expect((await call("GET", "/v1/me", { key })).json.key.scopes).toEqual(["read"]);
-    const row = await E.DB.prepare("SELECT id, created_by_user_id FROM api_keys WHERE account_id = ?").bind(id).first<{
+    const row = await E.DB.prepare("SELECT id, created_by_user_id FROM api_keys WHERE account_id = ? AND name = 'ci'").bind(id).first<{
       id: string;
       created_by_user_id: string;
     }>();
@@ -275,19 +290,21 @@ describe("CSRF and redirects", () => {
   it("rejects state-changing posts without the right token or from another origin", async () => {
     const b = new Browser();
     await b.signIn(uniqueEmail("csrf"));
-    expect((await b.post("/dashboard/projects", { name: "x" })).status).toBe(403);
-    expect((await b.post("/dashboard/projects", { name: "x", csrf: "0".repeat(64) })).status).toBe(403);
+    const id = await claimInto(b, (await signup("csrf")).key);
+    const rename = `/dashboard/projects/${id}/rename`;
+    expect((await b.post(rename, { name: "x" })).status).toBe(403);
+    expect((await b.post(rename, { name: "x", csrf: "0".repeat(64) })).status).toBe(403);
     const dash = await b.get("/dashboard");
     const csrf = csrfOf(dash.text);
-    const evil = await b.post("/dashboard/projects", { name: "x", csrf }, { headers: { origin: "https://evil.example" } });
+    const evil = await b.post(rename, { name: "x", csrf }, { headers: { origin: "https://evil.example" } });
     expect(evil.status).toBe(403);
     // Another session's token doesn't work either.
     const other = new Browser();
     await other.signIn(uniqueEmail("csrf2"));
-    expect((await other.post("/dashboard/projects", { name: "x", csrf })).status).toBe(403);
+    expect((await other.post(rename, { name: "x", csrf })).status).toBe(403);
     expect((await b.post("/auth/signout", {})).status).toBe(403);
     // The right token from the same origin works.
-    expect((await b.post("/dashboard/projects", { name: "x", csrf }, { headers: { origin: "https://afs.test" } })).status).toBe(303);
+    expect((await b.post(rename, { name: "x", csrf }, { headers: { origin: "https://afs.test" } })).status).toBe(303);
   });
 
   it("only follows same-origin next paths", async () => {
@@ -431,7 +448,7 @@ describe("account", () => {
     const b = new Browser();
     const email = uniqueEmail("leaver");
     await b.signIn(email);
-    await b.submit("/dashboard", "/dashboard/import", { key: agent.key });
+    await claimInto(b, agent.key);
     const user = (await E.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first<{ id: string }>())!;
     // An OAuth grant with tokens, as if they'd connected a chat app.
     await E.DB.prepare("INSERT OR IGNORE INTO oauth_clients (id, name, redirect_uris, metadata_hash, created_at) VALUES (?, ?, ?, ?, ?)")
