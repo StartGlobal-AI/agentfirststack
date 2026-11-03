@@ -1,0 +1,36 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=slack.com header.s=google header.b=Sl4; spf=pass smtp.mailfrom=feedback@slack.com; dmarc=pass header.from=slack.com
+Date: Mon, 3 Nov 2026 18:50:30 +0000
+From: Slack <feedback@slack.com>
+To: acme-signups@mail.example.com
+Message-ID: <confirm.2RK9QX.ab12@slack.com>
+Subject: Slack confirmation code: 2RK-9QX
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="slack-boundary-1"
+
+--slack-boundary-1
+Content-Type: text/plain; charset=UTF-8
+
+Confirm your email address
+
+Your confirmation code is below — enter it in your open browser window and we'll help you get signed in.
+
+2RK-9QX
+
+If you didn't request this email, there's nothing to worry about — you can safely ignore it.
+
+Made by Slack Technologies, LLC, a Salesforce company. 415 Mission Street, 3rd Floor, San Francisco, CA 94105
+Our Blog: https://slack.com/blog  Policies: https://slack.com/legal  Help Center: https://slack.com/help
+
+--slack-boundary-1
+Content-Type: text/html; charset=UTF-8
+
+<html><body><div style="max-width:600px">
+<h1 style="font-size:36px">Confirm your email address</h1>
+<p style="font-size:20px">Your confirmation code is below &mdash; enter it in your open browser window and we'll help you get signed in.</p>
+<div style="background:#f5f4f5;padding:40px;text-align:center"><span style="font-size:30px;letter-spacing:4px;font-weight:700">2RK-9QX</span></div>
+<p>If you didn't request this email, there's nothing to worry about &mdash; you can safely ignore it.</p>
+<p style="font-size:12px;color:#696969">Made by Slack Technologies, LLC, a Salesforce company. 415 Mission Street, 3rd Floor, San Francisco, CA 94105<br>
+<a href="https://slack.com/blog">Our Blog</a> | <a href="https://slack.com/legal">Policies</a> | <a href="https://slack.com/help">Help Center</a></p>
+</div></body></html>
+
+--slack-boundary-1--

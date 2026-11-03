@@ -1,0 +1,52 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=accounts.google.com header.s=20230601 header.b=Kd3f9a; spf=pass (mx.cloudflare.net: domain of 3abc@accounts.google.com designates 209.85.220.73 as permitted sender) smtp.mailfrom=3abc@accounts.google.com; dmarc=pass header.from=accounts.google.com; arc=none
+Received: from mail-sor-f73.google.com (mail-sor-f73.google.com [209.85.220.73]) by mx.cloudflare.net
+Date: Mon, 03 Nov 2026 10:12:44 -0800
+From: Google <noreply@accounts.google.com>
+To: acme-signups@mail.example.com
+Message-ID: <a8F3kLq9mZ.482913@accounts.google.com>
+Subject: 482913 is your Google verification code
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="000000000000g00gle"
+
+--000000000000g00gle
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+Google
+
+Verify your email
+
+Google needs to verify your email address to finish setting up your Google =
+Account. Use this code to finish setting up: 482913
+
+This code will expire in 15 minutes.
+
+If you don't recognize acme-signups@mail.example.com, you can safely ignore =
+this email.
+
+You received this email to let you know about important changes to your Go=
+ogle Account and services.
+=C2=A9 2026 Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043, =
+USA
+
+--000000000000g00gle
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html><html><head><style>td{font-family:Roboto,Arial}</style></hea=
+d><body><table width=3D"100%" cellpadding=3D"0"><tr><td align=3D"center">=
+<img src=3D"https://www.gstatic.com/images/branding/googlelogo/2x/googlelog=
+o_color_74x24dp.png" alt=3D"Google" width=3D"74"></td></tr>
+<tr><td style=3D"font-size:24px">Verify your email</td></tr>
+<tr><td style=3D"font-size:14px">Google needs to verify your email address =
+to finish setting up your Google Account. Use this code to finish setting u=
+p:</td></tr>
+<tr><td style=3D"font-size:36px;letter-spacing:3px;font-weight:bold">482913=
+</td></tr>
+<tr><td>This code will expire in 15 minutes.</td></tr>
+<tr><td style=3D"font-size:11px;color:#777">You received this email to let=
+ you know about important changes to your Google Account and services.<br>=
+&copy; 2026 Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043=
+, USA</td></tr></table></body></html>
+
+--000000000000g00gle--

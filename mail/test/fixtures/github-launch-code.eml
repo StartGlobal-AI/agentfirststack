@@ -1,0 +1,44 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=github.com header.s=pf2023 header.b=Gh8; spf=pass smtp.mailfrom=noreply@github.com; dmarc=pass header.from=github.com
+Date: Mon, 03 Nov 2026 10:44:12 -0800
+From: GitHub <noreply@github.com>
+To: acme-signups@mail.example.com
+Message-ID: <launch-code.61873352.a1b2@github.com>
+Subject: =?UTF-8?Q?=F0=9F=9A=80_Your_GitHub_launch_code?=
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="--==_mimepart_gh"
+
+----==_mimepart_gh
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Here's your GitHub launch code, @acme-signups!
+
+Continue signing up for GitHub by entering the code below:
+
+61873352
+
+Open GitHub: https://github.com/signup
+
+Not able to enter the code? Paste the following link into your browser:
+https://github.com/account_verifications/confirm/41209381/8f3d2a9c7b1e4f60a5d2c8b7e9f1a3c5?via_launch_code_email=true
+
+Codes expire shortly after they're sent. You're receiving this email because you recently created a new GitHub account. If this wasn't you, please ignore this email.
+
+GitHub, Inc. 88 Colin P Kelly Jr Street, San Francisco, CA 94107
+
+----==_mimepart_gh
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+<!DOCTYPE html><html><body><table width="100%"><tr><td>
+<h2 style="font-size:24px">Here's your GitHub launch code, @acme-signups!</h2>
+<p>Continue signing up for GitHub by entering the code below:</p>
+<table><tr><td style="font-size:32px;letter-spacing:6px;font-family:monospace;background:#f6f8fa;padding:12px">61873352</td></tr></table>
+<p><a href="https://github.com/signup" style="background:#2da44e;color:#fff;padding:8px 16px">Open GitHub</a></p>
+<p>Not able to enter the code? Paste the following link into your browser:<br>
+<a href="https://github.com/account_verifications/confirm/41209381/8f3d2a9c7b1e4f60a5d2c8b7e9f1a3c5?via_launch_code_email=true">https://github.com/account_verifications/confirm/41209381/8f3d2a9c7b1e4f60a5d2c8b7e9f1a3c5?via_launch_code_email=true</a></p>
+<p style="color:#6e7781;font-size:12px">Codes expire shortly after they're sent. You're receiving this email because you recently created a new GitHub account. If this wasn't you, please ignore this email.</p>
+<p style="color:#6e7781;font-size:12px">GitHub, Inc. &#x30fb;88 Colin P Kelly Jr Street &#x30fb;San Francisco, CA 94107</p>
+</td></tr></table></body></html>
+
+----==_mimepart_gh--

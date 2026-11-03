@@ -1,0 +1,44 @@
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    projects: [
+      // Pure logic (extraction corpus, address rules, threading, signing, DNS, CF API builders): Node.
+      { test: { name: "unit", include: ["test/unit/**/*.test.ts"], environment: "node" } },
+      // The Worker itself in workerd: D1, R2, InboxDO, Queue producer, send_email (local simulator).
+      {
+        plugins: [
+          cloudflareTest(async () => ({
+            wrangler: { configPath: "./wrangler.jsonc" },
+            miniflare: {
+              bindings: {
+                TEST_MIGRATIONS: await readD1Migrations("./migrations"),
+                // The shared identity DB (AUTH_DB), as on the hosted platform.
+                TEST_AUTH_MIGRATIONS: await readD1Migrations("../site/migrations"),
+                ENCRYPTION_KEY: "q5B6mPm7m6t0C9x2l8Yk3gq7cB1Fz2b0bZr7u1y4c3E=",
+                SEND_DAILY_LIMIT: "6",
+                // Fair-use controls stay off in tests (deployments may turn them on); fair-use tests set their own.
+                MAIL_DOMAIN: "mail.example.com",
+                PUBLIC_BASE_URL: "",
+                SIGNUP_HOURLY_LIMIT: "0",
+                SHARED_SEND_POLICY: "",
+                SHARED_RETENTION_DAYS: "",
+                MAX_INBOXES_PER_ACCOUNT: "",
+                MAX_MESSAGES_PER_INBOX: "",
+                MAX_INBOUND_PER_ACCOUNT_PER_DAY: "",
+                MAX_WEBHOOKS_PER_ACCOUNT: "",
+              },
+            },
+          })),
+        ],
+        test: {
+          name: "integration",
+          include: ["test/integration/**/*.test.ts"],
+          setupFiles: ["./test/integration/apply-migrations.ts"],
+          testTimeout: 30_000,
+        },
+      },
+    ],
+  },
+});

@@ -1,0 +1,78 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Generic template: local dev, tests and the defaults for every deployment. Real deployments
+  // don't edit this file; `pnpm afs config <profile>` derives wrangler.deploy.json from it plus
+  // deploy/<profile>.json (account, domain, resource ids, vars). See docs/self-hosting.md.
+  "name": "afs-tags",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The browser runtime (src/runtime, TypeScript + DOM) is bundled and minified by esbuild into
+  // dist/runtime.txt, which the Worker imports as a Text module (see `rules`).
+  "build": {
+    "command": "node scripts/build-runtime.mjs",
+    "watch_dir": ["src/runtime", "src/lib", "src/config"]
+  },
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
+
+  "observability": { "enabled": true },
+
+  "vars": {
+    // The URL agents and snippets use. Empty = the request origin.
+    "PUBLIC_BASE_URL": "",
+    // open | token | closed (see @afs/shared auth)
+    "SIGNUP_MODE": "open",
+    // Default base URL of the analytics app for `analytics` tags and destinations.
+    "ANALYTICS_BASE_URL": "",
+    // "true" only in local dev: allows http://localhost webhook destinations.
+    "DEV_MODE": "false",
+    // Prefix of the API keys this app mints ("afs" everywhere, so shared keys look alike).
+    "KEY_PREFIX": "afs"
+  },
+  // Optional vars a deployment can add (set them in deploy/<profile>.json, not here):
+  //   SIGNUP_HOURLY_LIMIT, MAX_CONTAINERS_PER_ACCOUNT,
+  //   MAX_DESTINATIONS_PER_CONTAINER (default 10), MAX_VERSIONS_PER_CONTAINER (default 50),
+  //   MAX_DRAFT_BYTES (default 524288). "0" turns one of the last three off.
+  // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN.
+
+  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afs-tags",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    },
+    // Shared identity (accounts + API keys): bind the same database in every app so one key works
+    // everywhere. Running only this app? Delete this binding; keys then live in DB.
+    {
+      "binding": "AUTH_DB",
+      "database_name": "afs-identity",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../site/migrations"
+    }
+  ],
+
+  // One ContainerDO (SQLite) per container: visitors, event log, dedupe, live config copy.
+  "durable_objects": {
+    "bindings": [{ "name": "CONTAINER", "class_name": "ContainerDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ContainerDO"] }],
+
+  // Server-side delivery to destinations, with retries.
+  "queues": {
+    "producers": [{ "binding": "DISPATCH", "queue": "afs-tags-dispatch" }],
+    "consumers": [
+      {
+        "queue": "afs-tags-dispatch",
+        "max_batch_size": 25,
+        "max_batch_timeout": 2,
+        "max_retries": 6,
+        "retry_delay": 30,
+        "dead_letter_queue": "afs-tags-dispatch-dlq"
+      }
+    ]
+  }
+}

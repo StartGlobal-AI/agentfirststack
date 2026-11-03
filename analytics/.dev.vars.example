@@ -1,0 +1,11 @@
+# Copy to .dev.vars for `pnpm dev`. Never commit .dev.vars.
+# Derives the daily visitor salt: daily_salt = HMAC(SALT_SECRET, YYYY-MM-DD). Generate: openssl rand -hex 32
+SALT_SECRET=change-me-to-a-long-random-string
+# Local dev only: honours x-dev-geo-* headers (fake request.cf geo) and allows verify to fetch localhost.
+DEV_MODE=true
+# Optional: rows a /sql query may read after its first result row before it is stopped (default 1000000)
+# SQL_MAX_ROWS_READ=1000000
+# Optional: open | token | closed
+# SIGNUP_MODE=open
+# SIGNUP_TOKEN=
+# ADMIN_TOKEN=

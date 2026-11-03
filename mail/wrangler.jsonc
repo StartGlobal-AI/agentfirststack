@@ -1,0 +1,87 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Generic template: local dev, tests and the defaults for every deployment. Real deployments
+  // don't edit this file; `pnpm afs config <profile>` derives wrangler.deploy.json from it plus
+  // deploy/<profile>.json (account, domain, resource ids, vars). See docs/self-hosting.md.
+  "name": "afs-mail",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "observability": { "enabled": true },
+
+  "vars": {
+    // Shared domain every account can create inboxes on. Needs Email Routing (catch-all -> this
+    // Worker) and Email Sending onboarding on the operator's Cloudflare account. See README.
+    "MAIL_DOMAIN": "mail.example.com",
+    // Per-account cap on recipients sent to per UTC day (protects domain reputation).
+    "SEND_DAILY_LIMIT": "200",
+    // Must equal "name" above: auto_configure points a zone's catch-all rule at this Worker.
+    "WORKER_NAME": "afs-mail",
+    // open | token | closed (see @afs/shared auth). Set SIGNUP_TOKEN / ADMIN_TOKEN as secrets.
+    "SIGNUP_MODE": "open",
+    // Public URL of this Worker, used in responses and llms.txt. Empty = request origin.
+    "PUBLIC_BASE_URL": "",
+    // Prefix of the API keys this app mints ("afs" everywhere, so shared keys look alike).
+    "KEY_PREFIX": "afs"
+  },
+  // Optional vars a deployment can add (public services want them; see src/env.ts):
+  // SIGNUP_HOURLY_LIMIT, SHARED_SEND_POLICY, SHARED_RETENTION_DAYS, MAX_INBOXES_PER_ACCOUNT,
+  // EXTRA_RESERVED_USERNAMES, MAX_MESSAGES_PER_INBOX, MAX_INBOUND_PER_ACCOUNT_PER_DAY,
+  // MAX_WEBHOOKS_PER_ACCOUNT (default 10). Secrets: ENCRYPTION_KEY (also keys custom-domain
+  // ownership challenges), ADMIN_TOKEN (also the x-admin-token for auto_configure), SIGNUP_TOKEN,
+  // CF_API_TOKEN.
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afs-mail",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    },
+    // Shared identity (accounts + API keys): bind the same database in every app so one key works
+    // everywhere. Running only this app? Delete this binding; keys then live in DB.
+    {
+      "binding": "AUTH_DB",
+      "database_name": "afs-identity",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../site/migrations"
+    }
+  ],
+
+  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+
+  // Raw .eml files, HTML bodies and attachments.
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "afs-mail-blobs" }],
+
+  // One InboxDO per inbox: parks wait_for_email callers until the email() handler notifies it.
+  "durable_objects": {
+    "bindings": [{ "name": "INBOX", "class_name": "InboxDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InboxDO"] }],
+
+  // Webhook deliveries: signed, retried with backoff.
+  "queues": {
+    "producers": [{ "binding": "WEBHOOKS", "queue": "afs-mail-webhooks" }],
+    "consumers": [
+      {
+        "queue": "afs-mail-webhooks",
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "afs-mail-webhooks-dlq"
+      }
+    ]
+  },
+
+  // Cloudflare Email Service (Email Sending). No restriction attributes: the from-domain must be
+  // onboarded for sending; the app itself enforces which addresses an account may send from.
+  "send_email": [{ "name": "EMAIL" }],
+
+  // Receiving: Email Routing must send every address on MAIL_DOMAIN to this Worker. Either set the
+  // zone's catch-all to "Send to a Worker: afs-mail" in the dashboard, or let `wrangler deploy` manage
+  // it by uncommenting this (catch-alls must name the zone apex, e.g. "*@agentmail.example"):
+  // "addresses": ["*@your-mail-domain.example"],
+
+  // Hourly: delete inboxes whose ttl_days has passed, and shared-domain mail older than
+  // SHARED_RETENTION_DAYS (with their stored blobs).
+  "triggers": { "crons": ["17 * * * *"] }
+}

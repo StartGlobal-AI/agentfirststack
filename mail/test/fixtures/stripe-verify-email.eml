@@ -1,0 +1,37 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=stripe.com header.s=s1 header.b=Ab12; spf=pass smtp.mailfrom=bounces+1234@em.stripe.com; dmarc=pass header.from=stripe.com
+Date: Mon, 3 Nov 2026 18:40:00 +0000
+From: Stripe <notifications@stripe.com>
+To: acme-signups@mail.example.com
+Message-ID: <verify.2Kq9Xb7Lm@stripe.com>
+Subject: Verify your email for Stripe
+List-Unsubscribe: <https://dashboard.stripe.com/settings/communication-preferences?u=acct_1Px9>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="--stripe-alt"
+
+----stripe-alt
+Content-Type: text/plain; charset=utf-8
+
+Verify your email
+
+Hi there,
+
+Please verify your email address so we know that it's really you!
+
+Verify my email address ( https://dashboard.stripe.com/confirm_email?t=Pq7Xk2Lm9Vb3Nz8Rt5Yw1&account=acct_1Px9 )
+
+The link expires in 24 hours. Stripe will never ask you for your password over email.
+
+Stripe, 354 Oyster Point Blvd, South San Francisco, CA 94080
+
+----stripe-alt
+Content-Type: text/html; charset=utf-8
+
+<html><body><table role="presentation" width="100%"><tbody>
+<tr><td style="font-size:24px;color:#32325d">Verify your email</td></tr>
+<tr><td style="font-size:16px">Hi there,<br><br>Please verify your email address so we know that it's really you!</td></tr>
+<tr><td><a href="https://dashboard.stripe.com/confirm_email?t=Pq7Xk2Lm9Vb3Nz8Rt5Yw1&amp;account=acct_1Px9" style="background:#635bff;color:#ffffff;border-radius:4px;padding:8px 16px">Verify my email address</a></td></tr>
+<tr><td style="font-size:13px;color:#8898aa">The link expires in 24 hours. Stripe will never ask you for your password over email.</td></tr>
+<tr><td style="font-size:12px;color:#8898aa">Stripe, 354 Oyster Point Blvd, South San Francisco, CA 94080<br><a href="https://stripe.com/privacy">Privacy</a> &middot; <a href="https://support.stripe.com">Support</a></td></tr>
+</tbody></table></body></html>
+
+----stripe-alt--

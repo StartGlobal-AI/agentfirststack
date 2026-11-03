@@ -1,0 +1,47 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=facebookmail.com header.s=s2048-2024-q3 header.b=Qm1x; spf=pass smtp.mailfrom=notification@facebookmail.com; dmarc=pass header.from=facebookmail.com
+Date: Mon, 3 Nov 2026 18:20:01 +0000
+From: Facebook <registration@facebookmail.com>
+To: Acme Signups <acme-signups@mail.example.com>
+Message-ID: <0f9b2c1e-48291-confirm@facebookmail.com>
+Subject: 48291 is your Facebook confirmation code
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1_fbconfirm"
+
+--b1_fbconfirm
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Hi Acme,
+
+You recently registered for Facebook. To complete your Facebook registration, please confirm your account.
+
+You may be asked to enter this confirmation code:
+48291
+
+Confirm your account
+https://www.facebook.com/n/?confirmemail.php&e=acme-signups%40mail.example.com&c=48291&z=0&gfid=AQDx8a9KzLm3Qp7Wv2
+
+Facebook will never ask you for your confirmation code anywhere but on Facebook.
+
+Thanks,
+The Facebook Team
+
+This message was sent to acme-signups@mail.example.com. If you don't want to receive these emails from Meta in the future, please unsubscribe.
+https://www.facebook.com/o.php?k=AS1xYz9vQwErTy12&u=100094823710&mid=5f9a2b
+Meta Platforms, Inc., Attention: Community Support, 1 Meta Way, Menlo Park, CA 94025
+
+--b1_fbconfirm
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+<html><body style="margin:0"><table width="100%"><tr><td>
+<p>Hi Acme,</p>
+<p>You recently registered for Facebook. To complete your Facebook registration, please confirm your account.</p>
+<p>You may be asked to enter this confirmation code:</p>
+<table><tr><td style="font-size:32px;font-weight:bold;padding:10px;border:1px solid #ccd0d5">48291</td></tr></table>
+<p><a href="https://www.facebook.com/n/?confirmemail.php&amp;e=acme-signups%40mail.example.com&amp;c=48291&amp;z=0&amp;gfid=AQDx8a9KzLm3Qp7Wv2" style="background:#1877f2;color:#fff;padding:10px 20px">Confirm your account</a></p>
+<p>Facebook will never ask you for your confirmation code anywhere but on Facebook.</p>
+<p style="font-size:11px;color:#8a8d91">This message was sent to <a href="mailto:acme-signups@mail.example.com">acme-signups@mail.example.com</a>. If you don't want to receive these emails from Meta in the future, please <a href="https://www.facebook.com/o.php?k=AS1xYz9vQwErTy12&amp;u=100094823710&amp;mid=5f9a2b">unsubscribe</a>.<br>Meta Platforms, Inc., Attention: Community Support, 1 Meta Way, Menlo Park, CA 94025</p>
+</td></tr></table></body></html>
+
+--b1_fbconfirm--

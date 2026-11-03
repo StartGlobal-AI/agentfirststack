@@ -1,0 +1,14 @@
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+dist/
+coverage/
+.DS_Store
+*.log
+
+# Deployment secrets (never commit) and generated deploy configs
+deploy/*.secrets.json
+wrangler.deploy.json
+ops/

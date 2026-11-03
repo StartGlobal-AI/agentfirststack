@@ -1,0 +1,16 @@
+# Local secrets for `pnpm dev` (copy to .dev.vars, which is git-ignored).
+
+# 32-byte base64 key that seals webhook secrets at rest and keys custom-domain ownership challenges:
+# openssl rand -base64 32
+ENCRYPTION_KEY=
+
+# Signup gating (@afs/shared). SIGNUP_MODE itself is a var in wrangler.jsonc (open | token | closed).
+# ADMIN_TOKEN is also the operator's x-admin-token for domain auto_configure / force, and keys domain
+# ownership challenges when ENCRYPTION_KEY is empty.
+SIGNUP_TOKEN=
+ADMIN_TOKEN=
+
+# Optional: lets POST /v1/domains {"auto_configure":true} configure zones in your Cloudflare account
+# (Zone Read, Zone Settings Edit, Email Routing Rules Edit, Email Sending Edit). Leave empty locally.
+CF_API_TOKEN=
+CF_ACCOUNT_ID=

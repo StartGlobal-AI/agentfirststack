@@ -1,0 +1,19 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=partner.example header.s=s1 header.b=Qr1; spf=pass smtp.mailfrom=jane@partner.example; dmarc=pass header.from=partner.example
+Date: Mon, 3 Nov 2026 20:30:00 +0000
+From: Jane Doe <jane@partner.example>
+To: acme-signups@mail.example.com
+Message-ID: <CAJane.reply.001@partner.example>
+In-Reply-To: <out.original.001@mail.example.com>
+References: <out.original.001@mail.example.com>
+Subject: Re: Partnership intro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Thanks, Thursday at 3pm works for us. I'll send an invite.
+
+Jane
+
+On Mon, Nov 3, 2026 at 9:00 AM Acme <acme-signups@mail.example.com> wrote:
+> Hi Jane, here is the agenda. Your access code is 449120 for the data room.
+> Best,
+> Acme

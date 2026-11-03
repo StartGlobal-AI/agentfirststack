@@ -1,0 +1,11 @@
+# Copy to .dev.vars for `pnpm dev` (git-ignored).
+# 32 random bytes, base64: openssl rand -base64 32. Seals destination credentials (AES-GCM).
+ENCRYPTION_KEY=REPLACE_WITH_openssl_rand_-base64_32
+# Optional: bypasses SIGNUP_MODE; send as Bearer to POST /v1/signup.
+ADMIN_TOKEN=
+# Only used when SIGNUP_MODE=token.
+SIGNUP_TOKEN=
+# Local dev only: lets webhook destinations use http://localhost / 127.0.0.1.
+DEV_MODE=true
+# Base URL of the analytics app (for `analytics` tags/destinations without base_url).
+ANALYTICS_BASE_URL=http://localhost:8787

@@ -1,0 +1,56 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=shop.example header.s=s1 header.b=Or1; spf=pass smtp.mailfrom=orders@shop.example; dmarc=pass header.from=shop.example
+Date: Mon, 3 Nov 2026 20:00:00 +0000
+From: Example Shop <orders@shop.example>
+To: acme-signups@mail.example.com
+Message-ID: <order-10234-confirmed@shop.example>
+Subject: Order #10234 confirmed
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="order-alt"
+
+--order-alt
+Content-Type: text/plain; charset=utf-8
+
+Thank you for your purchase!
+
+Hi Acme, we're getting your order ready to be shipped. We will notify you when it has been sent.
+
+Order #10234
+Order number: 5829301
+Confirmation number: 8472910
+Order date: November 3, 2026
+
+2 x Widget Pro (SKU 448812) $29.99
+1 x Cable 2m $9.99
+Subtotal: $69.97
+Shipping: $5.00
+Tax: $6.12
+Total: $81.09 USD
+
+Shipping address:
+Acme Inc
+1234 Main Street, Suite 500
+Springfield, IL 62704
+
+Tracking number: 1Z999AA10123456784
+Estimated delivery: 11/07/2026
+
+View your order: https://shop.example/account/orders/10234?key=7a8b9c0d1e2f3a4b5c6d
+Questions? Call 1-800-555-0199 or reply to this email. Customer ID: 559310
+
+Example Shop, 99 Commerce Way, Austin, TX 78701
+
+--order-alt
+Content-Type: text/html; charset=utf-8
+
+<html><body><table width="600">
+<tr><td><h1>Thank you for your purchase!</h1><p>Hi Acme, we're getting your order ready to be shipped. We will notify you when it has been sent.</p></td></tr>
+<tr><td><table><tr><td>Order</td><td>#10234</td></tr><tr><td>Order number</td><td>5829301</td></tr><tr><td>Confirmation number</td><td>8472910</td></tr></table></td></tr>
+<tr><td><table><tr><td>2 x Widget Pro</td><td>SKU 448812</td><td>$29.99</td></tr><tr><td>1 x Cable 2m</td><td></td><td>$9.99</td></tr>
+<tr><td>Subtotal</td><td></td><td>$69.97</td></tr><tr><td>Total</td><td></td><td>$81.09 USD</td></tr></table></td></tr>
+<tr><td><p>Shipping address:<br>Acme Inc<br>1234 Main Street, Suite 500<br>Springfield, IL 62704</p></td></tr>
+<tr><td><p>Tracking number</p><p>1Z999AA10123456784</p></td></tr>
+<tr><td><a href="https://shop.example/account/orders/10234?key=7a8b9c0d1e2f3a4b5c6d" style="background:#000;color:#fff;padding:12px">View your order</a></td></tr>
+<tr><td style="font-size:12px">Questions? Call 1-800-555-0199 or reply to this email. Customer ID: 559310<br>Example Shop, 99 Commerce Way, Austin, TX 78701</td></tr>
+</table></body></html>
+
+--order-alt--

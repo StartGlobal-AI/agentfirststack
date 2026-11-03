@@ -1,0 +1,26 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=shopify.com header.s=s1 header.b=Sh1; spf=pass smtp.mailfrom=bounces@email.shopify.com; dmarc=pass header.from=shopify.com
+Date: Mon, 3 Nov 2026 19:01:02 +0000
+From: Shopify <no-reply@shopify.com>
+To: acme-signups@mail.example.com
+Message-ID: <login-code-9a8b7c@shopify.com>
+Subject: Your Shopify login code
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><table class=3D"body" width=3D"100%"><tr><td>
+<table class=3D"container"><tr><td>
+<img src=3D"https://cdn.shopify.com/shopify-email/logo.png" alt=3D"Shopify" w=
+idth=3D"120">
+<h2>Log in to Shopify</h2>
+<p>Hi there,</p>
+<p>Use this code to log in to your Shopify account. It expires in 10 minutes=
+.</p>
+<table><tr><td class=3D"code" style=3D"font-size:28px;letter-spacing:2px">4=
+82 913</td></tr></table>
+<p>If you didn't try to log in, you can safely ignore this email. Someone may=
+ have typed your email address by mistake.</p>
+<p class=3D"disclaimer">Shopify International Limited, Victoria Buildings, 2n=
+d Floor, 1-2 Haddington Road, Dublin 4, D04 XN32, Ireland. Questions? <a href=
+=3D"https://help.shopify.com">Visit the Help Center</a>.</p>
+</td></tr></table></td></tr></table></body></html>

@@ -1,0 +1,57 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=devweekly.example header.s=mc header.b=Nw1; spf=pass smtp.mailfrom=bounce@mail.devweekly.example; dmarc=pass header.from=devweekly.example
+Date: Mon, 3 Nov 2026 07:00:00 +0000
+From: Dev Weekly <hello@devweekly.example>
+To: acme-signups@mail.example.com
+Message-ID: <issue-245.20261103@devweekly.example>
+Subject: Dev Weekly #245: 10 code review habits, 2026 survey results, and a 30% off code
+List-Unsubscribe: <https://devweekly.example/unsubscribe?u=8f7e6d5c4b3a&id=245>, <mailto:unsubscribe@devweekly.example?subject=unsubscribe>
+List-Id: Dev Weekly <weekly.devweekly.example>
+Precedence: bulk
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="nl-245"
+
+--nl-245
+Content-Type: text/plain; charset=utf-8
+
+DEV WEEKLY — Issue #245 — November 3, 2026
+
+Welcome to the 245th issue! Join 25,000 subscribers and 1200 companies reading every Monday.
+
+1. 10 code review habits that cut review time by 40%
+Our survey of 3500 developers found that teams with a review checklist merge 2x faster.
+Read more: https://devweekly.example/r/245/1?utm_source=newsletter&utm_campaign=245
+
+2. The code: 12 lessons from 1500 pull requests
+We looked at 2048 lines of config and 640 tests.
+Read more: https://devweekly.example/r/245/2
+
+3. 2026 State of JS results are out
+Over 23000 responses from 120 countries.
+
+SPONSOR: Ship faster with CloudCo. Use code SPRING25 for 25% off your first 3 months.
+Use code 2468 at checkout to get a free t-shirt. Offer ends 11/30.
+
+Upcoming meetup: Thursday 18:30, Room 204, 1355 Market St, San Francisco, CA 94103
+Call 415-555-0134 to RSVP.
+
+Log in to manage your account: https://devweekly.example/login
+Update your email preferences: https://devweekly.example/preferences?u=8f7e6d5c4b3a
+Unsubscribe: https://devweekly.example/unsubscribe?u=8f7e6d5c4b3a&id=245
+
+Dev Weekly, PO Box 3345, Portland, OR 97208
+
+--nl-245
+Content-Type: text/html; charset=utf-8
+
+<html><body><div style="display:none">10 code review habits, 2026 survey results, and a 30% off code</div>
+<table width="600" align="center"><tr><td><h1>DEV WEEKLY</h1><p>Issue #245 &mdash; November 3, 2026</p></td></tr>
+<tr><td><p>Welcome to the 245th issue! Join 25,000 subscribers and 1200 companies reading every Monday.</p></td></tr>
+<tr><td><h2>1. 10 code review habits that cut review time by 40%</h2><p>Our survey of 3500 developers found that teams with a review checklist merge 2x faster.</p><a href="https://devweekly.example/r/245/1?utm_source=newsletter&amp;utm_campaign=245">Read more</a></td></tr>
+<tr><td><h2>2. The code: 12 lessons from 1500 pull requests</h2><p>We looked at 2048 lines of config and 640 tests.</p><a href="https://devweekly.example/r/245/2">Read more</a></td></tr>
+<tr><td><h2>3. 2026 State of JS results are out</h2><p>Over 23000 responses from 120 countries.</p></td></tr>
+<tr><td style="background:#fffbe6"><p><b>SPONSOR:</b> Ship faster with CloudCo. Use code <b>SPRING25</b> for 25% off your first 3 months.</p><p>Use code <b>2468</b> at checkout to get a free t-shirt. Offer ends 11/30.</p></td></tr>
+<tr><td><p>Upcoming meetup: Thursday 18:30, Room 204, 1355 Market St, San Francisco, CA 94103. Call 415-555-0134 to RSVP.</p></td></tr>
+<tr><td style="font-size:12px"><a href="https://devweekly.example/login">Log in</a> to manage your account &middot; <a href="https://devweekly.example/preferences?u=8f7e6d5c4b3a">Update your email preferences</a> &middot; <a href="https://devweekly.example/unsubscribe?u=8f7e6d5c4b3a&amp;id=245">Unsubscribe</a><br>Dev Weekly, PO Box 3345, Portland, OR 97208</td></tr>
+</table></body></html>
+
+--nl-245--

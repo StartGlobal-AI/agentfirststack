@@ -1,0 +1,19 @@
+name: Feature request
+description: Something an agent should be able to do that it can't yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: job
+    attributes:
+      label: What should an agent be able to do?
+      description: Describe the task, not the implementation. For example "send purchases to LinkedIn's conversion API".
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today
+  - type: textarea
+    id: shape
+    attributes:
+      label: Suggested API or tool (optional)

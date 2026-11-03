@@ -1,0 +1,50 @@
+{
+  "name": "com.agentfirststack/tags",
+  "title": "AgentFirstStack Tags",
+  "description": "Tag manager and server-side conversion router: containers, site scan, conversion setup, GA4, Google Ads, Meta and TikTok destinations with test events, publish and rollback.",
+  "version": "0.1.0",
+  "websiteUrl": "https://agentfirststack.com",
+  "repository": {
+    "url": "https://github.com/StartGlobal-AI/agentfirststack",
+    "source": "github"
+  },
+  "serverInfo": {
+    "name": "tags",
+    "title": "AgentFirstStack Tags",
+    "version": "0.1.0"
+  },
+  "endpoint": "https://tags.agentfirststack.com/mcp",
+  "transport": {
+    "type": "streamable-http",
+    "url": "https://tags.agentfirststack.com/mcp"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://tags.agentfirststack.com/mcp",
+      "supportedProtocolVersions": ["2025-11-25", "2025-06-18", "2025-03-26"],
+      "authentication": {
+        "type": "bearer",
+        "description": "API key from one unauthenticated request: POST https://agentfirststack.com/v1/signup. No OAuth, no email.",
+        "registration_url": "https://agentfirststack.com/v1/signup",
+        "documentation_url": "https://agentfirststack.com/auth.md"
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {api_key}",
+          "isRequired": true,
+          "isSecret": true,
+          "description": "An afs_ API key from POST /v1/signup"
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "toolCount": 25,
+  "documentation": "https://agentfirststack.com/llms.txt"
+}

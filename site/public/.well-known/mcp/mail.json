@@ -1,0 +1,50 @@
+{
+  "name": "com.agentfirststack/mail",
+  "title": "AgentFirstStack Mail",
+  "description": "Email inboxes for agents: create an inbox, wait for a verification email with the code and link extracted, read, reply, send, custom domains and webhooks.",
+  "version": "0.1.0",
+  "websiteUrl": "https://agentfirststack.com",
+  "repository": {
+    "url": "https://github.com/StartGlobal-AI/agentfirststack",
+    "source": "github"
+  },
+  "serverInfo": {
+    "name": "mail",
+    "title": "AgentFirstStack Mail",
+    "version": "0.1.0"
+  },
+  "endpoint": "https://mail.agentfirststack.com/mcp",
+  "transport": {
+    "type": "streamable-http",
+    "url": "https://mail.agentfirststack.com/mcp"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mail.agentfirststack.com/mcp",
+      "supportedProtocolVersions": ["2025-11-25", "2025-06-18", "2025-03-26"],
+      "authentication": {
+        "type": "bearer",
+        "description": "API key from one unauthenticated request: POST https://agentfirststack.com/v1/signup. No OAuth, no email.",
+        "registration_url": "https://agentfirststack.com/v1/signup",
+        "documentation_url": "https://agentfirststack.com/auth.md"
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {api_key}",
+          "isRequired": true,
+          "isSecret": true,
+          "description": "An afs_ API key from POST /v1/signup"
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "toolCount": 29,
+  "documentation": "https://agentfirststack.com/llms.txt"
+}

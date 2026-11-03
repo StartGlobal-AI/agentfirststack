@@ -1,0 +1,46 @@
+{
+  "name": "agentfirststack",
+  "private": true,
+  "description": "AgentFirstStack: analytics, tags (tag manager + server-side conversions) and mail (inboxes + sending) that AI agents set up end to end. Cloudflare Workers.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "pnpm -r --parallel run typecheck",
+    "test": "pnpm -r run test",
+    "afs": "node scripts/afs.mjs",
+    "format": "biome format --write",
+    "format:check": "biome format"
+  },
+  "packageManager": "pnpm@10.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd",
+      "sharp"
+    ]
+  },
+  "license": "MIT",
+  "homepage": "https://agentfirststack.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StartGlobal-AI/agentfirststack.git"
+  },
+  "bugs": {
+    "url": "https://github.com/StartGlobal-AI/agentfirststack/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "analytics",
+    "tag-manager",
+    "conversion-tracking",
+    "email",
+    "cloudflare-workers",
+    "llms-txt"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4"
+  }
+}

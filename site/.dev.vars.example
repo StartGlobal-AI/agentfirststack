@@ -1,0 +1,3 @@
+# Local secrets for `pnpm dev` (copy to .dev.vars, git-ignored). All optional here.
+ADMIN_TOKEN=
+SIGNUP_TOKEN=

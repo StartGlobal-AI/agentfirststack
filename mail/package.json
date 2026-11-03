@@ -1,0 +1,29 @@
+{
+  "name": "@afs/mail",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8789",
+    "types": "wrangler types --strict-vars=false",
+    "typecheck": "wrangler types --strict-vars=false >/dev/null && tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local && wrangler d1 migrations apply AUTH_DB --local",
+    "smoke": "bash scripts/smoke.sh",
+    "deploy": "echo 'Deploy from the repo root: pnpm afs deploy <profile> mail  (see docs/self-hosting.md)' && exit 1"
+  },
+  "dependencies": {
+    "@afs/shared": "workspace:*",
+    "hono": "^4.13.16",
+    "zod": "^4.6.7",
+    "postal-mime": "^4.2.0",
+    "mimetext": "^3.0.28"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.156.2"
+  }
+}

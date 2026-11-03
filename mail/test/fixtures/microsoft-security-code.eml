@@ -1,0 +1,25 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=accountprotection.microsoft.com header.s=selector1 header.b=Zx9; spf=pass smtp.mailfrom=account-security-noreply@accountprotection.microsoft.com; dmarc=pass header.from=accountprotection.microsoft.com
+Date: Mon, 3 Nov 2026 18:31:07 +0000
+From: Microsoft account team <account-security-noreply@accountprotection.microsoft.com>
+To: acme-signups@mail.example.com
+Message-ID: <MS-SEC-7f3a0c91.4829@accountprotection.microsoft.com>
+Subject: Microsoft account security code
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Microsoft account
+
+Security code
+
+Please use the following security code for the Microsoft account ac*****@mail.example.com.
+
+Security code: 4829
+
+If you don't recognize the Microsoft account ac*****@mail.example.com, you can click https://account.live.com/dp?ft=-DqY4m2Rk8Lp9Zx to remove your email address from that account.
+
+Thanks,
+The Microsoft account team
+
+Privacy Statement: https://go.microsoft.com/fwlink/?LinkId=521839
+Microsoft Corporation, One Microsoft Way, Redmond, WA 98052

@@ -1,0 +1,326 @@
+import { ApiError, badRequest, conflict, newId, notFound } from "@afs/shared";
+import type { AppEnv } from "../env";
+import { checkUsername, normalizeDomain, randomUsername } from "../lib/address";
+import { headerSafe } from "../lib/headers";
+import { type InboxRow, inboxJson, utcDay } from "./format";
+
+export const MAX_TTL_DAYS = 3650;
+const DAY = 86_400_000;
+/** Wall time one cron run may spend on each purge before handing the rest to the next run. */
+export const PURGE_BUDGET_MS = 20_000;
+const PURGE_BATCH = 200;
+const DELETE_CHUNK = 500;
+
+/** Display names go into the From header: no CR/LF or other control characters. */
+function cleanDisplayName(v: string | null | undefined): string | null {
+  return headerSafe(v) || null;
+}
+
+export function sharedDomain(env: AppEnv): string {
+  return (env.MAIL_DOMAIN || "mail.example.com").toLowerCase();
+}
+
+/** The domain an account may create an inbox on: the shared MAIL_DOMAIN or one of its own. */
+export async function resolveInboxDomain(
+  env: AppEnv,
+  accountId: string,
+  domain?: string | null,
+): Promise<{ domain: string; shared: boolean; verified: boolean }> {
+  const shared = sharedDomain(env);
+  if (!domain) return { domain: shared, shared: true, verified: true };
+  const d = normalizeDomain(domain);
+  if (!d) throw badRequest(`"${domain}" is not a valid domain.`, "Pass a hostname like example.com, or omit domain to use " + shared + ".");
+  if (d === shared) return { domain: shared, shared: true, verified: true };
+  const row = await env.DB.prepare("SELECT receiving_verified, owner_verified_at FROM domains WHERE domain = ? AND account_id = ?")
+    .bind(d, accountId)
+    .first<{ receiving_verified: number; owner_verified_at: number | null }>();
+  if (!row) {
+    throw new ApiError(
+      404,
+      "domain_not_found",
+      `Domain ${d} is not set up on this account.`,
+      `Add it first: POST /v1/domains {"domain":"${d}"} (returns the DNS records), or omit domain to use ${shared}.`,
+    );
+  }
+  if (!row.owner_verified_at) throw ownershipNotVerified(d);
+  return { domain: d, shared: false, verified: !!row.receiving_verified };
+}
+
+export const ownershipNotVerified = (d: string) =>
+  new ApiError(
+    403,
+    "ownership_not_verified",
+    `This account has not proven it controls ${d} yet.`,
+    `Add the TXT record _afs-verify.${d} listed first in GET /v1/domains/${d} (records[0]), then POST /v1/domains/${d}/verify until ownership is "pass".`,
+  );
+
+export interface CreateInboxInput {
+  username?: string | null;
+  domain?: string | null;
+  display_name?: string | null;
+  ttl_days?: number | null;
+}
+
+/** MAX_INBOXES_PER_ACCOUNT (hosted fair use). Unset = no cap. */
+async function assertInboxQuota(env: AppEnv, accountId: string) {
+  const max = Number(env.MAX_INBOXES_PER_ACCOUNT || 0);
+  if (!(max > 0)) return;
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM inboxes WHERE account_id = ?").bind(accountId).first<{ n: number }>();
+  if ((row?.n ?? 0) >= max) {
+    throw new ApiError(
+      403,
+      "quota_exceeded",
+      `This account already has ${max} inboxes, the most allowed here.`,
+      "Delete an inbox you no longer need (DELETE /v1/inboxes/:id), or reuse one: an inbox can receive mail from any number of services.",
+    );
+  }
+}
+
+export async function createInbox(env: AppEnv, accountId: string, input: CreateInboxInput, now = Date.now()) {
+  const dom = await resolveInboxDomain(env, accountId, input.domain);
+  const expiresAt = input.ttl_days ? now + Math.round(input.ttl_days * DAY) : null;
+  const display = cleanDisplayName(input.display_name);
+
+  /** null = the address is someone else's: taken by another account, or (shared domain) once theirs. */
+  const insert = async (username: string): Promise<{ row: InboxRow; existing: boolean } | null> => {
+    const address = `${username}@${dom.domain}`;
+    // One query for both, so a live address and a tombstoned one cost the same and answer the same.
+    const found = await env.DB.prepare(
+      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address",
+    )
+      .bind(address)
+      .first<InboxRow & { id: string | null; tomb_account: string | null }>();
+    if (found?.id) {
+      if (found.account_id !== accountId) return null;
+      const { tomb_account: _t, ...row } = found;
+      return { row: row as InboxRow, existing: true };
+    }
+    if (found?.tomb_account && found.tomb_account !== accountId) return null;
+    await assertInboxQuota(env, accountId);
+    const row: InboxRow = {
+      id: newId("inb"),
+      account_id: accountId,
+      address,
+      username,
+      domain: dom.domain,
+      display_name: display,
+      expires_at: expiresAt,
+      last_message_at: null,
+      created_at: now,
+    };
+    try {
+      await env.DB.prepare(
+        "INSERT INTO inboxes (id, account_id, address, username, domain, display_name, expires_at, last_message_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+      )
+        .bind(row.id, row.account_id, row.address, row.username, row.domain, row.display_name, row.expires_at, row.created_at)
+        .run();
+    } catch (e) {
+      if (/UNIQUE/i.test(String(e))) {
+        // Lost a race with a concurrent create of the same address.
+        const again = await env.DB.prepare("SELECT * FROM inboxes WHERE address = ?").bind(address).first<InboxRow>();
+        if (again && again.account_id === accountId) return { row: again, existing: true };
+        return null;
+      }
+      throw e;
+    }
+    return { row, existing: false };
+  };
+
+  let result: { row: InboxRow; existing: boolean } | null = null;
+  if (input.username) {
+    const chk = checkUsername(input.username, { sharedDomain: dom.shared, extraReserved: env.EXTRA_RESERVED_USERNAMES });
+    if (!chk.ok) throw badRequest(`Invalid username: ${chk.reason}`, "Pick another username, or omit it for a random one.");
+    result = await insert(chk.username);
+    if (!result) {
+      throw conflict(
+        `${chk.username}@${dom.domain} belongs to another account.`,
+        "Pick another username, or omit username for a random one.",
+      );
+    }
+  } else {
+    for (let i = 0; i < 5 && !result; i++) result = await insert(randomUsername());
+    if (!result) throw new ApiError(503, "unavailable", "Could not allocate a random address.", "Retry the request.");
+  }
+
+  const inbox = inboxJson(result.row);
+  const next_steps = [
+    `Use ${inbox.address} in the signup form, then GET /v1/inboxes/${inbox.id}/wait?timeout=60 (or /latest-code) to block until the email arrives with codes and links extracted.`,
+    ...(dom.shared || dom.verified
+      ? []
+      : [`Domain ${dom.domain} has not passed the receiving DNS check yet: POST /v1/domains/${dom.domain}/verify.`]),
+  ];
+  return { inbox, existing: result.existing, next_steps };
+}
+
+/** Default inbox for a brand-new account (signup hook). Random username on the shared domain. */
+export async function createDefaultInbox(env: AppEnv, accountId: string) {
+  const r = await createInbox(env, accountId, {});
+  return r.inbox;
+}
+
+export async function getInboxRow(env: AppEnv, accountId: string, id: string): Promise<InboxRow> {
+  const row = await env.DB.prepare("SELECT * FROM inboxes WHERE id = ? AND account_id = ?").bind(id, accountId).first<InboxRow>();
+  if (!row) throw notFound("Inbox", "GET /v1/inboxes lists your inboxes.");
+  return row;
+}
+
+export async function getInbox(env: AppEnv, accountId: string, id: string) {
+  const row = await getInboxRow(env, accountId, id);
+  const stats = await env.DB.prepare(
+    "SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN read = 0 AND direction = 'in' THEN 1 ELSE 0 END), 0) AS unread FROM messages WHERE inbox_id = ?",
+  )
+    .bind(id)
+    .first<{ total: number; unread: number }>();
+  return { inbox: { ...inboxJson(row), message_count: stats?.total ?? 0, unread_count: stats?.unread ?? 0 } };
+}
+
+export async function listInboxes(env: AppEnv, accountId: string, opts: { limit?: number; domain?: string } = {}) {
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const { results } = opts.domain
+    ? await env.DB.prepare("SELECT * FROM inboxes WHERE account_id = ? AND domain = ? ORDER BY created_at DESC LIMIT ?")
+        .bind(accountId, opts.domain.toLowerCase(), limit)
+        .all<InboxRow>()
+    : await env.DB.prepare("SELECT * FROM inboxes WHERE account_id = ? ORDER BY created_at DESC LIMIT ?")
+        .bind(accountId, limit)
+        .all<InboxRow>();
+  return { inboxes: results.map(inboxJson), shared_domain: sharedDomain(env) };
+}
+
+export async function updateInbox(
+  env: AppEnv,
+  accountId: string,
+  id: string,
+  input: { display_name?: string | null; ttl_days?: number | null },
+  now = Date.now(),
+) {
+  const row = await getInboxRow(env, accountId, id);
+  const display = input.display_name === undefined ? row.display_name : cleanDisplayName(input.display_name);
+  const expires = input.ttl_days === undefined ? row.expires_at : input.ttl_days === null ? null : now + Math.round(input.ttl_days * DAY);
+  await env.DB.prepare("UPDATE inboxes SET display_name = ?, expires_at = ? WHERE id = ?").bind(display, expires, id).run();
+  return { inbox: inboxJson({ ...row, display_name: display, expires_at: expires }) };
+}
+
+/** Delete every R2 object under a prefix (paginated). */
+export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<number> {
+  let cursor: string | undefined;
+  let n = 0;
+  do {
+    const list = await bucket.list({ prefix, cursor, limit: 1000 });
+    if (list.objects.length) {
+      await bucket.delete(list.objects.map((o) => o.key));
+      n += list.objects.length;
+    }
+    cursor = list.truncated ? list.cursor : undefined;
+  } while (cursor);
+  return n;
+}
+
+export async function deleteInbox(env: AppEnv, accountId: string, id: string, now = Date.now()) {
+  const row = await getInboxRow(env, accountId, id);
+  // Messages go in chunks first, so a huge inbox never needs one giant statement.
+  for (;;) {
+    const chunk = "SELECT id FROM messages WHERE inbox_id = ?1 ORDER BY seq LIMIT ?2";
+    const [, msgs] = await env.DB.batch([
+      env.DB.prepare(`DELETE FROM attachments WHERE message_id IN (${chunk})`).bind(id, DELETE_CHUNK),
+      env.DB.prepare(`DELETE FROM messages WHERE id IN (${chunk})`).bind(id, DELETE_CHUNK),
+    ]);
+    if ((msgs?.meta.changes ?? 0) < DELETE_CHUNK) break;
+  }
+  await env.DB.batch([
+    env.DB.prepare("UPDATE domains SET catch_all_inbox_id = NULL WHERE catch_all_inbox_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM threads WHERE inbox_id = ?").bind(id),
+    env.DB.prepare("UPDATE webhooks SET enabled = 0 WHERE inbox_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM inboxes WHERE id = ?").bind(id),
+    // Shared-domain addresses are never handed to another account (see migrations/0006).
+    ...(row.domain === sharedDomain(env)
+      ? [
+          env.DB.prepare(
+            "INSERT INTO address_tombstones (address, account_id, deleted_at) VALUES (?, ?, ?) ON CONFLICT(address) DO NOTHING",
+          ).bind(row.address, row.account_id, now),
+        ]
+      : []),
+  ]);
+  const blobs = await deletePrefix(env.BLOBS, `inbox/${id}/`);
+  return { deleted: id, address: row.address, blobs_deleted: blobs };
+}
+
+/**
+ * Cron: drop inboxes whose ttl has passed. Loops until none are left or `budgetMs` of wall time is
+ * spent (`more: true` then; the next hourly run continues).
+ */
+export async function purgeExpiredInboxes(env: AppEnv, now = Date.now(), budgetMs = PURGE_BUDGET_MS) {
+  const stop = Date.now() + budgetMs;
+  let purged = 0;
+  for (;;) {
+    if (Date.now() >= stop) return { purged, more: true };
+    const { results } = await env.DB.prepare("SELECT id, account_id FROM inboxes WHERE expires_at IS NOT NULL AND expires_at <= ? LIMIT 50")
+      .bind(now)
+      .all<{ id: string; account_id: string }>();
+    for (const r of results) {
+      if (Date.now() >= stop) return { purged, more: true };
+      await deleteInbox(env, r.account_id, r.id, now);
+      purged++;
+    }
+    if (results.length < 50) return { purged, more: false };
+  }
+}
+
+/**
+ * SHARED_RETENTION_DAYS: delete shared-domain messages (and their R2 blobs) older than the cutoff.
+ * Runs from the hourly cron in batches of PURGE_BATCH until none are left or `budgetMs` of wall
+ * time is spent (`more: true` then).
+ */
+export async function purgeOldSharedMessages(env: AppEnv, now = Date.now(), budgetMs = PURGE_BUDGET_MS) {
+  const days = Number(env.SHARED_RETENTION_DAYS || 0);
+  if (!(days > 0)) return { purged_messages: 0, more: false };
+  const cutoff = now - days * DAY;
+  const { deleteMessageRows } = await import("./messages");
+  const stop = Date.now() + budgetMs;
+  let purged = 0;
+  for (;;) {
+    if (Date.now() >= stop) return { purged_messages: purged, more: true };
+    const { results } = await env.DB.prepare(
+      "SELECT m.id, m.thread_id, m.raw_key, m.html_key FROM messages m JOIN inboxes i ON i.id = m.inbox_id WHERE i.domain = ? AND m.received_at < ? LIMIT ?",
+    )
+      .bind(sharedDomain(env), cutoff, PURGE_BATCH)
+      .all<{ id: string; thread_id: string; raw_key: string | null; html_key: string | null }>();
+    purged += await deleteMessageRows(env, results);
+    if (results.length < PURGE_BATCH) return { purged_messages: purged, more: false };
+  }
+}
+
+/** Cron: daily inbound counters older than a week are no longer needed. */
+export async function pruneCounters(env: AppEnv, now = Date.now()) {
+  const r = await env.DB.prepare("DELETE FROM inbound_counters WHERE day < ?")
+    .bind(utcDay(now - 7 * DAY))
+    .run();
+  return { counters_pruned: r.meta.changes ?? 0 };
+}
+
+/**
+ * Recipient resolution for the email() handler. Expired inboxes do not exist, and a custom
+ * domain only receives (by address or catch-all) once its account passed the ownership challenge.
+ */
+export async function findInboxForRecipient(
+  env: AppEnv,
+  address: string,
+  now = Date.now(),
+): Promise<{ inbox: InboxRow; via: "address" | "catch_all" } | null> {
+  const shared = sharedDomain(env);
+  const direct = await env.DB.prepare(
+    `SELECT i.* FROM inboxes i WHERE i.address = ? AND (i.expires_at IS NULL OR i.expires_at > ?)
+       AND (i.domain = ? OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id AND d.owner_verified_at IS NOT NULL))`,
+  )
+    .bind(address, now, shared)
+    .first<InboxRow>();
+  if (direct) return { inbox: direct, via: "address" };
+  const domain = address.split("@")[1];
+  if (!domain || domain === shared) return null;
+  const ca = await env.DB.prepare(
+    `SELECT i.* FROM domains d JOIN inboxes i ON i.id = d.catch_all_inbox_id
+     WHERE d.domain = ? AND d.owner_verified_at IS NOT NULL AND i.account_id = d.account_id AND (i.expires_at IS NULL OR i.expires_at > ?)`,
+  )
+    .bind(domain, now)
+    .first<InboxRow>();
+  return ca ? { inbox: ca, via: "catch_all" } : null;
+}

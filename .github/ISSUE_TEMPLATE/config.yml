@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/StartGlobal-AI/agentfirststack/security/advisories/new
+    about: Please report vulnerabilities privately, not as an issue.
+  - name: Read the manual
+    url: https://agentfirststack.com/llms.txt
+    about: Every endpoint, MCP tool and field, with examples.

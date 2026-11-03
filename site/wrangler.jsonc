@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Generic template: local dev, tests and the defaults for every deployment. Real deployments
+  // don't edit this file; `pnpm afs config <profile>` derives wrangler.deploy.json from it plus
+  // deploy/<profile>.json (account, domain, resource ids, vars). See docs/self-hosting.md.
+  "name": "afs-site",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Regenerates public/.well-known/agent-skills/index.json (sha256 digests) before dev/deploy.
+  "build": { "command": "node scripts/build-discovery.mjs", "watch_dir": "public/.well-known/agent-skills" },
+
+  // Static landing page, llms.txt and /.well-known/* from public/. The Worker runs first only for
+  // "/" (markdown negotiation + Link headers), the MCP gateway and the API.
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/", "/mcp", "/v1/*", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/*"]
+  },
+
+  // The MCP gateway forwards tool calls to each service's own MCP server.
+  "services": [
+    { "binding": "ANALYTICS", "service": "afs-analytics" },
+    { "binding": "TAGS", "service": "afs-tags" },
+    { "binding": "MAIL", "service": "afs-mail" }
+  ],
+
+  // The shared identity database: every app binds it as AUTH_DB, so one key works everywhere.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afs-identity",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Burst limit on signup per IP (the binding only supports 10s/60s windows).
+  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+
+  "vars": {
+    // The URL used in responses. Empty = the request origin.
+    "PUBLIC_BASE_URL": "",
+    "SIGNUP_MODE": "open",
+    // Must match the apps: the per-IP signup count in signup_log is keyed with it.
+    "KEY_PREFIX": "afs"
+  },
+  // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT. Secrets: ADMIN_TOKEN, SIGNUP_TOKEN.
+  "observability": { "enabled": true }
+}

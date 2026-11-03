@@ -1,0 +1,34 @@
+# AgentFirstStack: infrastructure for AI agents. Agents and crawlers are welcome.
+# Manual for agents: https://agentfirststack.com/llms.txt
+# The API (/v1/) and the MCP endpoint (/mcp) are for authenticated calls, not crawling.
+
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+Disallow: /v1/
+Disallow: /mcp
+
+# AI search and assistant crawlers: they fetch the pages AI answers cite.
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+Disallow: /v1/
+Disallow: /mcp
+
+# AI training crawlers: allowed, so models learn how to use this open-source project.
+User-agent: GPTBot
+User-agent: ClaudeBot
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: CCBot
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+Disallow: /v1/
+Disallow: /mcp
+
+Sitemap: https://agentfirststack.com/sitemap.xml

@@ -1,0 +1,311 @@
+import { ApiError, parse, randomString, timingSafeEqual } from "@afs/shared";
+import { z } from "zod";
+import { type Bindings, isDev } from "../env";
+import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/channel";
+import { EMPTY_GEO, type Geo, PROXY_KEY_HEADER, geoFromFields, geoFromRequest, requestIp } from "../lib/geo";
+import { botReason, parseUserAgent } from "../lib/ua";
+import { parsePage, parseReferrer } from "../lib/url";
+import { proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
+import type { Attribution, EnrichedEvent } from "../lib/types";
+import { type Ctx, SITE_ID_RE, type SiteStub, loadSite, pushSettings, siteStub } from "./context";
+
+const DEV_SALT = "insecure-dev-salt";
+export const MAX_BODY_BYTES = 16 * 1024;
+export const TOO_LARGE = { ok: false, error: "payload_too_large", hint: `POST /e bodies are limited to ${MAX_BODY_BYTES / 1024} KB.` };
+
+export function saltSecret(env: Bindings): string {
+  if (env.SALT_SECRET) return env.SALT_SECRET;
+  if (isDev(env)) return DEV_SALT;
+  throw new ApiError(
+    503,
+    "not_configured",
+    "SALT_SECRET is not set on this deployment.",
+    "Operator: `wrangler secret put SALT_SECRET` (openssl rand -hex 32).",
+  );
+}
+
+/** The site's first-party proxy key, or null when SALT_SECRET is missing (deployment misconfigured). */
+export async function proxyKeyFor(env: Bindings, siteId: string): Promise<string | null> {
+  try {
+    return await proxyKey(saltSecret(env), siteId);
+  } catch {
+    return null;
+  }
+}
+
+type Props = Record<string, string>;
+
+/** Props are stored as strings: max 30 keys, 64-char keys, 500-char values. */
+export function cleanProps(input: unknown): string | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const out: Props = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (n >= 30) break;
+    if (v == null || typeof v === "object") continue;
+    const key = String(k).trim().slice(0, 64);
+    if (!/^[A-Za-z0-9_.-]+$/.test(key)) continue;
+    out[key] = String(v).slice(0, 500);
+    n++;
+  }
+  return n ? JSON.stringify(out) : null;
+}
+
+function attribution(pageHost: string | null, page: ReturnType<typeof parsePage>, referrerRaw: string | null | undefined): Attribution {
+  const ref = parseReferrer(referrerRaw);
+  const ch = classifyChannel({
+    referrerHost: ref.referrer_host,
+    pageHost,
+    utmSource: page.utm_source,
+    utmMedium: page.utm_medium,
+    utmCampaign: page.utm_campaign,
+    clickIdType: page.click_id_type,
+  });
+  const internal = ref.referrer_host && pageHost && ref.referrer_host.replace(/^www\./, "") === pageHost.replace(/^www\./, "");
+  return {
+    referrer: internal ? null : ref.referrer,
+    referrer_host: internal ? null : ref.referrer_host,
+    source: ch.source,
+    channel: ch.channel,
+    utm_source: page.utm_source,
+    utm_medium: page.utm_medium,
+    utm_campaign: page.utm_campaign,
+    utm_term: page.utm_term,
+    utm_content: page.utm_content,
+    click_id_type: page.click_id_type,
+    click_id: page.click_id,
+  };
+}
+
+const clip = (v: unknown, n: number): string | null => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
+
+function revenueOf(v: unknown): { revenue: number | null; currency: string | null } {
+  let amount: unknown;
+  let currency: unknown;
+  if (Array.isArray(v)) [amount, currency] = v;
+  else if (v && typeof v === "object") ({ amount, currency } = v as { amount?: unknown; currency?: unknown });
+  const n = typeof amount === "string" ? Number(amount) : amount;
+  if (typeof n !== "number" || !Number.isFinite(n)) return { revenue: null, currency: null };
+  const c = typeof currency === "string" && /^[A-Za-z]{3}$/.test(currency) ? currency.toUpperCase() : null;
+  return { revenue: Math.round(n * 100) / 100, currency: c };
+}
+
+// ------------------------------------------------------------------ browser: POST /e
+
+/**
+ * Tracker payload (text/plain JSON, so no CORS preflight):
+ *   s site id · n event name (default "pageview"; "engagement" = visible-time beacon) · u page URL
+ *   r referrer · p props · $ [amount, currency] · i user id · id persistent visitor id
+ *   e engagement ms · b 1 when navigator.webdriver · d 1 when GPC/DNT
+ */
+export interface BrowserResult {
+  status: 202 | 400 | 404 | 413 | 503;
+  body: Record<string, unknown>;
+}
+
+export async function ingestBrowser(
+  env: Bindings,
+  req: Request,
+  text: string,
+  waitUntil: (p: Promise<unknown>) => void,
+): Promise<BrowserResult> {
+  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) return { status: 413, body: TOO_LARGE };
+  let p: Record<string, unknown>;
+  try {
+    p = JSON.parse(text);
+    if (!p || typeof p !== "object" || Array.isArray(p)) throw new Error();
+  } catch {
+    return {
+      status: 400,
+      body: { ok: false, error: "invalid_json", hint: 'Body must be a JSON object like {"s":"site_...","u":"https://..."}.' },
+    };
+  }
+  const siteId = typeof p.s === "string" ? p.s : "";
+  if (!SITE_ID_RE.test(siteId))
+    return { status: 400, body: { ok: false, error: "bad_site_id", hint: 'Set data-site="site_..." on the script tag.' } };
+  const name = clip(p.n, 120) ?? "pageview";
+  const stub = siteStub(env, siteId);
+  const cf = (req as unknown as { cf?: Record<string, unknown> }).cf;
+  const ua = req.headers.get("user-agent");
+  const bm = cf?.botManagement as { verifiedBot?: boolean } | undefined;
+  const bot = botReason({
+    ua,
+    verifiedBot: bm?.verifiedBot,
+    verifiedBotCategory: (cf?.verifiedBotCategory as string) || null,
+    webdriver: p.b === 1 || p.b === true,
+  });
+  if (bot) {
+    waitUntil(stub.recordDrop(`bot:${bot}`, ua?.slice(0, 200) ?? null).catch(() => {}));
+    return { status: 202, body: { ok: false, dropped: "bot", reason: bot } };
+  }
+  let salt: string;
+  try {
+    salt = saltSecret(env);
+  } catch {
+    return { status: 503, body: { ok: false, error: "not_configured", hint: "SALT_SECRET is not set on this deployment." } };
+  }
+  const now = Date.now();
+  const page = parsePage(clip(p.u, 2000));
+  // Browser events always come from a real page; anything else (javascript:, file:, junk) is noise.
+  if (typeof p.u !== "string" || !/^https?:\/\//i.test(p.u) || !page.hostname) {
+    return { status: 400, body: { ok: false, error: "bad_url", hint: "u must be the page's absolute http(s) URL (location.href)." } };
+  }
+  // Forwarded IP / geo headers are trusted only with the site's proxy key (anyone can set them).
+  // A request under a path prefix (/_a/e) came through a first-party proxy: without a valid key its
+  // IP and geo are the proxy's, which the DO counts as a warning that verify reports.
+  const presented = req.headers.get(PROXY_KEY_HEADER);
+  const trusted = !!presented && timingSafeEqual(presented, await proxyKey(salt, siteId));
+  const viaProxy = new URL(req.url).pathname !== "/e";
+  const geo = geoFromRequest(req, { devMode: isDev(env), trustForwarded: trusted });
+  const ip = requestIp(req, trusted);
+  const ev: EnrichedEvent = {
+    ts: now,
+    name,
+    origin: "browser",
+    hostname: page.hostname,
+    pathname: page.pathname,
+    url: page.url,
+    user_id: clip(p.i, 200),
+    props: cleanProps(p.p),
+    ...revenueOf(p.$),
+    engagement_ms: typeof p.e === "number" && p.e > 0 ? Math.round(p.e) : 0,
+    visitor_hash: await visitorHash(salt, siteId, ip, ua ?? "", now),
+    client_visitor_id: typeof p.id === "string" && VISITOR_ID_RE.test(p.id) ? p.id : null,
+    explicit_visitor_id: null,
+    dnt: p.d === 1 || p.d === true || req.headers.get("sec-gpc") === "1" || req.headers.get("dnt") === "1",
+    proxy_warning: viaProxy && !trusted ? (presented ? "proxy_key_invalid" : "proxy_key_missing") : null,
+    ...attribution(page.hostname, page, clip(p.r, 2000)),
+    ...geo,
+    ...parseUserAgent(ua),
+  };
+  const res = await stub.ingest([ev]);
+  if (!res.known_site) {
+    return {
+      status: 404,
+      body: { ok: false, error: "unknown_site", hint: `No site ${siteId}. Create one with POST /v1/sites and use its id in data-site.` },
+    };
+  }
+  const r = res.results[0];
+  if (!r?.ok) return { status: 202, body: { ok: false, dropped: r?.reason ?? "rejected" } };
+  return { status: 202, body: { ok: true, v: r.visitor_id, ...(res.persistent ? { p: 1 } : {}) } };
+}
+
+// ------------------------------------------------------------------ server: POST /v1/sites/:id/events
+
+const propValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+export const serverEventSchema = z.object({
+  name: z.string().min(1).max(120).describe('"pageview" or a custom event name, e.g. "purchase".'),
+  timestamp: z
+    .union([z.number().int(), z.string()])
+    .optional()
+    .describe("unix ms or ISO 8601; default now. Up to 31 days in the past, 5 minutes in the future."),
+  url: z.string().max(2000).optional().describe("Page URL; supplies hostname, path, UTM tags and click ids."),
+  referrer: z.string().max(2000).optional(),
+  visitor_id: z.string().regex(VISITOR_ID_RE).optional().describe("From afsa.visitorId() in the browser; joins that exact visitor."),
+  user_id: z.string().max(200).optional(),
+  ip: z.string().max(64).optional().describe("Visitor IP. With user_agent, computes the same cookieless visitor id as the browser."),
+  user_agent: z.string().max(1000).optional(),
+  country: z.string().max(8).optional().describe("ISO 3166-1 alpha-2. Explicit geo always wins; nothing is looked up from ip."),
+  region: z.string().max(100).optional(),
+  region_code: z.string().max(10).optional(),
+  city: z.string().max(100).optional(),
+  continent: z.string().max(4).optional(),
+  utm_source: z.string().max(200).optional(),
+  utm_medium: z.string().max(200).optional(),
+  utm_campaign: z.string().max(200).optional(),
+  utm_term: z.string().max(200).optional(),
+  utm_content: z.string().max(200).optional(),
+  click_id_type: z.enum(CLICK_ID_PARAMS).optional().describe("e.g. gclid, with click_id."),
+  click_id: z.string().max(500).optional(),
+  props: z.record(z.string(), propValue).optional(),
+  revenue: z.object({ amount: z.number(), currency: z.string().regex(/^[A-Za-z]{3}$/) }).optional(),
+});
+export type ServerEvent = z.infer<typeof serverEventSchema>;
+
+export const serverIngestInput = z.union([
+  z.object({ events: z.array(serverEventSchema).min(1).max(100) }),
+  serverEventSchema.transform((e) => ({ events: [e] })),
+]);
+
+function eventTs(t: ServerEvent["timestamp"], now: number): number | string {
+  if (t == null) return now;
+  const ms = typeof t === "number" ? t : Date.parse(t);
+  if (!Number.isFinite(ms)) return "timestamp is not unix ms or ISO 8601";
+  if (ms > now + 5 * 60_000) return "timestamp is in the future";
+  if (ms < now - 31 * 86_400_000) return "timestamp is more than 31 days old";
+  return ms;
+}
+
+export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: string, now: number): Promise<EnrichedEvent | string> {
+  const ts = eventTs(e.timestamp, now);
+  if (typeof ts === "string") return ts;
+  if (e.user_agent) {
+    const bot = botReason({ ua: e.user_agent });
+    if (bot && bot !== "non_browser_user_agent" && bot !== "short_user_agent") return `bot (${bot})`;
+  }
+  const page = parsePage(e.url ?? null);
+  // Explicit UTM / click id fields override what the URL carries.
+  for (const k of ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"] as const) if (e[k]) page[k] = e[k]!;
+  if (e.click_id_type && e.click_id) {
+    page.click_id_type = e.click_id_type as ClickIdType;
+    page.click_id = e.click_id;
+  }
+  let visitor: string;
+  if (e.visitor_id) visitor = e.visitor_id;
+  else if (e.ip && e.user_agent) visitor = await visitorHash(salt, siteId, e.ip, e.user_agent, ts);
+  else if (e.user_id) visitor = await userVisitorId(siteId, e.user_id);
+  else visitor = `r${randomString(15)}`;
+  const geo: Geo = e.country || e.city || e.region ? geoFromFields(e) : { ...EMPTY_GEO };
+  return {
+    ts,
+    name: e.name,
+    origin: "server",
+    hostname: page.hostname,
+    pathname: e.url ? page.pathname : null,
+    url: page.url,
+    user_id: e.user_id ?? null,
+    props: cleanProps(e.props),
+    ...revenueOf(e.revenue),
+    engagement_ms: 0,
+    visitor_hash: visitor,
+    client_visitor_id: null,
+    explicit_visitor_id: e.visitor_id ?? null,
+    dnt: false,
+    ...attribution(page.hostname, page, e.referrer),
+    ...geo,
+    ...parseUserAgent(e.user_agent),
+  };
+}
+
+export async function ingestServer(ctx: Ctx, siteId: string, raw: unknown) {
+  const { events } = parse(serverIngestInput, raw);
+  const site = await loadSite(ctx, siteId);
+  const salt = saltSecret(ctx.env);
+  const now = Date.now();
+  const enriched = await Promise.all(events.map((e) => enrichServerEvent(site.id, e, salt, now)));
+  const valid = enriched.filter((e): e is EnrichedEvent => typeof e !== "string");
+  const stub: SiteStub = siteStub(ctx.env, site.id);
+  let res = valid.length ? await stub.ingest(valid) : { known_site: true, persistent: false, results: [] };
+  if (!res.known_site) {
+    await pushSettings(ctx.env, site);
+    res = await stub.ingest(valid);
+  }
+  let vi = 0;
+  const results = enriched.map((e, index) => {
+    if (typeof e === "string") return { index, ok: false, reason: e };
+    const r = res.results[vi++];
+    return {
+      index,
+      ok: !!r?.ok,
+      ...(r?.ok ? { visitor_id: r.visitor_id, session_id: r.session_id } : { reason: r?.reason ?? "rejected" }),
+    };
+  });
+  const accepted = results.filter((r) => r.ok).length;
+  return {
+    accepted,
+    rejected: results.length - accepted,
+    results,
+    ...(accepted ? { next_steps: [`GET /v1/sites/${site.id}/realtime shows them in recent_events.`] } : {}),
+  };
+}

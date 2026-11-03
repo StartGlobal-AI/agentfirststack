@@ -1,0 +1,19 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=service.tiktok.com header.s=tt1 header.b=Tt9; spf=pass smtp.mailfrom=register@account.tiktok.com; dmarc=pass header.from=account.tiktok.com
+Date: Mon, 3 Nov 2026 19:10:44 +0000
+From: TikTok <register@account.tiktok.com>
+To: acme-signups@mail.example.com
+Message-ID: <20261103191044.tt.773344@account.tiktok.com>
+Subject: 739205 is your verification code
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>.code{font-size:28px;font-weight:bold}</style></head>
+<body><div style="display:none;max-height:0;overflow:hidden">739205 is your verification code&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+<table align="center" width="600"><tr><td><img src="https://sf16-scmcdn-sg.ibytedtos.com/tiktok-logo.png" alt="TikTok"></td></tr>
+<tr><td><p>Verification Code</p><p>To verify your account, enter this code in TikTok:</p></td></tr>
+<tr><td class="code" style="font-size:28px;font-weight:bold;color:#000">739205</td></tr>
+<tr><td><p>Verification codes expire after 48 hours.</p><p>If you didn't request this code, you can ignore this message.</p></td></tr>
+<tr><td style="font-size:12px;color:#8a8b91">TikTok Pte. Ltd., 1 Raffles Quay, #26-10, South Tower, Singapore 048583<br>
+This is an automatically generated email. Replies to this email address aren't monitored.<br>
+<a href="https://www.tiktok.com/legal/privacy-policy">Privacy Policy</a> | <a href="https://support.tiktok.com/en">Help Center</a></td></tr>
+</table></body></html>

@@ -1,0 +1,23 @@
+{
+  "name": "@afs/site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "agentfirststack.com: landing page, the master llms.txt, and the shared signup/identity endpoint.",
+  "scripts": {
+    "dev": "wrangler dev --port 8786",
+    "types": "wrangler types --strict-vars=false",
+    "typecheck": "wrangler types --strict-vars=false >/dev/null && tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy": "echo 'Deploy from the repo root: pnpm afs deploy <profile> site  (see docs/self-hosting.md)' && exit 1"
+  },
+  "dependencies": {
+    "@afs/shared": "workspace:*",
+    "hono": "^4.13.16",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "^4.156.2"
+  }
+}

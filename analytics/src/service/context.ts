@@ -1,0 +1,124 @@
+import { ApiError, notFound } from "@afs/shared";
+import type { Bindings } from "../env";
+import type { Breakdown } from "../lib/filters";
+import type {
+  DoError,
+  EnrichedEvent,
+  FunnelRequest,
+  Goal,
+  IngestResponse,
+  SiteSettings,
+  StatsRequest,
+  TimeseriesRequest,
+  VisitorIdMode,
+} from "../lib/types";
+import { isDoError } from "../lib/types";
+
+/** What every service call needs: bindings, the caller's account, and the public base URL. */
+export interface Ctx {
+  env: Bindings;
+  accountId: string;
+  baseUrl: string;
+}
+
+/** D1 row of `sites`. */
+export interface SiteRow {
+  id: string;
+  account_id: string;
+  domain: string;
+  name: string | null;
+  timezone: string;
+  visitor_id_mode: VisitorIdMode;
+  retention_days: number;
+  allowed_hostnames: string | null;
+  respect_dnt: number;
+  created_at: number;
+  updated_at: number;
+}
+
+type Obj = Record<string, unknown>;
+
+/** The RPC surface of SiteDO, typed loosely (results are plain JSON objects). */
+export interface SiteStub {
+  configure(s: SiteSettings): Promise<{ ok: true }>;
+  ingest(events: EnrichedEvent[]): Promise<IngestResponse>;
+  recordDrop(reason: string, sample: string | null): Promise<void>;
+  stats(q: StatsRequest): Promise<Obj | DoError>;
+  breakdown(q: StatsRequest & { breakdown: Breakdown }): Promise<Obj | DoError>;
+  timeseries(q: TimeseriesRequest): Promise<Obj | DoError>;
+  realtime(): Promise<Obj | DoError>;
+  funnel(q: FunnelRequest): Promise<Obj | DoError>;
+  sql(q: string): Promise<Obj | DoError>;
+  summary(): Promise<SiteSummary | DoError>;
+  destroy(): Promise<{ ok: true }>;
+}
+
+export interface SiteSummary {
+  total_events: number;
+  events_last_24h: number;
+  browser_events: number;
+  server_events: number;
+  first_event_at: number | null;
+  last_event_at: number | null;
+  last_event: Obj | null;
+  hostnames_last_7d: { hostname: string | null; events: number }[];
+  dropped_last_7d: Record<string, { count: number; last_at: number | null; sample: string | null }>;
+  warnings_last_7d: Record<string, { count: number; last_at: number | null; sample: string | null }>;
+}
+
+export function siteStub(env: Bindings, siteId: string): SiteStub {
+  return env.SITE.get(env.SITE.idFromName(siteId)) as unknown as SiteStub;
+}
+
+export const SITE_ID_RE = /^site_[0-9a-z]{16}$/;
+
+export async function loadSite(ctx: Ctx, siteId: string): Promise<SiteRow> {
+  if (!SITE_ID_RE.test(siteId)) throw notFound("Site", "Site ids look like site_xxxxxxxxxxxxxxxx. GET /v1/sites lists yours.");
+  const row = await ctx.env.DB.prepare("SELECT * FROM sites WHERE id = ? AND account_id = ?").bind(siteId, ctx.accountId).first<SiteRow>();
+  if (!row) throw notFound("Site", "GET /v1/sites lists the sites this key can see.");
+  return row;
+}
+
+export async function loadGoals(env: Bindings, siteId: string): Promise<Goal[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, name, type, match, value, created_at FROM goals WHERE site_id = ? ORDER BY created_at",
+  )
+    .bind(siteId)
+    .all<Goal>();
+  return results;
+}
+
+export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
+  return {
+    id: site.id,
+    domain: site.domain,
+    name: site.name,
+    timezone: site.timezone,
+    visitor_id_mode: site.visitor_id_mode,
+    retention_days: site.retention_days,
+    allowed_hostnames: site.allowed_hostnames ? (JSON.parse(site.allowed_hostnames) as string[]) : null,
+    respect_dnt: !!site.respect_dnt,
+    created_at: site.created_at,
+    goals,
+  };
+}
+
+/** Push the D1 truth (settings + goals) into the site's Durable Object. */
+export async function pushSettings(env: Bindings, site: SiteRow): Promise<void> {
+  await siteStub(env, site.id).configure(settingsFor(site, await loadGoals(env, site.id)));
+}
+
+/**
+ * Call the DO; if it reports it was never configured (storage lost, or created before a deploy),
+ * push settings and retry once. DO errors come back as values and become ApiErrors here.
+ */
+export async function callSite<T extends Obj>(env: Bindings, site: SiteRow, fn: (stub: SiteStub) => Promise<T | DoError>): Promise<T> {
+  const stub = siteStub(env, site.id);
+  let r = await fn(stub);
+  if (isDoError(r) && r.error.code === "not_configured") {
+    await pushSettings(env, site);
+    r = await fn(stub);
+  }
+  if (isDoError(r)) throw new ApiError(400, r.error.code, r.error.message, r.error.hint);
+  return r;
+}

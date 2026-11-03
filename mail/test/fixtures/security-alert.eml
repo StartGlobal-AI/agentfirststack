@@ -1,0 +1,25 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=accounts.google.com header.s=20230601 header.b=Sa1; spf=pass smtp.mailfrom=no-reply@accounts.google.com; dmarc=pass header.from=accounts.google.com
+Date: Mon, 3 Nov 2026 20:10:00 +0000
+From: Google <no-reply@accounts.google.com>
+To: acme-signups@mail.example.com
+Message-ID: <alert.1730664600.k9@accounts.google.com>
+Subject: Security alert: new sign-in on Mac
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+A new sign-in on Mac
+
+acme-signups@mail.example.com
+
+We noticed a new sign-in to your Google Account on a Mac device. If this was you, you don't need to do anything. If not, we'll help you secure your account.
+
+Check activity: https://accounts.google.com/AccountChooser?Email=acme-signups@mail.example.com&continue=https://myaccount.google.com/alert/nt/1730664600000?rfn%3D31
+
+Location: San Francisco, CA 94107, USA
+IP address: 198.51.100.23
+Time: Monday, November 3, 2026 12:09 PM PST
+Device: Chrome 131 on macOS 15
+
+You can also see security activity at https://myaccount.google.com/notifications
+
+© 2026 Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043, USA

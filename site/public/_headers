@@ -1,0 +1,26 @@
+/.well-known/*
+  Access-Control-Allow-Origin: *
+
+/.well-known/api-catalog
+  Content-Type: application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"
+
+/.well-known/ai-catalog.json
+  Content-Type: application/json; charset=utf-8
+
+/.well-known/mcp/*
+  Content-Type: application/json; charset=utf-8
+
+/.well-known/agent-skills/index.json
+  Content-Type: application/json; charset=utf-8
+
+/.well-known/agent-skills/*/SKILL.md
+  Content-Type: text/markdown; charset=utf-8
+
+/auth.md
+  Content-Type: text/markdown; charset=utf-8
+
+/index.md
+  Content-Type: text/markdown; charset=utf-8
+
+/llms.txt
+  Access-Control-Allow-Origin: *

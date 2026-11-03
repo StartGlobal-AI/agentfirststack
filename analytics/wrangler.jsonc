@@ -1,0 +1,56 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Generic template: local dev, tests and the defaults for every deployment. Real deployments
+  // don't edit this file; `pnpm afs config <profile>` derives wrangler.deploy.json from it plus
+  // deploy/<profile>.json (account, domain, resource ids, vars). See docs/self-hosting.md.
+  "name": "afs-analytics",
+  "main": "src/index.ts",
+  // Must stay <= the workerd bundled with @cloudflare/vitest-pool-workers (1.20260815).
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The browser tracker (src/tracker/*.ts) is bundled + minified by esbuild into dist/tracker.txt,
+  // which the Worker imports as a Text module and serves at /s.js.
+  "build": { "command": "node scripts/build-tracker.mjs", "watch_dir": "src" },
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afs-analytics",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    },
+    // Shared identity (accounts + API keys): bind the same database in every app so one key works
+    // everywhere. Running only this app? Delete this binding; keys then live in DB.
+    {
+      "binding": "AUTH_DB",
+      "database_name": "afs-identity",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../site/migrations"
+    }
+  ],
+
+  // Burst limit on /v1/signup per IP; same namespace as the other apps, so it's one shared counter.
+  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+
+  // One SQLite-backed Durable Object per site: its events, sessions, settings copy and queries.
+  "durable_objects": { "bindings": [{ "name": "SITE", "class_name": "SiteDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteDO"] }],
+
+  "vars": {
+    // The URL agents and install snippets use. Empty = the request origin.
+    "PUBLIC_BASE_URL": "",
+    // Prefix of the API keys this app mints ("afs" everywhere, so shared keys look alike).
+    "KEY_PREFIX": "afs",
+    // open | token | closed (see @afs/shared auth)
+    "SIGNUP_MODE": "open",
+    // "true" only in local dev (.dev.vars): enables x-dev-geo-* headers and an insecure fallback salt.
+    "DEV_MODE": ""
+  },
+  // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT, SIGNUP_TOKEN,
+  // SQL_MAX_ROWS_READ (rows a /sql query may read after its first row; default 1000000).
+  // Secrets (wrangler secret put): SALT_SECRET (required), SIGNUP_TOKEN, ADMIN_TOKEN.
+
+  "observability": { "enabled": true }
+}

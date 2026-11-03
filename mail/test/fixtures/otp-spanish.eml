@@ -1,0 +1,18 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=banco.example header.s=s1 header.b=Es1; spf=pass smtp.mailfrom=seguridad@banco.example; dmarc=pass header.from=banco.example
+Date: Mon, 3 Nov 2026 20:20:00 +0000
+From: Banco Ejemplo <seguridad@banco.example>
+To: acme-signups@mail.example.com
+Message-ID: <otp.es.55aa@banco.example>
+Subject: =?UTF-8?Q?Tu_c=C3=B3digo_de_verificaci=C3=B3n?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Hola,
+
+Tu c=C3=B3digo de verificaci=C3=B3n es: 305718
+
+Este c=C3=B3digo vence en 5 minutos. No lo compartas con nadie.
+
+Si necesitas ayuda llama al +34 912 345 678.
+Banco Ejemplo S.A., Calle Mayor 10, 28013 Madrid

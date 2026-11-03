@@ -1,0 +1,50 @@
+{
+  "name": "com.agentfirststack/analytics",
+  "title": "AgentFirstStack Analytics",
+  "description": "Cookieless web analytics: sites, install verification, stats by country, page, source and device, goals, revenue, funnels, realtime and read-only SQL.",
+  "version": "0.1.0",
+  "websiteUrl": "https://agentfirststack.com",
+  "repository": {
+    "url": "https://github.com/StartGlobal-AI/agentfirststack",
+    "source": "github"
+  },
+  "serverInfo": {
+    "name": "analytics",
+    "title": "AgentFirstStack Analytics",
+    "version": "0.1.0"
+  },
+  "endpoint": "https://analytics.agentfirststack.com/mcp",
+  "transport": {
+    "type": "streamable-http",
+    "url": "https://analytics.agentfirststack.com/mcp"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://analytics.agentfirststack.com/mcp",
+      "supportedProtocolVersions": ["2025-11-25", "2025-06-18", "2025-03-26"],
+      "authentication": {
+        "type": "bearer",
+        "description": "API key from one unauthenticated request: POST https://agentfirststack.com/v1/signup. No OAuth, no email.",
+        "registration_url": "https://agentfirststack.com/v1/signup",
+        "documentation_url": "https://agentfirststack.com/auth.md"
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {api_key}",
+          "isRequired": true,
+          "isSecret": true,
+          "description": "An afs_ API key from POST /v1/signup"
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "toolCount": 19,
+  "documentation": "https://agentfirststack.com/llms.txt"
+}

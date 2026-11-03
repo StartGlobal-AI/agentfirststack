@@ -1,0 +1,18 @@
+Authentication-Results: mx.cloudflare.net; dkim=pass header.d=amazon.com header.s=yg4mwqurec7fkhzutopddd3ytuaqrvuz header.b=Am1; spf=pass smtp.mailfrom=account-update@amazon.com; dmarc=pass header.from=amazon.com
+Date: Mon, 3 Nov 2026 20:40:00 +0000
+From: "Amazon.com" <account-update@amazon.com>
+To: acme-signups@mail.example.com
+Message-ID: <0100019a2b3c4d5e-otp@email.amazonses.com>
+Subject: Verify your new Amazon account
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><body><table><tr><td>
+<p>To verify your email address, please use the following One Time Password (OTP):</p>
+<p style="font-size:24px;font-weight:bold">
+  <span>6</span><span> </span><span>1</span><span> </span><span>4</span><span> </span><span>0</span><span> </span><span>2</span><span> </span><span>7</span>
+</p>
+<p>Do not share this OTP with anyone. Amazon takes your account security very seriously. Amazon Customer Service will never ask you to disclose or verify your Amazon password, OTP, credit card, or banking account number.</p>
+<p>Thank you for shopping with us! We hope to see you again soon.</p>
+<p style="font-size:11px">Amazon.com, 410 Terry Ave. N, Seattle, WA 98109. Amazon.com is a registered trademark of Amazon.com, Inc.</p>
+</td></tr></table></body></html>

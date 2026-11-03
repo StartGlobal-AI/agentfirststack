@@ -1,0 +1,67 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://agentfirststack.com/v1",
+      "service-doc": [
+        {
+          "href": "https://agentfirststack.com/llms.txt",
+          "type": "text/markdown",
+          "title": "Platform manual"
+        },
+        {
+          "href": "https://agentfirststack.com/auth.md",
+          "type": "text/markdown",
+          "title": "Registration and credentials"
+        }
+      ]
+    },
+    {
+      "anchor": "https://analytics.agentfirststack.com/v1",
+      "service-doc": [
+        {
+          "href": "https://analytics.agentfirststack.com/llms.txt",
+          "type": "text/markdown",
+          "title": "Analytics manual"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://analytics.agentfirststack.com/",
+          "type": "application/json"
+        }
+      ]
+    },
+    {
+      "anchor": "https://tags.agentfirststack.com/v1",
+      "service-doc": [
+        {
+          "href": "https://tags.agentfirststack.com/llms.txt",
+          "type": "text/markdown",
+          "title": "Tags manual"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://tags.agentfirststack.com/",
+          "type": "application/json"
+        }
+      ]
+    },
+    {
+      "anchor": "https://mail.agentfirststack.com/v1",
+      "service-doc": [
+        {
+          "href": "https://mail.agentfirststack.com/llms.txt",
+          "type": "text/markdown",
+          "title": "Mail manual"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://mail.agentfirststack.com/",
+          "type": "application/json"
+        }
+      ]
+    }
+  ]
+}

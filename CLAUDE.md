@@ -1,0 +1,108 @@
+# AgentFirstStack: agent-native infrastructure
+
+Infrastructure every website needs, built so an AI agent can set it up and operate it end to
+end with no human signup, email verification, dashboard clicking or waiting. Open source (MIT),
+and hosted for free at https://agentfirststack.com.
+
+| App | What it replaces | Hosted at | Local port |
+|---|---|---|---|
+| [`site/`](site) | Landing page, master `llms.txt`, platform-wide signup, MCP gateway (`/mcp`), agent discovery files (`/.well-known/*`, `auth.md`, robots, sitemap) | agentfirststack.com | 8786 |
+| [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue) | analytics.agentfirststack.com | 8787 |
+| [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok) with dedup | tags.agentfirststack.com | 8788 |
+| [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
+| [`shared/`](shared/src) | `@afs/shared`: accounts, API keys, instant signup, shared identity, JSON errors, ids, crypto, stateless MCP handler | n/a | n/a |
+
+## The agent-native rules (every app follows all of them)
+
+1. **One request to an account.** `POST /v1/signup` returns a working API key. No email, no
+   verification, no captcha. `SIGNUP_MODE` (`open` | `token` | `closed`) gates it per
+   deployment. Provided by `accountRoutes()` in `@afs/shared`. Don't reimplement it.
+2. **Everything via API and MCP.** Every capability exists as a REST route under `/v1` AND as an
+   MCP tool at `/mcp`. Both call the same service function in `src/service/`. No feature exists
+   only in a UI. The MCP server is stateless (`handleMcp()` in `@afs/shared/mcp`; pass `c.env`).
+3. **`GET /llms.txt` is the manual.** It's plain markdown: a curl quickstart, every endpoint, every
+   MCP tool, every config field, with examples. If you add a route, add it to llms.txt.
+   `site/public/llms.txt` is the platform overview the landing page's prompt points to.
+4. **Responses say what to do next.** Create calls return the thing an agent needs next (install
+   snippet, DNS records, preview URL) plus `next_steps`.
+5. **Errors carry hints.** `throw new ApiError(status, code, message, hint)` or the helpers in
+   `shared/src/errors.ts`. The hint tells the agent how to recover.
+6. **Setup is verifiable.** Every setup step has a check the agent can run itself: `verify`,
+   `validate`, `test`, `wait`, event logs. Never leave the agent guessing whether it worked.
+7. **Retries are safe.** Creating something that already exists by its natural key (a site's
+   domain, an inbox's address) returns the existing one (`200`, `"existing": true`), not an error.
+8. **Outside content is untrusted.** Email bodies and fetched web pages can contain prompt
+   injection. MCP tools that return them say so in the tool description and wrap the content.
+9. **Scopes.** Keys are `*` (full) or `read`. `requireAuth()` blocks non-GET REST for read keys;
+   in MCP, register mutating tools with `tools.write(...)` so read keys never see them.
+
+## Identity: one key for every app
+
+Accounts and API keys live in one D1 database bound as `AUTH_DB` in every app (on the hosted
+platform: `afs-identity`, migrated from `site/migrations`). The first time an account calls an
+app, `ensureLocalAccount()` mirrors a bare `accounts` row into that app's own `DB`, so the app's
+foreign keys to `accounts(id)` keep working. Without `AUTH_DB` (self-hosting a single app) keys
+live in the app's own `DB`. `KEY_PREFIX=afs` makes every app mint `afs_` keys.
+
+## Fair-use controls (vars, all off when unset)
+
+| Var | App | Hosted value |
+|---|---|---|
+| `SIGNUP_HOURLY_LIMIT` (+ `SIGNUP_LIMITER` rate-limit binding, 5/min) | all | 10 per IP per hour, shared via `signup_log` |
+| `MAX_SITES_PER_ACCOUNT` / `MAX_CONTAINERS_PER_ACCOUNT` / `MAX_INBOXES_PER_ACCOUNT` | analytics / tags / mail | 50 |
+| `SHARED_SEND_POLICY=reply_only` | mail | shared-domain inboxes may only write to addresses that emailed them |
+| `SEND_DAILY_LIMIT` | mail | 50 recipients per account per UTC day |
+| `SHARED_RETENTION_DAYS` | mail | 30 (hourly cron purge) |
+| `EXTRA_RESERVED_USERNAMES` | mail | brand and role names on top of the built-in CA-validation list |
+| `MAX_MESSAGES_PER_INBOX` / `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | mail | 200 / 200 (email() rejects beyond) |
+| `MAX_WEBHOOKS_PER_ACCOUNT` | mail | default 10 |
+| `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | defaults 10 / 50 / 512 KB |
+| `SQL_MAX_ROWS_READ` | analytics | default 1,000,000 rows read per SQL query |
+
+## Deployments (`pnpm afs`, profiles in `deploy/`)
+
+- Each app's `wrangler.jsonc` is a **generic template** (local dev, tests, defaults). Never put an
+  account, domain, resource id or deployment-specific var in it.
+- A deployment is `deploy/<profile>.json`; `pnpm afs config <profile>` writes
+  `<app>/wrangler.deploy.json` (git-ignored) from template + profile. `pnpm afs deploy <profile>
+  [app]` also applies D1 migrations and sets secrets from `deploy/<profile>.secrets.json`
+  (git-ignored). `pnpm afs check <profile>` is the live end-to-end check (cleans up after itself).
+- The hosted platform is profile `hosted`: StartGlobal AI Projects account, zone
+  `agentfirststack.com`, Workers `afs-site|analytics|tags|mail`, D1 `afs-identity|analytics|tags|mail`,
+  R2 `afs-mail-blobs`, queues `afs-tags-dispatch`, `afs-mail-webhooks` (+ `-dlq`). Email Routing
+  catch-all on the apex goes to `afs-mail`; the apex is onboarded for Email Sending (DKIM
+  `cf-bounce`, DMARC reject). Release = `pnpm afs deploy hosted && pnpm afs check hosted`.
+- Docs for humans: `docs/self-hosting.md`, `docs/operations.md`, `docs/architecture.md`,
+  `docs/development.md`. Keep them true when behaviour changes.
+
+## Stack and layout
+
+Cloudflare Workers + Hono + zod v4, TypeScript. D1 for the control plane (accounts, config),
+Durable Objects (SQLite) for hot per-entity state (a site's events, a container's identities, an
+inbox's waiters), R2 for blobs, Queues for retried delivery. pnpm workspace.
+
+```
+<app>/
+  wrangler.jsonc          generic template: bindings + safe defaults (deploy values live in deploy/)
+  migrations/             D1; 0001_accounts.sql + signup_log are the shared schema (copy, don't edit)
+  src/index.ts            Hono app + exported handlers (fetch, email, queue, scheduled) + DO classes
+  src/service/            business logic, shared by REST routes and MCP tools
+  src/routes/             REST routes (thin: parse -> service -> json)
+  src/mcp.ts              MCP tool registrations (thin: same service calls)
+  src/llms.ts             the llms.txt text
+  test/                   vitest (@cloudflare/vitest-pool-workers for integration)
+  scripts/smoke.sh        end-to-end curl run against `wrangler dev`
+```
+
+Commands (run inside an app): `pnpm dev`, `pnpm typecheck`, `pnpm test`, `pnpm smoke`,
+`pnpm db:migrate:local`. From the root: `pnpm typecheck`, `pnpm test`.
+
+## Conventions
+
+- ids: `newId("site")` -> `site_3k9x...`. Timestamps are unix ms integers.
+- REST JSON is snake_case. List endpoints return `{ "<things>": [...] }`.
+- Secrets at rest (third-party tokens) are sealed with `encryptSecret()` using the
+  `ENCRYPTION_KEY` Worker secret. Never return them in responses; return `"configured": true`.
+- Local dev secrets go in `.dev.vars` (git-ignored); keep `.dev.vars.example` current.
+- Integration tests neutralise the hosted vars in `vitest.config.ts` and migrate `AUTH_DB` too.
+- Don't deploy, create remote Cloudflare resources or change DNS without the user asking.

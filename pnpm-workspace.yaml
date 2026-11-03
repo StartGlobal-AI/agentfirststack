@@ -1,0 +1,6 @@
+packages:
+  - shared
+  - site
+  - analytics
+  - tags
+  - mail
