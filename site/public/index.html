@@ -315,7 +315,7 @@ pnpm afs deploy mystack</pre>
 
 4. If you support MCP, add the servers listed in the manual so you can call the tools directly.
 
-5. Write what you set up (site, container and inbox ids, and which env vars hold keys) in AGENTFIRSTSTACK.md at the repo root, so the next run updates it instead of starting over.
+5. Write what you set up (site, container and inbox ids, and which env vars hold keys, never the key values) in AGENTFIRSTSTACK.md at the repo root and commit it, so the next run updates it instead of starting over.
 
 6. Last, create a claim link for me with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool). It lets me sign in and see everything you set up in a dashboard.
 

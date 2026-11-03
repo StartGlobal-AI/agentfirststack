@@ -44,7 +44,8 @@ Or one per service at `https://<service>.agentfirststack.com/mcp`.
 Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt first; it is
 the complete manual. If .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get a key with
 POST https://agentfirststack.com/v1/signup and save it there. Then set up analytics, conversion
-tracking and an inbox, verifying each step, and note what you set up in AGENTFIRSTSTACK.md. Ask me only for ad platform IDs and tokens. Finish with POST
+tracking and an inbox, verifying each step, and note what you set up in AGENTFIRSTSTACK.md (ids and
+env var names, never key values). Ask me only for ad platform IDs and tokens. Finish with POST
 https://agentfirststack.com/v1/claim-link and give me the claim link it returns. Tell me what you
 set up and what still needs me.
 ```

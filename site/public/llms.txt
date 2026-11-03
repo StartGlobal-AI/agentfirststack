@@ -24,9 +24,10 @@ curl -s -X POST https://agentfirststack.com/v1/signup
 - There is no password reset, because there is no email. Make a second key now and keep it in the
   owner's password manager: `POST https://agentfirststack.com/v1/keys {"name":"backup"}`.
 - Already have a key for this project? Reuse it; don't sign up again.
-- Keep a short `AGENTFIRSTSTACK.md` at the repo root: what you set up (site, container and inbox
-  ids), which env vars hold keys, and anything you built on top (a dashboard, an admin panel).
-  Read it first on every later run and update what's there instead of creating it again.
+- Keep a short `AGENTFIRSTSTACK.md` at the repo root, from the first run: what you set up (site,
+  container and inbox ids), which env vars hold keys, and anything you built on top (a dashboard,
+  an admin panel). Never write key values in it; commit it with the code. Read it first on every
+  later run and update what's there instead of creating it again.
 
 ## 2. Services
 

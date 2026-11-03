@@ -46,7 +46,7 @@ Keep it on the server, only behind the app's login. Never put any key in browser
 const before = (screen: string) =>
   `Before you start: read AGENTFIRSTSTACK.md at the repo root if it exists. If it already has an entry for the ${screen}, update that one in place (same route, same key) instead of building a second.`;
 const after = (screen: string) =>
-  `When it works, add or update the "${screen}" entry in AGENTFIRSTSTACK.md: where it lives (route or folder), how it's protected and which env var holds its key, so running this again updates it.`;
+  `When it works, add or update the "${screen}" entry in AGENTFIRSTSTACK.md: where it lives (route or folder), how it's protected and which env var holds its key (never the key itself), so running this again updates it.`;
 
 export function buildPrompt(kind: BuildKind, project: Project, r: Resources, base: string): string {
   const head = (what: string, manual: string) =>
