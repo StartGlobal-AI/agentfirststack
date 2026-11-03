@@ -167,6 +167,8 @@ export function buildConfig(profile, app, template) {
   // AUTH_ISSUER: the OAuth authorization server (the site) that every app's RFC 9728 metadata names.
   const derived = { PUBLIC_BASE_URL: `https://${hostOf(profile, app)}`, AUTH_ISSUER: `https://${profile.domain}` };
   if (app === "tags") derived.ANALYTICS_BASE_URL = `https://${hostOf(profile, "analytics")}`;
+  // The analytics tracker loads the replay recorder on sites linked to a replay site.
+  if (app === "analytics") derived.REPLAY_BASE_URL = `https://${hostOf(profile, "replay")}`;
   if (app === "mail") {
     derived.MAIL_DOMAIN = profile.mail_domain || profile.domain;
     derived.WORKER_NAME = n.worker("mail");
@@ -437,8 +439,23 @@ async function cmdCheck(name) {
   step("tags: create container with the shared key", !!ctr.json?.container?.id);
   const inbox = await call(`${base("mail")}/v1/inboxes`, { method: "POST", headers: H, body: JSON.stringify({}) });
   step("mail: create inbox with the shared key", !!inbox.json?.inbox?.id, inbox.json?.inbox?.address ?? "");
-  const rsite = await call(`${base("replay")}/v1/sites`, { method: "POST", headers: H, body: JSON.stringify({ domain: dom }) });
+  // Linked to the analytics site: its tracker loads the recorder, so there's no second snippet.
+  const rsite = await call(`${base("replay")}/v1/sites`, {
+    method: "POST",
+    headers: H,
+    body: JSON.stringify({ domain: dom, analytics_site_id: site.json?.site?.id }),
+  });
   step("replay: create site with the shared key", !!rsite.json?.site?.id);
+  step("replay: linked analytics site loads the recorder", rsite.json?.site?.loads_with_analytics === true);
+  if (site.json?.site?.id && rsite.json?.site?.id) {
+    const pv = await call(`${base("analytics")}/e`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ s: site.json.site.id, n: "pageview", u: `https://${dom}/` }),
+    });
+    const want = `${base("replay")}/r/${rsite.json.site.id}.js`;
+    step("analytics: tracker answer names the replay loader", pv.json?.r === want, pv.json?.r ?? `HTTP ${pv.status}`);
+  }
   const as = await call(`${base("site")}/.well-known/oauth-authorization-server`);
   step("OAuth authorization server metadata", as.json?.issuer === base("site"), as.json?.issuer ?? `HTTP ${as.status}`);
   for (const app of APPS) {
@@ -456,11 +473,11 @@ async function cmdCheck(name) {
     const count = t.json?.result?.tools?.length ?? 0;
     step(`${app}: MCP tools/list`, count > 0, `${count} tools`);
   }
-  // Clean up everything this check created.
+  // Clean up everything this check created (replay first: deleting it unlinks the analytics site).
+  if (rsite.json?.site?.id) await call(`${base("replay")}/v1/sites/${rsite.json.site.id}`, { method: "DELETE", headers: H });
   if (site.json?.site?.id) await call(`${base("analytics")}/v1/sites/${site.json.site.id}`, { method: "DELETE", headers: H });
   if (ctr.json?.container?.id) await call(`${base("tags")}/v1/containers/${ctr.json.container.id}`, { method: "DELETE", headers: H });
   if (inbox.json?.inbox?.id) await call(`${base("mail")}/v1/inboxes/${inbox.json.inbox.id}`, { method: "DELETE", headers: H });
-  if (rsite.json?.site?.id) await call(`${base("replay")}/v1/sites/${rsite.json.site.id}`, { method: "DELETE", headers: H });
   const me = await call(`${base("site")}/v1/me`, { headers: H });
   if (me.json?.key?.id) await call(`${base("site")}/v1/keys/${me.json.key.id}`, { method: "DELETE", headers: H });
   step("cleaned up and revoked the check key", true);

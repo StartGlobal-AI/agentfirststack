@@ -74,6 +74,9 @@
   // DAILY_EVENT_BUDGET, MAX_SITE_STORAGE_MB, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS (unset = off),
   // SQL_TIME_BUDGET_MS (default 60000 per 10 minutes). Each also has an UNCLAIMED_<NAME> form for
   // accounts no person has claimed (see README "Config").
+  // REPLAY_BASE_URL: the replay service's public URL; the tracker of a site with replay_site_id then
+  // loads <REPLAY_BASE_URL>/r/<replay_site_id>.js by itself. Unset = off. `pnpm afs config` derives
+  // it from the profile's replay host; locally, .dev.vars can point it at http://localhost:8790.
   // Secrets (wrangler secret put): SALT_SECRET (required), SIGNUP_TOKEN, ADMIN_TOKEN,
   // ENCRYPTION_KEY (optional: seals the Stripe webhook signing secret; openssl rand -base64 32).
 

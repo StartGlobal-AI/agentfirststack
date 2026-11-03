@@ -105,7 +105,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Update site",
       description:
-        "Change a site's settings (name, domain, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions, browser_revenue, trust_browser_user_id). Only the fields you pass change; exclusions replaces the whole rule set (check it with get_exclusions). Lowering retention_days purges older data at once.",
+        "Change a site's settings (name, domain, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions, browser_revenue, trust_browser_user_id, replay_site_id). Only the fields you pass change; exclusions replaces the whole rule set (check it with get_exclusions). Lowering retention_days purges older data at once. replay_site_id (rsite_... or null) makes the tracker load that replay site's recorder by itself; the replay app sets it when a replay site is linked to this site.",
       input: { site_id: siteId, ...updateSiteInput.shape },
     },
     ({ site_id, ...rest }) => updateSite(ctx, site_id, rest),

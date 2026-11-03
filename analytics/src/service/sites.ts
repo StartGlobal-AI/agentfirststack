@@ -24,7 +24,7 @@ import {
 } from "../lib/exclusions";
 import { isValidTimezone } from "../lib/time";
 import { type Ctx, type SiteRow, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
-import { proxyKeyFor } from "./ingest";
+import { REPLAY_SITE_RE, proxyKeyFor } from "./ingest";
 import { type Framework, installInstructions, scriptSnippet } from "./install";
 
 const hostnamePattern = z
@@ -97,7 +97,18 @@ export const createSiteInput = z.object({
   domain: z.string().min(1).max(253).describe("The site's domain, e.g. example.com (scheme, path and www. are stripped)."),
   ...settingsShape,
 });
-export const updateSiteInput = z.object({ domain: z.string().min(1).max(253).optional(), ...settingsShape });
+export const updateSiteInput = z.object({
+  domain: z.string().min(1).max(253).optional(),
+  ...settingsShape,
+  replay_site_id: z
+    .string()
+    .max(40)
+    .nullable()
+    .optional()
+    .describe(
+      "Link an AgentFirstStack replay site (rsite_...): the tracker then loads that site's recorder by itself, so there is no second snippet to paste. null unlinks. The replay app sets this when a replay site names this site as its analytics_site_id.",
+    ),
+});
 
 export function siteJson(s: SiteRow, baseUrl: string) {
   return {
@@ -112,6 +123,7 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     exclusions: parseExclusions(s.exclusions),
     browser_revenue: !!s.browser_revenue,
     trust_browser_user_id: !!s.trust_browser_user_id,
+    replay_site_id: s.replay_site_id ?? null,
     created_at: s.created_at,
     updated_at: s.updated_at,
     snippet: scriptSnippet(baseUrl, s.id),
@@ -334,9 +346,10 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.exclusions !== undefined) next.exclusions = exclusionsColumn(input.exclusions);
   if (input.browser_revenue !== undefined) next.browser_revenue = input.browser_revenue ? 1 : 0;
   if (input.trust_browser_user_id !== undefined) next.trust_browser_user_id = input.trust_browser_user_id ? 1 : 0;
+  if (input.replay_site_id !== undefined) next.replay_site_id = replaySiteColumn(input.replay_site_id);
   await ctx.env.DB.prepare(
     `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, exclusions = ?,
-       browser_revenue = ?, trust_browser_user_id = ?, updated_at = ?
+       browser_revenue = ?, trust_browser_user_id = ?, replay_site_id = ?, updated_at = ?
      WHERE id = ? AND account_id = ?`,
   )
     .bind(
@@ -350,13 +363,35 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
       next.exclusions ?? null,
       next.browser_revenue ?? 0,
       next.trust_browser_user_id ?? 0,
+      next.replay_site_id ?? null,
       next.updated_at,
       s.id,
       ctx.accountId,
     )
     .run();
   await pushSettings(ctx.env, next);
-  return { site: siteJson(next, ctx.baseUrl) };
+  const linked = input.replay_site_id !== undefined && next.replay_site_id;
+  return {
+    site: siteJson(next, ctx.baseUrl),
+    ...(linked
+      ? {
+          note: ctx.env.REPLAY_BASE_URL
+            ? `Pages with this site's tracker now load the recorder of replay site ${next.replay_site_id} by themselves (from ${ctx.env.REPLAY_BASE_URL.replace(/\/+$/, "")}): no second snippet. A strict Content-Security-Policy needs script-src and connect-src for that host.`
+            : "Linked, but this deployment has no REPLAY_BASE_URL, so the tracker doesn't load the recorder: install the replay snippet on your pages.",
+        }
+      : {}),
+  };
+}
+
+/** replay_site_id as stored: an rsite_ id, or null (null or "" clears it). */
+function replaySiteColumn(v: string | null): string | null {
+  if (v === null || v === "") return null;
+  if (!REPLAY_SITE_RE.test(v))
+    throw badRequest(
+      "replay_site_id must be a replay site id (rsite_ + 16 characters).",
+      'Use a replay site id (rsite_..., listed by the replay app\'s GET /v1/sites), or set analytics_site_id to this site on the replay site, which links both ways. {"replay_site_id": null} unlinks.',
+    );
+  return v;
 }
 
 export async function deleteSite(ctx: Ctx, siteId: string) {

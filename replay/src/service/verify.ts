@@ -4,8 +4,9 @@ import { isDev } from "../env";
 import { readTextCapped } from "../lib/body";
 import { cap, DEFAULTS } from "../lib/limits";
 import { ownHost } from "../lib/url";
+import { analyticsLoadsReplay } from "./analytics";
 import { type Ctx, forgetSite, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
-import { scriptSnippet } from "./install";
+import { loaderUrl, scriptSnippet } from "./install";
 import { LOADER_MARKER, recorderPath } from "./scripts";
 import { verificationJson, verifyRecord } from "./sites";
 
@@ -89,6 +90,35 @@ export function findLoaderScripts(html: string): { src: string; site: string | n
   return out;
 }
 
+const attrVal = (tag: string, name: string) => {
+  const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? "") : null;
+};
+
+/**
+ * <script> tags of the AgentFirstStack analytics tracker for `analyticsSiteId`: a src ending in
+ * /s.js (the analytics host, or a first-party proxy such as /_a/s.js) and data-site naming that
+ * site, in any attribute order. Pure.
+ */
+export function findAnalyticsTrackers(html: string, analyticsSiteId: string): { src: string; site: string }[] {
+  const out: { src: string; site: string }[] = [];
+  for (const m of html.matchAll(/<script\b[^>]*>/gi)) {
+    const tag = m[0];
+    const src = attrVal(tag, "src");
+    if (!src || !/(^|\/)s\.js([?#]|$)/.test(src) || attrVal(tag, "data-site") !== analyticsSiteId) continue;
+    out.push({ src: src.slice(0, 300), site: analyticsSiteId });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+/** The homepage proof a page's HTML gives: this site's loader, or the linked analytics site's tracker. */
+function homepageProof(site: SiteRow, html: string): "homepage" | "homepage_analytics" | null {
+  if (findLoaderScripts(html).some((s) => s.site === site.id)) return "homepage";
+  if (site.analytics_site_id && findAnalyticsTrackers(html, site.analytics_site_id).length) return "homepage_analytics";
+  return null;
+}
+
 /**
  * Does a CSP directive allow loading `paths` from `origin`? Rough but practical: host sources
  * with a path match by prefix (path ending in "/") or exactly. null = no such directive.
@@ -118,6 +148,37 @@ export function cspAllows(csp: string, directive: string, origin: string, sameOr
 }
 
 const isLocal = (h: string) => h === "localhost" || h === "127.0.0.1";
+
+/** The csp / csp_scope checks for the loader at `scriptUrl` (and the recorder and /i next to it) on a page. */
+async function cspChecks(csp: string, site: SiteRow, scriptUrl: URL, pageUrl: string): Promise<Check[]> {
+  const same = scriptUrl.origin === new URL(pageUrl).origin;
+  const prefix = scriptUrl.pathname.replace(/\/r\/[^/]+\.js$/, "");
+  const rec = await recorderPath();
+  const s = cspAllows(csp, "script-src", scriptUrl.origin, same, [scriptUrl.pathname, `${prefix}${rec}`]);
+  const c = cspAllows(csp, "connect-src", scriptUrl.origin, same, [`${prefix}/i`]);
+  // Path-scoped sources: only this site's loader and the recorder, so an HTML injection on the
+  // page can't load another site's loader from the same host.
+  const sources = `script-src ${scriptUrl.origin}${prefix}/r/${site.id}.js ${scriptUrl.origin}${prefix}/rec/; connect-src ${scriptUrl.origin}${prefix}/i`;
+  if (s === false || c === false)
+    return [
+      {
+        id: "csp",
+        ok: false,
+        detail: `The page's Content-Security-Policy blocks ${s === false ? "script-src" : "connect-src"} for ${scriptUrl.origin} (the loader, the recorder and chunk uploads all use it).`,
+        fix: same ? "Add 'self' to script-src and connect-src." : `Add path-scoped sources rather than the whole host: ${sources}.`,
+      },
+    ];
+  if (!same && (cspAllows(csp, "script-src", scriptUrl.origin, false, ["/r/rsite_0000000000000000.js"]) ?? true))
+    return [
+      {
+        id: "csp_scope",
+        ok: true,
+        detail: `The CSP allows every script on ${scriptUrl.origin}, including other sites' loaders.`,
+        fix: `Narrow it to this site: ${sources}.`,
+      },
+    ];
+  return [];
+}
 
 /** verify only fetches https pages on the site's own domain (or a subdomain), port 443; localhost in dev. */
 function fetchable(site: SiteRow, u: URL, dev: boolean): boolean {
@@ -210,7 +271,7 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
   const siteHostOk = (u: URL) => fetchable(site, u, dev);
   const ownBase = new URL(ctx.baseUrl);
   const page = await fetchCapped(pageUrl, { maxBytes: MAX_PAGE_BYTES, allowed: siteHostOk });
-  let loaderOnPage: { finalUrl: URL } | null = null;
+  let loaderOnPage: { finalUrl: URL; proof: "homepage" | "homepage_analytics" } | null = null;
   if ("error" in page) {
     checks.push({
       id: "page_reachable",
@@ -229,9 +290,10 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     checks.push({ id: "page_reachable", ok: true, detail: `HTTP ${page.status} from ${page.finalUrl}` });
     scripts = findLoaderScripts(page.text);
     const mine = scripts.filter((s) => s.site === site.id);
+    const trackers = !mine.length && site.analytics_site_id ? findAnalyticsTrackers(page.text, site.analytics_site_id) : [];
     if (mine.length) {
       checks.push({ id: "snippet_present", ok: true, detail: `Found the loader for ${site.id}.` });
-      loaderOnPage = { finalUrl: new URL(page.finalUrl) };
+      loaderOnPage = { finalUrl: new URL(page.finalUrl), proof: "homepage" };
       const scriptUrl = new URL(mine[0]!.src, page.finalUrl);
       const okHost = (u: URL) => (u.host === ownBase.host && u.protocol === ownBase.protocol) || siteHostOk(u);
       const js = !okHost(scriptUrl)
@@ -249,30 +311,35 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
         });
       else checks.push({ id: "script_loads", ok: true, detail: `${scriptUrl.origin}${scriptUrl.pathname} serves the loader.` });
       const csp = page.headers.get("content-security-policy");
-      if (csp) {
-        const same = scriptUrl.origin === new URL(page.finalUrl).origin;
-        const prefix = scriptUrl.pathname.replace(/\/r\/[^/]+\.js$/, "");
-        const rec = await recorderPath();
-        const s = cspAllows(csp, "script-src", scriptUrl.origin, same, [scriptUrl.pathname, `${prefix}${rec}`]);
-        const c = cspAllows(csp, "connect-src", scriptUrl.origin, same, [`${prefix}/i`]);
-        // Path-scoped sources: only this site's loader and the recorder, so an HTML injection on the
-        // page can't load another site's loader from the same host.
-        const sources = `script-src ${scriptUrl.origin}${prefix}/r/${site.id}.js ${scriptUrl.origin}${prefix}/rec/; connect-src ${scriptUrl.origin}${prefix}/i`;
-        if (s === false || c === false)
-          checks.push({
-            id: "csp",
-            ok: false,
-            detail: `The page's Content-Security-Policy blocks ${s === false ? "script-src" : "connect-src"} for ${scriptUrl.origin} (the loader, the recorder and chunk uploads all use it).`,
-            fix: same ? "Add 'self' to script-src and connect-src." : `Add path-scoped sources rather than the whole host: ${sources}.`,
-          });
-        else if (!same && (cspAllows(csp, "script-src", scriptUrl.origin, false, ["/r/rsite_0000000000000000.js"]) ?? true))
-          checks.push({
-            id: "csp_scope",
-            ok: true,
-            detail: `The CSP allows every script on ${scriptUrl.origin}, including other sites' loaders.`,
-            fix: `Narrow it to this site: ${sources}.`,
-          });
+      if (csp) checks.push(...(await cspChecks(csp, site, scriptUrl, page.finalUrl)));
+    } else if (trackers.length) {
+      // The analytics tracker of the linked analytics site: it adds this site's loader by itself
+      // when that analytics site names this replay site (asked live; the stored state is refreshed).
+      const a = site.analytics_site_id!;
+      loaderOnPage = { finalUrl: new URL(page.finalUrl), proof: "homepage_analytics" };
+      const live = await analyticsLoadsReplay(ctx.env, ctx.accountId, a, site.id);
+      const loads = live ?? site.analytics_linked_at != null;
+      if (live !== null && live !== (site.analytics_linked_at != null)) {
+        site.analytics_linked_at = live ? Date.now() : null;
+        await ctx.env.DB.prepare("UPDATE sites SET analytics_linked_at = ? WHERE id = ?").bind(site.analytics_linked_at, site.id).run();
+        forgetSite(site.id);
       }
+      if (loads)
+        checks.push({
+          id: "snippet_present",
+          ok: true,
+          detail: `Found the analytics tracker for ${a}, which loads this site's recorder by itself (loads_with_analytics): nothing else to paste.`,
+        });
+      else
+        checks.push({
+          id: "snippet_present",
+          ok: false,
+          detail: `Found the analytics tracker for ${a}, but that analytics site doesn't load this replay site${live === null ? " (analytics couldn't be asked)" : ""}.`,
+          fix: `Re-assert the link: PATCH /v1/sites/${site.id} {"analytics_site_id": "${a}"}; or add this site's snippet: ${snippet}`,
+        });
+      // The tracker fetches the loader from this service directly, never through a proxy.
+      const csp = page.headers.get("content-security-policy");
+      if (csp) checks.push(...(await cspChecks(csp, site, new URL(loaderUrl(ctx.baseUrl, site.id)), page.finalUrl)));
     } else if (scripts.length) {
       checks.push({
         id: "snippet_present",
@@ -284,26 +351,28 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       checks.push({
         id: "snippet_present",
         ok: false,
-        detail: 'No <script src=".../r/rsite_....js"> in the page\'s HTML.',
-        fix: `Add to <head>: ${snippet}. Injected with a tag manager, it won't be in static HTML; then the sessions check below is what matters.`,
+        detail: `No <script src=".../r/rsite_....js">${site.analytics_site_id ? ` and no analytics tracker for ${site.analytics_site_id}` : ""} in the page's HTML.`,
+        fix: `Add to <head>: ${snippet}${site.analytics_site_id ? `, or the analytics tracker for ${site.analytics_site_id} (it loads this recorder by itself)` : ""}. Injected with a tag manager, it won't be in static HTML; then the sessions check below is what matters.`,
       });
     }
   }
 
   // Domain ownership: this site's loader on the domain's own homepage over https (redirects only to
   // the domain or www.), or the DNS TXT record. In dev, a localhost page with the loader counts.
+  // The analytics tracker of the linked analytics site proves as much as the loader: its id belongs
+  // to this account (checked when linked), and only the domain's owner can put it on that homepage.
   let proof: string | null = null;
   const before = isVerified(site);
   if (!before) {
     if (loaderOnPage && dev && isLocal(loaderOnPage.finalUrl.hostname)) proof = "dev_localhost";
     else if (loaderOnPage && pageUrl.pathname === "/" && homeHost(site, pageUrl) && homeHost(site, loaderOnPage.finalUrl))
-      proof = "homepage";
+      proof = loaderOnPage.proof;
     else if (!(pageUrl.pathname === "/" && homeHost(site, pageUrl))) {
       const home = await fetchCapped(new URL(`https://${site.domain}/`), {
         maxBytes: MAX_PAGE_BYTES,
         allowed: (u) => u.protocol === "https:" && (u.port === "" || u.port === "443") && homeHost(site, u),
       });
-      if (!("error" in home) && home.status < 400 && findLoaderScripts(home.text).some((s) => s.site === site.id)) proof = "homepage";
+      if (!("error" in home) && home.status < 400) proof = homepageProof(site, home.text);
     }
     let dnsDetail = "";
     if (!proof) {
@@ -317,7 +386,7 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       checks.push({
         id: "domain_verified",
         ok: false,
-        detail: `${site.domain} isn't verified yet: this site's loader isn't on https://${site.domain}/.${dnsDetail} Until then the site records a small trial quota (strict masking, no analytics forwarding, no share links).`,
+        detail: `${site.domain} isn't verified yet: this site's loader${site.analytics_site_id ? ` (or the analytics tracker for ${site.analytics_site_id})` : ""} isn't on https://${site.domain}/.${dnsDetail} Until then the site records a small trial quota (strict masking, no analytics forwarding, no share links).`,
         fix: `Put the snippet on https://${site.domain}/, or add DNS TXT ${verifyRecord(site).name} = "${verifyRecord(site).value}", then verify again.`,
       });
   }

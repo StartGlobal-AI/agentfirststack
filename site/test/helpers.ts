@@ -12,7 +12,7 @@ export const BASE = "https://afs.test";
 export const SESSION = "__Host-afs_session";
 export const E = rawEnv as unknown as Bindings;
 
-// ---------- the services behind ANALYTICS / TAGS / MAIL ----------
+// ---------- the services behind ANALYTICS / TAGS / MAIL / REPLAY ----------
 
 /** Resources each stub service lists, per account. */
 export const fixtures = new Map<
@@ -21,6 +21,7 @@ export const fixtures = new Map<
     sites?: { id: string; domain: string; name: string | null; created_at: number }[];
     containers?: { id: string; domain: string; name: string | null; live_version: number | null; created_at: number }[];
     inboxes?: { id: string; address: string; display_name: string | null; last_message_at: number | null; created_at: number }[];
+    replaySites?: { id: string; domain: string; name: string | null; enabled: boolean; created_at: number }[];
   }
 >();
 
@@ -56,6 +57,7 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
   }
   if (service === "tags") svc.get("/v1/containers", (c) => c.json({ containers: fixtures.get(c.var.auth.accountId)?.containers ?? [] }));
   if (service === "mail") svc.get("/v1/inboxes", (c) => c.json({ inboxes: fixtures.get(c.var.auth.accountId)?.inboxes ?? [] }));
+  if (service === "replay") svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.replaySites ?? [] }));
 
   return {
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {

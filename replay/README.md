@@ -16,6 +16,8 @@ REST and MCP for everything; a human player behind expiring share links.
 KEY=$(curl -s -X POST $BASE/v1/signup | jq -r .api_key)
 SITE=$(curl -s -X POST $BASE/v1/sites -H "Authorization: Bearer $KEY" -d '{"domain":"example.com"}' | jq -r .site.id)
 #   paste <script defer src="$BASE/r/$SITE.js"></script> into <head>
+#   (already running AgentFirstStack analytics? pass "analytics_site_id":"site_..." above instead:
+#   its tracker then loads the recorder by itself, site.loads_with_analytics = true, nothing to paste)
 curl -X PATCH $BASE/v1/sites/$SITE -H "Authorization: Bearer $KEY" -d '{"unmask_selectors":["nav","button","a","h1","h2","label"]}'
 #   open https://example.com/?afsr=1 once (forces a recording), click around
 curl -X POST $BASE/v1/sites/$SITE/verify -H "Authorization: Bearer $KEY"   # also verifies the domain
@@ -119,7 +121,18 @@ own `src`, so a first-party proxy of `/<prefix>/*` works unchanged.
 - **Page API:** `afsr.sessionId()`, `afsr.status()`, `afsr('identify', id)`, `afsr('event', name,
   props)`, `afsr('consent', bool)`, `afsr('stop')`. With the analytics tracker on the page, its
   `afsa.visitorId()` is attached to every chunk (`analytics_visitor_id`). To link the other way,
-  send `afsr.sessionId()` as a prop on analytics events (the analytics tracker is not changed here).
+  send `afsr.sessionId()` as a prop on analytics events.
+- **Loaded by the analytics tracker (no second snippet).** Linking a site (`analytics_site_id`) sets
+  that analytics site's `replay_site_id` to it over the `ANALYTICS` binding; the analytics tracker
+  then adds `<script async src="<replay>/r/<site>.js">` once per page load (analytics needs
+  `REPLAY_BASE_URL`). `loads_with_analytics` is true once analytics confirmed it. An analytics
+  failure never fails the replay call: it is logged, `loads_with_analytics` stays false, and
+  `notes` say to PATCH the same `analytics_site_id` again, which re-asserts the link. Unlinking,
+  moving the link or deleting the site clears the old analytics site's `replay_site_id`, only while
+  it still names this site. One analytics site loads one replay site (linking a second one moves
+  it). The direct snippet stays the alternative for pages without the tracker and for a strict CSP
+  (the tracker fetches the loader from the replay host directly). Unlinked sites on an account with
+  analytics get `suggested_analytics_site_id` in install responses instead of a second snippet.
 
 ## Privacy
 
@@ -167,7 +180,7 @@ page ended; nothing is sent twice.
 | GET | `/sites`, `/sites/:id` | list; one with a data summary (sessions, last chunk, bytes, today's counters, hostnames, chunks refused by reason), its `limits`, and `untrusted.drop_samples` |
 | PATCH, DELETE | `/sites/:id` | settings (lists replaced whole, caps clamped and reported in `notes`); delete removes everything (R2 by cron) |
 | GET | `/sites/:id/install` | `?framework=html\|nextjs\|react\|astro\|wordpress\|gtm` |
-| POST | `/sites/:id/verify` | `{ url? }`: page fetch (https on the domain or a subdomain, port 443), snippet, script, CSP (path-scoped advice), domain verification (homepage loader or DNS TXT), sessions received, drops, masking advice; `MAX_VERIFY_PER_ACCOUNT_PER_HOUR` |
+| POST | `/sites/:id/verify` | `{ url? }`: page fetch (https on the domain or a subdomain, port 443), snippet (or the linked analytics site's tracker, checked live with analytics), script, CSP (path-scoped advice), domain verification (homepage loader, the linked analytics site's tracker on the homepage = `homepage_analytics`, or DNS TXT), sessions received, drops, masking advice; `MAX_VERIFY_PER_ACCOUNT_PER_HOUR` |
 | GET | `/sites/:id/sessions` | filters (below), `sort=frustration\|recent\|duration`, `limit`, `cursor` |
 | GET | `/sites/:id/sessions/:sid` | facts + pages (dwell, scroll reach, quick back, excessive scroll) |
 | GET | `/sites/:id/sessions/:sid/transcript` | `?format=text\|json&max_events=&kinds=` |
@@ -259,7 +272,8 @@ All the count caps above are optional vars read through `capFor()` (`@afs/shared
 Site settings (`POST`/`PATCH /v1/sites`): `name`, `enabled` (true), `sample_rate` (1),
 `mask_mode` (`strict`), `unmask_selectors`, `mask_selectors`, `block_selectors`, `exclude_paths`,
 `allowed_hostnames`, `max_session_minutes` (30), `retention_days` (30), `heatmap_retention_days`
-(180), `capture_console_errors` (true), `require_consent` (false), `analytics_site_id`.
+(180), `capture_console_errors` (true), `require_consent` (false), `analytics_site_id` (site JSON
+adds `loads_with_analytics`).
 
 Built-in limits (always on, `src/lib/limits.ts`): 1 MB compressed / 8 MB decompressed per chunk,
 20 MB and 2,000 chunks per session, 50,000 rrweb events looked at per chunk, derived events per chunk
@@ -303,7 +317,8 @@ BASE=http://localhost:8791 pnpm smoke   # when 8790 is taken: run `wrangler dev 
 - `test/integration/` (workerd, D1 + DO + R2): every REST route and MCP tool, the loader and
   recorder scripts (ETag, prefix), ingest end to end (gzip and plain) and every refusal, caps,
   deletion from DO and R2, share links and the player (CSP, data, chunks, revoke), verify with a
-  stubbed fetch, analytics forwarding and funnels through a stubbed `ANALYTICS` binding, the
+  stubbed fetch, analytics forwarding, funnels and the replay_site_id link (link, move, unlink,
+  delete, repair, suggestions, verify by the analytics tracker) through a stubbed `ANALYTICS` binding, the
   cron's purge and rollup, site deletion with the DO tombstone, read-only keys, llms.txt coverage;
   `hardening.test.ts`: Origin and page-host checks, the trial quota and verification (homepage and
   DNS TXT), forced and per-network quotas, account and deployment budgets, suspension, edge rate
@@ -314,8 +329,7 @@ BASE=http://localhost:8791 pnpm smoke   # when 8790 is taken: run `wrangler dev 
 
 ## Not yet
 
-- The analytics tracker lazy-loading the recorder ("no new snippet") and analytics funnels linking
-  to sessions from the analytics side: need changes in `analytics/` (see the integration notes).
+- Analytics funnels linking to sessions from the analytics side: needs changes in `analytics/`.
 - Alerts on new error types and rage-click spikes (build-order step 4, waits for analytics alerts).
 - Rendered heatmap PNGs for people, Web Vitals per session, network request capture, canvas,
   cross-origin iframes, raw recording export over the API.

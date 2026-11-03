@@ -191,6 +191,19 @@ const RATE_LIMITED: BrowserResult = {
   body: { ok: false, error: "rate_limited", hint: "Too many events from this network or for this site; slow down and retry in a minute." },
 };
 
+export const REPLAY_SITE_RE = /^rsite_[0-9a-z]{16}$/;
+
+/**
+ * `r` for the tracker: the linked replay site's loader, which it injects once per page load. Only
+ * with REPLAY_BASE_URL set. The loader makes its own sampling, bot, DNT and consent decisions, so
+ * this rides on drops too.
+ */
+export function replayField(env: Bindings, replaySiteId: string | null | undefined): { r?: string } {
+  const base = env.REPLAY_BASE_URL?.trim().replace(/\/+$/, "");
+  if (!base || !replaySiteId || !REPLAY_SITE_RE.test(replaySiteId)) return {};
+  return { r: `${base}/r/${replaySiteId}.js` };
+}
+
 export async function ingestBrowser(
   env: Bindings,
   req: Request,
@@ -239,8 +252,11 @@ export async function ingestBrowser(
     webdriver: p.b === 1 || p.b === true,
   });
   if (bot) {
-    waitUntil(stub.recordDrop(`bot:${bot}`, ua?.slice(0, 200) ?? null).catch(() => {}));
-    return { status: 202, body: { ok: false, dropped: "bot", reason: bot } };
+    const drop = stub.recordDrop(`bot:${bot}`, ua?.slice(0, 200) ?? null).catch(() => null);
+    waitUntil(drop);
+    // Waited for only when replay loading is on: the answer names the site's replay link.
+    const link = env.REPLAY_BASE_URL ? await drop : null;
+    return { status: 202, body: { ok: false, dropped: "bot", reason: bot, ...replayField(env, link?.replay_site_id) } };
   }
   const now = Date.now();
   const page = parsePage(clip(p.u, 2000));
@@ -280,13 +296,15 @@ export async function ingestBrowser(
       body: { ok: false, error: "unknown_site", hint: `No site ${siteId}. Create one with POST /v1/sites and use its id in data-site.` },
     };
   }
+  // A suspended account's site gets no replay link (its loader is refused anyway).
+  const replay = res.refused === "account_suspended" ? {} : replayField(env, res.replay_site_id);
   if (res.refused) {
     const e = refusalError(env, res.refused);
-    return { status: REFUSAL_STATUS[res.refused], body: { ok: false, error: e.code, hint: e.hint } };
+    return { status: REFUSAL_STATUS[res.refused], body: { ok: false, error: e.code, hint: e.hint, ...replay } };
   }
   const r = res.results[0];
-  if (!r?.ok) return { status: 202, body: { ok: false, dropped: r?.reason ?? "rejected" } };
-  return { status: 202, body: { ok: true, v: r.visitor_id, ...(res.persistent ? { p: 1 } : {}) } };
+  if (!r?.ok) return { status: 202, body: { ok: false, dropped: r?.reason ?? "rejected", ...replay } };
+  return { status: 202, body: { ok: true, v: r.visitor_id, ...(res.persistent ? { p: 1 } : {}), ...replay } };
 }
 
 // ------------------------------------------------------------------ server: POST /v1/sites/:id/events

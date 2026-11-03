@@ -30,11 +30,55 @@ const code = (base: string, id: string): Record<Framework, { file: string; code:
   },
 });
 
-export function installInstructions(site: SiteRow, base: string, framework: Framework = "html") {
+/** Linked, and the analytics site confirmed its tracker loads this site's recorder. */
+export const loadsWithAnalytics = (s: SiteRow) => !!s.analytics_site_id && s.analytics_linked_at != null;
+
+/** An analytics site of the account to link instead of pasting a second snippet (see suggestAnalyticsSite). */
+export type AnalyticsSuggestion = { site: { id: string; domain: string } | null; count: number } | null;
+
+const linkBody = (id: string) => `{"analytics_site_id": "${id}"}`;
+
+/**
+ * How the recorder gets onto pages, given the analytics link: one sentence for install, next_steps
+ * and verify. `paste` = the snippet is still the way in (no confirmed link).
+ */
+export function analyticsInstallNote(site: SiteRow, suggestion: AnalyticsSuggestion): { text: string; paste: boolean } {
+  const a = site.analytics_site_id;
+  if (a && loadsWithAnalytics(site))
+    return {
+      paste: false,
+      text: `Nothing to paste on pages that run the AgentFirstStack analytics tracker for ${a}: it loads this site's recorder by itself. The snippet is the alternative, for pages without that tracker, or for a strict Content-Security-Policy where you'd rather serve replay through your own first-party proxy (the tracker fetches the loader from the replay host directly).`,
+    };
+  if (a)
+    return {
+      paste: true,
+      text: `Linked to analytics site ${a}, but it hasn't confirmed that its tracker loads this recorder (the call failed, or this deployment can't reach analytics). Retry with PATCH /v1/sites/${site.id} ${linkBody(a)} (the same id again re-asserts the link); until then add the snippet.`,
+    };
+  if (suggestion?.site)
+    return {
+      paste: true,
+      text: `This account has analytics site ${suggestion.site.id} (${suggestion.site.domain}). Link it instead of pasting a second snippet: PATCH /v1/sites/${site.id} ${linkBody(suggestion.site.id)}. Pages that run its tracker then load the recorder by themselves, and frustration signals and JS errors appear in analytics as events.`,
+    };
+  if (suggestion?.count)
+    return {
+      paste: true,
+      text: `This account has ${suggestion.count} analytics site(s), none for ${site.domain}. If one runs on these pages, link it instead of pasting a second snippet: PATCH /v1/sites/${site.id} ${linkBody("site_...")} (analytics GET /v1/sites lists them).`,
+    };
+  return {
+    paste: true,
+    text: `Pages that also run the AgentFirstStack analytics tracker (afsa) get the analytics visitor id attached to each recording automatically. Link the sites with PATCH /v1/sites/:id ${linkBody("site_...")} and the analytics tracker loads this recorder by itself (no second snippet); frustration signals and JS errors are then forwarded to analytics as events.`,
+  };
+}
+
+export function installInstructions(site: SiteRow, base: string, framework: Framework = "html", suggestion: AnalyticsSuggestion = null) {
   const all = code(base, site.id);
+  const note = analyticsInstallNote(site, suggestion);
   return {
     site_id: site.id,
     framework,
+    loads_with_analytics: loadsWithAnalytics(site),
+    ...(!note.paste ? { nothing_to_paste: note.text } : {}),
+    ...(suggestion?.site && !site.analytics_site_id ? { suggested_analytics_site_id: suggestion.site.id } : {}),
     snippet: scriptSnippet(base, site.id),
     file: all[framework].file,
     code: all[framework].code,
@@ -60,7 +104,6 @@ export function installInstructions(site: SiteRow, base: string, framework: Fram
       "localStorage.afsr_ignore = 1 in your own browser stops your visits being recorded.",
       "Browsers sending Global Privacy Control or Do Not Track are never recorded.",
     ],
-    with_analytics:
-      'Pages that also run the AgentFirstStack analytics tracker (afsa) get the analytics visitor id attached to each recording automatically. Link the sites with PATCH /v1/sites/:id {"analytics_site_id": "site_..."} to forward frustration signals and JS errors to analytics as events.',
+    with_analytics: note.text,
   };
 }

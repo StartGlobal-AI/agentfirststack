@@ -66,7 +66,7 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get this project its own key. Set up analytics, conversion tracking and an inbox as the project needs, and verify each step. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values). When you're done, send me a claim link for the project.";
+  "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get this project its own key. Set up analytics, conversion tracking and an inbox as the project needs (ask me before turning on session replay), and verify each step. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values). When you're done, send me a claim link for the project.";
 
 /** The screens an agent can build for a project, one prompt each (see dashboard-prompt.ts). */
 const BUILDS: { kind: BuildKind; title: string; what: string }[] = [
@@ -77,6 +77,11 @@ const BUILDS: { kind: BuildKind; title: string; what: string }[] = [
     what: "Delivery health per ad platform, what's live, and safe edits with preview, publish and rollback.",
   },
   { kind: "mail", title: "Inboxes", what: "A small mail client: read, search, reply, with codes and links pulled out." },
+  {
+    kind: "replay",
+    title: "Session review",
+    what: "The most frustrated sessions first, readable transcripts, JS errors and heatmaps, with a Watch button.",
+  },
 ];
 
 /** Things people ask their agent instead of opening this dashboard, and the service that answers. */
@@ -92,7 +97,7 @@ const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; lab
 async function projectsPage(c: Context<SiteEnv>) {
   const s = c.var.session;
   const projects = await listProjects(c.env.DB, s.user.id);
-  // Resources for the first 20 projects (each is three service calls).
+  // Resources for the first 20 projects (each is four service calls).
   const shown = projects.slice(0, 20);
   const resources = await Promise.all(shown.map((p) => projectResources(c.env, p.id)));
   const projectTile = (p: Project, i: number) => {
@@ -104,7 +109,7 @@ async function projectsPage(c: Context<SiteEnv>) {
       </div>
       <code class="project-id">${p.id}</code>
       <div class="project-bottom">
-        ${r ? resourceCounts(r) : html`<p class="muted small">Open it to see its sites, containers and inboxes.</p>`}
+        ${r ? resourceCounts(r) : html`<p class="muted small">Open it to see its sites, containers, inboxes and replay sites.</p>`}
         <p class="project-foot">Created ${fmtDay(p.created_at)}</p>
       </div>
     </li>`;
@@ -139,7 +144,7 @@ async function projectsPage(c: Context<SiteEnv>) {
 </div>
 <div class="section-head">
   <h2>Projects</h2>
-  <p class="muted small">${plural(projects.length, "project", "projects")}. Each is what one API key belongs to: its sites, tag containers and inboxes.</p>
+  <p class="muted small">${plural(projects.length, "project", "projects")}. Each is what one API key belongs to: its sites, tag containers, inboxes and replay sites.</p>
 </div>
 ${
   projects.length

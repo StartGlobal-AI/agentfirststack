@@ -23,9 +23,12 @@ function browser(
     status?: number;
     meta404?: boolean;
     referrer?: string;
+    /** window.afsr before the tracker runs (the replay snippet installed directly) */
+    afsr?: unknown;
   } = {},
 ) {
   const sent: Sent[] = [];
+  const scripts: { tag: string; src?: string; async?: boolean }[] = [];
   const listeners: Record<string, ((e: unknown) => void)[]> = {};
   const docListeners: Record<string, ((e: unknown) => void)[]> = {};
   let clock = 1_000_000;
@@ -63,6 +66,8 @@ function browser(
       referrer: opts.referrer ?? "https://www.google.com/",
       visibilityState: "visible",
       addEventListener: (t: string, f: (e: unknown) => void) => (docListeners[t] ||= []).push(f),
+      createElement: (tag: string) => ({ tag }),
+      head: { appendChild: (el: { tag: string }) => scripts.push(el) },
     },
     navigator: {
       webdriver: false,
@@ -94,6 +99,7 @@ function browser(
     addEventListener: (t: string, f: (e: unknown) => void) => (listeners[t] ||= []).push(f),
   };
   ctx.window = ctx;
+  if (opts.afsr) ctx.afsr = opts.afsr;
   if (opts.perf) {
     const perf = opts.perf;
     const PO = function (this: { cb: (l: unknown) => void }, cb: (l: unknown) => void) {
@@ -125,6 +131,7 @@ function browser(
   const afsa = ctx.afsa as ((...a: unknown[]) => void) & { visitorId: () => string | null };
   return {
     sent,
+    scripts,
     store,
     afsa,
     ctx,
@@ -148,9 +155,10 @@ function browser(
 describe("tracker (/s.js)", () => {
   it("is small and carries the verify marker", () => {
     expect(TRACKER.startsWith("/*! afs-analytics */")).toBe(true);
-    // Budget: 3.4 KB minified (scroll depth, Web Vitals, 404 and form tracking took it from 2.2 KB).
-    expect(TRACKER.length).toBeLessThan(3400);
-    expect(gzipSync(TRACKER).length).toBeLessThan(1900);
+    // Budget: 3.6 KB minified, 2 KB gzip (scroll depth, Web Vitals, 404 and form tracking took it
+    // from 2.2 KB to 3.4 KB; loading the replay recorder of linked sites added 0.2 KB).
+    expect(TRACKER.length).toBeLessThan(3600);
+    expect(gzipSync(TRACKER).length).toBeLessThan(2000);
   });
 
   it("exposes window.afsa and nothing under the old sga name", () => {
@@ -334,5 +342,54 @@ describe("tracker: scroll depth, Web Vitals, 404 and forms", () => {
     const off = browser();
     off.submit({ id: "contact" });
     expect(off.sent).toHaveLength(1);
+  });
+});
+
+describe("tracker: replay loader of a linked site", () => {
+  const R = "https://replay.example.net/r/rsite_0123456789abcdef.js";
+
+  it("adds <script async src=r> once per page load, not again on SPA navigations", async () => {
+    const b = browser({ response: { ok: true, v: "vid_1", r: R } });
+    await b.flush();
+    expect(b.scripts).toEqual([{ tag: "script", src: R, async: true }]);
+    b.history.pushState({}, "", "/pricing");
+    b.afsa("event", "signup");
+    await b.flush();
+    expect(b.sent.filter((s) => s.via === "fetch")).toHaveLength(3);
+    expect(b.scripts).toHaveLength(1);
+    expect(b.afsa.visitorId()).toBe("vid_1"); // the rest of the answer is still read
+  });
+
+  it("also from an answer that dropped the event (bots, exclusions, budgets: the loader decides)", async () => {
+    const b = browser({ response: { ok: false, dropped: "bot", reason: "webdriver", r: R } });
+    await b.flush();
+    expect(b.scripts.map((s) => s.src)).toEqual([R]);
+  });
+
+  it("only https, or http on localhost / 127.0.0.1", async () => {
+    const loads = async (r: string) => {
+      const b = browser({ response: { ok: true, v: "vid_1", r } });
+      await b.flush();
+      return b.scripts.length;
+    };
+    expect(await loads("http://replay.example.net/r/rsite_0123456789abcdef.js")).toBe(0);
+    expect(await loads("http://localhost.evil.test/r/rsite_0123456789abcdef.js")).toBe(0);
+    expect(await loads("javascript:alert(1)")).toBe(0);
+    expect(await loads("//replay.example.net/r/rsite_0123456789abcdef.js")).toBe(0);
+    expect(await loads("http://localhost:8790/r/rsite_0123456789abcdef.js")).toBe(1);
+    expect(await loads("http://127.0.0.1/r/rsite_0123456789abcdef.js")).toBe(1);
+  });
+
+  it("nothing without r, and nothing when the replay snippet is installed directly", async () => {
+    const plain = browser();
+    await plain.flush();
+    expect(plain.scripts).toHaveLength(0);
+    const direct = browser({ response: { ok: true, v: "vid_1", r: R }, afsr: Object.assign(() => {}, { sessionId: () => "rs_x" }) });
+    await direct.flush();
+    expect(direct.scripts).toHaveLength(0);
+    // the install snippet's queue stub alone (loader not run yet) doesn't count as installed
+    const stub = browser({ response: { ok: true, v: "vid_1", r: R }, afsr: Object.assign(() => {}, { q: [] }) });
+    await stub.flush();
+    expect(stub.scripts).toHaveLength(1);
   });
 });

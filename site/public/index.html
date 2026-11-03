@@ -312,7 +312,7 @@ pnpm afs deploy mystack</pre>
    - Conversion tracking: create a tags container, add its snippet, scan the site, define the conversions that matter here (sign-ups, purchases, leads), validate, test and publish. If the backend also reports a conversion the browser tracks, pass the browser's event_id with it as the tags manual explains, so ad platforms count it once.
    - Ad accounts: connect the platforms this business uses (Google Ads, Meta, GA4, TikTok). If you have tools for those platforms, use them to find or create the pixel, measurement and conversion IDs. Otherwise ask me for exactly the IDs and tokens the manual lists, and tell me where to find each one.
    - Email: create an inbox for signing up to third-party services, and use wait_for_email to receive their verification codes.
-   - Replay (optional, ask me first): turn on session replay for the production domain. Text and inputs are masked by default. Later, use search_sessions and get_session_transcript to answer why visitors drop off or what's broken.
+   - Replay (optional, ask me first): turn on session replay for the production domain, linked to its analytics site so the analytics snippet loads it (nothing else to paste). Text and inputs are masked by default. Later, use search_sessions and get_session_transcript to answer why visitors drop off or what's broken.
 
 4. If you support MCP, add the servers listed in the manual so you can call the tools directly.
 

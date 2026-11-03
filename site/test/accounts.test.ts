@@ -31,6 +31,7 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
       inboxes: [
         { id: "inb_acme000000000", address: "acme-signups@afs.test", display_name: null, last_message_at: null, created_at: Date.now() },
       ],
+      replaySites: [{ id: "rsite_acme000000000000", domain: "www.acme.test", name: null, enabled: false, created_at: Date.now() }],
     });
 
     const link = await claimLink(agent.key);
@@ -81,22 +82,24 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(dash.text).toContain("acme");
     expect(dash.text).toContain(agent.accountId);
     // One count per service, each in its own cell of the project tile.
-    expect(dash.text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("1 site 1 container 1 inbox");
+    expect(dash.text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("1 site 1 container 1 inbox 1 replay site");
     expect(dash.text).not.toContain("in the last 7 days");
     expect(serviceCalls.map((s) => [s.service, s.path, s.account, s.internal])).toEqual(
       expect.arrayContaining([
         ["analytics", "/v1/sites", agent.accountId, E.INTERNAL_TOKEN],
         ["tags", "/v1/containers", agent.accountId, E.INTERNAL_TOKEN],
         ["mail", "/v1/inboxes", agent.accountId, E.INTERNAL_TOKEN],
+        ["replay", "/v1/sites", agent.accountId, E.INTERNAL_TOKEN],
       ]),
     );
     expect(serviceCalls.every((s) => s.authorization === null)).toBe(true);
 
     const project = await owner.get(`/dashboard/projects/${agent.accountId}`);
     expect(project.text).toContain("the owner");
-    // An inventory only: where analytics is installed, which containers and inboxes exist.
+    // An inventory only: where analytics is installed, which containers and inboxes exist, where replay records.
     expect(project.text).toContain("acme.test");
     expect(project.text).toContain("acme-signups@afs.test");
+    expect(project.text).toMatch(/<b>www\.acme\.test<\/b><span class="item-note">paused<\/span><code>rsite_acme000000000000<\/code>/);
     // No numbers, no tag publishing state, no analytics share button: the owner's agent does that.
     expect(project.text).not.toContain("visitors, 7 days");
     expect(project.text).not.toContain("version 2 live");
@@ -107,9 +110,11 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(project.text).toContain("Build me an analytics dashboard for my AgentFirstStack project");
     expect(project.text).toContain("Build me a conversion tracking panel for my AgentFirstStack project");
     expect(project.text).toContain("Build me a small email client for my AgentFirstStack project");
+    expect(project.text).toContain("Build me a session review screen for my AgentFirstStack project");
     expect(project.text).toContain("acme.test (site_acme0000000000)");
     expect(project.text).toContain("acme.test (ctr_acme000000000)");
     expect(project.text).toContain("acme-signups@afs.test (inb_acme000000000)");
+    expect(project.text).toContain("www.acme.test (rsite_acme000000000000)");
     expect(project.text).toContain(`{&quot;name&quot;:&quot;dashboard&quot;,&quot;scope&quot;:&quot;read&quot;}`);
 
     // The agent's key keeps working after the claim.

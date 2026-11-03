@@ -25,7 +25,7 @@ curl "$BASE/v1/sites/$SITE/stats?period=7d&breakdown=country" -H "Authorization:
 ## Architecture
 
 ```
-browser ── /s.js (tracker, 3.3 KB min / 1.8 KB gzip) ──► POST /e ─┐
+browser ── /s.js (tracker, 3.5 KB min / 2.0 KB gzip) ──► POST /e ─┐
 backend ── POST /v1/sites/:id/events ─────────────────────────────┤
 billing ── POST /v1/sites/:id/payments ───────────────────────────┼─► Worker: enrich (geo, UA,
 Stripe ─── POST /webhooks/stripe/:site_id (signed) ───────────────┤    bot filter, channel, visitor hash),
@@ -134,6 +134,15 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
   (the `Sec-GPC` / `DNT` headers count too)
 - `data-api` overrides the collect URL; `localStorage.afsa_ignore = 1` excludes your own visits
   (no cookies; the only other storage key is `afsa_vid`, in persistent mode)
+- session replay with no second snippet: when the site has `replay_site_id` (the replay app sets
+  it when one of its sites links this one as `analytics_site_id`) and the deployment has
+  `REPLAY_BASE_URL`, every `/e` answer for the site carries `r` (the replay loader URL, also on
+  drops and daily-budget refusals) and the tracker adds `<script async src=r>` once per page load,
+  not on SPA navigations. Only `https://` URLs (`http://localhost` and `127.0.0.1` for local dev),
+  and not when `window.afsr.sessionId` exists (the replay snippet is on the page). The replay loader
+  makes its own sampling, bot, DNT and consent decisions. It is fetched from the replay host
+  directly, not through a first-party proxy, so a strict CSP needs `script-src` and `connect-src`
+  for that host
 - `text/plain` body so there is no CORS preflight; `POST /e` bodies are limited to 16 KB (`413
   payload_too_large`, refused by `content-length` and never read past 16 KB); props keep 30 keys of
   64 characters, values of 500 and 2 KB in all; `429` when rate limited or over a daily budget, `403`
@@ -146,7 +155,7 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
 | POST | `/signup` | account + key (no auth); `/me`, `/keys` from `@afs/shared` |
 | POST | `/sites` | `{ domain, name?, timezone?, visitor_id_mode?, retention_days?, allowed_hostnames?, respect_dnt?, browser_revenue?, trust_browser_user_id? }` -> site + install snippets + next_steps. Same domain again returns the existing site (`200`, `existing: true`) |
 | GET | `/sites`, `/sites/:id` | `/sites/:id` adds a data summary (event counts, drops by reason, `warnings_last_7d`, `usage_today`, `database_bytes`; visitor-sent strings such as bot user agents, dropped hostnames and the last event only under `untrusted`), `limits` and `status` |
-| PATCH | `/sites/:id` | settings (any subset, including domain) |
+| PATCH | `/sites/:id` | settings (any subset, including domain), and `replay_site_id` (`rsite_` + 16 characters, or `null`; 400 with a hint otherwise): the tracker then loads that replay site's recorder. Every site response returns `replay_site_id` (null when unset) |
 | DELETE | `/sites/:id` | deletes site, goals, share links and the DO's data |
 | GET | `/sites/:id/install?framework=html\|nextjs\|astro\|react\|wordpress\|gtm\|tags` | file + code, tracker API, proxy snippets, server-side curl |
 | POST | `/sites/:id/verify` | `{url?}`: fetches the page, checks the snippet + site id, that the script URL serves the tracker (catches broken proxies), CSP, that events arrived, hostname rejections, proxied events without the proxy key, ignored browser revenue, storage and daily limits; returns `checks`, `fixes`, `limits`, `status`, `untrusted` (page-copied and visitor-sent strings), `next_steps`. Full key only, rate limited per account and per domain. Fetches only https on port 443 on the domain or a subdomain (never `allowed_hostnames`, IP literals or single-label hosts); redirects: at most 3, each hop under the same rule; reads at most 1 MB of the page; fetches the script (at most 256 KB) only from this deployment's host or the site's own hosts |
@@ -397,6 +406,7 @@ pages/sources/countries/devices tables, light and dark. It reads `GET /share/:to
 | `MAX_SITE_STORAGE_MB` | optional var; stop storing a site's data once its DO database passes this size (`507 storage_full`). Unset = no budget (the DO's own limit is 10 GB) |
 | `MIN_RETENTION_DAYS`, `MAX_RETENTION_DAYS` | optional vars; bounds for `retention_days` (default 1..3650); the daily purge clamps to them |
 | `MAX_SITES_PER_ACCOUNT` | optional var; sites per account (`403 quota_exceeded`). Unset = no cap |
+| `REPLAY_BASE_URL` | optional var; the replay app's public URL. With it, `/e` answers for sites with `replay_site_id` carry `r` and the tracker loads the replay recorder. Unset = off. `pnpm afs config` derives it from the profile's replay host |
 | `MAX_GOALS_PER_SITE` | optional var; goals per site. Default 100 |
 | `MAX_SHARE_LINKS_PER_SITE` | optional var; active share links per site. Default 10 |
 | `UNCLAIMED_<NAME>` | optional; for every cap and budget above (and the annotation / funnel caps): the value for accounts no person has claimed. Unset = the plain var. `0` means "no cap" for count caps (sites, goals, share links, funnels, annotations) and "nothing" for daily budgets and storage |

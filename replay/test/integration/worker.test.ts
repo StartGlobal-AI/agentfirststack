@@ -520,6 +520,9 @@ describe("llms.txt and discovery", () => {
       "POST ",
       "/i?s=",
       "/r/<site>.js",
+      "loads_with_analytics",
+      "homepage_analytics",
+      "suggested_analytics_site_id",
     ])
       expect(llms.text).toContain(route);
     const root = await call("GET", "/");

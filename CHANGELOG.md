@@ -25,6 +25,8 @@ All notable changes to this project. The format follows
   - Sessions as readable transcripts, frustration signals (rage, dead and error clicks, quick backs, excessive scrolling, JS errors) with a 0-100 score, heatmaps, grouped JS errors and funnel drop-offs, all as data over REST and 19 MCP tools (`replay_` on the gateway).
   - Expiring share links to a human player; per-visitor deletion; retention purge by hourly cron.
   - The deploy tool creates its D1 database and R2 bucket (`<prefix>-replay`, `<prefix>-replay-chunks`) and maps R2 buckets per app.
+  - No second snippet on analytics sites: linking a replay site to an analytics site (`analytics_site_id`) sets that site's new `replay_site_id`, and the analytics tracker loads the replay loader by itself (`r` in the `/e` answer, with the analytics var `REPLAY_BASE_URL`). Replay sites show `loads_with_analytics`; re-sending the same `analytics_site_id` repairs the link; verify accepts the linked analytics tracker on the homepage as domain proof. Migrations: analytics `0008_replay_link`, replay `0007_analytics_link`.
+  - The dashboard lists replay sites next to sites, containers and inboxes, and offers a fourth build prompt: a session review screen (most frustrated sessions first, transcripts, JS errors, heatmaps, a Watch button through a share link).
 
 - **Accounts for people, optional** ([docs/accounts.md](docs/accounts.md)). Agents still get a key with one request; nothing changes for them.
   - Sign in with Google (OIDC with PKCE, state and nonce) and sessions with CSRF-protected forms.

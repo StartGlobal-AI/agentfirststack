@@ -111,8 +111,11 @@ Everything is masked in the browser by default (all text and inputs); unmask onl
 
 ```sh
 R=https://replay.agentfirststack.com
-curl -s -X POST $R/v1/sites -H "$H" -H 'content-type: application/json' -d '{"domain":"example.com"}'
-# -> site.id (rsite_...) and the <script defer src=".../r/rsite_....js"> for <head>
+# With analytics already on the site, link it: its tracker then loads the recorder, nothing to paste.
+curl -s -X POST $R/v1/sites -H "$H" -H 'content-type: application/json' \
+  -d '{"domain":"example.com","analytics_site_id":"'$SITE'"}'
+# -> site.id (rsite_...), loads_with_analytics: true. Without analytics, add the returned
+#    <script defer src=".../r/rsite_....js"> to <head> instead.
 curl -s -X PATCH $R/v1/sites/$RSITE -H "$H" -H 'content-type: application/json' \
   -d '{"unmask_selectors":["nav","button","a","h1","h2","label"]}'
 # Deploy, open https://example.com/?afsr=1 once (forces a recording), click around, then:
@@ -176,7 +179,7 @@ Everything else (signup, sites, containers, conversions, inboxes, verification) 
 
 Finish every setup by giving the person you work for a claim link. It's a single-use URL, valid
 for 7 days. They open it, sign in with Google, and see everything this key set up (sites, tag
-containers, inboxes) in a dashboard at https://agentfirststack.com/dashboard, where they can also
+containers, inboxes, replay sites) in a dashboard at https://agentfirststack.com/dashboard, where they can also
 manage keys, invite teammates and connect chat apps. Your key keeps working after they claim it.
 
 ```sh

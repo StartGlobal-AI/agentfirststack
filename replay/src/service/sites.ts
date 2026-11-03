@@ -15,9 +15,23 @@ import { MASK_MODES, pathHash } from "../lib/mask-rules";
 import type { LoaderConfig } from "../lib/protocol";
 import { joinSelectors, selectorListProblems } from "../lib/selectors";
 import { checkHostPattern, DomainError, type HostProblem, normalizeDomain } from "../lib/url";
-import { ANALYTICS_SITE_RE, analyticsAvailable, checkAnalyticsSite } from "./analytics";
+import {
+  ANALYTICS_SITE_RE,
+  analyticsAvailable,
+  checkAnalyticsSite,
+  linkAnalyticsSite,
+  suggestAnalyticsSite,
+  unlinkAnalyticsSite,
+} from "./analytics";
 import { type Ctx, forgetSite, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
-import { type Framework, installInstructions, scriptSnippet } from "./install";
+import {
+  type AnalyticsSuggestion,
+  analyticsInstallNote,
+  type Framework,
+  installInstructions,
+  loadsWithAnalytics,
+  scriptSnippet,
+} from "./install";
 
 const selectors = (what: string) =>
   z.array(z.string().min(1).max(200)).max(50).optional().describe(`CSS selectors (max 50) ${what}. The whole list is replaced.`);
@@ -98,7 +112,7 @@ export const settingsShape = {
     .nullable()
     .optional()
     .describe(
-      "Link an AgentFirstStack analytics site (site_...) on the same account: signals and JS errors are forwarded there as events. null unlinks. Needs the deployment's ANALYTICS binding.",
+      "Link an AgentFirstStack analytics site (site_...) on the same account: its tracker then loads this site's recorder by itself (no second snippet; see loads_with_analytics), and signals and JS errors are forwarded there as events. Passing the same id again re-asserts the link. null unlinks. Needs the deployment's ANALYTICS binding.",
     ),
 };
 
@@ -148,7 +162,7 @@ export function verificationJson(s: SiteRow) {
           until_verified:
             "Trial quota: a few sessions per day, strict masking whatever the settings, no analytics forwarding, no share links.",
           how: [
-            `Put the snippet on https://${s.domain}/ (the homepage, served over https), then POST /v1/sites/${s.id}/verify (MCP verify_install).`,
+            `Put the snippet${s.analytics_site_id ? ` (or the analytics tracker for ${s.analytics_site_id})` : ""} on https://${s.domain}/ (the homepage, served over https), then POST /v1/sites/${s.id}/verify (MCP verify_install).`,
             `Or add a DNS TXT record ${verifyRecord(s).name} = "${verifyRecord(s).value}", then POST /v1/sites/${s.id}/verify.`,
           ],
           dns_record: verifyRecord(s),
@@ -175,6 +189,8 @@ export function siteJson(s: SiteRow, baseUrl: string, env: Bindings) {
     capture_console_errors: !!s.capture_console_errors,
     require_consent: !!s.require_consent,
     analytics_site_id: s.analytics_site_id,
+    // The analytics site confirmed its tracker loads this recorder: no snippet needed where it runs.
+    loads_with_analytics: loadsWithAnalytics(s),
     analytics_forwarding: s.analytics_site_id
       ? !analyticsAvailable(env)
         ? "unavailable_on_this_deployment"
@@ -263,10 +279,61 @@ async function apply(ctx: Ctx, row: SiteRow, input: Settings): Promise<string[]>
   return notes;
 }
 
-function nextSteps(ctx: Ctx, s: SiteRow): string[] {
+/**
+ * Keep the analytics side in step after a write that named analytics_site_id: point the (new or
+ * same) analytics site at this replay site, so its tracker loads the recorder, and clear the old
+ * one if it still points here. Analytics failures never fail the replay operation: they are logged,
+ * recorded as loads_with_analytics: false and explained in the returned notes.
+ */
+async function syncAnalyticsLink(ctx: Ctx, row: SiteRow, prev: { id: string | null; linked: boolean }): Promise<string[]> {
+  const notes: string[] = [];
+  const now = row.analytics_site_id;
+  if (prev.id && prev.id !== now) {
+    const r = await unlinkAnalyticsSite(ctx.env, ctx.accountId, prev.id, row.id);
+    if (!r.ok && (prev.linked || r.status !== 503))
+      notes.push(
+        `Couldn't tell analytics site ${prev.id} to stop loading this recorder (HTTP ${r.status}). On the analytics service: PATCH /v1/sites/${prev.id} {"replay_site_id": null}.`,
+      );
+  }
+  let linkedAt: number | null = null;
+  if (now) {
+    const r = await linkAnalyticsSite(ctx.env, ctx.accountId, now, row.id);
+    if (r.ok) {
+      linkedAt = Date.now();
+      if (!prev.linked || prev.id !== now)
+        notes.push(`Pages that run the analytics tracker for ${now} now load this site's recorder by themselves: nothing to paste there.`);
+    } else
+      notes.push(
+        `Analytics site ${now} didn't confirm that its tracker loads this recorder (HTTP ${r.status}), so loads_with_analytics is false. Retry with PATCH /v1/sites/${row.id} {"analytics_site_id": "${now}"} (the same id again re-asserts the link), or add the snippet to your pages.`,
+      );
+  }
+  row.analytics_linked_at = linkedAt;
+  const db = ctx.env.DB;
+  const writes = [db.prepare("UPDATE sites SET analytics_linked_at = ? WHERE id = ?").bind(linkedAt, row.id)];
+  // The analytics tracker loads one replay site: another one of the account linked to the same
+  // analytics site no longer loads with it.
+  if (now && linkedAt)
+    writes.push(
+      db
+        .prepare("UPDATE sites SET analytics_linked_at = NULL WHERE account_id = ? AND analytics_site_id = ? AND id != ?")
+        .bind(ctx.accountId, now, row.id),
+    );
+  await db.batch(writes);
+  forgetSite(row.id);
+  return notes;
+}
+
+/** What to suggest about analytics for a site that isn't linked (null when it is, or analytics is off). */
+const suggestionFor = (ctx: Ctx, s: SiteRow): Promise<AnalyticsSuggestion> =>
+  s.analytics_site_id ? Promise.resolve(null) : suggestAnalyticsSite(ctx.env, ctx.accountId, s.domain);
+
+function nextSteps(ctx: Ctx, s: SiteRow, suggestion: AnalyticsSuggestion): string[] {
+  const note = analyticsInstallNote(s, suggestion);
+  const paste = `Add to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework code: GET /v1/sites/${s.id}/install?framework=nextjs|react|astro|wordpress|gtm).`;
+  const homepage = s.analytics_site_id ? `this site's snippet or the analytics tracker for ${s.analytics_site_id}` : "the snippet";
   return [
-    `Add to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework code: GET /v1/sites/${s.id}/install?framework=nextjs|react|astro|wordpress|gtm).`,
-    `Open https://${s.domain}/?afsr=1 once (records regardless of sampling), click around, then confirm: POST /v1/sites/${s.id}/verify (MCP: verify_install). Verify also proves the domain is yours (the snippet on https://${s.domain}/, or DNS TXT ${verifyRecord(s).name} = "${verifyRecord(s).value}"): until then the site records a small trial quota with strict masking.`,
+    ...(note.paste ? (s.analytics_site_id || suggestion?.site ? [note.text, paste] : [paste]) : [note.text]),
+    `Open https://${s.domain}/?afsr=1 once (records regardless of sampling), click around, then confirm: POST /v1/sites/${s.id}/verify (MCP: verify_install). Verify also proves the domain is yours (${homepage} on https://${s.domain}/, or DNS TXT ${verifyRecord(s).name} = "${verifyRecord(s).value}"): until then the site records a small trial quota with strict masking.`,
     `Text is masked by default (mask_mode strict). Show non-personal UI text with PATCH /v1/sites/${s.id} {"unmask_selectors":["nav","button","a","h1","h2","label"]} so transcripts name what was clicked.`,
     `Read: GET /v1/sites/${s.id}/sessions?sort=frustration, then GET /v1/sites/${s.id}/sessions/<id>/transcript (MCP: search_sessions, get_session_transcript).`,
   ];
@@ -300,18 +367,21 @@ export async function createSite(ctx: Ctx, raw: unknown) {
   const domain = cleanDomain(input.domain, isDev(ctx.env));
   const db = ctx.env.DB;
   const find = () => db.prepare("SELECT * FROM sites WHERE account_id = ? AND domain = ?").bind(ctx.accountId, domain).first<SiteRow>();
-  const respond = (s: SiteRow, existing: boolean, notes: string[] = []) => ({
-    site: siteJson(s, ctx.baseUrl, ctx.env),
-    existing,
-    ...(existing
-      ? {
-          note: "A replay site for this domain already exists on your account; returned unchanged. Use PATCH /v1/sites/:id to change settings.",
-        }
-      : {}),
-    ...(notes.length ? { notes } : {}),
-    install: installInstructions(s, ctx.baseUrl, "html"),
-    next_steps: nextSteps(ctx, s),
-  });
+  const respond = async (s: SiteRow, existing: boolean, notes: string[] = []) => {
+    const suggestion = await suggestionFor(ctx, s);
+    return {
+      site: siteJson(s, ctx.baseUrl, ctx.env),
+      existing,
+      ...(existing
+        ? {
+            note: "A replay site for this domain already exists on your account; returned unchanged. Use PATCH /v1/sites/:id to change settings.",
+          }
+        : {}),
+      ...(notes.length ? { notes } : {}),
+      install: installInstructions(s, ctx.baseUrl, "html", suggestion),
+      next_steps: nextSteps(ctx, s, suggestion),
+    };
+  };
   const existing = await find();
   if (existing) return respond(existing, true);
   const standing = await accountStanding(ctx.env, ctx.accountId);
@@ -355,6 +425,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     capture_console_errors: ctx.env.CAPTURE_CONSOLE_ERRORS_DEFAULT === "false" ? 0 : 1,
     require_consent: 0,
     analytics_site_id: null,
+    analytics_linked_at: null,
     purged_at: null,
     verified_at: null,
     verify_method: null,
@@ -373,6 +444,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     throw e;
   }
   forgetSite(row.id);
+  if (row.analytics_site_id) notes.push(...(await syncAnalyticsLink(ctx, row, { id: null, linked: false })));
   return respond(row, false, notes);
 }
 
@@ -425,6 +497,8 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   }
   const notes = await apply(ctx, next, input);
   if (domainChanged) notes.push(`The domain changed, so it has to be verified again (POST /v1/sites/${s.id}/verify).`);
+  if (input.analytics_site_id !== undefined)
+    notes.push(...(await syncAnalyticsLink(ctx, next, { id: s.analytics_site_id, linked: loadsWithAnalytics(s) })));
   const cols = COLUMNS.filter((c) => c !== "id" && c !== "account_id" && c !== "created_at");
   await ctx.env.DB.prepare(
     `UPDATE sites SET ${cols.map((c) => `${c} = ?`).join(", ")}${domainChanged ? ", verified_at = NULL, verify_method = NULL" : ""} WHERE id = ? AND account_id = ?`,
@@ -447,6 +521,8 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
 
 export async function deleteSite(ctx: Ctx, siteId: string) {
   const s = await loadSite(ctx, siteId);
+  // The analytics tracker must not keep loading a deleted site's loader (only if it still points here).
+  const unlink = s.analytics_site_id ? await unlinkAnalyticsSite(ctx.env, ctx.accountId, s.analytics_site_id, s.id) : null;
   await ctx.env.DB.batch([
     ctx.env.DB.prepare("DELETE FROM replay_links WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, ctx.accountId),
@@ -454,15 +530,23 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
   ]);
   forgetSite(s.id);
   await siteStub(ctx.env, s.id).destroy();
+  const stale = unlink && !unlink.ok && (loadsWithAnalytics(s) || unlink.status !== 503);
   return {
     deleted: s.id,
     note: "The replay site, its sessions, signals, heatmaps and share links are gone. Stored recording chunks are deleted from R2 in the background (hourly).",
+    ...(stale
+      ? {
+          next_steps: [
+            `Analytics site ${s.analytics_site_id} may still load this deleted site's loader (HTTP ${unlink.status}). On the analytics service: PATCH /v1/sites/${s.analytics_site_id} {"replay_site_id": null}.`,
+          ],
+        }
+      : {}),
   };
 }
 
 export async function getInstall(ctx: Ctx, siteId: string, framework?: Framework) {
   const s = await loadSite(ctx, siteId);
-  return installInstructions(s, ctx.baseUrl, framework ?? "html");
+  return installInstructions(s, ctx.baseUrl, framework ?? "html", await suggestionFor(ctx, s));
 }
 
 /**

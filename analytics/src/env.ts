@@ -29,6 +29,11 @@ export interface Bindings extends AuthBindings {
   MAX_ANNOTATIONS_PER_SITE?: string;
   /** Fair use: max saved funnels per site. Unset = no cap. */
   MAX_FUNNELS_PER_SITE?: string;
+  /**
+   * The replay service's public URL (e.g. https://replay.example.com). With it, the tracker of a
+   * site that has replay_site_id loads REPLAY_BASE_URL/r/<replay_site_id>.js by itself. Unset = off.
+   */
+  REPLAY_BASE_URL?: string;
 
   // Fair use (all optional; every account-level one also reads UNCLAIMED_<NAME> for accounts no
   // person has claimed, via capFor). See src/lib/limits.ts and README "Config".

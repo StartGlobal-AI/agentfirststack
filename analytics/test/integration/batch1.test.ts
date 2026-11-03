@@ -734,7 +734,90 @@ describe("scopes, schema and docs", () => {
       "SQL_TIME_BUDGET_MS",
       "match_weekday",
       "data-404",
+      "replay_site_id",
+      "REPLAY_BASE_URL",
     ])
       expect(llms).toContain(s);
+  });
+});
+
+describe("replay link: the tracker loads a linked replay site's recorder", () => {
+  const RSITE = "rsite_0123456789abcdef";
+  const REPLAY = { REPLAY_BASE_URL: "https://replay.example.net/" };
+  const loader = `https://replay.example.net/r/${RSITE}.js`;
+  /** A beacon through the proxy with some vars changed (REPLAY_BASE_URL, caps). */
+  const beaconWith = (over: Record<string, unknown>, proxyKey: string, payload: Record<string, unknown>, ua = UA) =>
+    callWith(over, "/_a/e", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "user-agent": ua, "content-type": "text/plain", "x-forwarded-for": "198.51.100.7", "x-afs-proxy-key": proxyKey },
+    });
+
+  it("PATCH replay_site_id: validated with a hint, returned by every site response, null (or empty) clears it", async () => {
+    const { key, site, created } = await newSite("replaylink.test");
+    expect(created.body.site.replay_site_id).toBeNull();
+    for (const bad of ["site_0123456789abcdef", "rsite_SHORT", `${RSITE}x`]) {
+      const r = await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: bad } });
+      expect(r.status).toBe(400);
+      expect(r.body.error.hint).toContain("rsite_");
+    }
+    const linked = await callWith(REPLAY, `/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: RSITE } });
+    expect(linked.status).toBe(200);
+    expect(linked.body.site.replay_site_id).toBe(RSITE);
+    expect(linked.body.note).toContain("replay.example.net");
+    expect((await call(`/v1/sites/${site}`, { key })).body.site.replay_site_id).toBe(RSITE);
+    expect((await call("/v1/sites", { key })).body.sites.find((s: { id: string }) => s.id === site).replay_site_id).toBe(RSITE);
+    // another setting leaves it alone
+    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { name: "x" } })).body.site.replay_site_id).toBe(RSITE);
+    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: null } })).body.site.replay_site_id).toBeNull();
+    const mcpLinked = await tool(key, "update_site", { site_id: site, replay_site_id: RSITE });
+    expect(mcpLinked.data.site.replay_site_id).toBe(RSITE);
+    expect((await tool(key, "update_site", { site_id: site, replay_site_id: "nope" })).isError).toBe(true);
+    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: "" } })).body.site.replay_site_id).toBeNull();
+  });
+
+  it("POST /e answers carry r only for a linked site with REPLAY_BASE_URL set, dropped and refused events included", async () => {
+    const { key, site, proxyKey } = await newSite("replayload.test", { exclusions: { paths: ["/admin/*"] } });
+    const u = "https://replayload.test/";
+    // not linked: nothing, with or without REPLAY_BASE_URL
+    expect((await beaconWith(REPLAY, proxyKey, { s: site, u })).body).not.toHaveProperty("r");
+    await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: RSITE } });
+    // linked, but the deployment has no REPLAY_BASE_URL: the feature is off
+    const off = await beaconWith({}, proxyKey, { s: site, u });
+    expect(off.body.ok).toBe(true);
+    expect(off.body).not.toHaveProperty("r");
+    // linked + REPLAY_BASE_URL (a trailing slash is fine)
+    const on = await beaconWith(REPLAY, proxyKey, { s: site, u });
+    expect(on.status).toBe(202);
+    expect(on.body).toMatchObject({ ok: true, r: loader });
+    expect(typeof on.body.v).toBe("string");
+    // dropped events still carry it: the loader makes its own decisions
+    expect((await beaconWith(REPLAY, proxyKey, { s: site, u: "https://replayload.test/admin/x" })).body).toMatchObject({
+      ok: false,
+      dropped: "excluded_path",
+      r: loader,
+    });
+    expect((await beaconWith(REPLAY, proxyKey, { s: site, u: "https://elsewhere.test/" })).body).toMatchObject({
+      dropped: "hostname_not_allowed",
+      r: loader,
+    });
+    expect((await beaconWith(REPLAY, proxyKey, { s: site, u }, "Googlebot/2.1 (+http://www.google.com/bot.html)")).body).toMatchObject({
+      dropped: "bot",
+      r: loader,
+    });
+    expect((await beaconWith({}, proxyKey, { s: site, u }, "Googlebot/2.1 (+http://www.google.com/bot.html)")).body).not.toHaveProperty(
+      "r",
+    );
+    // a daily budget refusal too
+    const capped = await beaconWith({ ...REPLAY, MAX_EVENTS_PER_SITE_PER_DAY: "1" }, proxyKey, { s: site, u });
+    expect(capped.status).toBe(429);
+    expect(capped.body).toMatchObject({ ok: false, error: "daily_limit", r: loader });
+    // unknown site: no link
+    const unknown = await beaconWith(REPLAY, proxyKey, { s: "site_zzzzzzzzzzzzzzzz", u });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).not.toHaveProperty("r");
+    // unlinked again: gone from the next answer
+    await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: null } });
+    expect((await beaconWith(REPLAY, proxyKey, { s: site, u })).body).not.toHaveProperty("r");
   });
 });

@@ -35,6 +35,7 @@
   --orange: #ff6a2b; /* analytics */
   --yellow: #f4b400; /* tags */
   --blue: #2f6bff; /* mail */
+  --emerald: #0f9d58; /* replay */
   --green: #0b7a45;
   --red: #b3261e;
   --on-ink: #ffffff;
@@ -434,7 +435,7 @@ pre {
   grid-column: span 4;
 }
 .resources > .resource {
-  grid-column: span 4;
+  grid-column: span 6;
 }
 .project-more > .stat-tile {
   grid-column: span 3;
@@ -512,6 +513,10 @@ pre {
 .svc-mail,
 .ask-mail {
   --c: var(--blue);
+}
+.svc-replay,
+.ask-replay {
+  --c: var(--emerald);
 }
 .ask-projects {
   --c: #ffffff;
@@ -1104,13 +1109,13 @@ pre {
   color: var(--ink-3);
 }
 
-/* Resource counts: the mark's three bars, as data. */
+/* Resource counts: one coloured bar per service, as data. */
 .counts {
   list-style: none;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 8px;
 }
 .count {
   min-width: 0;
@@ -1153,6 +1158,9 @@ pre {
 }
 .project:hover .count:nth-child(3)::before {
   transition-delay: 80ms;
+}
+.project:hover .count:nth-child(4)::before {
+  transition-delay: 120ms;
 }
 
 .empty {
@@ -1203,6 +1211,11 @@ pre {
 .items code {
   flex: none;
   font-size: 11.5px;
+  color: var(--ink-3);
+}
+.items .item-note {
+  margin-right: auto;
+  font-size: 12px;
   color: var(--ink-3);
 }
 
@@ -1851,7 +1864,7 @@ body.app .nav {
   list-style: none;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 .build {
@@ -1905,7 +1918,12 @@ body.app .nav {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
+  .builds {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
   .builds {
     grid-template-columns: minmax(0, 1fr);
   }

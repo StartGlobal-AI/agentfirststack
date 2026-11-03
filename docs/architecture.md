@@ -30,7 +30,9 @@ that has to be retried.
 Replay (`replay.*`) sits beside them: the browser recorder (`/r/:id.js`, masked before anything is
 sent) posts gzip chunks to `/i`; they're stored in R2 (`<site>/<session>/<seq>`) and a
 `ReplaySiteDO` per site keeps the session index, derived events, signals, error groups and heatmap
-rollups. Signals can be forwarded to analytics as events over its service binding.
+rollups. Signals can be forwarded to analytics as events over its service binding. Linking a
+replay site to an analytics site also sets that site's `replay_site_id` over the binding, so the
+analytics tracker loads the replay loader by itself (`r` in the `/e` answer, with `REPLAY_BASE_URL`).
 
 ## Identity
 

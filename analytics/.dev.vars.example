@@ -25,6 +25,9 @@ DEV_MODE=true
 # MAX_RETENTION_DAYS=
 # SQL wall time a site may use per 10 minutes, ms (default 60000; 0 = off)
 # SQL_TIME_BUDGET_MS=60000
+# Optional: the replay app's URL. Sites with replay_site_id then load its recorder from the tracker
+# (run replay's `pnpm dev` too). Unset = off.
+# REPLAY_BASE_URL=http://localhost:8790
 # Optional: open | token | closed
 # SIGNUP_MODE=open
 # SIGNUP_TOKEN=

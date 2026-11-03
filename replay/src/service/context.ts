@@ -31,6 +31,8 @@ export interface SiteRow {
   capture_console_errors: number;
   require_consent: number;
   analytics_site_id: string | null;
+  /** when the analytics site confirmed its tracker loads this site's recorder (migration 0007; NULL = not) */
+  analytics_linked_at?: number | null;
   purged_at: number | null;
   /** set when verify proved the domain is the account's (homepage loader or DNS TXT) */
   verified_at?: number | null;

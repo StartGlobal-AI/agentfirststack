@@ -38,6 +38,8 @@ export interface SiteSettings {
   browser_revenue?: boolean;
   /** let user ids from afsa('identify') link payments that carry only a user id; default false */
   trust_browser_user_id?: boolean;
+  /** linked replay site (rsite_...): the tracker loads its recorder. Older copies have no field: null. */
+  replay_site_id?: string | null;
   created_at: number;
   goals: Goal[];
 }
@@ -107,6 +109,8 @@ export interface IngestResponse {
   results: IngestOutcome[];
   /** every event was refused for this one reason (suspended account, storage or daily budget) */
   refused?: "account_suspended" | "storage_full" | "daily_limit" | "account_daily_limit" | "platform_daily_budget";
+  /** the site's linked replay site from the settings copy (known sites only, not for suspended accounts) */
+  replay_site_id?: string | null;
 }
 
 export interface PeriodParams {

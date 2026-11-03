@@ -12,6 +12,12 @@
  * loaded (not SPA navigations), Core Web Vitals v = [LCP ms, INP ms, CLS x 1000]. Opt-in:
  * data-404="true" sends a "404" event on pages served with status 404 (or with
  * <meta name="afsa-404">), and data-forms="true" sends "form_submit" {form} on every form submit.
+ *
+ * Session replay: when the site is linked to a replay site, the /e answer carries r (that site's
+ * replay loader URL) and the tracker adds <script async src=r> once per page load (not on SPA
+ * navigations). Only https URLs (http://localhost and 127.0.0.1 for local dev), and not when
+ * window.afsr already has sessionId (the replay snippet is installed directly). The loader makes
+ * its own sampling, bot, DNT and consent decisions.
  */
 
 type Fn = ((cmd: string, ...args: unknown[]) => void) & { q?: IArguments[]; visitorId?: () => string | null };
@@ -19,7 +25,7 @@ type Entry = PerformanceEntry & { value: number; duration: number; interactionId
 type Payload = Record<string, unknown>;
 
 (() => {
-  const w = window as unknown as { afsa?: Fn };
+  const w = window as unknown as { afsa?: Fn; afsr?: { sessionId?: unknown } };
   const d = document;
   const nav = navigator;
   const loc = location;
@@ -51,6 +57,7 @@ type Payload = Record<string, unknown>;
   // Web Vitals of the loaded page; emptied for good once an SPA navigation happens (they describe the first page only)
   let vt: number[] = [];
   let hard = 1;
+  let rl = 0; // replay loader added (once per page load)
 
   const send = (n: string, extra?: Payload, beacon?: boolean) => {
     const body: Payload = { s: site, n, u: loc.href, r: d.referrer || undefined, ...extra };
@@ -62,7 +69,15 @@ type Payload = Record<string, unknown>;
     if (beacon && nav.sendBeacon && nav.sendBeacon(api, data)) return;
     fetch(api, { method: "POST", body: data, keepalive: true })
       .then((r) => r.json())
-      .then((j: { v?: string; p?: number }) => {
+      .then((j: { v?: string; p?: number; r?: string }) => {
+        const r = j && j.r;
+        if (r && !rl && /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])/.test(r) && !(w.afsr && w.afsr.sessionId)) {
+          rl = 1;
+          const s = d.createElement("script");
+          s.async = true;
+          s.src = r;
+          d.head.appendChild(s);
+        }
         if (!j || !j.v) return;
         lastV = j.v;
         if (!store) return;

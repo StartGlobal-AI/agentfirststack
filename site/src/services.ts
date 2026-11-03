@@ -6,8 +6,8 @@ import type { Bindings } from "./env";
  * requireAuth() accepts that as a full-access caller. Nothing here needs an API key.
  */
 
-export type Service = "analytics" | "tags" | "mail";
-const BINDING = { analytics: "ANALYTICS", tags: "TAGS", mail: "MAIL" } as const;
+export type Service = "analytics" | "tags" | "mail" | "replay";
+const BINDING = { analytics: "ANALYTICS", tags: "TAGS", mail: "MAIL", replay: "REPLAY" } as const;
 
 export interface ServiceResult<T = unknown> {
   ok: boolean;
@@ -70,27 +70,33 @@ export interface InboxItem {
   created_at: number;
 }
 
+export interface ReplaySiteItem {
+  id: string;
+  domain: string;
+  name: string | null;
+  enabled: boolean;
+  created_at: number;
+}
+
 /** null for a list = that service couldn't be reached (shown as "unavailable", not "none"). */
 export interface Resources {
   sites: SiteItem[] | null;
   containers: ContainerItem[] | null;
   inboxes: InboxItem[] | null;
+  replaySites: ReplaySiteItem[] | null;
 }
 
 export async function projectResources(env: Bindings, accountId: string): Promise<Resources> {
-  const [sites, containers, inboxes] = await Promise.all([
+  const [sites, containers, inboxes, replay] = await Promise.all([
     callService<{ sites?: SiteItem[] }>(env, "analytics", accountId, "/v1/sites"),
     callService<{ containers?: ContainerItem[] }>(env, "tags", accountId, "/v1/containers"),
     callService<{ inboxes?: InboxItem[] }>(env, "mail", accountId, "/v1/inboxes"),
+    callService<{ sites?: ReplaySiteItem[] }>(env, "replay", accountId, "/v1/sites"),
   ]);
   return {
     sites: sites.ok ? (sites.json?.sites ?? []) : null,
     containers: containers.ok ? (containers.json?.containers ?? []) : null,
     inboxes: inboxes.ok ? (inboxes.json?.inboxes ?? []) : null,
+    replaySites: replay.ok ? (replay.json?.sites ?? []) : null,
   };
 }
-
-/**
- * Unique visitors over the last 7 days for each site, from analytics' stats API (one call per
- * site). Best effort: a site that doesn't answer is simply missing from the map.
- */

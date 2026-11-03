@@ -63,6 +63,7 @@ MCP (stateless, Streamable HTTP): \`claude mcp add --transport http analytics ${
 - Payload is text/plain JSON (no CORS preflight). Bots, headless browsers (navigator.webdriver) and verified bots are dropped and counted.
 - Visitor identity: \`cookieless\` (default) = sha256(daily_salt | site_id | ip | user_agent), salt rotates daily (UTC), no storage, no cross-day linking. \`persistent\` = random id in localStorage (the server tells the tracker; nothing to change in the snippet).
 - GPC / DNT: dropped when the site has \`respect_dnt: true\`.
+- Session replay with no second snippet: on a site with \`replay_site_id\` (set by the replay app when a replay site names this site as its analytics_site_id, or with PATCH /v1/sites/:id), the tracker adds \`<script async src="<replay>/r/<replay_site_id>.js">\` once per page load (not on SPA navigations). The replay loader then makes its own sampling, bot, DNT and consent decisions. Skipped when the replay snippet is already on the page (window.afsr.sessionId exists). Needs the deployment's REPLAY_BASE_URL.
 
 ### First-party proxy
 
@@ -72,12 +73,13 @@ The tracker posts to the origin and path prefix it was loaded from, and this Wor
 - With the key: visitor IP = first \`X-Forwarded-For\` hop (else cf-connecting-ip); geo = \`x-afs-geo-{country,region,region-code,city,continent,timezone,lat,lon}\` (URI-encoded; read only when x-afs-geo-country is present), else Vercel's \`x-vercel-ip-*\`, else Cloudflare's view of the request (the proxy's location).
 - Without it (direct requests, or a proxy missing the key): IP = \`cf-connecting-ip\` and geo = Cloudflare's view of the request; X-Forwarded-For, x-afs-geo-* and x-vercel-ip-* are ignored. Behind a proxy that means every visitor looks like the proxy, so events arriving under a path prefix (/_a/e) without a valid key are counted as \`warnings_last_7d.proxy_key_missing\` (or \`proxy_key_invalid\`) and verify reports a \`proxy_key\` check.
 - Rotating SALT_SECRET changes every proxy key: re-apply the snippets.
+- The replay loader of a linked site is fetched from the replay host directly, not through this proxy. A strict Content-Security-Policy needs \`script-src\` and \`connect-src\` for that host (the replay app's verify suggests the exact sources), or install the replay snippet through your own replay proxy instead.
 
 ### POST /e (public, CORS *)
 
 \`{"s":"site_xxx","n":"pageview","u":"https://example.com/p?utm_source=x","r":"https://google.com/"}\`
 Fields: s site id, n name (default pageview; "engagement" + e ms = visible-time beacon), u url, r referrer, p props, $ [amount, currency], i user id, id persistent id, b 1 = webdriver, d 1 = GPC/DNT. Engagement only: sd max scroll depth 0-100, v [LCP ms, INP ms, CLS x 1000].
-Response 202 \`{"ok":true,"v":"<visitor_id>"}\` (plus \`"p":1\` in persistent mode), \`{"ok":false,"dropped":"bot"}\` or \`{"ok":false,"dropped":"hostname_not_allowed"}\`, 404 unknown_site, 413 payload_too_large for a body over 16 KB (refused by content-length, and the body is never read past 16 KB), 429 \`rate_limited\` (per client network or per site, per minute), 429 \`daily_limit\` / \`over_capacity\` (daily budgets, see Fair use), 403 \`account_suspended\`, 507 \`storage_full\`.
+Response 202 \`{"ok":true,"v":"<visitor_id>"}\` (plus \`"p":1\` in persistent mode), \`{"ok":false,"dropped":"bot"}\` or \`{"ok":false,"dropped":"hostname_not_allowed"}\`; for a site with replay_site_id (and REPLAY_BASE_URL set) every answer for that site, drops and daily budget refusals included, also has \`"r":"<REPLAY_BASE_URL>/r/<replay_site_id>.js"\`, the loader the tracker adds; 404 unknown_site, 413 payload_too_large for a body over 16 KB (refused by content-length, and the body is never read past 16 KB), 429 \`rate_limited\` (per client network or per site, per minute), 429 \`daily_limit\` / \`over_capacity\` (daily budgets, see Fair use), 403 \`account_suspended\`, 507 \`storage_full\`.
 Hostnames: without allowed_hostnames, browser events are accepted only from the site's domain and its subdomains (localhost too in DEV_MODE); others are dropped as hostname_not_allowed and reported by verify.
 
 ## Endpoints (all under /v1, Bearer key)
@@ -91,7 +93,7 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | POST | /v1/sites | create site (same domain again returns it with existing: true) |
 | GET | /v1/sites | list sites |
 | GET | /v1/sites/:id | site + data summary (events, drops, warnings, usage today, storage), limits, status; visitor-sent strings under untrusted |
-| PATCH | /v1/sites/:id | update settings |
+| PATCH | /v1/sites/:id | update settings (incl. replay_site_id) |
 | DELETE | /v1/sites/:id | delete site and all its data |
 | GET | /v1/sites/:id/install?framework= | ${FRAMEWORKS.join(" \\| ")} + proxy snippets |
 | POST | /v1/sites/:id/verify | fetch the site (https, its own domain), check snippet/script/CSP/events/proxy key/limits, return fixes. Body {url?}. Full key |
@@ -141,7 +143,8 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 \`\`\`json
 { "domain": "example.com", "name": "Example", "timezone": "UTC", "visitor_id_mode": "cookieless",
   "retention_days": 400, "allowed_hostnames": null, "respect_dnt": false, "browser_revenue": false, "trust_browser_user_id": false,
-  "exclusions": { "ips": ["203.0.113.0/24", "2001:db8::/32"], "paths": ["/admin/*"], "hostnames": ["staging.example.com"], "countries": ["RU"] } }
+  "exclusions": { "ips": ["203.0.113.0/24", "2001:db8::/32"], "paths": ["/admin/*"], "hostnames": ["staging.example.com"], "countries": ["RU"] },
+  "replay_site_id": null }
 \`\`\`
 - domain: scheme, path, port and leading www. are stripped. Unique per account. Not a public suffix (vercel.app, co.uk): use your own hostname (myapp.vercel.app).
 - timezone: IANA name; periods, days and buckets are in it.
@@ -152,6 +155,7 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 - browser_revenue: false (default) = revenue sent by the browser tracker is ignored (counted as warning browser_revenue_ignored); true = counted.
 - trust_browser_user_id: false (default) = payments that carry only a user id link to sessions a server event identified; true = afsa('identify') ids link too.
 - exclusions: drop matching events at ingest (see Exclusions). null = none; PATCH replaces the whole set.
+- replay_site_id (PATCH only; every site response returns it, null when unset): an AgentFirstStack replay site, \`rsite_\` + 16 characters (400 with a hint otherwise), or null to unlink. The tracker then loads that replay site's recorder by itself. The replay app sets and clears it when you link a replay site to this one (its analytics_site_id), so usually you link there.
 
 \`\`\`sh
 curl -X PATCH $BASE/v1/sites/$SITE -H "Authorization: Bearer $KEY" -d '{"allowed_hostnames":["example.com","*.example.com"]}'
@@ -393,6 +397,7 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H "content-type: application/
 | ENCRYPTION_KEY | optional secret: 32 bytes, base64 (openssl rand -base64 32); seals the Stripe webhook signing secret. Without it connecting Stripe returns 503 not_configured (the payments API still works). Changing it makes stored secrets unreadable: connect Stripe again |
 | MAX_ANNOTATIONS_PER_SITE | optional var: manual annotations per site (403 quota_exceeded beyond). Unset = no cap |
 | MAX_FUNNELS_PER_SITE | optional var: saved funnels per site. Unset = no cap |
+| REPLAY_BASE_URL | optional var: the replay app's public URL (e.g. https://replay.example.com). With it, /e answers for sites with replay_site_id carry \`r\` and the tracker loads the replay loader. Unset = off |
 | DEV_MODE | "true" only locally: honours x-dev-geo-{country,region,region-code,city,continent,timezone,lat,lon} headers, lets verify fetch http://localhost, accepts browser events from localhost, falls back to an insecure salt |
 `;
 }

@@ -53,6 +53,19 @@ MCP (stateless, Streamable HTTP): \`claude mcp add --transport http replay ${bas
 
 GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} returns the file and code for each.
 
+**Already running AgentFirstStack analytics? Nothing to paste.** Link the sites: POST /v1/sites \`{"domain":"example.com","analytics_site_id":"site_..."}\`
+(or PATCH an existing site). Replay then sets that analytics site's \`replay_site_id\` to this site, and its tracker (/s.js) adds
+\`<script async src="${base}/r/<site>.js">\` by itself, once per page load. The loader still makes every recording decision below.
+- \`site.loads_with_analytics\`: true once the analytics site confirmed the link. False = the analytics call failed (the replay
+  change still succeeded; \`notes\` say why): PATCH the same analytics_site_id again to retry, it re-asserts the link.
+- Unlinking (analytics_site_id null or another id) or deleting the replay site clears the old analytics site's replay_site_id,
+  only if it still names this replay site. One analytics site loads one replay site: linking a second replay site to it moves it.
+- Keep the direct snippet for pages without the analytics tracker, and for a strict Content-Security-Policy: the tracker
+  fetches the loader from ${base} directly (never through an analytics proxy), so such a page needs
+  \`script-src ${base}/r/<site>.js ${base}/rec/; connect-src ${base}/i\`, or the direct snippet behind your own replay proxy.
+- Not linked but the account has analytics: install and create responses suggest the analytics site to link
+  (\`suggested_analytics_site_id\`, the one for this domain) instead of a second snippet.
+
 - \`/r/<site>.js\` is a ~2 KB loader with the site's settings inlined (browser cache 5 minutes). It
   decides whether this tab is recorded, then lazy-loads the recorder (rrweb, ~29 KB gzip) after the
   page's load event, from the same base it was loaded from (a first-party proxy of \`/<prefix>/*\` to
@@ -79,7 +92,7 @@ Page API (window.afsr):
 - \`afsr('event', name, props)\` a named step in the transcript; usable as a funnel step \`event:<name>\` (props: up to 20 string/number/boolean values).
 - \`afsr('consent', true|false)\` with require_consent: true starts recording, false stops it.
 - \`afsr('stop')\` stop recording this tab.
-- When the AgentFirstStack analytics tracker is on the page, its visitor id (\`afsa.visitorId()\`) is attached to the session automatically (filter analytics_visitor_id).
+- When the AgentFirstStack analytics tracker is on the page, its visitor id (\`afsa.visitorId()\`) is attached to the session automatically (filter analytics_visitor_id), whether the recorder came from the direct snippet or was loaded by that tracker.
 
 HTML attributes: \`data-afsr-unmask\` (show this element's text as is, and the values typed into fields inside it), \`data-afsr-mask\` (always mask),
 \`data-afsr-block\` (don't record the element; a same-size placeholder is recorded), \`data-afsr-ignore\`
@@ -118,6 +131,9 @@ links; an account has at most MAX_UNVERIFIED_SITES_PER_ACCOUNT (default ${DEFAUL
 verification_required). POST /v1/sites/:id/verify (MCP verify_install) verifies it when either holds:
 - this site's loader (\`/r/<site_id>.js\`) is on the domain's own homepage, \`https://<domain>/\` (redirects only to the
   domain or www.<domain>); or
+- the analytics tracker of the linked analytics site is on that homepage (\`<script src=".../s.js" data-site="<analytics_site_id>">\`,
+  any attribute order, also a first-party proxy src like \`/_a/s.js\`): method \`homepage_analytics\`. The analytics site
+  belongs to this account (checked when linked), so it proves the domain just as the loader does; or
 - a DNS TXT record \`_afs-verify.<domain>\` has the value \`afs-replay-site=<site_id>\` (looked up over DNS-over-HTTPS).
 Sites show \`verification: {verified, method, verified_at, how, dns_record}\`. Changing a site's domain needs a new
 verification. Domains can't be IPs, single labels (TLDs) or public suffixes (co.uk, github.io, pages.dev, ...);
@@ -173,11 +189,11 @@ input into a field), afs.scroll, afs.error, afs.event, afs.hide, afs.idle.
 
 ### Replay sites
 - POST /v1/sites \`{ domain, ...settings }\` -> 201 \`{ site, install, next_steps }\`; same domain again -> 200 \`existing: true\`. 403 quota_exceeded past MAX_SITES_PER_ACCOUNT, 403 verification_required past MAX_UNVERIFIED_SITES_PER_ACCOUNT, 400 for IPs, TLDs and public suffixes.
-- GET /v1/sites -> \`{ sites }\` (each with \`verification\`). GET /v1/sites/:id -> \`{ site, data: { sessions_total, sessions_last_24h, sessions_today, forced_sessions, last_chunk_at, chunks_total, bytes_total, usage_today: {sessions, forced_sessions, chunks, bytes, derived_events, forwarded_events}, hostnames_last_7d, dropped_last_7d: {reason: {count, last_at}} }, limits: {sessions_per_day, forced_sessions_per_day, sessions_per_network_per_day, forwarded_events_per_day, account_per_day}, untrusted: { drop_samples: {reason: value} } }\`.
+- GET /v1/sites -> \`{ sites }\` (each with \`verification\`, \`analytics_site_id\`, \`loads_with_analytics\`, \`analytics_forwarding\`). GET /v1/sites/:id -> \`{ site, data: { sessions_total, sessions_last_24h, sessions_today, forced_sessions, last_chunk_at, chunks_total, bytes_total, usage_today: {sessions, forced_sessions, chunks, bytes, derived_events, forwarded_events}, hostnames_last_7d, dropped_last_7d: {reason: {count, last_at}} }, limits: {sessions_per_day, forced_sessions_per_day, sessions_per_network_per_day, forwarded_events_per_day, account_per_day}, untrusted: { drop_samples: {reason: value} } }\`.
 - PATCH /v1/sites/:id \`{ domain?, ...settings }\`: only given fields change; lists are replaced whole; values over the deployment's caps are clamped and reported in \`notes\`. The loader picks changes up within ~5 minutes.
-- DELETE /v1/sites/:id: the site, its sessions, signals, heatmaps and links; R2 chunks are deleted by the hourly cron.
-- GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} -> \`{ snippet, file, code, page_api, html_attributes, testing }\`.
-- POST /v1/sites/:id/verify \`{ url? }\` -> \`{ ok, installed, receiving_sessions, domain_verified, verification, checks: [{id, ok, detail, fix}], fixes, data, untrusted: {found_scripts, drop_samples}, next_steps }\`. Fetches the page (https on the site's domain or a subdomain, port 443, no IPs, 3 redirects; at most MAX_VERIFY_PER_ACCOUNT_PER_HOUR calls, default ${DEFAULTS.VERIFY_PER_ACCOUNT_PER_HOUR}, 429 rate_limited), finds the loader for this site id, checks it serves the loader, checks the page CSP (script-src, connect-src; suggests path-scoped sources), verifies the domain (homepage loader or DNS TXT), sessions received, refused chunks by reason, and whether labels are all masked.
+- DELETE /v1/sites/:id: the site, its sessions, signals, heatmaps and links; R2 chunks are deleted by the hourly cron. A linked analytics site still naming it stops loading it (\`next_steps\` say so if analytics couldn't be reached).
+- GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} -> \`{ snippet, file, code, loads_with_analytics, nothing_to_paste?, suggested_analytics_site_id?, with_analytics, page_api, html_attributes, testing }\`.
+- POST /v1/sites/:id/verify \`{ url? }\` -> \`{ ok, installed, receiving_sessions, domain_verified, verification, checks: [{id, ok, detail, fix}], fixes, data, untrusted: {found_scripts, drop_samples}, next_steps }\`. Fetches the page (https on the site's domain or a subdomain, port 443, no IPs, 3 redirects; at most MAX_VERIFY_PER_ACCOUNT_PER_HOUR calls, default ${DEFAULTS.VERIFY_PER_ACCOUNT_PER_HOUR}, 429 rate_limited), finds the loader for this site id (or the linked analytics site's tracker, then asks analytics whether it loads this site and refreshes loads_with_analytics), checks it serves the loader, checks the page CSP (script-src, connect-src; suggests path-scoped sources), verifies the domain (homepage loader, linked analytics tracker, or DNS TXT), sessions received, refused chunks by reason, and whether labels are all masked.
 
 Settings:
 - \`name\` string | null
@@ -192,7 +208,7 @@ Settings:
 - \`heatmap_retention_days\` 7..${LIMITS.HEATMAP_RETENTION_DAYS_MAX} (default ${DEFAULTS.HEATMAP_RETENTION_DAYS}; capped by MAX_HEATMAP_RETENTION_DAYS): daily click and scroll aggregates
 - \`capture_console_errors\` boolean (default true, or false where CAPTURE_CONSOLE_ERRORS_DEFAULT=false)
 - \`require_consent\` boolean (default false)
-- \`analytics_site_id\` site_... of an analytics site on the same account (validated), or null
+- \`analytics_site_id\` site_... of an analytics site on the same account (validated), or null. Its tracker then loads this recorder (see Install); the same id again re-asserts that link
 
 ### Sessions
 Shared filters (sessions, summary, funnel): \`period\` (${PERIODS.join(", ")}; default all retained) or \`from\`/\`to\` (unix ms, unix s, ISO 8601), \`page\` (path glob the session visited), \`entry_page\`, \`exit_page\`, \`signal\` (${SIGNALS.join(", ")}), \`has_error\` true|false, \`device\` desktop|mobile|tablet, \`browser\`, \`os\`, \`country\` (ISO alpha-2), \`min_duration\` / \`max_duration\` (seconds), \`min_frustration\` 0-100, \`user_id\`, \`analytics_visitor_id\`, \`clicked\` (selector contains / label equals), \`error_fingerprint\`, \`event\`, \`forced\` true|false.

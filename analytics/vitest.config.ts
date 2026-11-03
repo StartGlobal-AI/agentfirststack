@@ -48,6 +48,8 @@ export default defineConfig({
                   "SQL_TIME_BUDGET_MS",
                 ]),
                 SIGNUP_HOURLY_LIMIT: "0",
+                // Replay loading off (and a local .dev.vars overridden); tests that need it pass it per call.
+                REPLAY_BASE_URL: "",
                 // Seals the Stripe signing secret (tests for a missing key override it per call).
                 ENCRYPTION_KEY: "q5B6mPm7m6t0C9x2l8Yk3gq7cB1Fz2b0bZr7u1y4c3E=",
                 // Low, so the SQL test can show a real DO cursor being stopped by its rowsRead.

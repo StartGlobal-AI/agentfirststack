@@ -44,6 +44,8 @@ export interface SiteRow {
   browser_revenue?: number;
   /** 1 = user ids from afsa('identify') may link payments (migration 0007; default 0) */
   trust_browser_user_id?: number;
+  /** linked replay site, rsite_...; the tracker loads its recorder (migration 0008; NULL = none) */
+  replay_site_id?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -54,7 +56,7 @@ type Obj = Record<string, unknown>;
 export interface SiteStub {
   configure(s: SiteSettings): Promise<{ ok: true }>;
   ingest(events: EnrichedEvent[], policy?: IngestPolicy): Promise<IngestResponse>;
-  recordDrop(reason: string, sample: string | null): Promise<void>;
+  recordDrop(reason: string, sample: string | null): Promise<{ replay_site_id: string | null } | null>;
   stats(q: StatsRequest): Promise<Obj | DoError>;
   breakdown(q: StatsRequest & { breakdown: Breakdown }): Promise<Obj | DoError>;
   timeseries(q: TimeseriesRequest): Promise<Obj | DoError>;
@@ -153,6 +155,7 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     exclusions: parseExclusions(site.exclusions),
     browser_revenue: !!site.browser_revenue,
     trust_browser_user_id: !!site.trust_browser_user_id,
+    replay_site_id: site.replay_site_id ?? null,
     created_at: site.created_at,
     goals,
   };

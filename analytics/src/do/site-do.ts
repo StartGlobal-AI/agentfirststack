@@ -270,13 +270,17 @@ export class SiteDO extends DurableObject<Bindings> {
     this.pendingRefused += res.results.filter((r) => (engine.BUDGET_REASONS as readonly string[]).includes(r.reason ?? "")).length;
     this.writeDrops();
     if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
-    return res;
+    // From the settings copy already in hand: the Worker turns it into the tracker's replay loader URL.
+    return { ...res, replay_site_id: s.replay_site_id ?? null };
   }
 
-  recordDrop(reason: string, sample: string | null): void {
-    if (!this.settingsOrNull()) return; // unknown site: don't create storage for it
+  /** A drop decided in the Worker (bots). Returns the site's replay link, or null for an unknown site. */
+  recordDrop(reason: string, sample: string | null): { replay_site_id: string | null } | null {
+    const s = this.settingsOrNull();
+    if (!s) return null; // unknown site: don't create storage for it
     this.queueDrop(reason, sample);
     this.writeDrops();
+    return { replay_site_id: s.replay_site_id ?? null };
   }
 
   stats(q: StatsRequest) {
