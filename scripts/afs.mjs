@@ -154,7 +154,8 @@ export function buildConfig(profile, app, template) {
 
   // AUTH_ISSUER: the OAuth authorization server (the site) that every app's RFC 9728 metadata names.
   const derived = { PUBLIC_BASE_URL: `https://${hostOf(profile, app)}`, AUTH_ISSUER: `https://${profile.domain}` };
-  if (app === "tags") derived.ANALYTICS_BASE_URL = `https://${hostOf(profile, "analytics")}`;
+  // tags links to analytics; the site's project pages redirect to analytics share pages.
+  if (app === "tags" || app === "site") derived.ANALYTICS_BASE_URL = `https://${hostOf(profile, "analytics")}`;
   if (app === "mail") {
     derived.MAIL_DOMAIN = profile.mail_domain || profile.domain;
     derived.WORKER_NAME = n.worker("mail");

@@ -1953,3 +1953,10 @@ body.app .nav {
     transition-delay: 0s !important;
   }
 }
+
+/* "Open analytics dashboard" fallback, when the share page's origin isn't allowed for a redirect. */
+.open-share {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
+}

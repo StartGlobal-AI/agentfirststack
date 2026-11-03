@@ -112,6 +112,16 @@ export async function visitorsLast7Days(env: Bindings, accountId: string, siteId
 }
 
 /** A share link for a site's public, aggregate-only dashboard (analytics returns the existing one). */
+/** Analytics' public origin from ANALYTICS_BASE_URL, or null when it isn't set (or isn't a URL). */
+export function analyticsOrigin(env: Bindings): string | null {
+  try {
+    const u = new URL(env.ANALYTICS_BASE_URL ?? "");
+    return u.protocol === "https:" || u.protocol === "http:" ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function analyticsShareLink(env: Bindings, accountId: string, siteId: string): Promise<string | null> {
   const r = await callService<{ url?: string }>(env, "analytics", accountId, `/v1/sites/${encodeURIComponent(siteId)}/share`, {
     method: "POST",

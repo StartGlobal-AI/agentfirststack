@@ -15,7 +15,7 @@ import {
   requireProject,
   revokeGrant,
 } from "./identity";
-import { type Resources, analyticsShareLink, projectResources, visitorsLast7Days } from "./services";
+import { type Resources, analyticsOrigin, analyticsShareLink, projectResources, visitorsLast7Days } from "./services";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
 import { askLine, askText, plural, resourceCounts, resourcesView } from "./views";
 
@@ -221,10 +221,12 @@ dashboard.get("/projects/:id", async (c) => {
         resources.sites.slice(0, 20).map((x) => x.id),
       )
     : undefined;
+  const analytics = analyticsOrigin(c.env);
   return page({
     title: projectName(p),
     session: s,
     nav: "projects",
+    formActionOrigins: analytics ? [analytics] : [],
     body: html`${tabs(p, "overview")}
 ${resourcesView(resources, { projectId: p.id, session: s }, visitors)}
 <div class="bento project-more">
@@ -270,7 +272,20 @@ dashboard.post("/projects/:id/sites/:site/share", async (c) => {
       "Couldn't open the analytics dashboard.",
       "The analytics service didn't answer. Try again in a moment.",
     );
-  return redirect(url);
+  // The project page's CSP lists analytics' origin in form-action, so the browser may follow this
+  // redirect. If the share page lives elsewhere (ANALYTICS_BASE_URL unset or different), a 303
+  // would be blocked silently; show a link to it instead.
+  if (new URL(url).origin === analyticsOrigin(c.env)) return redirect(url);
+  return page({
+    title: "Analytics dashboard",
+    session: c.var.session,
+    nav: "projects",
+    body: html`<section class="tile open-share">
+  <h1>Your analytics dashboard is ready</h1>
+  <p>It's a private, read-only link. Anyone with it can see this site's numbers, so share it with care.</p>
+  <p><a class="btn btn-primary" href="${url}" rel="noreferrer">Open analytics dashboard</a></p>
+</section>`,
+  });
 });
 
 // ---------- keys ----------

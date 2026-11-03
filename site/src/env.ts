@@ -15,6 +15,11 @@ export type Bindings = Env & {
   INTERNAL_TOKEN?: string;
   /** The OAuth issuer (defaults to PUBLIC_BASE_URL, else the request origin). */
   AUTH_ISSUER?: string;
+  /**
+   * Analytics' public URL (the deploy tool sets it). Its origin is allowed as a form-action target
+   * on project pages, so "Open analytics dashboard" can redirect straight to the share page.
+   */
+  ANALYTICS_BASE_URL?: string;
   /** "true" only for local dev and tests: enables GET /auth/dev-login. */
   DEV_MODE?: string;
   /** New OAuth client registrations per network per hour (default 30). */

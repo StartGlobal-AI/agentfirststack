@@ -86,6 +86,8 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(project.text).toContain("version 2 live");
     expect(project.text).toContain("Open analytics dashboard");
     expect(project.text).toContain("the owner");
+    // Browsers apply form-action to redirects: the share button's 303 to analytics must be allowed.
+    expect(project.headers.get("content-security-policy")).toContain("form-action 'self' https://analytics.afs.test;");
 
     // "Open analytics dashboard" creates a share link through analytics' API.
     const share = await owner.post(`/dashboard/projects/${agent.accountId}/sites/site_acme0000000000/share`, {
@@ -93,6 +95,18 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     });
     expect(share.status).toBe(303);
     expect(share.location).toMatch(/^https:\/\/analytics\.afs\.test\/share\/shr_/);
+
+    // Without ANALYTICS_BASE_URL the redirect would be blocked, so the dashboard links to it instead.
+    const noOrigin = testEnv({ ANALYTICS_BASE_URL: "" });
+    const projectNoOrigin = await owner.get(`/dashboard/projects/${agent.accountId}`, { env: noOrigin });
+    expect(projectNoOrigin.headers.get("content-security-policy")).toContain("form-action 'self';");
+    const linked = await owner.post(
+      `/dashboard/projects/${agent.accountId}/sites/site_acme0000000000/share`,
+      { csrf: csrfOf(projectNoOrigin.text) },
+      { env: noOrigin },
+    );
+    expect(linked.status).toBe(200);
+    expect(linked.text).toMatch(/href="https:\/\/analytics\.afs\.test\/share\/shr_k+"/);
 
     // The agent's key keeps working after the claim.
     expect((await call("GET", "/v1/me", { key: agent.key })).status).toBe(200);
