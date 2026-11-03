@@ -43,7 +43,6 @@ function tabs(p: Project, active: "overview" | "keys" | "members"): SafeHtml {
   <p class="crumbs"><a href="/dashboard">Projects</a><span aria-hidden="true">/</span></p>
   <h1>${projectName(p)}</h1>
   <p class="meta"><code>${p.id}</code><span>You're ${p.role === "owner" ? "the owner" : "a member"}</span><span>Created ${fmtDay(p.created_at)}</span></p>
-  ${askLine(`Show me the stats for ‘${projectName(p)}’ on AgentFirstStack.`, "Or ask your agent")}
   <nav class="tabs" aria-label="Project">
     ${tab("overview", `/dashboard/projects/${p.id}`, "Overview")}
     ${tab("keys", `/dashboard/projects/${p.id}/keys`, "API keys")}
