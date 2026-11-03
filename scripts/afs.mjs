@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const APPS = ["site", "analytics", "tags", "mail"];
+const APPS = ["site", "analytics", "tags", "mail", "replay"];
 const DEPLOY_FILE = "wrangler.deploy.json";
 
 // ---------- helpers ----------
@@ -108,8 +108,10 @@ function names(profile) {
   const p = profile.prefix || "afs";
   return {
     worker: (app) => `${p}-${app}`,
-    d1: { identity: `${p}-identity`, analytics: `${p}-analytics`, tags: `${p}-tags`, mail: `${p}-mail` },
+    d1: { identity: `${p}-identity`, analytics: `${p}-analytics`, tags: `${p}-tags`, mail: `${p}-mail`, replay: `${p}-replay` },
     mailBlobs: `${p}-mail-blobs`,
+    // R2 bucket per app that has one: mail's message blobs, replay's recording chunks.
+    r2: { mail: `${p}-mail-blobs`, replay: `${p}-replay-chunks` },
     queues: { tags: `${p}-tags-dispatch`, mail: `${p}-mail-webhooks` },
   };
 }
@@ -136,7 +138,10 @@ export function buildConfig(profile, app, template) {
     if (!id) die(`deploy/${profile.name}.json has no resources.d1.${key}. Run \`pnpm afs init ${profile.name} ...\` to create it.`);
     return { ...db, database_name: n.d1[key], database_id: id };
   });
-  if (template.r2_buckets) cfg.r2_buckets = template.r2_buckets.map((b) => ({ ...b, bucket_name: n.mailBlobs }));
+  if (template.r2_buckets) {
+    if (!n.r2[app]) die(`${app}/wrangler.jsonc declares an R2 bucket, but the deploy tool has no bucket name for "${app}".`);
+    cfg.r2_buckets = template.r2_buckets.map((b) => ({ ...b, bucket_name: n.r2[app] }));
+  }
   if (template.queues) {
     const q = n.queues[app];
     cfg.queues = {
@@ -226,7 +231,7 @@ async function cmdInit(name, opts) {
     if (!fine) die(`${kind} ${label} failed:\n${r.out}`);
     log(`  ${kind} ${label}: ${r.ok ? "created" : "exists"}`);
   };
-  ensure("r2", ["r2", "bucket", "create", n.mailBlobs], n.mailBlobs);
+  for (const bucket of Object.values(n.r2)) ensure("r2", ["r2", "bucket", "create", bucket], bucket);
   for (const q of Object.values(n.queues)) {
     ensure("queue", ["queues", "create", q], q);
     ensure("queue", ["queues", "create", `${q}-dlq`], `${q}-dlq`);
@@ -401,7 +406,7 @@ async function cmdCheck(name) {
   for (const [label, url] of [
     ["landing page", `${base("site")}/`],
     ["platform manual", `${base("site")}/llms.txt`],
-    ...["analytics", "tags", "mail"].map((a) => [`${a} manual`, `${base(a)}/llms.txt`]),
+    ...["analytics", "tags", "mail", "replay"].map((a) => [`${a} manual`, `${base(a)}/llms.txt`]),
   ]) {
     const r = await call(url);
     step(label, r.status === 200, url);
@@ -418,6 +423,8 @@ async function cmdCheck(name) {
   step("tags: create container with the shared key", !!ctr.json?.container?.id);
   const inbox = await call(`${base("mail")}/v1/inboxes`, { method: "POST", headers: H, body: JSON.stringify({}) });
   step("mail: create inbox with the shared key", !!inbox.json?.inbox?.id, inbox.json?.inbox?.address ?? "");
+  const rsite = await call(`${base("replay")}/v1/sites`, { method: "POST", headers: H, body: JSON.stringify({ domain: dom }) });
+  step("replay: create site with the shared key", !!rsite.json?.site?.id);
   const as = await call(`${base("site")}/.well-known/oauth-authorization-server`);
   step("OAuth authorization server metadata", as.json?.issuer === base("site"), as.json?.issuer ?? `HTTP ${as.status}`);
   for (const app of APPS) {
@@ -426,7 +433,7 @@ async function cmdCheck(name) {
   }
   const claim = await call(`${base("site")}/v1/claim-link`, { method: "POST", headers: H });
   step("claim link", claim.status === 201 && String(claim.json?.url ?? "").startsWith(`${base("site")}/claim/`));
-  for (const app of ["analytics", "tags", "mail"]) {
+  for (const app of ["analytics", "tags", "mail", "replay"]) {
     const t = await call(`${base(app)}/mcp`, {
       method: "POST",
       headers: { ...H, accept: "application/json, text/event-stream" },
@@ -439,6 +446,7 @@ async function cmdCheck(name) {
   if (site.json?.site?.id) await call(`${base("analytics")}/v1/sites/${site.json.site.id}`, { method: "DELETE", headers: H });
   if (ctr.json?.container?.id) await call(`${base("tags")}/v1/containers/${ctr.json.container.id}`, { method: "DELETE", headers: H });
   if (inbox.json?.inbox?.id) await call(`${base("mail")}/v1/inboxes/${inbox.json.inbox.id}`, { method: "DELETE", headers: H });
+  if (rsite.json?.site?.id) await call(`${base("replay")}/v1/sites/${rsite.json.site.id}`, { method: "DELETE", headers: H });
   const me = await call(`${base("site")}/v1/me`, { headers: H });
   if (me.json?.key?.id) await call(`${base("site")}/v1/keys/${me.json.key.id}`, { method: "DELETE", headers: H });
   step("cleaned up and revoked the check key", true);

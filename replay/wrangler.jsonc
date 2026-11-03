@@ -1,0 +1,69 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Generic template: local dev, tests and the defaults for every deployment. Real deployments
+  // don't edit this file; `pnpm afs config <profile>` derives wrangler.deploy.json from it plus
+  // deploy/<profile>.json (account, domain, resource ids, vars). See docs/self-hosting.md.
+  "name": "afs-replay",
+  "main": "src/index.ts",
+  // Must stay <= the workerd bundled with @cloudflare/vitest-pool-workers (1.20260815).
+  "compatibility_date": "2026-08-01",
+
+  // The browser loader, recorder and player (src/recorder, src/player) are bundled + minified by
+  // esbuild into dist/*.txt, which the Worker imports as Text modules and serves.
+  "build": { "command": "node scripts/build-recorder.mjs", "watch_dir": "src" },
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afs-replay",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    },
+    // Shared identity (accounts + API keys): bind the same database in every app so one key works
+    // everywhere. Running only this app? Delete this binding; keys then live in DB.
+    {
+      "binding": "AUTH_DB",
+      "database_name": "afs-identity",
+      // A different placeholder from DB's, so local dev and tests keep two databases, as deployed.
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "../site/migrations"
+    }
+  ],
+
+  // Burst limit on /v1/signup per IP; same namespace as the other apps, so it's one shared counter.
+  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+
+  // Recording chunks as received (gzip JSON of rrweb events): <site_id>/<session_id>/<seq>.
+  "r2_buckets": [{ "binding": "CHUNKS", "bucket_name": "afs-replay-chunks" }],
+
+  // One SQLite-backed Durable Object per replay site: the session index, the derived event log,
+  // signals, error groups and heatmap rollups. Ingest derives in the Worker, the DO only stores.
+  "durable_objects": { "bindings": [{ "name": "SITE", "class_name": "ReplaySiteDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReplaySiteDO"] }],
+
+  // Optional: forwards frustration signals and JS errors to a linked analytics site as events, and
+  // reads analytics funnels (internal auth with INTERNAL_TOKEN). Unbound or no INTERNAL_TOKEN = off.
+  "services": [{ "binding": "ANALYTICS", "service": "afs-analytics" }],
+
+  "vars": {
+    // The URL agents and install snippets use. Empty = the request origin.
+    "PUBLIC_BASE_URL": "",
+    // Prefix of the API keys this app mints ("afs" everywhere, so shared keys look alike).
+    "KEY_PREFIX": "afs",
+    // open | token | closed (see @afs/shared auth)
+    "SIGNUP_MODE": "open",
+    // "true" only in local dev (.dev.vars): x-dev-geo-country, localhost origins and verify.
+    "DEV_MODE": ""
+  },
+  // Optional fair-use vars a deployment can add (all off when unset; see README "Config"):
+  // SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT, MAX_SAMPLE_RATE, MAX_SESSION_MINUTES,
+  // MAX_SESSIONS_PER_SITE_PER_DAY, MAX_CHUNK_BYTES, MAX_SESSION_BYTES, MAX_RETENTION_DAYS,
+  // MAX_LINKS_PER_SITE. Secrets (wrangler secret put): SIGNUP_TOKEN, ADMIN_TOKEN, INTERNAL_TOKEN.
+
+  // Hourly: purge sessions past retention_days (DO rows + R2 chunks), roll settled days up into
+  // heatmap aggregates, expire share links, finish R2 cleanup of deleted sites.
+  "triggers": { "crons": ["23 * * * *"] },
+
+  "observability": { "enabled": true }
+}

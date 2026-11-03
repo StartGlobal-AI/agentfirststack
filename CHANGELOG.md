@@ -8,6 +8,12 @@ All notable changes to this project. The format follows
 
 ### Added
 
+- **Replay** ([replay/README.md](replay/README.md)), the fourth service: headless session replay at `replay.<domain>`.
+  - A recorder (rrweb, lazy-loaded, about 29 KB gzipped) that masks all text, attributes and inputs in the browser by default, drops query strings, honours GPC and DNT and sets no cookies.
+  - Sessions as readable transcripts, frustration signals (rage, dead and error clicks, quick backs, excessive scrolling, JS errors) with a 0-100 score, heatmaps, grouped JS errors and funnel drop-offs, all as data over REST and 19 MCP tools (`replay_` on the gateway).
+  - Expiring share links to a human player; per-visitor deletion; retention purge by hourly cron.
+  - The deploy tool creates its D1 database and R2 bucket (`<prefix>-replay`, `<prefix>-replay-chunks`) and maps R2 buckets per app.
+
 - **Accounts for people, optional** ([docs/accounts.md](docs/accounts.md)). Agents still get a key with one request; nothing changes for them.
   - Sign in with Google (OIDC with PKCE, state and nonce) and sessions with CSRF-protected forms.
   - Claim links: `POST /v1/claim-link` and the MCP gateway tool `afs_create_claim_link` give the owner a single-use, 7-day link to claim the project an agent created.

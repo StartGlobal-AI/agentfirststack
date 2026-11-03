@@ -1,7 +1,7 @@
 {
   "protocolVersion": "0.3.0",
   "name": "AgentFirstStack",
-  "description": "Web analytics, tag management with server-side conversion tracking, and email inboxes for AI agents. Each skill runs AgentFirstStack tools: send a data part {\"tool\": \"<name>\", \"arguments\": {...}}; send plain text to get the tool list.",
+  "description": "Web analytics, tag management with server-side conversion tracking, email inboxes and session replay for AI agents. Each skill runs AgentFirstStack tools: send a data part {\"tool\": \"<name>\", \"arguments\": {...}}; send plain text to get the tool list.",
   "url": "https://agentfirststack.com/a2a",
   "preferredTransport": "JSONRPC",
   "supportedInterfaces": [
@@ -91,6 +91,13 @@
       "examples": ["{\"tool\":\"mail_create_inbox\",\"arguments\":{\"username\":\"acme-signups\"}}"],
       "inputModes": ["application/json"],
       "outputModes": ["application/json"]
+    },
+    {
+      "id": "replay",
+      "name": "Session replay",
+      "description": "Run replay_* tools: record sessions masked by default, search them, read a session as a transcript, find rage, dead and error clicks, heatmaps and JS errors, share a replay with a person.",
+      "tags": ["session replay", "heatmaps", "frustration signals"],
+      "examples": ["{\"tool\":\"replay_search_sessions\",\"arguments\":{\"site_id\":\"<site id>\",\"signal\":\"rage_click\"}}"]
     },
     {
       "id": "account",

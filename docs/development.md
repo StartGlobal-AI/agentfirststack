@@ -18,7 +18,7 @@ Durable Objects, R2, Queues and the email handler locally.
 cd mail                    # or analytics, tags, site
 cp .dev.vars.example .dev.vars
 pnpm db:migrate:local      # app DB + the shared identity DB
-pnpm dev                   # site :8786, analytics :8787, tags :8788, mail :8789
+pnpm dev                   # site :8786, analytics :8787, tags :8788, mail :8789, replay :8790
 pnpm smoke                 # end-to-end run against the dev server (in another terminal)
 ```
 

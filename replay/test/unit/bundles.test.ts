@@ -1,0 +1,180 @@
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import { gzipSync } from "node:zlib";
+import { describe, expect, it } from "vitest";
+import { QUEUE_STUB } from "../../src/service/install";
+
+// The built bundles (pnpm test runs scripts/build-recorder.mjs first).
+const LOADER = readFileSync(new URL("../../dist/loader.txt", import.meta.url), "utf8");
+const RECORDER = readFileSync(new URL("../../dist/recorder.txt", import.meta.url), "utf8");
+const PLAYER = readFileSync(new URL("../../dist/player.txt", import.meta.url), "utf8");
+
+const SITE = "rsite_0123456789abcdef";
+const CFG = {
+  site: SITE,
+  rec: "/recorder.abc123.js",
+  sr: 1,
+  mask: "strict",
+  unmask: "",
+  maskSel: "",
+  block: "",
+  ex: [],
+  maxMs: 30 * 60_000,
+  idleMs: 300_000,
+  consent: false,
+  errors: true,
+  on: true,
+  base: "https://replay.test",
+};
+
+/** A fake browser with just what the loader touches; returns what it did. */
+function browser(
+  opts: {
+    cfg?: Partial<typeof CFG>;
+    src?: string;
+    search?: string;
+    dnt?: boolean;
+    gpc?: boolean;
+    random?: number;
+    session?: Record<string, string>;
+    local?: Record<string, string>;
+    now?: number;
+    stubCalls?: string;
+  } = {},
+) {
+  const injected: { src: string; async: boolean }[] = [];
+  const session: Record<string, string> = { ...(opts.session ?? {}) };
+  const local: Record<string, string> = { ...(opts.local ?? {}) };
+  const store = (m: Record<string, string>) => ({
+    getItem: (k: string) => m[k] ?? null,
+    setItem: (k: string, v: string) => (m[k] = v),
+    removeItem: (k: string) => delete m[k],
+  });
+  class ErrorEvent {}
+  const ctx: Record<string, unknown> = {
+    JSON,
+    Math: Object.assign(Object.create(Math), { random: () => opts.random ?? 0.5 }),
+    Date: { now: () => opts.now ?? 1_800_000_000_000 },
+    Uint8Array,
+    crypto: { getRandomValues: (a: Uint8Array) => a.map((_, i) => i * 7) },
+    ErrorEvent,
+    location: { search: opts.search ?? "" },
+    navigator: { doNotTrack: opts.dnt ? "1" : null, globalPrivacyControl: !!opts.gpc },
+    sessionStorage: store(session),
+    localStorage: store(local),
+    setTimeout: (f: () => void) => f(),
+    addEventListener: () => {},
+    document: {
+      currentScript: { src: opts.src ?? `https://replay.test/r/${SITE}.js` },
+      readyState: "complete",
+      head: { appendChild: (s: { src: string; async: boolean }) => injected.push({ src: s.src, async: s.async }) },
+      createElement: () => ({ src: "", async: false }),
+    },
+  };
+  ctx.window = ctx;
+  if (opts.stubCalls) {
+    runInNewContext(QUEUE_STUB.replace(/^<script>|<\/script>$/g, ""), ctx);
+    runInNewContext(opts.stubCalls, ctx);
+  }
+  runInNewContext(`(function(){var __AFSR__=${JSON.stringify({ ...CFG, ...opts.cfg })};\n${LOADER}\n})();`, ctx);
+  const afsr = ctx.afsr as ((...a: unknown[]) => void) & { sessionId: () => string | null; status: () => string };
+  return { afsr, injected, session, ctx, boot: ctx.__afsrBoot as { queue: unknown[][] } | undefined };
+}
+
+describe("bundles", () => {
+  it("stay small: loader ~2 KB, recorder < 32 KB gzip, player < 90 KB gzip", () => {
+    expect(LOADER.length).toBeLessThan(3000);
+    expect(gzipSync(LOADER).length).toBeLessThan(1500);
+    expect(RECORDER.startsWith("/*! afs-replay recorder")).toBe(true);
+    expect(gzipSync(RECORDER).length).toBeLessThan(32 * 1024);
+    expect(PLAYER.startsWith("/*! afs-replay player")).toBe(true);
+    expect(gzipSync(PLAYER).length).toBeLessThan(90 * 1024);
+  });
+  it("the recorder bundle carries the masking it promises", () => {
+    // rrweb's mask-all-text switch, our built-in selectors, and the always-masked input rule.
+    for (const s of [
+      '"*"',
+      "[data-afsr-unmask]",
+      "[data-afsr-mask]",
+      "[data-afsr-block]",
+      "[data-afsr-ignore]",
+      "one-time-code",
+      "CompressionStream",
+      "sendBeacon",
+    ])
+      expect(RECORDER).toContain(s);
+    expect(RECORDER).not.toMatch(/document\.cookie/);
+  });
+});
+
+describe("loader (/r/<site>.js)", () => {
+  it("records a sampled tab: a per-tab session in sessionStorage, the recorder from its own base", () => {
+    const b = browser();
+    expect(b.afsr.status()).toBe("loading");
+    expect(b.afsr.sessionId()).toMatch(/^rs_[0-9a-z]{16}$/);
+    expect(b.injected).toEqual([{ src: "https://replay.test/recorder.abc123.js", async: true }]);
+    const saved = JSON.parse(b.session[`afsr_${SITE}`]!);
+    expect(saved).toMatchObject({ id: b.afsr.sessionId(), seq: 0, pv: 0, on: 1 });
+    expect(b.ctx.document).not.toHaveProperty("cookie");
+  });
+
+  it("follows a first-party proxy prefix", () => {
+    expect(browser({ src: `https://shop.test/_r/r/${SITE}.js` }).injected[0]!.src).toBe("https://shop.test/_r/recorder.abc123.js");
+  });
+
+  it("never records with Global Privacy Control or Do Not Track, when disabled, or opted out", () => {
+    for (const [o, status] of [
+      [{ gpc: true }, "dnt"],
+      [{ dnt: true }, "dnt"],
+      [{ cfg: { on: false } }, "disabled"],
+      [{ local: { afsr_ignore: "1" } }, "ignored"],
+    ] as const) {
+      const b = browser(o as Parameters<typeof browser>[0]);
+      expect(b.afsr.status()).toBe(status);
+      expect(b.afsr.sessionId()).toBeNull();
+      expect(b.injected).toHaveLength(0);
+    }
+  });
+
+  it("samples per tab; ?afsr=1 forces recording (and marks it forced)", () => {
+    const out = browser({ cfg: { sr: 0.1 }, random: 0.5 });
+    expect(out.afsr.status()).toBe("not_sampled");
+    expect(out.injected).toHaveLength(0);
+    const forced = browser({ cfg: { sr: 0 }, search: "?utm_source=x&afsr=1" });
+    expect(forced.afsr.status()).toBe("loading");
+    expect(JSON.parse(forced.session[`afsr_${SITE}`]!)).toMatchObject({ on: 1, f: 1 });
+  });
+
+  it("continues the tab's session across page loads, starts a new one after 30 idle minutes", () => {
+    const now = 1_800_000_000_000;
+    const state = (last: number) => ({
+      [`afsr_${SITE}`]: JSON.stringify({ id: "rs_aaaaaaaaaaaaaaaa", t0: last - 1000, last, seq: 7, pv: 3, on: 1 }),
+    });
+    expect(browser({ now, session: state(now - 60_000) }).afsr.sessionId()).toBe("rs_aaaaaaaaaaaaaaaa");
+    expect(browser({ now, session: state(now - 31 * 60_000) }).afsr.sessionId()).not.toBe("rs_aaaaaaaaaaaaaaaa");
+    const long = {
+      [`afsr_${SITE}`]: JSON.stringify({ id: "rs_aaaaaaaaaaaaaaaa", t0: now - 31 * 60_000, last: now - 1000, seq: 7, pv: 3, on: 1 }),
+    };
+    const b = browser({ now, session: long });
+    expect(b.afsr.status()).toBe("stopped:max_duration");
+    expect(b.injected).toHaveLength(0);
+  });
+
+  it("with require_consent waits for afsr('consent', true); calls queued before load are kept", () => {
+    const b = browser({ cfg: { consent: true } });
+    expect(b.afsr.status()).toBe("consent_pending");
+    expect(b.afsr.sessionId()).toBeNull();
+    expect(b.injected).toHaveLength(0);
+    b.afsr("consent", true);
+    expect(b.injected).toHaveLength(1);
+    const early = browser({ cfg: { consent: true }, stubCalls: "afsr('identify', 'u_9'); afsr('consent', true); afsr('event', 'x')" });
+    expect(early.injected).toHaveLength(1);
+    expect(early.boot!.queue).toEqual([
+      ["identify", "u_9"],
+      ["event", "x"],
+    ]);
+    const denied = browser({ cfg: { consent: true }, stubCalls: "afsr('consent', false)" });
+    expect(denied.afsr.status()).toBe("stopped:consent");
+    expect(denied.injected).toHaveLength(0);
+  });
+});

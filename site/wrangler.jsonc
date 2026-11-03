@@ -38,7 +38,8 @@
   "services": [
     { "binding": "ANALYTICS", "service": "afs-analytics" },
     { "binding": "TAGS", "service": "afs-tags" },
-    { "binding": "MAIL", "service": "afs-mail" }
+    { "binding": "MAIL", "service": "afs-mail" },
+    { "binding": "REPLAY", "service": "afs-replay" }
   ],
 
   // The shared identity database: every app binds it as AUTH_DB, so one key works everywhere.

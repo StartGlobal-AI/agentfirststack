@@ -17,6 +17,7 @@ export default defineConfig({
           ANALYTICS: () => new Response("not wired in tests", { status: 503 }),
           TAGS: () => new Response("not wired in tests", { status: 503 }),
           MAIL: () => new Response("not wired in tests", { status: 503 }),
+          REPLAY: () => new Response("not wired in tests", { status: 503 }),
         },
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),

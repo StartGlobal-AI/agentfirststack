@@ -35,7 +35,7 @@ export const serviceCalls: {
  * A stand-in for one service: the real requireAuth() (internal auth and API keys, against the
  * same identity DB) and the real handleMcp() with two tools, so tokens are checked as for real.
  */
-function stubService(service: "analytics" | "tags" | "mail"): Fetcher {
+function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher {
   const svc = new Hono<{ Bindings: AuthBindings; Variables: { auth: AuthContext } }>();
   svc.onError(onError);
   svc.all("/mcp", (c) =>
@@ -70,7 +70,12 @@ function stubService(service: "analytics" | "tags" | "mail"): Fetcher {
   } as unknown as Fetcher;
 }
 
-const services = { ANALYTICS: stubService("analytics"), TAGS: stubService("tags"), MAIL: stubService("mail") };
+const services = {
+  ANALYTICS: stubService("analytics"),
+  TAGS: stubService("tags"),
+  MAIL: stubService("mail"),
+  REPLAY: stubService("replay"),
+};
 
 /** The Worker's env with the service stubs, plus any overrides (e.g. DEV_MODE off). */
 export const testEnv = (overrides: Partial<Bindings> = {}): Bindings => ({ ...E, ...services, ...overrides }) as Bindings;

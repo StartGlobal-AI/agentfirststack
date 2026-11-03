@@ -111,7 +111,7 @@ app.route(
       return {
         all: { url: `${base}/mcp`, claude_code: `claude mcp add --transport http afs ${base}/mcp ${header}` },
         ...Object.fromEntries(
-          (["analytics", "tags", "mail"] as const).map((svc) => {
+          (["analytics", "tags", "mail", "replay"] as const).map((svc) => {
             const url = `${serviceUrl(base, svc)}/mcp`;
             return [svc, { url, claude_code: `claude mcp add --transport http afs-${svc} ${url} ${header}` }];
           }),
@@ -119,11 +119,12 @@ app.route(
       };
     },
     nextSteps: (base) => [
-      "Save api_key in the project's .env as AGENTFIRSTSTACK_API_KEY. It works for analytics, tags and mail.",
+      "Save api_key in the project's .env as AGENTFIRSTSTACK_API_KEY. It works for analytics, tags, mail and replay.",
       `Read ${base}/llms.txt for what to do next.`,
       `Analytics: POST ${serviceUrl(base, "analytics")}/v1/sites {"domain":"example.com"}`,
       `Tags: POST ${serviceUrl(base, "tags")}/v1/containers {"domain":"example.com"}`,
       `Mail: POST ${serviceUrl(base, "mail")}/v1/inboxes {"username":"example-signups"}`,
+      `Replay (ask the owner first): POST ${serviceUrl(base, "replay")}/v1/sites {"domain":"example.com"}`,
       `When you're done: POST ${base}/v1/claim-link and give the project's owner the returned url, so they can see everything in a dashboard.`,
     ],
   }),

@@ -10,7 +10,7 @@
     {
       "identifier": "urn:air:agentfirststack.com:mcp:agentfirststack",
       "displayName": "AgentFirstStack MCP server (all services)",
-      "description": "One MCP server for every AgentFirstStack service: web analytics, tag management with server-side conversion tracking, and email inboxes. Tools are prefixed analytics_, tags_ and mail_.",
+      "description": "One MCP server for every AgentFirstStack service: web analytics, tag management with server-side conversion tracking, email inboxes and session replay. Tools are prefixed analytics_, tags_, mail_ and replay_.",
       "type": "application/mcp-server-card+json",
       "url": "https://agentfirststack.com/.well-known/mcp/server-card.json",
       "representativeQueries": [
@@ -54,6 +54,18 @@
         "create an email address for my agent",
         "wait for a verification email and get the code",
         "sign up for a service with a disposable inbox"
+      ]
+    },
+    {
+      "identifier": "urn:air:agentfirststack.com:mcp:replay",
+      "displayName": "AgentFirstStack Replay MCP server",
+      "description": "Headless session replay: masked recordings, sessions as readable transcripts, rage, dead and error clicks, heatmaps and JS errors as data.",
+      "type": "application/mcp-server-card+json",
+      "url": "https://agentfirststack.com/.well-known/mcp/replay.json",
+      "representativeQueries": [
+        "why do visitors drop off on my checkout page",
+        "find rage clicks and JS errors on my site",
+        "session replay my agent can read"
       ]
     },
     {

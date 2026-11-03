@@ -10,6 +10,7 @@ and hosted for free at https://agentfirststack.com.
 | [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue) | analytics.agentfirststack.com | 8787 |
 | [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok) with dedup | tags.agentfirststack.com | 8788 |
 | [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
+| [`replay/`](replay/README.md) | Hotjar / Microsoft Clarity: headless session replay masked in the browser by default, sessions as readable transcripts, rage/dead/error clicks, heatmaps and JS errors as data, share-link player | replay.agentfirststack.com | 8790 |
 | [`shared/`](shared/src) | `@afs/shared`: accounts, API keys, instant signup, shared identity, JSON errors, ids, crypto, stateless MCP handler | n/a | n/a |
 
 ## The agent-native rules (every app follows all of them)
@@ -67,6 +68,7 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | defaults 10 / 50 / 512 KB |
 | `SQL_MAX_ROWS_READ` | analytics | default 1,000,000 rows read per SQL query |
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
+| `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` | replay | 50 / 1000 / 30 / 30 / 20 (`MAX_SAMPLE_RATE` unset: sites choose) |
 
 ## Deployments (`pnpm afs`, profiles in `deploy/`)
 
@@ -77,8 +79,8 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
   [app]` also applies D1 migrations and sets secrets from `deploy/<profile>.secrets.json`
   (git-ignored). `pnpm afs check <profile>` is the live end-to-end check (cleans up after itself).
 - The hosted platform is profile `hosted`: StartGlobal AI Projects account, zone
-  `agentfirststack.com`, Workers `afs-site|analytics|tags|mail`, D1 `afs-identity|analytics|tags|mail`,
-  R2 `afs-mail-blobs`, queues `afs-tags-dispatch`, `afs-mail-webhooks` (+ `-dlq`). Email Routing
+  `agentfirststack.com`, Workers `afs-site|analytics|tags|mail|replay`, D1 `afs-identity|analytics|tags|mail|replay`,
+  R2 `afs-mail-blobs`, `afs-replay-chunks`, queues `afs-tags-dispatch`, `afs-mail-webhooks` (+ `-dlq`). Email Routing
   catch-all on the apex goes to `afs-mail`; the apex is onboarded for Email Sending (DKIM
   `cf-bounce`, DMARC reject). Release = `pnpm afs deploy hosted && pnpm afs check hosted`.
 - Docs for humans: `docs/self-hosting.md`, `docs/operations.md`, `docs/architecture.md`,

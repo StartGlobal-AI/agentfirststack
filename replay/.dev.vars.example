@@ -1,0 +1,21 @@
+# Copy to .dev.vars for `pnpm dev`. Never commit .dev.vars.
+# Local dev only: honours x-dev-geo-country/-region/-city headers, accepts chunks from localhost
+# origins and lets verify fetch localhost pages.
+DEV_MODE=true
+# Optional: open | token | closed
+# SIGNUP_MODE=open
+# SIGNUP_TOKEN=
+# ADMIN_TOKEN=
+# Optional: same value as the site's and analytics'; lets the site's dashboard read this app as a
+# project (x-afs-internal), and turns on signal forwarding to a linked analytics site through the
+# ANALYTICS service binding (run analytics' `pnpm dev` too for that locally).
+# INTERNAL_TOKEN=
+# Optional fair-use controls (all off when unset; see README "Config"):
+# MAX_SITES_PER_ACCOUNT=
+# MAX_SAMPLE_RATE=
+# MAX_SESSION_MINUTES=
+# MAX_SESSIONS_PER_SITE_PER_DAY=
+# MAX_CHUNK_BYTES=
+# MAX_SESSION_BYTES=
+# MAX_RETENTION_DAYS=
+# MAX_LINKS_PER_SITE=

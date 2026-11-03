@@ -22,7 +22,7 @@ pnpm install
 # 1. Create the D1 databases, R2 bucket and queues; write deploy/mystack.json and its secrets file
 pnpm afs init mystack --domain example.com --account <your-account-id>
 
-# 2. Generate configs, apply D1 migrations, deploy the four Workers, set their secrets
+# 2. Generate configs, apply D1 migrations, deploy the five Workers, set their secrets
 pnpm afs deploy mystack
 
 # 3. Mail only: Email Routing catch-all to the mail Worker + Email Sending for the domain
@@ -104,7 +104,7 @@ newer version over an older one is safe. Read `CHANGELOG.md` before upgrading ac
 repository.
 
 - `ADMIN_TOKEN`: operator access (signup when closed, admin-only mail features).
-- `INTERNAL_TOKEN` (top level, set on all four Workers): lets the site's dashboard read a
+- `INTERNAL_TOKEN` (top level, set on all five Workers): lets the site's dashboard read a
   project's sites, containers and inboxes from the services over service bindings. `init`
   generates it (and adds it to an older secrets file when you re-run it). Without it the dashboard
   shows those lists as unavailable; nothing else changes.

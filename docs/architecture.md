@@ -1,6 +1,6 @@
 # Architecture
 
-AgentFirstStack is four Cloudflare Workers that share one identity database. Each service is
+AgentFirstStack is five Cloudflare Workers that share one identity database. Each service is
 usable on its own, and each is built the same way: Hono routes and MCP tools on top of one service
 layer, D1 for configuration, a Durable Object per hot entity, R2 for blobs and Queues for delivery
 that has to be retried.
@@ -26,6 +26,11 @@ that has to be retried.
      └── AUTH_DB: one D1 identity database (accounts, api_keys, signup_log, users, OAuth) ──┘
            each app also has its own D1 (config) and mirrors account rows into it
 ```
+
+Replay (`replay.*`) sits beside them: the browser recorder (`/r/:id.js`, masked before anything is
+sent) posts gzip chunks to `/i`; they're stored in R2 (`<site>/<session>/<seq>`) and a
+`ReplaySiteDO` per site keeps the session index, derived events, signals, error groups and heatmap
+rollups. Signals can be forwarded to analytics as events over its service binding.
 
 ## Identity
 

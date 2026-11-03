@@ -1,7 +1,7 @@
 {
   "name": "com.agentfirststack/agentfirststack",
   "title": "AgentFirstStack (all services)",
-  "description": "One MCP server for every AgentFirstStack service: web analytics, tag management with server-side conversion tracking, and email inboxes. Tools are prefixed analytics_, tags_ and mail_.",
+  "description": "One MCP server for every AgentFirstStack service: web analytics, tag management with server-side conversion tracking, email inboxes and session replay. Tools are prefixed analytics_, tags_, mail_ and replay_.",
   "version": "0.1.0",
   "websiteUrl": "https://agentfirststack.com",
   "repository": {
