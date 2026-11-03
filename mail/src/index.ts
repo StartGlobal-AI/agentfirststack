@@ -1,4 +1,4 @@
-import { accountRoutes, onError, onNotFound, publicBaseUrl, requireAuth } from "@afs/shared";
+import { accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
 import { handleMcp } from "@afs/shared/mcp";
 import { Hono } from "hono";
 import type { AppEnv, AppHono, WebhookJob } from "./env";
@@ -17,6 +17,8 @@ const VERSION = "0.1.0";
 const app = new Hono<AppHono>();
 app.onError(onError);
 app.notFound(onNotFound);
+// RFC 9728 metadata naming the platform's OAuth server (AUTH_ISSUER), for MCP connectors.
+app.route("/", protectedResourceRoutes({ name: "AgentFirstStack Mail" }));
 
 app.get("/", (c) => {
   const base = publicBaseUrl(c);

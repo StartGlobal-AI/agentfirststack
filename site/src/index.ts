@@ -1,15 +1,36 @@
-import { type AuthContext, accountRoutes, onError, onNotFound } from "@afs/shared";
-import { Hono } from "hono";
+import { accountRoutes, onError, onNotFound, protectedResourceRoutes } from "@afs/shared";
+import { Hono, type MiddlewareHandler } from "hono";
+import { claimLinkApi, claimRoutes } from "./claims";
+import { purgeExpired } from "./cleanup";
+import { dashboard } from "./dashboard";
+import type { Bindings, SiteEnv } from "./env";
+import { authRoutes, siteBase } from "./google";
 import { mcpGateway } from "./mcp-gateway";
+import { oauthApi, oauthPages } from "./oauth";
+import { redirect } from "./session";
 
 // The platform apex (agentfirststack.com). Static assets in public/ (landing page, llms.txt,
-// /.well-known/*) are served by the assets binding. This Worker runs first only for:
-//   /        content negotiation (Accept: text/markdown -> /index.md) and discovery Link headers
-//   /mcp     the MCP gateway over every service
-//   /v1/*    the one signup endpoint for the whole platform, plus key management
-const app = new Hono<{ Bindings: Env; Variables: { auth: AuthContext } }>();
+// privacy and terms, /.well-known/*) are served by the assets binding. This Worker runs first for:
+//   /             content negotiation (Accept: text/markdown -> /index.md) and discovery Link headers
+//   /mcp          the MCP gateway over every service
+//   /v1/*         the one signup endpoint for the whole platform, key management, claim links
+//   /signin, /auth/*, /claim/*, /dashboard/*   optional accounts for people (docs/accounts.md)
+//   /oauth/*, /.well-known/oauth-*             the OAuth 2.1 server for MCP connectors
+const app = new Hono<SiteEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+
+// People-facing pages live on one host (PUBLIC_BASE_URL), so cookies and the Google callback match.
+const canonicalHost: MiddlewareHandler<SiteEnv> = async (c, next) => {
+  const base = c.env.PUBLIC_BASE_URL;
+  if (base && (c.req.method === "GET" || c.req.method === "HEAD")) {
+    const want = new URL(base);
+    const u = new URL(c.req.url);
+    if (u.host !== want.host) return redirect(`${want.origin}${u.pathname}${u.search}`, { status: 302 });
+  }
+  await next();
+};
+for (const path of ["/signin", "/auth/*", "/claim/*", "/dashboard", "/dashboard/*", "/oauth/authorize"]) app.use(path, canonicalHost);
 
 /** Service hosts derive from the apex: https://example.com -> https://analytics.example.com. */
 const serviceUrl = (base: string, svc: string) => {
@@ -57,26 +78,29 @@ app.on(["GET", "HEAD"], "/", async (c) => {
 
 app.all("/mcp", (c) => mcpGateway(c.req.raw, c.env));
 
-// RFC 9728 protected resource metadata, for the apex and (path-suffixed) for the MCP gateway.
-// No authorization_servers on purpose: keys come from one unauthenticated POST /v1/signup, not
-// OAuth. resource_documentation (auth.md) explains registration and credential use.
-const resourceMetadata = (resource: string) => ({
-  resource,
-  resource_name: "AgentFirstStack",
-  resource_documentation: `${new URL(resource).origin}/auth.md`,
-  bearer_methods_supported: ["header"],
-  scopes_supported: ["*", "read"],
-});
-app.get("/.well-known/oauth-protected-resource", (c) =>
-  c.json(resourceMetadata(new URL(c.req.url).origin), 200, { "access-control-allow-origin": "*" }),
+// RFC 9728 protected resource metadata, for the apex and (path-suffixed) for the MCP gateway. Agents
+// still get keys from one POST /v1/signup; the authorization server is for chat connectors.
+app.route(
+  "/",
+  protectedResourceRoutes<Bindings>({
+    name: "AgentFirstStack",
+    documentation: (origin) => `${origin}/auth.md`,
+    defaultIssuer: (c) => siteBase(c),
+  }),
 );
-app.get("/.well-known/oauth-protected-resource/mcp", (c) =>
-  c.json(resourceMetadata(`${new URL(c.req.url).origin}/mcp`), 200, { "access-control-allow-origin": "*" }),
-);
+
+// OAuth 2.1 authorization server (RFC 8414 metadata, RFC 7591 registration, token, revoke) and
+// its consent page; Google sign-in; claim links; the dashboard.
+app.route("/", oauthApi);
+app.route("/", oauthPages);
+app.route("/", authRoutes);
+app.route("/", claimRoutes);
+app.route("/", claimLinkApi);
+app.route("/dashboard", dashboard);
 
 app.route(
   "/",
-  accountRoutes<Env>({
+  accountRoutes<Bindings>({
     keyPrefix: "afs",
     appName: "AgentFirstStack",
     mcpName: "afs",
@@ -98,8 +122,16 @@ app.route(
       `Analytics: POST ${serviceUrl(base, "analytics")}/v1/sites {"domain":"example.com"}`,
       `Tags: POST ${serviceUrl(base, "tags")}/v1/containers {"domain":"example.com"}`,
       `Mail: POST ${serviceUrl(base, "mail")}/v1/inboxes {"username":"example-signups"}`,
+      `When you're done: POST ${base}/v1/claim-link and give the project's owner the returned url, so they can see everything in a dashboard.`,
     ],
   }),
 );
 
-export default app;
+export { app };
+
+export default {
+  fetch: app.fetch,
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
+  },
+} satisfies ExportedHandler<Bindings>;

@@ -33,6 +33,7 @@
       <a href="#services">Services</a>
       <a href="/llms.txt">Manual</a>
       <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
     </nav>
   </div>
 </header>
@@ -43,7 +44,7 @@
   <div class="wrap hero-grid">
     <div class="hero-copy">
       <h1>Infrastructure your agent sets up by itself</h1>
-      <p class="lede">Analytics, tag management with server-side conversion tracking, and email inboxes. No signup form, no verification email, no dashboard. Free and open source.</p>
+      <p class="lede">Analytics, tag management with server-side conversion tracking, and email inboxes. No signup form, no verification email, no dashboard to click through. Free and open source.</p>
       <div class="actions">
         <button class="btn btn-primary" type="button" data-copy>Copy prompt for your agent</button>
         <a class="btn btn-quiet" href="/llms.txt">Read the manual</a>
@@ -92,9 +93,10 @@
         <div class="msg msg-agent" data-step="say"><p>Last, an inbox so I can sign up for Stripe.</p></div>
         <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_inbox signups</code><span class="tool-res">signups@agentfirststack.com</span></div>
         <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>wait_for_email from: stripe.com</code><span class="tool-res is-good">code 482913</span></div>
+        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_claim_link</code><span class="tool-res">link for you</span></div>
 
         <div class="msg msg-agent msg-final" data-step="say">
-          <p>Done. Analytics, conversion tracking and the inbox are set up and verified. To send conversions to your ad accounts I need two things from you:</p>
+          <p>Done. Analytics, conversion tracking and the inbox are set up and verified. Open your claim link to see it all in a dashboard. To send conversions to your ad accounts I need two things from you:</p>
           <ul class="asks">
             <li>Your Meta Conversions API access token</li>
             <li>Your Google Ads conversion ID</li>
@@ -124,7 +126,7 @@
       </li>
       <li>
         <h3>You approve what only you can</h3>
-        <p>Your ad accounts stay yours. The agent asks for the exact IDs and tokens it needs from Google Ads, Meta or TikTok, and tells you where to find them.</p>
+        <p>Your ad accounts stay yours. The agent asks for the exact IDs and tokens it needs from Google Ads, Meta or TikTok, and tells you where to find them. It also gives you a link to claim the project, so you can see everything in a dashboard.</p>
       </li>
     </ol>
   </div>
@@ -275,7 +277,7 @@ pnpm afs deploy mystack</pre>
 <footer class="footer">
   <div class="wrap footer-inner">
     <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
-    <p class="footer-links"><a href="/llms.txt">Manual</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a><a href="mailto:abuse@agentfirststack.com">Report abuse</a></p>
+    <p class="footer-links"><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a><a href="mailto:abuse@agentfirststack.com">Report abuse</a></p>
   </div>
 </footer>
 
@@ -296,7 +298,9 @@ pnpm afs deploy mystack</pre>
 
 4. If you support MCP, add the servers listed in the manual so you can call the tools directly.
 
-When you're done, tell me what you set up, how you verified it, and anything still waiting on me.</template>
+5. Last, create a claim link for me with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool). It lets me sign in and see everything you set up in a dashboard.
+
+When you're done, tell me what you set up, how you verified it, anything still waiting on me, and give me the claim link.</template>
 
 <script src="/app.js" defer></script>
 </body>

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · AgentFirstStack</title>
+<meta name="description" content="What AgentFirstStack stores, why, and how to delete it.">
+<link rel="canonical" href="https://agentfirststack.com/privacy">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body class="app">
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap app-main">
+<article class="legal">
+<h1>Privacy</h1>
+<p class="muted">Last updated 3 November 2026</p>
+
+<p class="lead">AgentFirstStack is a free, open-source service run by StartGlobal at agentfirststack.com. This page says what we store, why we store it, and how to delete it. The <a href="https://github.com/StartGlobal-AI/agentfirststack">source code</a> is public, so you can check every word.</p>
+
+<h2>Agents don't need an account</h2>
+<p>Most use never involves a person. An agent creates a project with one request and gets an API key. For that we store:</p>
+<ul>
+  <li>the project: an id, and a name or email address only if the agent sends one (we never verify or contact it);</li>
+  <li>its API keys as SHA-256 hashes (never the keys themselves), with their names, scope, and when they were created and last used;</li>
+  <li>a truncated hash of the network a signup came from, for 24 hours, to limit abuse.</li>
+</ul>
+
+<h2>If you sign in with Google</h2>
+<p>Signing in is optional. It lets you see the projects your agents created, manage their keys and teammates, and connect chat apps. We ask Google only for your basic profile (the <code>openid</code>, <code>email</code> and <code>profile</code> scopes) and store:</p>
+<ul>
+  <li>your Google account id, email address, name and the address of your profile picture (we never load the picture);</li>
+  <li>which projects you belong to, and whether you're the owner or a member;</li>
+  <li>your sign-in sessions, as hashes of the cookie, until 30 days after you last use them;</li>
+  <li>the apps you connect over OAuth (for example Claude or ChatGPT): which app, which project, the access you gave and when it was last used. Their tokens are stored as hashes; access tokens last 8 hours and refresh tokens 30 days;</li>
+  <li>claim and invite links, as hashes, until they're used or expire after 7 days.</li>
+</ul>
+<p>We use this only to sign you in and show you your projects. We don't sell it, share it with advertisers or use it for marketing, and we don't send you email.</p>
+
+<h2>Cookies</h2>
+<p>These pages set one cookie, <code>afs_session</code>, to keep you signed in, and a short-lived one (10 minutes) while you sign in with Google. There are no analytics or advertising cookies on them.</p>
+
+<h2>What's in a project</h2>
+<p>The data agents put into a project (sites and their visit statistics, tag containers and their event logs, inboxes and their mail, and the ad-platform credentials you choose to add) is stored to provide those services, and kept as each service's manual describes. For example, mail on shared <code>@agentfirststack.com</code> addresses is deleted after 30 days, and third-party credentials are encrypted and never shown again.</p>
+
+<h2>Where it's stored</h2>
+<p>On Cloudflare (Workers, D1, Durable Objects and R2), which runs the service for us. Google handles the sign-in itself under its own privacy policy.</p>
+
+<h2>Deleting your data</h2>
+<ul>
+  <li><b>Your account:</b> Account &gt; Delete my account removes your user record, memberships, sessions, connected apps and every token they issued, at once. Projects stay, because they belong to the project and not to you: their agent keys keep working, and a project with no members left becomes unclaimed again.</li>
+  <li><b>A project's contents:</b> delete sites, containers and inboxes through the API or ask your agent to, and revoke keys in the dashboard.</li>
+  <li><b>Backups:</b> the database keeps point-in-time recovery for up to 30 days, after which deleted data is gone for good.</li>
+</ul>
+
+<h2>Questions</h2>
+<p>Email <a href="mailto:privacy@agentfirststack.com">privacy@agentfirststack.com</a>. If we change this policy, we update this page and the date at the top.</p>
+</article>
+</main>
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:abuse@agentfirststack.com">Report abuse</a></p>
+  </div>
+</footer>
+</body>
+</html>

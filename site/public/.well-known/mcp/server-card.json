@@ -25,7 +25,7 @@
       "supportedProtocolVersions": ["2025-11-25", "2025-06-18", "2025-03-26"],
       "authentication": {
         "type": "bearer",
-        "description": "API key from one unauthenticated request: POST https://agentfirststack.com/v1/signup. No OAuth, no email.",
+        "description": "API key from one unauthenticated request: POST https://agentfirststack.com/v1/signup (no email). Chat apps can connect with OAuth 2.1 instead (sign in with Google); see auth.md.",
         "registration_url": "https://agentfirststack.com/v1/signup",
         "documentation_url": "https://agentfirststack.com/auth.md"
       },
@@ -45,6 +45,6 @@
       "listChanged": false
     }
   },
-  "toolCount": 73,
+  "toolCount": 74,
   "documentation": "https://agentfirststack.com/llms.txt"
 }

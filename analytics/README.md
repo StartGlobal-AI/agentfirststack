@@ -212,6 +212,7 @@ pages/sources/countries/devices tables, light and dark. It reads `GET /share/:to
 |---|---|
 | `PUBLIC_BASE_URL` | var; the URL agents and snippets use (empty = request origin) |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | see `@afs/shared` auth |
+| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SALT_SECRET` | secret, required; derives the daily visitor salt and each site's proxy key (`/e` returns 503 without it) |
 | `SQL_MAX_ROWS_READ` | optional var; rows a SQL query may read after its first result row before it is stopped. Default 1000000 |
 | `DEV_MODE` | `"true"` only in local `.dev.vars`: honours `x-dev-geo-{country,region,region-code,city,continent,timezone,lat,lon}` headers, lets verify fetch localhost, falls back to an insecure salt. Empty in `wrangler.jsonc` |

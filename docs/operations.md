@@ -42,6 +42,15 @@ deploy.
 | `SALT_SECRET` (analytics) | Safe; visitor ids for the current day are split once, nothing else changes |
 | `ENCRYPTION_KEY` (tags, mail) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it. Keep it backed up |
 | `SIGNUP_TOKEN` | Safe; callers need the new value |
+| `INTERNAL_TOKEN` (all apps) | Safe: edit the file and deploy all four apps (`pnpm afs deploy <profile>`). Between the first and last app, the dashboard may show resource lists as unavailable |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (site) | Safe; create a new secret in Google Cloud Console, deploy the site, then delete the old one. Existing sessions keep working |
+
+## Scheduled jobs
+
+- **site**, daily at 03:17 UTC: deletes expired OAuth access tokens (API keys with `expires_at`),
+  authorization codes, refresh tokens, sessions and claim links, unusable grants older than a
+  month and OAuth clients nobody authorized. Logged as `cron.purge` with counts.
+- **mail**, hourly: retention purges (see the mail README).
 
 ## Watching it
 

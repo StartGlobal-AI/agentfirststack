@@ -9,3 +9,5 @@ SIGNUP_TOKEN=
 DEV_MODE=true
 # Base URL of the analytics app (for `analytics` tags/destinations without base_url).
 ANALYTICS_BASE_URL=http://localhost:8787
+# Optional: same value as the site's; lets the site's dashboard read this app as a project (x-afs-internal).
+# INTERNAL_TOKEN=

@@ -5,6 +5,7 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { type AuthBindings, type AuthContext, authenticate, authenticateEnv, canWrite, extractKey } from "./auth";
 import { ApiError } from "./errors";
+import { mcpChallenge } from "./resource";
 
 /**
  * Stateless remote MCP (Streamable HTTP, JSON responses) for a Worker. A fresh McpServer per
@@ -94,10 +95,12 @@ function makeRegistrar(server: McpServer, auth: AuthContext): ToolRegistrar {
   };
 }
 
-const unauthorizedMcp = (hint: string) =>
+// The challenge points at RFC 9728 metadata, so OAuth-capable clients (claude.ai, ChatGPT) can
+// find the authorization server; clients with a key never see it.
+const unauthorizedMcp = (request: Request, hint: string, invalidToken: boolean) =>
   new Response(JSON.stringify(new ApiError(401, "unauthorized", "Missing or invalid API key.", hint).toJSON()), {
     status: 401,
-    headers: { "content-type": "application/json", "www-authenticate": 'Bearer realm="mcp"' },
+    headers: { "content-type": "application/json", "www-authenticate": mcpChallenge(request, invalidToken) },
   });
 
 /**
@@ -110,12 +113,12 @@ export async function handleMcp(request: Request, envOrDb: AuthBindings | D1Data
     return new Response(null, { status: 405, headers: { allow: "POST" } });
   }
   const token = extractKey(request);
-  if (!token) return unauthorizedMcp("Add header `Authorization: Bearer <api_key>`. Get a key with POST /v1/signup.");
+  if (!token) return unauthorizedMcp(request, "Add header `Authorization: Bearer <api_key>`. Get a key with POST /v1/signup.", false);
   const auth =
     "prepare" in envOrDb && typeof envOrDb.prepare === "function"
       ? await authenticate(envOrDb as D1Database, token)
       : await authenticateEnv(envOrDb as AuthBindings, token);
-  if (!auth) return unauthorizedMcp("That API key is unknown or revoked. POST /v1/signup for a new one.");
+  if (!auth) return unauthorizedMcp(request, "That API key is unknown, revoked or expired. POST /v1/signup for a new one.", true);
 
   const server = new McpServer(
     { name: opts.name, version: opts.version },

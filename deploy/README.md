@@ -8,7 +8,7 @@ writes a `wrangler.deploy.json` for each app from that app's generic `wrangler.j
 |---|---|---|
 | `hosted.json` | yes | The official deployment at agentfirststack.com |
 | `<name>.json` | your choice | Your deployment, created by `pnpm afs init <name> ...` |
-| `<name>.secrets.json` | **never** (git-ignored) | `ADMIN_TOKEN`, `SALT_SECRET`, `ENCRYPTION_KEY`s. Back it up somewhere safe |
+| `<name>.secrets.json` | **never** (git-ignored) | `ADMIN_TOKEN` and `INTERNAL_TOKEN` (top level, every app), `SALT_SECRET`, `ENCRYPTION_KEY`s, optional `site.GOOGLE_CLIENT_ID` / `site.GOOGLE_CLIENT_SECRET`. Back it up somewhere safe |
 
 ## Format
 
@@ -32,7 +32,7 @@ writes a `wrangler.deploy.json` for each app from that app's generic `wrangler.j
 ```
 
 Everything else is derived: Worker names (`<prefix>-<app>`), custom domains, `PUBLIC_BASE_URL`,
-`MAIL_DOMAIN`, `ANALYTICS_BASE_URL`, R2 bucket and queue names. Vars in the profile override the
+`AUTH_ISSUER` (the site, for OAuth), `MAIL_DOMAIN`, `ANALYTICS_BASE_URL`, R2 bucket and queue names. Vars in the profile override the
 template's; the optional ones each app understands are listed in its README under "Config".
 
 See [docs/self-hosting.md](../docs/self-hosting.md) for the full walkthrough.

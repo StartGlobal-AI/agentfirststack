@@ -305,6 +305,7 @@ missing and where to find them). Read-only keys only see the read tools.
 |---|---|
 | `PUBLIC_BASE_URL` | var; empty = request origin |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth |
+| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `ENCRYPTION_KEY` | secret, 32 bytes base64 (`openssl rand -base64 32`) |
 | `ANALYTICS_BASE_URL` | var; default base URL of the analytics app for `analytics` tags/destinations |
 | `DEV_MODE` | var; `true` only locally (allows `http://localhost` webhooks) |

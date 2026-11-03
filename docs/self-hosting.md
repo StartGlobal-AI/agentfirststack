@@ -83,7 +83,8 @@ database (`AUTH_DB`) and migrates it itself, so a single app works on its own: a
 keys keep working because they all read the same identity database.
 
 To run an app completely standalone (keys in its own database), delete the `AUTH_DB` binding
-from its `wrangler.jsonc` before deploying.
+from its `wrangler.jsonc` before deploying. A standalone app has no OAuth server: its RFC 9728
+metadata lists none unless you set `AUTH_ISSUER`.
 
 ## Update
 
@@ -102,11 +103,37 @@ newer version over an older one is safe. Read `CHANGELOG.md` before upgrading ac
 repository.
 
 - `ADMIN_TOKEN`: operator access (signup when closed, admin-only mail features).
+- `INTERNAL_TOKEN` (top level, set on all four Workers): lets the site's dashboard read a
+  project's sites, containers and inboxes from the services over service bindings. `init`
+  generates it (and adds it to an older secrets file when you re-run it). Without it the dashboard
+  shows those lists as unavailable; nothing else changes.
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (site, optional): turn on "Sign in with Google" for
+  claim links, the dashboard and OAuth connectors. Put them under `"site"` (or at the top level;
+  they only go to the site). See [Sign-in for people](#sign-in-for-people-optional).
 - `SALT_SECRET` (analytics): derives the daily salt for cookieless visitor ids.
 - `ENCRYPTION_KEY` (tags, mail): seals stored third-party credentials and webhook secrets.
   **If you lose it, those stored values can't be decrypted**; users have to re-enter them.
 
 `pnpm afs deploy` sets them on every deploy. To change one, edit the file and deploy again.
+
+## Sign-in for people (optional)
+
+Agents never need it. To let people claim projects, use the dashboard and connect Claude or
+ChatGPT over OAuth ([accounts.md](accounts.md)):
+
+1. Google Cloud Console > APIs & Services > OAuth consent screen: External, your app name, home
+   page `https://example.com`, privacy policy `https://example.com/privacy`, terms
+   `https://example.com/terms`, scopes `openid`, `email`, `profile` (no verification needed for
+   these).
+2. Credentials > Create OAuth client ID > Web application, with the authorised redirect URI
+   `https://example.com/auth/google/callback`.
+3. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` under `"site"` in your secrets file and
+   `pnpm afs deploy mystack`.
+
+`pnpm afs config` sets `AUTH_ISSUER=https://<domain>` on every app, so each service's RFC 9728
+metadata names the site as the OAuth authorization server. The site's daily cron (03:17 UTC)
+deletes expired OAuth tokens, codes, sessions and claim links. The privacy and terms pages in
+`site/public/` describe the hosted service; edit them for your deployment.
 
 ## Remove a deployment
 

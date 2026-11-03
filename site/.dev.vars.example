@@ -1,3 +1,10 @@
 # Local secrets for `pnpm dev` (copy to .dev.vars, git-ignored). All optional here.
 ADMIN_TOKEN=
 SIGNUP_TOKEN=
+# Local dev only: enables the fake sign-in at /auth/dev-login?email=you@example.com.
+DEV_MODE=true
+# Optional: real "Sign in with Google" (redirect URI http://localhost:8786/auth/google/callback).
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# Optional: shared with the services' .dev.vars so the dashboard can list a project's resources.
+INTERNAL_TOKEN=

@@ -152,7 +152,8 @@ export function buildConfig(profile, app, template) {
     cfg.ratelimits = template.ratelimits.map((r) => ({ ...r, namespace_id: String(profile.ratelimit_namespace) }));
   }
 
-  const derived = { PUBLIC_BASE_URL: `https://${hostOf(profile, app)}` };
+  // AUTH_ISSUER: the OAuth authorization server (the site) that every app's RFC 9728 metadata names.
+  const derived = { PUBLIC_BASE_URL: `https://${hostOf(profile, app)}`, AUTH_ISSUER: `https://${profile.domain}` };
   if (app === "tags") derived.ANALYTICS_BASE_URL = `https://${hostOf(profile, "analytics")}`;
   if (app === "mail") {
     derived.MAIL_DOMAIN = profile.mail_domain || profile.domain;
@@ -172,6 +173,17 @@ function writeConfigs(profile, apps = APPS) {
     writeFileSync(join(ROOT, app, DEPLOY_FILE), `${JSON.stringify({ ...header, ...cfg }, null, 2)}\n`);
     log(`  ${app}/${DEPLOY_FILE}  ->  ${cfg.name} on ${cfg.routes.map((r) => r.pattern).join(", ")}`);
   }
+}
+
+/**
+ * The secrets one app gets: ADMIN_TOKEN and INTERNAL_TOKEN (top level, every app), the site's
+ * GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (top level or under "site"), then the app's own block.
+ */
+export function secretsFor(secrets, app) {
+  const out = {};
+  for (const k of ["ADMIN_TOKEN", "INTERNAL_TOKEN"]) if (secrets[k]) out[k] = secrets[k];
+  if (app === "site") for (const k of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) if (secrets[k]) out[k] = secrets[k];
+  return { ...out, ...(secrets[app] ?? {}) };
 }
 
 // ---------- commands ----------
@@ -224,17 +236,28 @@ async function cmdInit(name, opts) {
   saveProfile(profile);
   log(`\nWrote deploy/${name}.json`);
 
-  if (!loadSecrets(name)) {
+  const existingSecrets = loadSecrets(name);
+  if (!existingSecrets) {
     const b64 = () => randomBytes(32).toString("base64");
     const secrets = {
       ADMIN_TOKEN: randomBytes(32).toString("hex"),
+      // Shared by all four Workers: the site's dashboard reads resources from the services with it.
+      INTERNAL_TOKEN: randomBytes(32).toString("hex"),
       analytics: { SALT_SECRET: b64() },
       tags: { ENCRYPTION_KEY: b64() },
       mail: { ENCRYPTION_KEY: b64() },
     };
     writeFileSync(secretsPath(name), `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
     log(`Wrote deploy/${name}.secrets.json (git-ignored; keep it safe: losing ENCRYPTION_KEY makes stored credentials unreadable)`);
+  } else if (!existingSecrets.INTERNAL_TOKEN) {
+    // Profiles created before the dashboard existed: add the one new top-level secret, keep the rest.
+    existingSecrets.INTERNAL_TOKEN = randomBytes(32).toString("hex");
+    writeFileSync(secretsPath(name), `${JSON.stringify(existingSecrets, null, 2)}\n`, { mode: 0o600 });
+    log(`Added INTERNAL_TOKEN to deploy/${name}.secrets.json`);
   }
+  log(
+    'Optional: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET under "site" in the secrets file turn on Sign in with Google (docs/accounts.md).',
+  );
   log(`\nNext: pnpm afs deploy ${name}   then   pnpm afs email ${name}`);
 }
 
@@ -252,6 +275,9 @@ function cmdDeploy(name, apps, opts) {
   const targets = apps.length ? apps : APPS;
   for (const a of targets) if (!APPS.includes(a)) die(`Unknown app "${a}". Apps: ${APPS.join(", ")}`);
   writeConfigs(profile, targets);
+  if (secrets && !opts["skip-secrets"] && !secrets.INTERNAL_TOKEN) {
+    log(`! deploy/${name}.secrets.json has no INTERNAL_TOKEN: the dashboard can't list resources. \`pnpm afs init ${name}\` adds one.`);
+  }
   // Identity first: every app authenticates against it.
   const order = APPS.filter((a) => targets.includes(a));
   for (const app of order) {
@@ -264,7 +290,7 @@ function cmdDeploy(name, apps, opts) {
     }
     if (!wrangler(app, ["deploy", "-c", DEPLOY_FILE]).ok) die(`wrangler deploy failed for ${app}.`);
     if (secrets && !opts["skip-secrets"]) {
-      const appSecrets = { ...(secrets.ADMIN_TOKEN ? { ADMIN_TOKEN: secrets.ADMIN_TOKEN } : {}), ...(secrets[app] ?? {}) };
+      const appSecrets = secretsFor(secrets, app);
       if (Object.keys(appSecrets).length) {
         const f = join(tmpdir(), `afs-${name}-${app}-${process.pid}.json`);
         writeFileSync(f, JSON.stringify(appSecrets), { mode: 0o600 });
@@ -373,6 +399,14 @@ async function cmdCheck(name) {
   step("tags: create container with the shared key", !!ctr.json?.container?.id);
   const inbox = await call(`${base("mail")}/v1/inboxes`, { method: "POST", headers: H, body: JSON.stringify({}) });
   step("mail: create inbox with the shared key", !!inbox.json?.inbox?.id, inbox.json?.inbox?.address ?? "");
+  const as = await call(`${base("site")}/.well-known/oauth-authorization-server`);
+  step("OAuth authorization server metadata", as.json?.issuer === base("site"), as.json?.issuer ?? `HTTP ${as.status}`);
+  for (const app of APPS) {
+    const prm = await call(`${base(app)}/.well-known/oauth-protected-resource/mcp`);
+    step(`${app}: protected resource metadata names it`, prm.json?.authorization_servers?.[0] === base("site"));
+  }
+  const claim = await call(`${base("site")}/v1/claim-link`, { method: "POST", headers: H });
+  step("claim link", claim.status === 201 && String(claim.json?.url ?? "").startsWith(`${base("site")}/claim/`));
   for (const app of ["analytics", "tags", "mail"]) {
     const t = await call(`${base(app)}/mcp`, {
       method: "POST",

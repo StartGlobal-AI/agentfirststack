@@ -14,3 +14,5 @@ ADMIN_TOKEN=
 # (Zone Read, Zone Settings Edit, Email Routing Rules Edit, Email Sending Edit). Leave empty locally.
 CF_API_TOKEN=
 CF_ACCOUNT_ID=
+# Optional: same value as the site's; lets the site's dashboard read this app as a project (x-afs-internal).
+# INTERNAL_TOKEN=

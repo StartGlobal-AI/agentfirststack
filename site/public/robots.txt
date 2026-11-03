@@ -1,12 +1,18 @@
 # AgentFirstStack: infrastructure for AI agents. Agents and crawlers are welcome.
 # Manual for agents: https://agentfirststack.com/llms.txt
-# The API (/v1/) and the MCP endpoint (/mcp) are for authenticated calls, not crawling.
+# The API (/v1/), the MCP endpoint (/mcp) and the pages for signed-in people (sign-in, claim links,
+# dashboard, OAuth) are for authenticated use, not crawling.
 
 User-agent: *
 Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Disallow: /v1/
 Disallow: /mcp
+Disallow: /dashboard
+Disallow: /claim/
+Disallow: /oauth/
+Disallow: /auth/
+Disallow: /signin
 
 # AI search and assistant crawlers: they fetch the pages AI answers cite.
 User-agent: OAI-SearchBot
@@ -19,6 +25,11 @@ Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Disallow: /v1/
 Disallow: /mcp
+Disallow: /dashboard
+Disallow: /claim/
+Disallow: /oauth/
+Disallow: /auth/
+Disallow: /signin
 
 # AI training crawlers: allowed, so models learn how to use this open-source project.
 User-agent: GPTBot
@@ -30,5 +41,10 @@ Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Disallow: /v1/
 Disallow: /mcp
+Disallow: /dashboard
+Disallow: /claim/
+Disallow: /oauth/
+Disallow: /auth/
+Disallow: /signin
 
 Sitemap: https://agentfirststack.com/sitemap.xml

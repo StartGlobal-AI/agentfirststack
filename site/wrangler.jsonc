@@ -11,12 +11,26 @@
   // Regenerates public/.well-known/agent-skills/index.json (sha256 digests) before dev/deploy.
   "build": { "command": "node scripts/build-discovery.mjs", "watch_dir": "public/.well-known/agent-skills" },
 
-  // Static landing page, llms.txt and /.well-known/* from public/. The Worker runs first only for
-  // "/" (markdown negotiation + Link headers), the MCP gateway and the API.
+  // Static landing page, llms.txt, privacy/terms and /.well-known/* from public/. The Worker runs
+  // first for "/" (markdown negotiation + Link headers), the MCP gateway, the API, the pages for
+  // people (sign-in, claim links, dashboard) and the OAuth authorization server.
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
-    "run_worker_first": ["/", "/mcp", "/v1/*", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/*"]
+    "run_worker_first": [
+      "/",
+      "/mcp",
+      "/v1/*",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/*",
+      "/.well-known/oauth-authorization-server",
+      "/oauth/*",
+      "/signin",
+      "/auth/*",
+      "/claim/*",
+      "/dashboard",
+      "/dashboard/*"
+    ]
   },
 
   // The MCP gateway forwards tool calls to each service's own MCP server.
@@ -36,7 +50,10 @@
     }
   ],
 
-  // Burst limit on signup per IP (the binding only supports 10s/60s windows).
+  // Daily: delete expired OAuth tokens and codes, sessions and claim links from the identity DB.
+  "triggers": { "crons": ["17 3 * * *"] },
+
+  // Burst limit on signup (and OAuth client registration) per IP (the binding only supports 10s/60s windows).
   "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
 
   "vars": {
@@ -44,8 +61,13 @@
     "PUBLIC_BASE_URL": "",
     "SIGNUP_MODE": "open",
     // Must match the apps: the per-IP signup count in signup_log is keyed with it.
-    "KEY_PREFIX": "afs"
+    "KEY_PREFIX": "afs",
+    // "true" only in local dev and tests: enables the fake sign-in at /auth/dev-login.
+    "DEV_MODE": ""
   },
-  // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT. Secrets: ADMIN_TOKEN, SIGNUP_TOKEN.
+  // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT, AUTH_ISSUER (the OAuth issuer; default
+  // PUBLIC_BASE_URL), OAUTH_REGISTER_HOURLY_LIMIT (new OAuth clients per network per hour, default 30).
+  // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard),
+  // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google). See docs/accounts.md.
   "observability": { "enabled": true }
 }

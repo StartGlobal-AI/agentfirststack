@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "agentfirststack.com: landing page, the master llms.txt, and the shared signup/identity endpoint.",
+  "description": "agentfirststack.com: landing page, the master llms.txt, the shared signup/identity endpoint, the MCP gateway, optional sign-in, dashboard and OAuth server.",
   "scripts": {
     "dev": "wrangler dev --port 8786",
     "types": "wrangler types --strict-vars=false",
     "typecheck": "wrangler types --strict-vars=false >/dev/null && tsc --noEmit",
+    "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "deploy": "echo 'Deploy from the repo root: pnpm afs deploy <profile> site  (see docs/self-hosting.md)' && exit 1"
   },
@@ -17,7 +18,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
     "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
     "wrangler": "^4.156.2"
   }
 }

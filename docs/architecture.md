@@ -14,16 +14,16 @@ that has to be retried.
   apex          analytics.*       tags.*         mail.*  ◄─────┼── MX ── Email Routing (catch-all)
   landing,      /s.js, /e         /c/:id.js,     inboxes,      │
   llms.txt,     SiteDO per site   /collect       InboxDO per   │
-  signup        (events,          ContainerDO    inbox (wait)  │
-                sessions, SQL)    per container                │
-                                  (identities,                 │
-                                  event log)                   │
+  signup, MCP   (events,          ContainerDO    inbox (wait)  │
+  gateway,      sessions, SQL)    per container                │
+  dashboard,                      (identities,                 │
+  OAuth server                    event log)                   │
                                      │ Queue                   │ Queue (webhooks)
                                      ▼                         ▼
                        GA4 · Meta · Google Ads ·        customer webhooks,
                        TikTok · webhook · analytics     Email Sending (send_email)
      │              │              │              │
-     └──── AUTH_DB: one D1 identity database (accounts, api_keys, signup_log) ────┘
+     └── AUTH_DB: one D1 identity database (accounts, api_keys, signup_log, users, OAuth) ──┘
            each app also has its own D1 (config) and mirrors account rows into it
 ```
 
@@ -38,8 +38,37 @@ that has to be retried.
   app's own database, so the app's foreign keys and cascades keep working without cross-database
   joins.
 - Without `AUTH_DB` an app keeps keys in its own database and runs fully standalone.
+- Keys may carry an `expires_at`. `authenticate()` rejects a key once it passes; OAuth access
+  tokens use it (8 hours). Every app's own `api_keys` table has the column too, for standalone mode.
+- **Internal auth.** A request with `x-afs-internal: <INTERNAL_TOKEN>` (constant-time compare) and
+  `x-afs-account: acct_...` (an existing account) is a full-access caller for that account in
+  `requireAuth()`. The site's dashboard uses it over service bindings. A wrong token is a `401`;
+  without the secret the headers are ignored.
 
-Code: `shared/src/auth.ts`.
+Code: `shared/src/auth.ts`, `shared/src/resource.ts` (RFC 9728 metadata).
+
+## People and OAuth (optional)
+
+Agents never need any of this; see [accounts.md](accounts.md) for the full design. It all lives in
+the site Worker and the identity database (`site/migrations/0003_*`, `0004_*`).
+
+- **Users** sign in with Google (OIDC, PKCE, state, nonce; the ID token comes from the direct token
+  response). A session is a random cookie (`afs_session`, HttpOnly, Secure, SameSite=Lax, apex
+  only) of which only the SHA-256 is stored; it lasts 30 days, sliding. CSRF tokens are derived
+  from the cookie value, so they're never stored.
+- **Memberships** link users to accounts ("projects") as owner or member. Every dashboard route
+  looks the membership up first; a non-member gets a 404.
+- **Claim links** (`POST /v1/claim-link`, the gateway tool `afs_create_claim_link`) are single-use,
+  7-day tokens a full-access key can mint, so the person behind an agent can claim its project.
+- **Dashboard** (`/dashboard`): server-rendered HTML without JavaScript, `frame-ancestors 'none'`,
+  every form a POST with a CSRF token. Resource lists come from the services over their service
+  bindings with internal auth.
+- **OAuth 2.1 server** for MCP connectors: RFC 8414 metadata, dynamic registration of public
+  clients, consent with a project picker, PKCE S256, exact redirect URIs, single-use 10-minute
+  codes, `iss` on the redirect, rotating refresh tokens (reuse revokes the grant). Access tokens
+  are API keys with `expires_at`, so no service knows OAuth exists. Every service's RFC 9728
+  metadata names the site (`AUTH_ISSUER`) and every `/mcp` 401 points at that metadata.
+- A daily cron on the site deletes expired keys, codes, refresh tokens, sessions and claim links.
 
 ## One service layer, two interfaces
 
@@ -134,5 +163,7 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   say so, and the mail UI renders HTML in a sandboxed iframe with remote content blocked.
 - Role addresses certificate authorities use (admin@, postmaster@, ...) can never be claimed.
 - Public deployments turn on the fair-use vars (see [self-hosting.md](self-hosting.md)).
+- Tokens of every kind (API keys, OAuth access and refresh tokens, codes, sessions, claim links)
+  are stored as SHA-256 hashes only.
 
 See [SECURITY.md](../SECURITY.md) to report a vulnerability.

@@ -2,7 +2,8 @@
 
 > Free, open-source infrastructure built for AI agents: web analytics, a tag manager with
 > server-side conversion tracking, and email inboxes. Everything is a REST call and an MCP tool.
-> There is no signup form, no verification email and no dashboard: one request gets a key.
+> There is no signup form and no verification email: one request gets a key. When you're done,
+> give the owner a claim link so they can see it all in a dashboard (section 7).
 
 - Hosted (free): https://agentfirststack.com
 - Source (MIT): https://github.com/StartGlobal-AI/agentfirststack
@@ -129,9 +130,29 @@ test event in the platform's test mode and returns the platform's own answer.
 
 Everything else (signup, sites, containers, conversions, inboxes, verification) you can do alone.
 
-## 7. MCP
+## 7. Let the owner claim the project
 
-One MCP server for every service (73 tools, prefixed `analytics_`, `tags_` and `mail_`):
+Finish every setup by giving the person you work for a claim link. It's a single-use URL, valid
+for 7 days. They open it, sign in with Google, and see everything this key set up (sites, tag
+containers, inboxes) in a dashboard at https://agentfirststack.com/dashboard, where they can also
+manage keys, invite teammates and connect chat apps. Your key keeps working after they claim it.
+
+```sh
+curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
+# -> { "url": "https://agentfirststack.com/claim/<token>", "expires_at": 1793000000000,
+#      "account_id": "acct_...", "next_steps": [ ... ] }
+```
+
+- It needs a full-access key (scope `*`). Over MCP it's the gateway tool `afs_create_claim_link`.
+- Give the owner the `url` in your final message. If they already have an account, the link adds
+  them to this project; if the project already has an owner, they join as a member.
+- Lost it? Make another. A project can have up to 25 unused links at a time.
+- Owners who already have the key can also paste it under "Add a project by key" in the dashboard.
+
+## 8. MCP
+
+One MCP server for every service (73 tools, prefixed `analytics_`, `tags_` and `mail_`, plus the
+gateway's own `afs_create_claim_link`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -149,13 +170,33 @@ Other clients: URL `<base>/mcp`, header `Authorization: Bearer <key>`. Discovery
 for it: `/.well-known/mcp/server-card.json`, `/.well-known/ai-catalog.json`, `/.well-known/api-catalog`,
 `/.well-known/agent-skills/index.json` and `/auth.md`.
 
-## 8. Keys and account (on https://agentfirststack.com or any service)
+### Chat apps (claude.ai, ChatGPT): OAuth
+
+Chat apps can't hold an API key, so they connect over OAuth 2.1 instead. Add
+`https://agentfirststack.com/mcp` (or a service's `/mcp`) as a custom connector with no key. The
+app finds the authorization server from the `401` (`WWW-Authenticate: Bearer resource_metadata=...`),
+registers itself, and sends the person to sign in with Google, pick a project and choose full or
+read-only access.
+
+- Metadata: `https://agentfirststack.com/.well-known/oauth-authorization-server` (RFC 8414) and
+  `/.well-known/oauth-protected-resource/mcp` (RFC 9728) on every host.
+- Endpoints: `POST /oauth/register` (RFC 7591, public clients), `GET /oauth/authorize`,
+  `POST /oauth/token` (`authorization_code` with PKCE S256, rotating `refresh_token`),
+  `POST /oauth/revoke` (RFC 7009).
+- Access tokens are ordinary API keys that expire after 8 hours, for the chosen project and scope,
+  so they work on every service. Refresh tokens last 30 days and change on every refresh.
+
+Agents with a key never need any of this.
+
+## 9. Keys and account (on https://agentfirststack.com or any service)
 
 - `GET /v1/me`: the account and the calling key.
 - `GET /v1/keys`, `POST /v1/keys {"name":"ci","scope":"read"}`, `DELETE /v1/keys/:id`.
-  Scope `*` can change things; `read` sees GET routes and read-only MCP tools only.
+  Scope `*` can change things; `read` sees GET routes and read-only MCP tools only. Keys with an
+  `expires_at` are OAuth access tokens for connected chat apps; they stop working when it passes.
+- `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 7).
 
-## 9. How every service behaves
+## 10. How every service behaves
 
 - Errors: `{"error":{"code","message","hint","details"}}`. The hint says how to recover.
 - Retries are safe: creating something that already exists (a site's domain, an inbox address)
@@ -163,7 +204,7 @@ for it: `/.well-known/mcp/server-card.json`, `/.well-known/ai-catalog.json`, `/.
 - Every setup step has a check: analytics `verify`, tags `validate` and `test`, mail `wait`.
 - JSON is snake_case, timestamps are unix ms, ids look like `site_...`, `ctr_...`, `inb_...`.
 
-## 10. Fair use on the hosted version
+## 11. Fair use on the hosted version
 
 - 10 new accounts per hour from one network (and a short burst limit).
 - 50 sites, 50 tag containers and 50 inboxes per account.

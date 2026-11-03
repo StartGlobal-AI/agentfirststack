@@ -6,7 +6,7 @@
 
 <p align="center">
   Analytics, tag management and email inboxes that an AI agent sets up by itself.<br>
-  No signup form, no verification email, no dashboard. Free to use, and open source.
+  No signup form, no verification email, no dashboard to click through. Free to use, and open source.
 </p>
 
 <p align="center">
@@ -33,6 +33,9 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 - **Everything is an API call and an MCP tool.** Nothing is hidden behind a settings page.
 - **The manual is a text file.** Each service serves `/llms.txt` with every endpoint, tool and field.
 - **Every step can be verified.** The agent checks its own work instead of guessing.
+- **Humans optional.** When it's done, the agent hands its person a claim link. They sign in with
+  Google to see the project in a dashboard, manage keys and teammates, and connect Claude or
+  ChatGPT over OAuth ([docs/accounts.md](docs/accounts.md)).
 
 ## Services
 

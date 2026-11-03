@@ -6,7 +6,7 @@ and hosted for free at https://agentfirststack.com.
 
 | App | What it replaces | Hosted at | Local port |
 |---|---|---|---|
-| [`site/`](site) | Landing page, master `llms.txt`, platform-wide signup, MCP gateway (`/mcp`), agent discovery files (`/.well-known/*`, `auth.md`, robots, sitemap) | agentfirststack.com | 8786 |
+| [`site/`](site) | Landing page, master `llms.txt`, platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard, OAuth 2.1 server for MCP connectors (see `docs/accounts.md`) | agentfirststack.com | 8786 |
 | [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue) | analytics.agentfirststack.com | 8787 |
 | [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok) with dedup | tags.agentfirststack.com | 8788 |
 | [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
@@ -43,6 +43,14 @@ platform: `afs-identity`, migrated from `site/migrations`). The first time an ac
 app, `ensureLocalAccount()` mirrors a bare `accounts` row into that app's own `DB`, so the app's
 foreign keys to `accounts(id)` keep working. Without `AUTH_DB` (self-hosting a single app) keys
 live in the app's own `DB`. `KEY_PREFIX=afs` makes every app mint `afs_` keys.
+
+## Humans (optional) and OAuth
+
+Agents never need a person. People can sign in with Google to claim projects (`POST /v1/claim-link`),
+manage keys and members in `/dashboard`, and connect MCP clients over OAuth 2.1 (dynamic client
+registration + PKCE). OAuth access tokens are just API keys with `expires_at`, so every service
+accepts them unchanged. The dashboard talks to services with `x-afs-internal` (`INTERNAL_TOKEN`).
+Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 
 ## Fair-use controls (vars, all off when unset)
 

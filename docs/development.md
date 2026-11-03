@@ -27,6 +27,9 @@ values in it; those live in `deploy/<profile>.json` (see [self-hosting.md](self-
 
 Useful local hooks:
 
+- **site:** `DEV_MODE=true` (in `.dev.vars`) adds a fake sign-in, `/auth/dev-login?email=you@example.com`,
+  so claim links, the dashboard and the OAuth consent page work without Google. It answers 404
+  unless `DEV_MODE` is exactly `true`.
 - **analytics:** `DEV_MODE=true` honours `x-dev-geo-*` headers, so you can fake countries.
 - **tags:** `DEV_MODE=true` allows `http://localhost` webhook destinations.
 - **mail:** deliver a test message to the `email()` handler with
@@ -37,7 +40,8 @@ Useful local hooks:
 
 ```
 shared/        @afs/shared: auth, signup, errors, ids, crypto, MCP handler
-site/          landing page (public/), platform llms.txt, platform signup
+site/          landing page (public/), platform llms.txt, platform signup, MCP gateway,
+               sign-in, claim links, dashboard, OAuth server (docs/accounts.md)
 analytics/     tags/     mail/
   src/index.ts        Hono app + handlers (fetch, email, queue, scheduled) + Durable Objects
   src/service/        business logic: the only place REST and MCP call into
@@ -58,7 +62,12 @@ docs/                 these documents
 - **Integration tests** (`test/integration`) run the Worker inside workerd with
   `@cloudflare/vitest-pool-workers`, with real local D1, Durable Objects and queues. Migrations for
   the app DB and `AUTH_DB` are applied in the setup file. Fair-use vars are turned off in
-  `vitest.config.ts`; tests for them turn them on per call.
+  `vitest.config.ts`; tests for them turn them on per call. `DB` and `AUTH_DB` have different
+  placeholder ids in each `wrangler.jsonc`, so they are two local databases, as in production.
+- **The site** (`site/test`) runs in workerd too. The services behind its `ANALYTICS`, `TAGS` and
+  `MAIL` bindings are stubbed in `site/test/helpers.ts` with the real `requireAuth()` and
+  `handleMcp()`, so internal auth and OAuth access tokens are checked as the services check them.
+  A small cookie-jar `Browser` drives sign-in, claim, dashboard and consent pages.
 - **Smoke scripts** (`pnpm smoke`) drive a running dev server over HTTP the way an agent would.
 
 CI runs `pnpm typecheck` and `pnpm test` on every pull request.

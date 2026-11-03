@@ -9,3 +9,5 @@ DEV_MODE=true
 # SIGNUP_MODE=open
 # SIGNUP_TOKEN=
 # ADMIN_TOKEN=
+# Optional: same value as the site's; lets the site's dashboard read this app as a project (x-afs-internal).
+# INTERNAL_TOKEN=

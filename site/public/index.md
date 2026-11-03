@@ -1,8 +1,8 @@
 # AgentFirstStack
 
 Infrastructure your agent sets up by itself: web analytics, tag management with server-side
-conversion tracking, and email inboxes. No signup form, no verification email, no dashboard.
-Free to use, and open source (MIT).
+conversion tracking, and email inboxes. No signup form, no verification email, no dashboard to
+click through. Free to use, and open source (MIT).
 
 - Manual for agents: https://agentfirststack.com/llms.txt
 - Registration and credentials: https://agentfirststack.com/auth.md
@@ -15,6 +15,9 @@ Free to use, and open source (MIT).
    a key that works on every service. No email, password or verification.
 3. **You approve what only you can.** Your ad accounts stay yours; the agent asks for the exact
    IDs and tokens it needs from Google Ads, Meta or TikTok, and tells you where to find them.
+4. **Claim it when you like.** The agent gives you a claim link. Sign in with Google to see the
+   project's sites, containers and inboxes in a dashboard, manage keys, invite teammates and
+   connect Claude or ChatGPT (https://agentfirststack.com/mcp as a custom connector, over OAuth).
 
 ## Services
 
@@ -40,7 +43,9 @@ Or one per service at `https://<service>.agentfirststack.com/mcp`.
 Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt first; it is
 the complete manual. Get an API key with POST https://agentfirststack.com/v1/signup, save it as
 AGENTFIRSTSTACK_API_KEY, then set up analytics, conversion tracking and an inbox, verifying each
-step. Ask me only for ad platform IDs and tokens. Tell me what you set up and what still needs me.
+step. Ask me only for ad platform IDs and tokens. Finish with POST
+https://agentfirststack.com/v1/claim-link and give me the claim link it returns. Tell me what you
+set up and what still needs me.
 ```
 
 ## Free and open source

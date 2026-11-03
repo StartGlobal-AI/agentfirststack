@@ -1,4 +1,4 @@
-import { accountRoutes, onError, onNotFound, publicBaseUrl, requireAuth } from "@afs/shared";
+import { accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
 import { handleMcp } from "@afs/shared/mcp";
 import { Hono } from "hono";
 import { type AppEnv, type Bindings, VERSION } from "./env";
@@ -13,6 +13,8 @@ export { SiteDO } from "./do/site-do";
 const app = new Hono<AppEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+// RFC 9728 metadata naming the platform's OAuth server (AUTH_ISSUER), for MCP connectors.
+app.route("/", protectedResourceRoutes({ name: "AgentFirstStack Analytics" }));
 
 // Public: tracker + collection (also under any path prefix, for first-party proxies).
 app.use("*", ingestRoutes);

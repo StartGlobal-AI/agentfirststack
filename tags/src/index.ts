@@ -1,4 +1,4 @@
-import { accountRoutes, onError, onNotFound, publicBaseUrl, requireAuth } from "@afs/shared";
+import { accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
 import { handleMcp } from "@afs/shared/mcp";
 import { Hono } from "hono";
 import { schemaDocument } from "./config/catalog";
@@ -14,6 +14,8 @@ const app = new Hono<AppEnv>();
 
 app.onError(onError);
 app.notFound(onNotFound);
+// RFC 9728 metadata naming the platform's OAuth server (AUTH_ISSUER), for MCP connectors.
+app.route("/", protectedResourceRoutes({ name: "AgentFirstStack Tags" }));
 
 // Data plane first: /c/:id.js and /collect, at the root or under any proxy prefix.
 app.use("*", dataPlane);

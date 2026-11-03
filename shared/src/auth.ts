@@ -39,6 +39,14 @@ export interface AuthBindings {
   KEY_PREFIX?: string;
   /** Max signups per client network (IPv4 address or IPv6 /64) per rolling hour (needs signup_log). */
   SIGNUP_HOURLY_LIMIT?: string;
+  /**
+   * Secret shared by the Workers of one deployment. A request with `x-afs-internal: <token>` and
+   * `x-afs-account: acct_...` is a full-access caller for that account (the site's dashboard
+   * uses it over service bindings). Unset = internal auth is off.
+   */
+  INTERNAL_TOKEN?: string;
+  /** The OAuth authorization server listed in RFC 9728 metadata (the site's public URL). */
+  AUTH_ISSUER?: string;
 }
 
 /** The database that holds accounts and api_keys. */
@@ -97,16 +105,42 @@ export function extractKey(req: Request): string | null {
 export async function authenticate(db: D1Database, token: string, waitUntil?: (p: Promise<unknown>) => void): Promise<AuthContext | null> {
   const hash = await sha256Hex(token);
   const row = await db
-    .prepare("SELECT id, account_id, scopes, last_used_at FROM api_keys WHERE hash = ? AND revoked_at IS NULL")
+    .prepare("SELECT id, account_id, scopes, last_used_at, expires_at FROM api_keys WHERE hash = ? AND revoked_at IS NULL")
     .bind(hash)
-    .first<{ id: string; account_id: string; scopes: string; last_used_at: number | null }>();
+    .first<{ id: string; account_id: string; scopes: string; last_used_at: number | null; expires_at: number | null }>();
   if (!row) return null;
   const now = Date.now();
+  // Keys with an expiry (OAuth access tokens) stop working the moment it passes.
+  if (row.expires_at !== null && row.expires_at !== undefined && row.expires_at <= now) return null;
   // Touch last_used_at at most every 10 minutes to keep writes off the hot path.
   if (waitUntil && (!row.last_used_at || now - row.last_used_at > 600_000)) {
     waitUntil(db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").bind(now, row.id).run());
   }
   return { accountId: row.account_id, keyId: row.id, scopes: row.scopes.split(" ").filter(Boolean) };
+}
+
+/** keyId of callers authenticated with INTERNAL_TOKEN instead of an API key. */
+export const INTERNAL_KEY_ID = "internal";
+
+const ACCOUNT_ID = /^acct_[0-9a-z]{1,64}$/;
+
+/**
+ * Internal auth between the Workers of one deployment: `x-afs-internal` must equal INTERNAL_TOKEN
+ * (constant-time) and `x-afs-account` names an existing account.
+ * Returns null when the request doesn't use it (no header, or INTERNAL_TOKEN unset), false when
+ * it does but the token or account is wrong, else a full-access AuthContext for that account.
+ */
+export async function internalAuth(env: AuthBindings, req: Request): Promise<AuthContext | null | false> {
+  const secret = env.INTERNAL_TOKEN;
+  const presented = req.headers.get("x-afs-internal");
+  if (!secret || presented === null) return null;
+  if (!timingSafeEqual(presented, secret)) return false;
+  const accountId = req.headers.get("x-afs-account") ?? "";
+  if (!ACCOUNT_ID.test(accountId)) return false;
+  const row = await identityDb(env).prepare("SELECT id FROM accounts WHERE id = ?").bind(accountId).first();
+  if (!row) return false;
+  await ensureLocalAccount(env, accountId);
+  return { accountId, keyId: INTERNAL_KEY_ID, scopes: ["*"] };
 }
 
 function waitUntilOf(c: { executionCtx: { waitUntil(p: Promise<unknown>): void } }): ((p: Promise<unknown>) => void) | undefined {
@@ -124,10 +158,17 @@ function waitUntilOf(c: { executionCtx: { waitUntil(p: Promise<unknown>): void }
  */
 export function requireAuth<E extends AuthEnv>(): MiddlewareHandler<E> {
   return async (c, next) => {
+    const internal = await internalAuth(c.env, c.req.raw);
+    if (internal === false) throw unauthorized("The internal credentials are wrong. Use an API key instead.");
+    if (internal) {
+      c.set("auth", internal);
+      await next();
+      return;
+    }
     const token = extractKey(c.req.raw);
     if (!token) throw unauthorized();
     const auth = await authenticateEnv(c.env, token, waitUntilOf(c));
-    if (!auth) throw unauthorized("That API key is unknown or revoked. POST /v1/signup for a new one.");
+    if (!auth) throw unauthorized("That API key is unknown, revoked or expired. POST /v1/signup for a new one.");
     const method = c.req.method;
     const path = new URL(c.req.url).pathname;
     if (method !== "GET" && method !== "HEAD" && !path.startsWith("/mcp")) assertWrite(auth);
@@ -151,15 +192,39 @@ export function optionalAuth<E extends AuthEnv>(): MiddlewareHandler<E> {
 export async function createApiKey(
   db: D1Database,
   accountId: string,
-  opts: { keyPrefix: string; name?: string | null; scope?: Scope },
+  opts: {
+    keyPrefix: string;
+    name?: string | null;
+    scope?: Scope;
+    /** Unix ms after which the key stops working (OAuth access tokens). */
+    expiresAt?: number;
+    /** The OAuth grant an access token belongs to (identity DB only). */
+    oauthGrantId?: string;
+    /** The signed-in user who created the key in the dashboard (identity DB only). */
+    createdByUserId?: string;
+  },
 ): Promise<{ id: string; key: string; prefix: string; scopes: string }> {
   const key = `${opts.keyPrefix}_${randomString(40)}`;
   const id = newId("key");
   const prefix = key.slice(0, opts.keyPrefix.length + 7);
   const scopes = opts.scope ?? "*";
+  const row: Record<string, unknown> = {
+    id,
+    account_id: accountId,
+    name: opts.name ?? null,
+    prefix,
+    hash: await sha256Hex(key),
+    scopes,
+    created_at: Date.now(),
+  };
+  // Optional columns only when used, so plain signups write exactly what they always have.
+  if (opts.expiresAt !== undefined) row.expires_at = opts.expiresAt;
+  if (opts.oauthGrantId !== undefined) row.oauth_grant_id = opts.oauthGrantId;
+  if (opts.createdByUserId !== undefined) row.created_by_user_id = opts.createdByUserId;
+  const cols = Object.keys(row);
   await db
-    .prepare("INSERT INTO api_keys (id, account_id, name, prefix, hash, scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, accountId, opts.name ?? null, prefix, await sha256Hex(key), scopes, Date.now())
+    .prepare(`INSERT INTO api_keys (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
+    .bind(...Object.values(row))
     .run();
   return { id, key, prefix, scopes };
 }
@@ -302,7 +367,7 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
   app.get("/v1/keys", async (c) => {
     const { results } = await identityDb(c.env)
       .prepare(
-        "SELECT id, name, prefix, scopes, created_at, last_used_at, revoked_at FROM api_keys WHERE account_id = ? ORDER BY created_at",
+        "SELECT id, name, prefix, scopes, created_at, last_used_at, revoked_at, expires_at FROM api_keys WHERE account_id = ? ORDER BY created_at",
       )
       .bind(c.var.auth.accountId)
       .all();
