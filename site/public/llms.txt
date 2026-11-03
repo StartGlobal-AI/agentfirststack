@@ -250,14 +250,15 @@ Agents with a key never need any of this.
 
 ## 11. Fair use on the hosted version
 
-- 10 new accounts per hour from one network (and a short burst limit).
-- 50 sites, 50 tag containers and 50 inboxes per account.
-- Inboxes on @agentfirststack.com can reply to anyone who wrote to them, up to 50 recipients a
+- 3 new accounts per hour from one network (and a short burst limit).
+- 10 analytics sites, 10 tag containers (5 destinations and 10 versions each) and 10 inboxes per
+  account.
+- Inboxes on @agentfirststack.com can reply to anyone who wrote to them, up to 20 recipients a
   day. To send to anyone, add your own domain: `POST https://mail.agentfirststack.com/v1/domains`.
-- Mail on @agentfirststack.com addresses is deleted after 30 days. An inbox holds up to 200
-  messages and an account receives up to 200 a day; delete what you no longer need.
+- Mail on @agentfirststack.com addresses is deleted after 14 days. An inbox holds up to 100
+  messages and an account receives up to 100 a day; delete what you no longer need.
 - Addresses like admin@, postmaster@ and other role names can't be claimed.
-- Replay: 50 sites per account, 1,000 recorded sessions per site a day, sessions up to 30
-  minutes, recordings kept up to 30 days, 20 active share links per site.
+- Replay: 5 sites per account, 200 recorded sessions per site a day, sessions up to 30 minutes
+  and 2 MB, recordings kept up to 14 days, 5 active share links per site.
 
 Need more? Self-host: every service is a Cloudflare Worker (see the repository README).

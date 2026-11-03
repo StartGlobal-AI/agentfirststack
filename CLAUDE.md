@@ -57,18 +57,18 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 
 | Var | App | Hosted value |
 |---|---|---|
-| `SIGNUP_HOURLY_LIMIT` (+ `SIGNUP_LIMITER` rate-limit binding, 5/min) | all | 10 per IP per hour, shared via `signup_log` |
-| `MAX_SITES_PER_ACCOUNT` / `MAX_CONTAINERS_PER_ACCOUNT` / `MAX_INBOXES_PER_ACCOUNT` | analytics / tags / mail | 50 |
+| `SIGNUP_HOURLY_LIMIT` (+ `SIGNUP_LIMITER` rate-limit binding, 5/min) | all | 3 per IP per hour, shared via `signup_log` |
+| `MAX_SITES_PER_ACCOUNT` / `MAX_CONTAINERS_PER_ACCOUNT` / `MAX_INBOXES_PER_ACCOUNT` | analytics / tags / mail | 10 |
 | `SHARED_SEND_POLICY=reply_only` | mail | shared-domain inboxes may only write to addresses that emailed them |
-| `SEND_DAILY_LIMIT` | mail | 50 recipients per account per UTC day |
-| `SHARED_RETENTION_DAYS` | mail | 30 (hourly cron purge) |
+| `SEND_DAILY_LIMIT` | mail | 20 recipients per account per UTC day |
+| `SHARED_RETENTION_DAYS` | mail | 14 (hourly cron purge) |
 | `EXTRA_RESERVED_USERNAMES` | mail | brand and role names on top of the built-in CA-validation list |
-| `MAX_MESSAGES_PER_INBOX` / `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | mail | 200 / 200 (email() rejects beyond) |
-| `MAX_WEBHOOKS_PER_ACCOUNT` | mail | default 10 |
-| `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | defaults 10 / 50 / 512 KB |
-| `SQL_MAX_ROWS_READ` | analytics | default 1,000,000 rows read per SQL query |
+| `MAX_MESSAGES_PER_INBOX` / `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | mail | 100 / 100 (email() rejects beyond) |
+| `MAX_WEBHOOKS_PER_ACCOUNT` | mail | 3 (default 10) |
+| `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | 5 / 10 / 128 KB (defaults 10 / 50 / 512 KB) |
+| `SQL_MAX_ROWS_READ` | analytics | 100,000 (default 1,000,000) rows read per SQL query |
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
-| `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` | replay | 50 / 1000 / 30 / 30 / 20 (`MAX_SAMPLE_RATE` unset: sites choose) |
+| `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` / `MAX_CHUNK_BYTES` / `MAX_SESSION_BYTES` | replay | 5 / 200 / 30 / 14 / 5 / 256 KB / 2 MB (`MAX_SAMPLE_RATE` unset: sites choose); R2 lifecycle deletes chunks after 16 days |
 
 ## Deployments (`pnpm afs`, profiles in `deploy/`)
 
