@@ -153,8 +153,13 @@ export function buildConfig(profile, app, template) {
     // Service bindings point at this deployment's own Workers: afs-analytics -> <prefix>-analytics.
     cfg.services = template.services.map((s) => ({ ...s, service: n.worker(s.service.replace(/^[a-z0-9]+-/, "")) }));
   }
+  // SIGNUP_LIMITER is one counter shared by every app (signup works on all of them), so it takes
+  // the profile's namespace. Every other limiter keeps its own namespace id from the template:
+  // a namespace is one counter space, and two limiters sharing one would count each other's hits.
   if (template.ratelimits && profile.ratelimit_namespace) {
-    cfg.ratelimits = template.ratelimits.map((r) => ({ ...r, namespace_id: String(profile.ratelimit_namespace) }));
+    cfg.ratelimits = template.ratelimits.map((r) =>
+      r.name === "SIGNUP_LIMITER" ? { ...r, namespace_id: String(profile.ratelimit_namespace) } : r,
+    );
   }
 
   // AUTH_ISSUER: the OAuth authorization server (the site) that every app's RFC 9728 metadata names.

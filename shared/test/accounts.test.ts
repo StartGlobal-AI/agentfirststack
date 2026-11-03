@@ -4,8 +4,11 @@ import { handleMcp } from "../src/mcp";
 import {
   type AuthBindings,
   type AuthContext,
+  accountStanding,
   authenticate,
+  capFor,
   createAccount,
+  forgetStanding,
   createApiKey,
   internalAuth,
   mcpChallenge,
@@ -39,6 +42,13 @@ describe("authenticate", () => {
 
     await db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").bind(Date.now(), apiKey.id).run();
     expect(await authenticate(db, apiKey.key)).toBeNull();
+  });
+
+  it("refuses every key of a suspended account, with a reason", async () => {
+    const db = memoryD1(IDENTITY);
+    const { accountId, apiKey } = await account(db);
+    await db.prepare("UPDATE accounts SET suspended_at = ?, suspended_reason = 'abuse' WHERE id = ?").bind(Date.now(), accountId).run();
+    await expect(authenticate(db, apiKey.key)).rejects.toMatchObject({ status: 403, code: "account_suspended" });
   });
 
   it("works on a standalone app database (template migrations only)", async () => {
@@ -200,5 +210,39 @@ describe("handleMcp 401", () => {
     expect((await handleMcp(post({ authorization: `Bearer ${expired.key}` }), { DB: db }, opts)).status).toBe(401);
     const ok = await handleMcp(post({ authorization: `Bearer ${apiKey.key}` }), { DB: db }, opts);
     expect(ok.status).toBe(200);
+  });
+});
+
+describe("account standing", () => {
+  it("reads suspension and whether a person claimed it, and picks caps by standing", async () => {
+    const db = memoryD1(IDENTITY);
+    const env = { DB: db } as unknown as AuthBindings;
+    const { accountId } = await account(db);
+    expect(await accountStanding(env, accountId)).toEqual({ suspended: false, claimed: false });
+    await db
+      .prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES ('usr_standing', 'dev:s@example.com', 's@example.com', ?)")
+      .bind(Date.now())
+      .run();
+    await db
+      .prepare("INSERT INTO memberships (account_id, user_id, role, created_at) VALUES (?, 'usr_standing', 'owner', ?)")
+      .bind(accountId, Date.now())
+      .run();
+    await db.prepare("UPDATE accounts SET suspended_at = ? WHERE id = ?").bind(Date.now(), accountId).run();
+    // Cached for a minute; forgetStanding() drops it.
+    expect(await accountStanding(env, accountId)).toEqual({ suspended: false, claimed: false });
+    forgetStanding(accountId);
+    expect(await accountStanding(env, accountId)).toEqual({ suspended: true, claimed: true });
+
+    const vars = { MAX_SITES: "10", UNCLAIMED_MAX_SITES: "2", BAD: "x" };
+    expect(capFor(vars, { suspended: false, claimed: false }, "MAX_SITES", 50)).toBe(2);
+    expect(capFor(vars, { suspended: false, claimed: true }, "MAX_SITES", 50)).toBe(10);
+    expect(capFor(vars, { suspended: false, claimed: false }, "BAD", 7)).toBe(7);
+    expect(capFor({}, { suspended: false, claimed: false }, "MAX_SITES", Number.POSITIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("treats a standalone app database (no people tables) as claimed", async () => {
+    const db = memoryD1(TEMPLATE);
+    const { accountId } = await account(db);
+    expect(await accountStanding({ DB: db } as unknown as AuthBindings, accountId)).toEqual({ suspended: false, claimed: true });
   });
 });

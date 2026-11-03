@@ -45,3 +45,12 @@ export const tooManyRequests = (hint = "Slow down and retry in a few seconds.") 
   new ApiError(429, "rate_limited", "Too many requests.", hint);
 
 export const internal = (message = "Internal error.") => new ApiError(500, "internal", message);
+
+/** The operator suspended the account (abuse). Its keys and its public ingest stop working. */
+export const accountSuspended = () =>
+  new ApiError(
+    403,
+    "account_suspended",
+    "This account has been suspended for abuse of the free service.",
+    "If you think this is a mistake, email abuse@agentfirststack.com with the account id.",
+  );

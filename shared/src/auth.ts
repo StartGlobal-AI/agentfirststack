@@ -1,7 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { sha256Hex, timingSafeEqual } from "./crypto";
-import { ApiError, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
+import { ApiError, accountSuspended, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
 import { clientNetwork, publicBaseUrl, readJson } from "./http";
 import { newId, randomString } from "./ids";
 
@@ -104,11 +104,32 @@ export function extractKey(req: Request): string | null {
 
 export async function authenticate(db: D1Database, token: string, waitUntil?: (p: Promise<unknown>) => void): Promise<AuthContext | null> {
   const hash = await sha256Hex(token);
-  const row = await db
-    .prepare("SELECT id, account_id, scopes, last_used_at, expires_at FROM api_keys WHERE hash = ? AND revoked_at IS NULL")
-    .bind(hash)
-    .first<{ id: string; account_id: string; scopes: string; last_used_at: number | null; expires_at: number | null }>();
+  type KeyRow = {
+    id: string;
+    account_id: string;
+    scopes: string;
+    last_used_at: number | null;
+    expires_at: number | null;
+    suspended_at?: number | null;
+  };
+  let row: KeyRow | null;
+  try {
+    row = await db
+      .prepare(
+        "SELECT k.id, k.account_id, k.scopes, k.last_used_at, k.expires_at, a.suspended_at FROM api_keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ? AND k.revoked_at IS NULL",
+      )
+      .bind(hash)
+      .first<KeyRow>();
+  } catch {
+    // A database that hasn't run the account_standing migration yet: no suspension to check.
+    row = await db
+      .prepare("SELECT id, account_id, scopes, last_used_at, expires_at FROM api_keys WHERE hash = ? AND revoked_at IS NULL")
+      .bind(hash)
+      .first<KeyRow>();
+  }
   if (!row) return null;
+  // A suspended account's keys all stop at once, with an error that says why.
+  if (row.suspended_at != null) throw accountSuspended();
   const now = Date.now();
   // Keys with an expiry (OAuth access tokens) stop working the moment it passes.
   if (row.expires_at !== null && row.expires_at !== undefined && row.expires_at <= now) return null;
