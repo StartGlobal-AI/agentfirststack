@@ -1,4 +1,4 @@
-import { ApiError, notFound } from "@afs/shared";
+import { ApiError, accountSuspended, notFound } from "@afs/shared";
 import type { Bindings } from "../env";
 import type { Breakdown } from "../lib/filters";
 import type {
@@ -16,6 +16,7 @@ import type {
 } from "../lib/types";
 import { isDoError } from "../lib/types";
 import type { Exclusions } from "../lib/exclusions";
+import type { IngestPolicy } from "../do/site-do";
 
 /** What every service call needs: bindings, the caller's account, and the public base URL. */
 export interface Ctx {
@@ -39,6 +40,10 @@ export interface SiteRow {
   respect_dnt: number;
   /** JSON Exclusions; NULL = none (column added in migration 0005) */
   exclusions?: string | null;
+  /** 1 = count revenue the browser tracker sends (migration 0007; default 0) */
+  browser_revenue?: number;
+  /** 1 = user ids from afsa('identify') may link payments (migration 0007; default 0) */
+  trust_browser_user_id?: number;
   created_at: number;
   updated_at: number;
 }
@@ -48,14 +53,15 @@ type Obj = Record<string, unknown>;
 /** The RPC surface of SiteDO, typed loosely (results are plain JSON objects). */
 export interface SiteStub {
   configure(s: SiteSettings): Promise<{ ok: true }>;
-  ingest(events: EnrichedEvent[]): Promise<IngestResponse>;
+  ingest(events: EnrichedEvent[], policy?: IngestPolicy): Promise<IngestResponse>;
   recordDrop(reason: string, sample: string | null): Promise<void>;
   stats(q: StatsRequest): Promise<Obj | DoError>;
   breakdown(q: StatsRequest & { breakdown: Breakdown }): Promise<Obj | DoError>;
   timeseries(q: TimeseriesRequest): Promise<Obj | DoError>;
   realtime(): Promise<Obj | DoError>;
   funnel(q: FunnelRequest): Promise<Obj | DoError>;
-  sql(q: string): Promise<Obj | DoError>;
+  sql(q: string, opts?: { budgetMs?: number }): Promise<Obj | DoError>;
+  chargeSql(ms: number, budgetMs: number): Promise<void>;
   summary(): Promise<SiteSummary | DoError>;
   destroy(): Promise<{ ok: true }>;
   movers(q: Obj): Promise<Obj | DoError>;
@@ -64,7 +70,7 @@ export interface SiteStub {
   visitor(key: string, limit?: number): Promise<Obj | DoError>;
   session(id: string): Promise<Obj | DoError>;
   journeys(q: Obj): Promise<Obj | DoError>;
-  ingestPayments(records: PaymentInput[]): Promise<{ results: PaymentOutcome[] } | DoError>;
+  ingestPayments(records: PaymentInput[], policy?: IngestPolicy): Promise<{ results: PaymentOutcome[] } | DoError>;
   listPayments(q: Obj): Promise<Obj | DoError>;
   deletePayment(id: string): Promise<Obj | DoError>;
   paymentsSummary(): Promise<PaymentsSummary | DoError>;
@@ -82,6 +88,13 @@ export interface PaymentsSummary {
   last_payment_at: number | null;
 }
 
+export interface DropCount {
+  count: number;
+  last_at: number | null;
+  /** exclusion drops only: the site's own rule that matched */
+  rule?: string | null;
+}
+
 export interface SiteSummary {
   total_events: number;
   events_last_24h: number;
@@ -90,10 +103,18 @@ export interface SiteSummary {
   payment_events?: number;
   first_event_at: number | null;
   last_event_at: number | null;
-  last_event: Obj | null;
-  hostnames_last_7d: { hostname: string | null; events: number }[];
-  dropped_last_7d: Record<string, { count: number; last_at: number | null; sample: string | null }>;
-  warnings_last_7d: Record<string, { count: number; last_at: number | null; sample: string | null }>;
+  dropped_last_7d: Record<string, DropCount>;
+  warnings_last_7d: Record<string, DropCount>;
+  usage_today?: { day: string; events: number; bytes: number; refused: number };
+  database_bytes?: number;
+  /** strings visitors (or anyone with the public site id) sent: never interpolated into other fields */
+  untrusted: {
+    notice: string;
+    last_event: Obj | null;
+    hostnames_last_7d: { hostname: string | null; events: number }[];
+    drop_samples: Record<string, string>;
+    warning_samples: Record<string, string>;
+  };
 }
 
 export function siteStub(env: Bindings, siteId: string): SiteStub {
@@ -121,6 +142,7 @@ export async function loadGoals(env: Bindings, siteId: string): Promise<Goal[]> 
 export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
   return {
     id: site.id,
+    account_id: site.account_id,
     domain: site.domain,
     name: site.name,
     timezone: site.timezone,
@@ -129,6 +151,8 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     allowed_hostnames: site.allowed_hostnames ? (JSON.parse(site.allowed_hostnames) as string[]) : null,
     respect_dnt: !!site.respect_dnt,
     exclusions: parseExclusions(site.exclusions),
+    browser_revenue: !!site.browser_revenue,
+    trust_browser_user_id: !!site.trust_browser_user_id,
     created_at: site.created_at,
     goals,
   };
@@ -160,8 +184,17 @@ export async function callSite<T extends Obj>(env: Bindings, site: SiteRow, fn: 
     await pushSettings(env, site);
     r = await fn(stub);
   }
+  if (isDoError(r) && r.error.code === "account_suspended") throw accountSuspended();
   if (isDoError(r)) throw new ApiError(DO_ERROR_STATUS[r.error.code] ?? 400, r.error.code, r.error.message, r.error.hint);
   return r;
 }
 
-const DO_ERROR_STATUS: Record<string, 403 | 404 | 409> = { not_found: 404, quota_exceeded: 403, conflict: 409 };
+const DO_ERROR_STATUS: Record<string, 403 | 404 | 409 | 429 | 507> = {
+  not_found: 404,
+  quota_exceeded: 403,
+  conflict: 409,
+  account_suspended: 403,
+  storage_full: 507,
+  daily_limit: 429,
+  sql_budget_exhausted: 429,
+};

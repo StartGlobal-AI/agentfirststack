@@ -17,6 +17,12 @@
 export const RAGE_WINDOW_MS = 1000;
 export const RAGE_MIN_CLICKS = 3;
 export const RAGE_RADIUS_PX = 30;
+/**
+ * How many earlier clicks each click is compared with. Ingest keeps at most 20 clicks in any 1 s
+ * window (LIMITS.CLICKS_PER_SECOND), so this is exact for real input and keeps detection linear
+ * (O(20 n)) for anything else, e.g. overlapping chunks crafted to pile thousands of clicks into one second.
+ */
+export const RAGE_LOOKBACK = 20;
 export const ERROR_CLICK_MS = 1000;
 export const QUICK_BACK_MS = 7000;
 export const EXCESSIVE_MIN_REVERSALS = 4;
@@ -43,7 +49,8 @@ export function detectRage(clicks: readonly ClickPoint[]): { rage: boolean[]; st
   for (let j = 0; j < n; j++) {
     // Clicks on the same target within the window ending at j.
     const members = [j];
-    for (let i = j - 1; i >= 0 && clicks[j]!.ts - clicks[i]!.ts <= RAGE_WINDOW_MS; i--)
+    const stop = Math.max(0, j - RAGE_LOOKBACK);
+    for (let i = j - 1; i >= stop && clicks[j]!.ts - clicks[i]!.ts <= RAGE_WINDOW_MS; i--)
       if (sameTarget(clicks[i]!, clicks[j]!)) members.push(i);
     if (members.length >= RAGE_MIN_CLICKS) for (const m of members) rage[m] = true;
   }
@@ -51,7 +58,8 @@ export function detectRage(clicks: readonly ClickPoint[]): { rage: boolean[]; st
   for (let j = 0; j < n; j++) {
     if (!rage[j]) continue;
     let continues = false;
-    for (let i = j - 1; i >= 0 && clicks[j]!.ts - clicks[i]!.ts <= RAGE_WINDOW_MS; i--) {
+    const stop = Math.max(0, j - RAGE_LOOKBACK);
+    for (let i = j - 1; i >= stop && clicks[j]!.ts - clicks[i]!.ts <= RAGE_WINDOW_MS; i--) {
       if (rage[i] && sameTarget(clicks[i]!, clicks[j]!)) {
         continues = true;
         break;

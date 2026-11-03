@@ -1,9 +1,9 @@
-import { publicBaseUrl } from "@afs/shared";
+import { clientIp, networkKey, publicBaseUrl } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import type { AppEnv } from "../env";
-import { expiredPage, PLAYER_HEADERS, playerPage } from "../player-page";
+import { expiredPage, PLAYER_HEADERS, playerHeaders, playerPage } from "../player-page";
 import { ingestChunk } from "../service/ingest";
-import { playerChunk, playerData, recordView, resolveToken } from "../service/links";
+import { playerChunk, playerData, recordView, resolveToken, siteHostsForCsp } from "../service/links";
 import { playerHash, servePlayerAsset, serveLoader, serveRecorder } from "../service/scripts";
 import { waitUntilOf } from "./api";
 
@@ -25,10 +25,23 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
   const method = c.req.method;
   const loader = /\/r\/([^/]+)\.js$/.exec(path);
   if (loader && (method === "GET" || method === "HEAD")) {
+    // Per network before the site lookup: random site ids can't make D1 reads cheaply.
+    const limiter = c.env.INGEST_IP_LIMITER;
+    if (
+      limiter &&
+      !(await limiter.limit({ key: `l:${networkKey(clientIp(c.req.raw))}` }).then(
+        (r) => r.success,
+        () => true,
+      ))
+    )
+      return new Response("/* afs-replay: too many requests */\n", {
+        status: 429,
+        headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" },
+      });
     const res = await serveLoader(c.env, loader[1]!, publicBaseUrl(c), c.req.header("if-none-match") ?? null);
     return method === "HEAD" ? new Response(null, { status: res.status, headers: res.headers }) : res;
   }
-  const rec = /\/recorder\.([0-9a-f]{6,64})\.js$/.exec(path);
+  const rec = /\/(?:recorder\.|rec\/)([0-9a-f]{6,64})\.js$/.exec(path);
   if (rec && (method === "GET" || method === "HEAD")) return serveRecorder(rec[1]!);
   if (path === "/i" || path.endsWith("/i")) {
     if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
@@ -50,7 +63,11 @@ playerRoutes.get("/play/:token", async (c) => {
   if (!r) return c.html(expiredPage(), 404, PLAYER_HEADERS);
   waitUntilOf(c)(recordView(c.env, r.link.id).catch(() => {}));
   const h = await playerHash();
-  return c.html(playerPage({ js: `/assets/player-${h}.js`, css: `/assets/player-${h}.css` }), 200, PLAYER_HEADERS);
+  return c.html(
+    playerPage({ js: `/assets/player-${h}.js`, css: `/assets/player-${h}.css` }),
+    200,
+    playerHeaders(siteHostsForCsp(c.env, r.site)),
+  );
 });
 
 playerRoutes.get("/play/:token/data", async (c) => {
@@ -67,6 +84,11 @@ playerRoutes.get("/play/:token/chunks/:seq", async (c) => {
   const r = /^\d{1,6}$/.test(seq) ? await resolveToken(c.env, c.req.param("token")) : null;
   if (!r) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404);
   const body = await playerChunk(c.env, r, Number(seq));
+  if (body === "budget")
+    return c.json(
+      { error: { code: "rate_limited", message: "This link served its daily share of recording data; it works again tomorrow (UTC)." } },
+      429,
+    );
   if (!body) return c.json({ error: { code: "not_found", message: "Chunk not stored." } }, 404);
   return new Response(body, {
     headers: {

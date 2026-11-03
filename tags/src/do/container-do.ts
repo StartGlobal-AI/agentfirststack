@@ -1,10 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
-import { randomString } from "@afs/shared";
+import { accountStanding, randomString, type Standing } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { DispatchEvent } from "../destinations/types";
 import type { Bindings } from "../env";
+import { reserveDeliveries } from "../service/budget";
 import { aggregateStatus, type DestinationInfo, planDispatch, type PlannedTarget, type TargetResult } from "../service/dispatch-plan";
 import { mergeVisitor, type VisitorData, type VisitorUpdate } from "../service/identity";
+import { containerCaps, shownCap, utcDay } from "../service/limits";
 import {
   browserDispatchEvent,
   type CollectHit,
@@ -21,6 +23,8 @@ import { hostAllowed, originHost } from "../service/origin";
 export const EVENT_RETENTION_DAYS = 7;
 export const VISITOR_RETENTION_DAYS = 180;
 const DAY = 86_400_000;
+/** Backend events keep working past MAX_CONTAINER_DB_BYTES up to this factor, so a /collect flood can't block them. */
+export const SERVER_STORAGE_HEADROOM = 1.25;
 
 export interface ContainerState {
   id: string;
@@ -40,7 +44,13 @@ export interface DispatchMessage {
 
 export type CollectResult =
   | { ok: true; event_id: string; duplicate?: boolean; visitor_id?: string; destinations?: PlannedTarget[]; note?: string }
-  | { ok: false; error: "not_synced" | "origin_not_allowed"; host?: string };
+  | { ok: false; error: "not_synced" | "origin_not_allowed" | "suspended"; host?: string }
+  | { ok: false; error: "quota" | "storage_full"; limit: number };
+
+export type IngestRefusal =
+  | { error: "not_synced" | "suspended" }
+  | { error: "quota"; limit: number; used: number }
+  | { error: "storage_full"; limit: number };
 
 export interface ServerIngestResult {
   event_id: string;
@@ -84,7 +94,7 @@ type EventRow = {
 /** Event log rows are keyed by (source, event_id): browser and server rows never collide. */
 type Origin = "browser" | "server";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const EVENTS_DDL = `
   CREATE TABLE events (
     event_id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL,
@@ -132,10 +142,11 @@ export class ContainerDO extends DurableObject<Bindings> {
         CREATE INDEX IF NOT EXISTS visitors_em ON visitors(em);
         CREATE INDEX IF NOT EXISTS visitors_ph ON visitors(ph);
         CREATE INDEX IF NOT EXISTS visitors_seen ON visitors(last_seen);
+        CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, kind));
       `);
       const hasEvents = this.tableExists("events");
       const version = hasEvents ? (this.getMeta<number>("schema") ?? 1) : 0;
-      if (version < SCHEMA_VERSION) {
+      if (version < 2) {
         // v1 keyed events by event_id alone, so a browser row could stand in for a server event
         // ("browser+server"). v2 keys by (source, event_id); merged rows become server rows.
         if (hasEvents) this.sql.exec("ALTER TABLE events RENAME TO events_v1");
@@ -148,8 +159,16 @@ export class ContainerDO extends DurableObject<Bindings> {
           );
           this.sql.exec("DROP TABLE events_v1");
         }
-        this.setMeta("schema", SCHEMA_VERSION);
       }
+      if (version < 3) {
+        // v3: the user_id/em/ph join columns hold only identities a backend linked (VisitorData.linked).
+        // Older rows may carry ids a browser posted to /collect, so they are cleared; visitor_id joins
+        // are unaffected and the backend re-links visitors with its next event.
+        this.sql.exec(
+          "UPDATE visitors SET user_id = NULL, em = NULL, ph = NULL WHERE user_id IS NOT NULL OR em IS NOT NULL OR ph IS NOT NULL",
+        );
+      }
+      if (version < SCHEMA_VERSION) this.setMeta("schema", SCHEMA_VERSION);
       this.sql.exec(`
         CREATE INDEX IF NOT EXISTS events_received ON events(received_at);
         CREATE INDEX IF NOT EXISTS events_name ON events(name, received_at);
@@ -201,6 +220,7 @@ export class ContainerDO extends DurableObject<Bindings> {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.ready = false;
+    this.visitorCount = null;
     return { ok: true };
   }
 
@@ -213,6 +233,8 @@ export class ContainerDO extends DurableObject<Bindings> {
     const now = Date.now();
     this.sql.exec("DELETE FROM events WHERE received_at < ?", now - EVENT_RETENTION_DAYS * DAY);
     this.sql.exec("DELETE FROM visitors WHERE last_seen < ?", now - VISITOR_RETENTION_DAYS * DAY);
+    this.sql.exec("DELETE FROM usage WHERE day < ?", utcDay(now - 3 * DAY));
+    this.visitorCount = null;
     await this.ctx.storage.setAlarm(now + DAY);
   }
 
@@ -223,23 +245,49 @@ export class ContainerDO extends DurableObject<Bindings> {
     return row ? (JSON.parse(row.data) as VisitorData) : null;
   }
 
+  /** Join columns come only from identities the backend linked; ids posted to /collect never join. */
   private saveVisitor(id: string, v: VisitorData, now: number) {
     this.sql.exec(
       `INSERT INTO visitors (visitor_id, user_id, em, ph, data, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(visitor_id) DO UPDATE SET user_id = excluded.user_id, em = excluded.em, ph = excluded.ph,
          data = excluded.data, last_seen = excluded.last_seen`,
       id,
-      v.user_id ?? null,
-      v.user.em ?? null,
-      v.user.ph ?? null,
+      v.linked?.user_id ?? null,
+      v.linked?.em ?? null,
+      v.linked?.ph ?? null,
       JSON.stringify(v),
       now,
       now,
     );
   }
 
-  private upsertVisitor(id: string, u: VisitorUpdate, now: number): VisitorData {
-    const v = mergeVisitor(this.loadVisitor(id), u, now);
+  /** Visitor rows, counted once per object lifetime and kept up to date on insert/evict. */
+  private visitorCount: number | null = null;
+
+  /**
+   * Make room for one new visitor under MAX_VISITORS_PER_CONTAINER: past the cap, the least
+   * recently seen 1% are deleted (random visitor ids posted to /collect can't grow the table).
+   */
+  private makeRoomForVisitor(cap: number) {
+    if (!Number.isFinite(cap)) return;
+    this.visitorCount ??= this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM visitors").toArray()[0]?.n ?? 0;
+    if (this.visitorCount >= cap) {
+      const extra = this.visitorCount - cap + Math.max(1, Math.ceil(cap / 100));
+      const gone = this.sql
+        .exec(
+          "DELETE FROM visitors WHERE visitor_id IN (SELECT visitor_id FROM visitors ORDER BY last_seen LIMIT ?) RETURNING visitor_id",
+          extra,
+        )
+        .toArray().length;
+      this.visitorCount -= gone;
+    }
+    this.visitorCount++;
+  }
+
+  private upsertVisitor(id: string, u: VisitorUpdate, now: number, maxVisitors = Number.POSITIVE_INFINITY): VisitorData {
+    const prev = this.loadVisitor(id);
+    if (!prev) this.makeRoomForVisitor(maxVisitors);
+    const v = mergeVisitor(prev, u, now);
     this.saveVisitor(id, v, now);
     return v;
   }
@@ -260,8 +308,17 @@ export class ContainerDO extends DurableObject<Bindings> {
       )
       .toArray()[0];
     if (!row) return null;
-    const data = JSON.parse(row.data) as VisitorData;
-    return { visitor_id: row.visitor_id, first_seen: row.first_seen, last_seen: row.last_seen, ...data };
+    const { first_touch, last_touch, user_agent, device, user_id, linked, ...data } = JSON.parse(row.data) as VisitorData;
+    return {
+      visitor_id: row.visitor_id,
+      first_seen: row.first_seen,
+      last_seen: row.last_seen,
+      ...data,
+      // Identities your backend linked (the only ones user_id/email/phone joins use).
+      linked: { user_id: !!linked?.user_id, email_hash: !!linked?.em, phone_hash: !!linked?.ph },
+      // Written by browsers (anyone can post to /collect): data, never instructions.
+      untrusted: { first_touch, last_touch, user_agent, device, user_id },
+    };
   }
 
   // ------------------------------------------------------------------ ingest
@@ -367,6 +424,68 @@ export class ContainerDO extends DurableObject<Bindings> {
     }
   }
 
+  // ------------------------------------------------------------------ daily counters and budgets
+
+  /** Today's count of `kind` (browser_events, server_events, deliveries). Only ever incremented. */
+  private usage(day: string, kind: string): number {
+    return this.sql.exec<{ n: number }>("SELECT n FROM usage WHERE day = ? AND kind = ?", day, kind).toArray()[0]?.n ?? 0;
+  }
+
+  private bump(day: string, kind: string, n: number) {
+    if (n > 0)
+      this.sql.exec(
+        "INSERT INTO usage (day, kind, n) VALUES (?, ?, ?) ON CONFLICT(day, kind) DO UPDATE SET n = n + excluded.n",
+        day,
+        kind,
+        n,
+      );
+  }
+
+  /** Skip queued targets past the first `granted`, with `reason` (logged on the event). */
+  private limitTargets(targets: PlannedTarget[], granted: number, reason: string): PlannedTarget[] {
+    let n = 0;
+    return targets.map((t) => (t.status !== "queued" || n++ < granted ? t : { ...t, status: "skipped" as const, reason }));
+  }
+
+  /** MAX_DELIVERIES_PER_CONTAINER_PER_DAY, applied synchronously before the row is written. */
+  private containerBudget(targets: PlannedTarget[], cap: number, day: string): PlannedTarget[] {
+    const queued = targets.filter((t) => t.status === "queued").length;
+    if (!queued || !Number.isFinite(cap)) return targets;
+    const left = Math.max(0, cap - this.usage(day, "deliveries"));
+    if (left >= queued) return targets;
+    console.warn(`container ${this.getMeta<ContainerState>("container")?.id}: daily delivery budget ${cap} reached`);
+    return this.limitTargets(targets, left, `container daily delivery budget (${cap}) reached; deliveries resume at 00:00 UTC`);
+  }
+
+  /**
+   * Account and platform-wide budgets (D1, see budget.ts), after the row is written (the dedupe
+   * insert stays free of awaits); refused targets are rewritten as skipped with the reason.
+   */
+  private async accountBudget(
+    event: DispatchEvent,
+    targets: PlannedTarget[],
+    results: Record<string, TargetResult>,
+    accountId: string,
+    standing: Standing,
+    now: number,
+  ): Promise<{ targets: PlannedTarget[]; results: Record<string, TargetResult> }> {
+    const queued = targets.filter((t) => t.status === "queued").length;
+    if (!queued) return { targets, results };
+    const r = await reserveDeliveries(this.env, accountId, standing, queued, now);
+    if (r.granted >= queued) return { targets, results };
+    console.warn(`account ${accountId}: ${r.reason}`);
+    const next = this.limitTargets(targets, r.granted, r.reason ?? "daily delivery budget reached");
+    const planned = this.plannedResults(next, now);
+    this.sql.exec(
+      "UPDATE events SET results = ?, status = ? WHERE source = ? AND event_id = ?",
+      JSON.stringify(planned),
+      aggregateStatus(planned),
+      event.source,
+      event.event_id,
+    );
+    return { targets: next, results: planned };
+  }
+
   async collect(hit: CollectHit): Promise<CollectResult> {
     const state = this.getMeta<ContainerState>("container");
     if (!state) return { ok: false, error: "not_synced" };
@@ -374,14 +493,21 @@ export class ContainerDO extends DurableObject<Bindings> {
     const host = hit.enrich.origin_host ?? originHost(undefined, p.page_url);
     if (!hit.preview_config && (!host || !hostAllowed(host, state)))
       return { ok: false, error: "origin_not_allowed", host: host ?? undefined };
+    const standing = await accountStanding(this.env, state.account_id);
+    if (standing.suspended) return { ok: false, error: "suspended" };
+    const caps = containerCaps(this.env, standing);
     const now = hit.enrich.received_at;
+    const day = utcDay(now);
     const eventId = p.event_id ?? `${p.type === "visit" ? "v" : "e"}_${randomString(20)}`;
     const duplicate: CollectResult = { ok: true, event_id: eventId, duplicate: true };
 
     // Dedupe among browser rows first (retried beacons, double-fired triggers) so counters don't
     // move. Everything from here to insertEvent is synchronous, so the check can't be raced.
     if (this.eventRow("browser", eventId)) return duplicate;
-    const visitor = p.visitor_id ? this.upsertVisitor(p.visitor_id, visitorUpdateFromHit(hit), now) : null;
+    // Public ingest stops writing when the database or today's event quota is full.
+    if (this.sql.databaseSize > caps.dbBytes) return { ok: false, error: "storage_full", limit: caps.dbBytes };
+    if (this.usage(day, "browser_events") >= caps.eventsPerDay) return { ok: false, error: "quota", limit: caps.eventsPerDay };
+    const visitor = p.visitor_id ? this.upsertVisitor(p.visitor_id, visitorUpdateFromHit(hit), now, caps.visitors) : null;
 
     if (p.type === "visit") {
       const inserted = this.insertEvent({
@@ -407,6 +533,7 @@ export class ContainerDO extends DurableObject<Bindings> {
         results: {},
         note: null,
       });
+      if (inserted) this.bump(day, "browser_events", 1);
       return inserted ? { ok: true, event_id: eventId, visitor_id: p.visitor_id } : duplicate;
     }
 
@@ -424,9 +551,14 @@ export class ContainerDO extends DurableObject<Bindings> {
         this.eventRow("server", eventId) ?? (event.transaction_id ? this.serverRowByOrder(event.name, event.transaction_id) : null);
       if (server)
         note = `The backend already sent this conversion server-side (event ${server.event_id}); the browser copy is logged only.`;
-      else targets = planDispatch(event, this.getMeta<DestinationInfo[]>("destinations") ?? []);
+      else
+        targets = this.containerBudget(
+          planDispatch(event, this.getMeta<DestinationInfo[]>("destinations") ?? [], { matched: true, now }),
+          caps.deliveriesPerDay,
+          day,
+        );
     }
-    const planned = this.plannedResults(targets, now);
+    let planned = this.plannedResults(targets, now);
     const inserted = this.insertEvent({
       event_id: eventId,
       type: "conversion",
@@ -444,6 +576,9 @@ export class ContainerDO extends DurableObject<Bindings> {
       note,
     });
     if (!inserted) return duplicate;
+    this.bump(day, "browser_events", 1);
+    this.bump(day, "deliveries", targets.filter((t) => t.status === "queued").length);
+    ({ targets, results: planned } = await this.accountBudget(event, targets, planned, state.account_id, standing, now));
     await this.enqueue(event, targets, planned, state.id, now);
     await this.ensureAlarm();
     return { ok: true, event_id: eventId, visitor_id: p.visitor_id, destinations: targets, ...(note ? { note } : {}) };
@@ -453,11 +588,20 @@ export class ContainerDO extends DurableObject<Bindings> {
    * Backend events (authenticated by API key) are the source of truth. They're deduped only
    * against earlier server events (same event_id, or same name + order_id). Browser rows, which
    * anyone can post to /collect, never make a server event a duplicate, never lend it their
-   * event_id, visitor, values or skip rules, and are never overwritten by it.
+   * event_id, visitor, values or skip rules, and are never overwritten by it. They join a visitor
+   * by user_id / email / phone only when the backend itself linked that visitor (an earlier event
+   * with its visitor_id), and such a join never carries the visitor's consent or click ids.
    */
-  async ingestServer(events: ServerEvent[], opts: { test: boolean; now: number }): Promise<ServerIngestResult[] | { error: "not_synced" }> {
+  async ingestServer(events: ServerEvent[], opts: { test: boolean; now: number }): Promise<ServerIngestResult[] | IngestRefusal> {
     const state = this.getMeta<ContainerState>("container");
     if (!state) return { error: "not_synced" };
+    const standing = await accountStanding(this.env, state.account_id);
+    if (standing.suspended) return { error: "suspended" };
+    const caps = containerCaps(this.env, standing);
+    const day = utcDay(opts.now);
+    if (this.sql.databaseSize > caps.dbBytes * SERVER_STORAGE_HEADROOM) return { error: "storage_full", limit: caps.dbBytes };
+    const used = this.usage(day, "server_events");
+    if (used + events.length > caps.eventsPerDay) return { error: "quota", limit: caps.eventsPerDay, used };
     const config = this.getMeta<ContainerConfig>("config");
     const destinations = this.getMeta<DestinationInfo[]>("destinations") ?? [];
     const phoneCc = config?.settings?.phone_country_code;
@@ -465,7 +609,8 @@ export class ContainerDO extends DurableObject<Bindings> {
     for (const ev of events) {
       const now = opts.now;
       const user = serverUserData(ev, phoneCc);
-      // Join to a stored visitor: visitor_id > user_id > email hash > phone hash.
+      // Join to a stored visitor: visitor_id > user_id > email hash > phone hash (the last three
+      // only match identities a backend linked to the visitor).
       let visitorId: string | null = null;
       let by: string | null = null;
       if (ev.visitor_id && this.loadVisitor(ev.visitor_id)) [visitorId, by] = [ev.visitor_id, "visitor_id"];
@@ -473,6 +618,7 @@ export class ContainerDO extends DurableObject<Bindings> {
       if (!visitorId && user.em) [visitorId, by] = [this.findVisitorId("em", user.em), "email"];
       if (!visitorId && user.ph) [visitorId, by] = [this.findVisitorId("ph", user.ph), "phone"];
       if (!visitorId) by = null;
+      const inherit = by === "visitor_id";
       const conversion = findConversion(config, ev.name);
 
       const eventId = serverEventId(ev, () => randomString(20));
@@ -483,7 +629,7 @@ export class ContainerDO extends DurableObject<Bindings> {
           event_id: existing.event_id,
           name: ev.name,
           status: "duplicate",
-          joined: { by, visitor_id: visitorId, click_ids: Object.keys(v?.click_ids ?? {}) },
+          joined: { by, visitor_id: visitorId, click_ids: inherit ? Object.keys(v?.click_ids ?? {}) : [] },
           conversion: conversion?.name ?? null,
           destinations: [],
           note: "Already received from your backend (dedupe by event_id, or name + order_id).",
@@ -493,11 +639,19 @@ export class ContainerDO extends DurableObject<Bindings> {
       const visitor = visitorId
         ? this.upsertVisitor(
             visitorId,
-            { user, user_id: ev.user_id, click_ids: ev.click_ids, fbc: ev.fbc, fbp: ev.fbp, conversion: true },
+            {
+              user,
+              user_id: ev.user_id,
+              click_ids: ev.click_ids,
+              fbc: ev.fbc,
+              fbp: ev.fbp,
+              conversion: true,
+              // The backend says this visitor is this user: later events may join by these.
+              link: { user_id: ev.user_id, em: user.em, ph: user.ph },
+            },
             now,
           )
         : null;
-      const joined = { by, visitor_id: visitorId, click_ids: Object.keys(visitor?.click_ids ?? {}) };
       const event = serverDispatchEvent(ev, {
         eventId,
         visitor,
@@ -506,13 +660,26 @@ export class ContainerDO extends DurableObject<Bindings> {
         conversion,
         test: opts.test,
         now,
+        inherit,
       });
-      const targets = planDispatch(event, destinations, ev.destinations);
-      let note: string | undefined;
+      const joined = { by, visitor_id: visitorId, click_ids: Object.keys(event.click_ids) };
+      let targets = this.containerBudget(
+        planDispatch(event, destinations, { only: ev.destinations, matched: !!conversion, now }),
+        caps.deliveriesPerDay,
+        day,
+      );
+      const notes: string[] = [];
       if (!conversion && !ev.send_to) {
-        note = `No conversion named "${ev.name}" in the live config and no send_to in the event: only webhook/analytics destinations receive it. Define conversions[].name = "${ev.name}" (with send_to) or pass send_to.`;
+        notes.push(
+          `No conversion named "${ev.name}" in the live config and no send_to in the event: only analytics destinations and webhooks with settings.all_events receive it. Define conversions[].name = "${ev.name}" (with send_to) or pass send_to.`,
+        );
       }
-      const planned = this.plannedResults(targets, now);
+      if (visitorId && !inherit)
+        notes.push(
+          `Joined by ${by}: the visitor's consent and click ids aren't inherited through a ${by} join. Pass consent and click_ids in the event, or the browser's visitor_id.`,
+        );
+      const note = notes.length ? notes.join(" ") : undefined;
+      let planned = this.plannedResults(targets, now);
       const inserted = this.insertEvent({
         event_id: eventId,
         type: "conversion",
@@ -541,6 +708,9 @@ export class ContainerDO extends DurableObject<Bindings> {
         });
         continue;
       }
+      this.bump(day, "server_events", 1);
+      this.bump(day, "deliveries", targets.filter((t) => t.status === "queued").length);
+      ({ targets, results: planned } = await this.accountBudget(event, targets, planned, state.account_id, standing, now));
       await this.enqueue(event, targets, planned, state.id, now);
       out.push({
         event_id: eventId,
@@ -599,10 +769,21 @@ export class ContainerDO extends DurableObject<Bindings> {
     };
   }
 
+  /**
+   * One event-log entry. Strings that anyone could have written (page URLs, titles, referrers,
+   * params, items, browser order ids, user agents, destination answers and the exact requests
+   * sent) are only ever under an `untrusted` key; everything else is ids, numbers, statuses and
+   * this service's own notes.
+   */
   private present(r: EventRow, verbose: boolean) {
     const results = JSON.parse(r.results) as Record<string, TargetResult>;
     const data = JSON.parse(r.data) as Record<string, unknown>;
     const isConversion = r.type === "conversion";
+    const browser = r.source === "browser";
+    const untrusted: Record<string, unknown> = {};
+    if (!isConversion) untrusted.page = data;
+    if (browser && r.transaction_id) untrusted.transaction_id = r.transaction_id;
+    if (verbose && isConversion) untrusted.data = data;
     return {
       event_id: r.event_id,
       type: r.type,
@@ -611,7 +792,8 @@ export class ContainerDO extends DurableObject<Bindings> {
       ts: r.ts,
       received_at: r.received_at,
       visitor_id: r.visitor_id,
-      transaction_id: r.transaction_id,
+      // Backend order ids are yours; a browser's is under untrusted.transaction_id.
+      transaction_id: browser ? null : r.transaction_id,
       value: r.value,
       currency: r.currency,
       preview: !!r.preview,
@@ -619,12 +801,15 @@ export class ContainerDO extends DurableObject<Bindings> {
       ...(r.note ? { note: r.note } : {}),
       ...(isConversion
         ? { identity: identitySummary(data as unknown as DispatchEvent), fired_in_browser: (data.fired as string[] | undefined) ?? [] }
-        : { page: data }),
+        : {}),
       destinations: Object.entries(results).map(([id, res]) => {
-        const { request, ...rest } = res;
-        return { destination_id: id, ...rest, ...(verbose ? { request } : {}) };
+        const { request, response, ...rest } = res;
+        const u: Record<string, unknown> = {};
+        if (response !== undefined) u.response = response;
+        if (verbose && request !== undefined) u.request = request;
+        return { destination_id: id, ...rest, ...(Object.keys(u).length ? { untrusted: u } : {}) };
       }),
-      ...(verbose && isConversion ? { data } : {}),
+      ...(Object.keys(untrusted).length ? { untrusted } : {}),
     };
   }
 
@@ -653,8 +838,18 @@ export class ContainerDO extends DurableObject<Bindings> {
       .toArray();
     const visitors = one<{ n: number }>("SELECT COUNT(*) AS n FROM visitors");
     const config = this.getMeta<ContainerConfig>("config");
+    const state = this.getMeta<ContainerState>("container");
+    const caps = containerCaps(this.env, state ? await accountStanding(this.env, state.account_id) : undefined);
+    const day = utcDay(Date.now());
+    const bytes = this.sql.databaseSize;
+    const today = {
+      day,
+      browser_events: this.usage(day, "browser_events"),
+      server_events: this.usage(day, "server_events"),
+      deliveries: this.usage(day, "deliveries"),
+    };
     return {
-      synced: !!this.getMeta("container"),
+      synced: !!state,
       live_config_loaded: !!config,
       last_24h: {
         visits: ev?.visits ?? 0,
@@ -664,6 +859,15 @@ export class ContainerDO extends DurableObject<Bindings> {
         last_conversion_at: ev?.last_conversion ?? null,
       },
       visitors_stored: visitors?.n ?? 0,
+      today,
+      limits: {
+        events_per_day: shownCap(caps.eventsPerDay),
+        deliveries_per_day: shownCap(caps.deliveriesPerDay),
+        visitors: shownCap(caps.visitors),
+        db_bytes: shownCap(caps.dbBytes),
+      },
+      storage: { bytes, limit: shownCap(caps.dbBytes), full: bytes > caps.dbBytes },
+      quota_reached: today.browser_events >= caps.eventsPerDay,
     };
   }
 }

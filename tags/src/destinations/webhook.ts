@@ -1,6 +1,7 @@
 import { hmacSha256Hex } from "@afs/shared";
 import { z } from "zod";
-import { deploymentOrigins, MAX_RESPONSE_BYTES, readTextBounded, targetsDeployment } from "../lib/http";
+import { deploymentOrigins, readTextBounded, targetsDeployment } from "../lib/http";
+import { summarizeResponse } from "../service/sanitize";
 import { type Connector, type DispatchEvent, type SendContext } from "./types";
 
 /**
@@ -11,8 +12,13 @@ import { type Connector, type DispatchEvent, type SendContext } from "./types";
  *   x-signature-timestamp: unix seconds      x-event-id: the event_id (stable across retries)
  * Verify by recomputing the HMAC over the timestamp, a dot and the raw body; reject old timestamps.
  * Redirects are not followed (a 3xx is a failed delivery) and the URL can't point at this
- * deployment's own hosts.
+ * deployment's own hosts. Only events that matched a conversion in the config are sent (every
+ * server event with settings.all_events), with 3 attempts at most, and only a short sanitized
+ * summary of the answer is kept: the URL is the account's choice, so this is not a proxy.
  */
+export const WEBHOOK_MAX_ATTEMPTS = 3;
+/** Bytes of a webhook's answer read (the summary keeps far less). */
+const WEBHOOK_READ_BYTES = 4096;
 export const webhookCredentials = z.strictObject({
   url: z
     .url()
@@ -46,7 +52,9 @@ export const webhook: Connector<WebhookCredentials> = {
   naturalKey: (c) => c.url,
   requiredConsent: [],
   needsMapping: false,
-  testMode: 'Sends a sample event with "test": true.',
+  matchedOnly: true,
+  maxAttempts: WEBHOOK_MAX_ATTEMPTS,
+  testMode: 'Sends a sample event with "test": true; returns the HTTP status and a short summary of your endpoint\'s answer.',
   example: { url: "https://example.com/hooks/conversions", secret: "a-long-random-shared-secret" },
   docs: "Verify: hex(HMAC_SHA256(secret, timestamp + '.' + rawBody)) == x-signature minus the 'sha256=' prefix.",
   check(c, env, origins) {
@@ -72,14 +80,14 @@ export const webhook: Connector<WebhookCredentials> = {
     if (selfTarget(new URL(c.url), ctx.env)) return { ok: false, retryable: false, error: SELF_TARGET, request: { url } };
     try {
       const res = await ctx.fetch(c.url, { method: "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(15_000) });
-      const read = await readTextBounded(res, MAX_RESPONSE_BYTES);
-      const text = read.text.slice(0, 2000);
-      let response: unknown = text;
+      const read = await readTextBounded(res, WEBHOOK_READ_BYTES);
+      let parsed: unknown = read.text;
       try {
-        response = text && !read.truncated && read.text.length <= 2000 ? JSON.parse(text) : text || null;
+        if (read.text && !read.truncated) parsed = JSON.parse(read.text);
       } catch {
         /* keep text */
       }
+      const response = summarizeResponse(parsed);
       const redirected = res.status >= 300 && res.status < 400;
       return {
         ok: res.ok,

@@ -1,4 +1,5 @@
-import { badRequest, parse } from "@afs/shared";
+import { accountStanding, badRequest, capFor, parse } from "@afs/shared";
+import { DEFAULT_SQL_TIME_BUDGET_MS, enforce } from "../lib/limits";
 import { z } from "zod";
 import {
   type Breakdown,
@@ -15,7 +16,7 @@ import {
 import { FunnelError, parseFunnelSteps } from "../lib/query";
 import { type CompareSpec, INTERVALS, PERIODS } from "../lib/time";
 import type { SortSpec } from "../lib/types";
-import { type Ctx, callSite, loadSite } from "./context";
+import { type Ctx, callSite, loadSite, siteStub } from "./context";
 import { loadFunnel } from "./funnels";
 
 /**
@@ -284,8 +285,33 @@ export const sqlInput = z.object({
     ),
 });
 
+/** Queries faster than this aren't charged (no second call to the DO). */
+const SQL_CHARGE_MIN_MS = 25;
+
+/**
+ * SQL runs synchronously in the site's Durable Object, next to ingest. Besides the guard and the
+ * plan bound (engine.runSql), each account has a request rate (SQL_LIMITER) and each site a time
+ * budget: the wall time of every query, measured here around the call, is charged to the site, and
+ * once SQL_TIME_BUDGET_MS per 10 minutes is used up the DO refuses SQL until it refills.
+ */
 export async function querySql(ctx: Ctx, siteId: string, raw: unknown) {
   const { q } = parse(sqlInput, raw);
+  await enforce(
+    [[ctx.env.SQL_LIMITER, `acct:${ctx.accountId}`]],
+    "SQL queries",
+    "Wait a minute; prefer stats / breakdown / timeseries, which aren't limited this way.",
+  );
   const site = await loadSite(ctx, siteId);
-  return { site_id: site.id, ...(await callSite(ctx.env, site, (s) => s.sql(q))) };
+  const standing = await accountStanding(ctx.env, ctx.accountId);
+  const budgetMs = capFor(ctx.env as unknown as Record<string, unknown>, standing, "SQL_TIME_BUDGET_MS", DEFAULT_SQL_TIME_BUDGET_MS);
+  const t0 = Date.now();
+  try {
+    return { site_id: site.id, ...(await callSite(ctx.env, site, (s) => s.sql(q, { budgetMs }))) };
+  } finally {
+    const ms = Date.now() - t0;
+    if (ms >= SQL_CHARGE_MIN_MS && budgetMs > 0)
+      await siteStub(ctx.env, site.id)
+        .chargeSql(ms, budgetMs)
+        .catch(() => {});
+  }
 }

@@ -113,12 +113,13 @@ export const TAG_EXAMPLES: Record<Tag["type"], { description: string; example: T
     example: { id: "pinterest", type: "pinterest_tag", params: { tag_id: "2612345678901" }, triggers: ["all_pages"] },
   },
   analytics: {
-    description: "This platform's analytics app (loads <base_url>/s.js with data-site).",
+    description:
+      "This platform's analytics app (loads <base_url>/s.js with data-site). A base_url on another host counts as custom code (needs a verified domain to publish).",
     example: { id: "analytics", type: "analytics", params: { site_id: "site_3k9x2m7q8w1e5r4t" }, triggers: ["all_pages"] },
   },
   custom_html: {
     description:
-      "Arbitrary HTML injected into <body>; <script> tags run. {{variables}} are interpolated HTML-encoded (all but letters, digits and _ . , : @ - become &#N;; javascript:/vbscript: values are dropped), so page data can't add markup. To use a value in JavaScript, use custom_js (event.data / event.model).",
+      "Custom code: publishing it needs a verified domain (POST /v1/containers/:id/verify) and a claimed account. Arbitrary HTML injected into <body>; <script> tags run. {{variables}} are interpolated HTML-encoded (all but letters, digits and _ . , : @ - become &#N;; javascript:/vbscript: values are dropped), so page data can't add markup. To use a value in JavaScript, use custom_js (event.data / event.model).",
     example: {
       id: "chat_widget",
       type: "custom_html",
@@ -128,7 +129,7 @@ export const TAG_EXAMPLES: Record<Tag["type"], { description: string; example: T
     },
   },
   custom_js: {
-    description: "A function body run as (afst, event) => { ... }.",
+    description: "Custom code (needs a verified domain and a claimed account to publish): a function body run as (afst, event) => { ... }.",
     example: { id: "log_purchase", type: "custom_js", params: { code: "console.log('purchase', event.data)" }, triggers: ["purchase_dl"] },
   },
 };
@@ -278,7 +279,12 @@ export function destinationCatalog() {
         example: { type: c.type, credentials: c.example },
         public_fields: c.publicFields,
         required_consent: c.requiredConsent,
-        receives: c.needsMapping ? `server conversions with send_to.${c.type}` : "every server conversion and server event",
+        receives: c.needsMapping
+          ? `server conversions with send_to.${c.type}`
+          : c.matchedOnly
+            ? "every server conversion, and backend events whose name matches a conversion (settings.all_events: true for every backend event)"
+            : "every server conversion and server event",
+        max_attempts: c.maxAttempts ?? 6,
         dedupe: c.skipIfFiredBy
           ? `a browser conversion's server copy is skipped when that hit's ${c.skipIfFiredBy} tag already sent it (the platform doesn't dedupe by event_id); backend events are always delivered`
           : c.type === "google_ads"

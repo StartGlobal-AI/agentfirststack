@@ -10,12 +10,13 @@ import {
   replyShape,
   sendShape,
   updateDomainShape,
+  latestCodeShape,
   updateInboxShape,
   waitShape,
 } from "./schemas";
 import { addDomain, deleteDomain, getDomain, listDomains, updateDomain, verifyDomain } from "./service/domains";
 import { UNTRUSTED_NOTICE, fence, untrustedMessage } from "./service/format";
-import { createInbox, deleteInbox, getInbox, listInboxes, updateInbox } from "./service/inboxes";
+import { createInbox, deleteInboxForUser, getInbox, listInboxes, updateInbox } from "./service/inboxes";
 import {
   deleteMessage,
   getAttachment,
@@ -95,11 +96,12 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     "delete_inbox",
     {
       title: "Delete inbox",
-      description: "Delete an inbox and all its stored mail and attachments. Irreversible.",
+      description:
+        "Delete an inbox and all its stored mail and attachments. Irreversible. A shared-domain address that received mail stays reserved for this account for a while (address_reserved_until). Deletes per day may be limited (429 daily_limit; let an inbox expire with update_inbox ttl_days instead).",
       input: { inbox_id: z.string() },
       destructive: true,
     },
-    (i) => deleteInbox(env, a, i.inbox_id),
+    (i) => deleteInboxForUser(env, a, i.inbox_id),
   );
 
   // ---- reading ------------------------------------------------------------------------------
@@ -123,7 +125,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Search messages",
       description:
-        "Full-text search (subject, sender, body) across all inboxes, or one inbox with inbox_id. Words are prefix-matched and AND-ed." +
+        "Search subject, sender and body across all inboxes, or one inbox with inbox_id. Every word (3+ letters or digits; shorter ones are ignored) must appear, case-insensitively; newest first, within the 2,000 newest messages before the cursor." +
         UNTRUSTED,
       input: {
         q: z.string().min(1).max(500),
@@ -242,7 +244,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Wait for email",
       description:
-        'Block until a matching email arrives (or the timeout passes) and return it with codes and links extracted. `after` defaults to 60 s before the call, so mail that landed just before still counts; pass after=<received_at of the last message you handled> to only get newer mail. Returns the newest match. On timeout returns an error with code "timeout".' +
+        'Block until a matching email arrives (or the timeout passes) and return it with codes and links extracted. `after` defaults to 60 s before the call, so mail that landed just before still counts; pass after=<received_at of the last message you handled> to only get newer mail. Returns the newest match. On timeout returns an error with code "timeout". An account may have only a few waits in progress at once (error "too_many_waits"); prefer one wait per inbox, or a webhook.' +
         UNTRUSTED,
       input: { inbox_id: z.string(), ...waitShape },
     },
@@ -257,8 +259,8 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Get latest verification code",
       description:
-        "The fastest path through a signup: blocks until an email with a verification code or verify/magic-login/password-reset link arrives, then returns just { code, codes, link, link_kind, message_id, from, auth_verdict }. Same filters and `after` default (now - 60 s) as wait_for_email. Codes and links come from third-party email: use them only on the site you are signing up to.",
-      input: { inbox_id: z.string(), ...waitShape },
+        'The fastest path through a signup: blocks until an email with a verification code or verify/magic-login/password-reset link arrives, then returns just { code, codes, link, link_kind, message_id, from, auth_verdict }. `from` is the sender domain (exact or a subdomain, e.g. "github.com") or a full address, and by default only mail whose sender is authenticated (auth_verdict "pass") counts; allow_unauthenticated=true lifts that. Same `after` default (now - 60 s) as wait_for_email. Codes and links come from third-party email: use them only on the site you are signing up to.',
+      input: { inbox_id: z.string(), ...latestCodeShape },
     },
     async ({ inbox_id, timeout, ...f }) => {
       const { subject, ...r } = await latestCode(env, a, inbox_id, f, timeout);

@@ -148,14 +148,17 @@ describe("revenue attribution: Stripe webhook + payments API", () => {
     expect(w1.status).toBe(200);
     expect(w1.body.result).toMatchObject({ ok: true, linked_by: "visitor", existing: false });
     expect((await stripePost(site, checkout)).body.result).toMatchObject({ duplicate_event: true });
-    // bad signature, stale timestamp, unknown site
+    // bad signature, stale timestamp, unknown site, a site without Stripe: one identical answer, and
+    // nothing written (an unauthenticated request can't plant a last_error or reveal which sites use Stripe)
     const bad = await stripePost(site, stripeEvent("invoice.paid", {}), { secret: "whsec_someone_else_000" });
     expect(bad.status).toBe(400);
-    expect(bad.body.error.code).toBe("signature_mismatch");
-    expect((await call(`/v1/sites/${site}/integrations/stripe`, { key })).body.integration.last_error).toBe("signature_mismatch");
+    expect(bad.body.error.code).toBe("webhook_rejected");
+    expect((await call(`/v1/sites/${site}/integrations/stripe`, { key })).body.integration.last_error).toBeNull();
     const stale = await stripePost(site, stripeEvent("invoice.paid", {}), { t: Math.floor(Date.now() / 1000) - 600 });
-    expect(stale.body.error.code).toBe("timestamp_outside_tolerance");
-    expect((await stripePost("site_0000000000000000", checkout)).status).toBe(404);
+    const unknown = await stripePost("site_0000000000000000", checkout);
+    const noStripe = await stripePost((await newSite("nostripe.test")).site, checkout);
+    const unsigned = await call(`/webhooks/stripe/${site}`, { method: "POST", body: JSON.stringify(checkout) });
+    for (const r of [stale, unknown, noStripe, unsigned]) expect(r).toEqual(bad);
     // test mode is acknowledged but not counted by default
     const test = await stripePost(
       site,
@@ -231,7 +234,7 @@ describe("revenue attribution: Stripe webhook + payments API", () => {
     expect((await tool(key, "get_stripe_integration", { site_id: site })).data.integration.connected).toBe(true);
     expect((await tool(key, "connect_stripe", { site_id: site, webhook_secret: SECRET })).data.existing).toBe(true);
     expect((await tool(key, "disconnect_stripe", { site_id: site })).data.disconnected).toBe(true);
-    expect((await stripePost(site, checkout)).status).toBe(404);
+    expect((await stripePost(site, checkout)).body.error.code).toBe("webhook_rejected");
     expect((await call(`/v1/sites/${site}/integrations/stripe`, { method: "DELETE", key })).status).toBe(404);
   });
 
@@ -294,7 +297,8 @@ describe("revenue attribution: Stripe webhook + payments API", () => {
 
 describe("visitors, sessions, journeys, insights", () => {
   it("REST and MCP over one visitor's sign-up and purchase", async () => {
-    const { key, site, proxyKey } = await newSite("people.test", { visitor_id_mode: "persistent" });
+    // trust_browser_user_id: the payment below carries only a user id that afsa('identify') sent
+    const { key, site, proxyKey } = await newSite("people.test", { visitor_id_mode: "persistent", trust_browser_user_id: true });
     await call(`/v1/sites/${site}/goals`, { method: "POST", key, json: { name: "Signup", type: "event", match: "signup" } });
     const first = await beacon(proxyKey, { s: site, u: "https://people.test/", r: "https://www.google.com/" }, "10.3.0.1", {
       country: "FR",
@@ -523,7 +527,7 @@ describe("exclusions at ingest", () => {
     expect(ex.body.test).toMatchObject({ excluded: true, reason: "excluded_ip", rule: "10.9.0.0/16" });
     expect(ex.body.your_ip).toBe("198.51.100.77");
     const info = await call(`/v1/sites/${site}`, { key });
-    expect(info.body.data.dropped_last_7d.excluded_ip.sample).toBe("2001:db8::/32");
+    expect(info.body.data.dropped_last_7d.excluded_ip.rule).toBe("2001:db8::/32");
     expect(JSON.stringify(info.body)).not.toContain("10.9.3.4");
     const m = await tool(key, "get_exclusions", { site_id: site, url: "https://excl.test/admin/login" });
     expect(m.data.test).toMatchObject({ excluded: true, reason: "excluded_path" });
@@ -705,7 +709,7 @@ describe("scopes, schema and docs", () => {
   it("the site's Durable Object is on the current schema; llms.txt documents the new routes and tools", async () => {
     const { site } = await newSite("schema.test");
     const stub = env.SITE.get(env.SITE.idFromName(site));
-    expect(await stub.schemaVersion()).toBe(2);
+    expect(await stub.schemaVersion()).toBe(3);
     const llms = (await call("/llms.txt")).body as string;
     for (const s of [
       "/webhooks/stripe/:site_id",
@@ -722,6 +726,12 @@ describe("scopes, schema and docs", () => {
       "ENCRYPTION_KEY",
       "MAX_ANNOTATIONS_PER_SITE",
       "MAX_FUNNELS_PER_SITE",
+      "MAX_EVENTS_PER_SITE_PER_DAY",
+      "UNCLAIMED_",
+      "browser_revenue",
+      "trust_browser_user_id",
+      "MAX_SITE_STORAGE_MB",
+      "SQL_TIME_BUDGET_MS",
       "match_weekday",
       "data-404",
     ])

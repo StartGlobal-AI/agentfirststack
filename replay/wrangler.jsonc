@@ -32,7 +32,16 @@
   ],
 
   // Burst limit on /v1/signup per IP; same namespace as the other apps, so it's one shared counter.
-  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+  // The INGEST_* limiters guard the public browser routes (site ids are public in every customer's
+  // HTML): per client network (IPv4 or IPv6 /48; loader + ingest, checked before any D1 read), per
+  // site + network, and per site. Their own namespaces (42031-42039 are replay's), kept as is by
+  // `pnpm afs config`. Limits are per Cloudflare location and approximate.
+  "ratelimits": [
+    { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    { "name": "INGEST_IP_LIMITER", "namespace_id": "42031", "simple": { "limit": 600, "period": 60 } },
+    { "name": "INGEST_SITE_IP_LIMITER", "namespace_id": "42032", "simple": { "limit": 120, "period": 60 } },
+    { "name": "INGEST_SITE_LIMITER", "namespace_id": "42033", "simple": { "limit": 3000, "period": 60 } }
+  ],
 
   // Recording chunks as received (gzip JSON of rrweb events): <site_id>/<session_id>/<seq>.
   "r2_buckets": [{ "binding": "CHUNKS", "bucket_name": "afs-replay-chunks" }],
@@ -56,13 +65,19 @@
     // "true" only in local dev (.dev.vars): x-dev-geo-country, localhost origins and verify.
     "DEV_MODE": ""
   },
-  // Optional fair-use vars a deployment can add (all off when unset; see README "Config"):
-  // SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT, MAX_SAMPLE_RATE, MAX_SESSION_MINUTES,
-  // MAX_SESSIONS_PER_SITE_PER_DAY, MAX_CHUNK_BYTES, MAX_SESSION_BYTES, MAX_RETENTION_DAYS,
-  // MAX_LINKS_PER_SITE. Secrets (wrangler secret put): SIGNUP_TOKEN, ADMIN_TOKEN, INTERNAL_TOKEN.
+  // Optional fair-use vars a deployment can add (README "Config" lists them with their defaults;
+  // count caps also take an UNCLAIMED_<NAME> variant): SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT,
+  // MAX_UNVERIFIED_SITES_PER_ACCOUNT, MAX_SAMPLE_RATE, MAX_SESSION_MINUTES, MAX_SESSIONS_PER_SITE_PER_DAY,
+  // MAX_UNVERIFIED_SESSIONS_PER_SITE_PER_DAY, MAX_FORCED_SESSIONS_PER_SITE_PER_DAY,
+  // MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY, MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY, MAX_CHUNK_BYTES,
+  // MAX_SESSION_BYTES, MAX_CHUNKS_PER_SESSION, MAX_DERIVED_PER_CHUNK, MAX_DERIVED_PER_SESSION,
+  // MAX_{SESSIONS,CHUNKS,BYTES,DERIVED}_PER_ACCOUNT_PER_DAY, MAX_PLATFORM_{SESSIONS,CHUNKS,BYTES,DERIVED}_PER_DAY,
+  // MAX_RETENTION_DAYS, MAX_HEATMAP_RETENTION_DAYS, MAX_LINKS_PER_SITE, MAX_LINK_BYTES_PER_DAY,
+  // MAX_VERIFY_PER_ACCOUNT_PER_HOUR, CAPTURE_CONSOLE_ERRORS_DEFAULT.
+  // Secrets (wrangler secret put): SIGNUP_TOKEN, ADMIN_TOKEN, INTERNAL_TOKEN.
 
-  // Hourly: purge sessions past retention_days (DO rows + R2 chunks), roll settled days up into
-  // heatmap aggregates, expire share links, finish R2 cleanup of deleted sites.
+  // Hourly: R2 cleanup of deleted sites, a daily kick of each site's DO (retention itself runs on
+  // the DO's own alarm), expired share links and old usage rows.
   "triggers": { "crons": ["23 * * * *"] },
 
   "observability": { "enabled": true }

@@ -150,8 +150,10 @@ export interface LoaderConfig {
   unmask: string;
   maskSel: string;
   block: string;
-  /** path globs never recorded */
+  /** path globs never recorded (those with a * before the end; see exh) */
   ex: string[];
+  /** exact paths and "prefix*" globs never recorded, as salted hashes (pathExcluded in lib/mask-rules.ts) */
+  exh?: string[];
   /** max session duration and idle stop (ms) */
   maxMs: number;
   idleMs: number;

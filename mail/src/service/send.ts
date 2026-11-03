@@ -1,11 +1,12 @@
 import { ApiError, badRequest, forbidden, fromBase64, newId } from "@afs/shared";
-import type { AppEnv } from "../env";
+import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { htmlToText, makePreview } from "../extract/text";
 import { normalizeOutgoingAddress } from "../lib/address";
 import { hasControlChars, headerSafe, isMimeType } from "../lib/headers";
 import { bracketMessageId, buildReferences, replySubject } from "../lib/threading";
 import { type Addr, type InboxRow, type MessageRow, messageSummary, utcDay } from "./format";
-import { blobKey, capText, insertMessage, threadUpsert } from "./ingest";
+import { assertActive } from "./budgets";
+import { OVER_BUDGET_TEXT_BYTES, blobKey, capText, insertMessage, overTextBudget, threadUpsert, utf8Bytes } from "./ingest";
 import { getInboxRow, ownershipNotVerified, sharedDomain } from "./inboxes";
 import { getMessageRow } from "./messages";
 
@@ -20,7 +21,8 @@ export { utcDay };
  *     challenge passed) whose sending DNS records have passed verify (Email Service also refuses
  *     unverified sender domains).
  *   - At most 50 recipients (to+cc+bcc), 32 attachments, 25 MiB total (Email Service limits).
- *   - Per-account daily cap SEND_DAILY_LIMIT, counted per recipient, UTC day.
+ *   - Per-account daily cap SEND_DAILY_LIMIT (UNCLAIMED_SEND_DAILY_LIMIT for unclaimed accounts),
+ *     counted per recipient, UTC day. Suspended accounts cannot send.
  *   - Custom headers: X-* only (Email Service allows a fixed list; threading headers are set by us).
  *   - Nothing that becomes a header (display name, attachment filename / content type / content id)
  *     carries CR/LF or other control characters.
@@ -61,9 +63,10 @@ function recipients(field: string, v: string | string[] | undefined): string[] {
   });
 }
 
-export function dailyLimit(env: AppEnv): number {
-  const n = Number(env.SEND_DAILY_LIMIT ?? 200);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 200;
+export const DEFAULT_SEND_DAILY_LIMIT = 200;
+
+export function dailyLimit(env: AppEnv, standing: Standing = { suspended: false, claimed: true }): number {
+  return cap(env, standing, "SEND_DAILY_LIMIT", DEFAULT_SEND_DAILY_LIMIT);
 }
 
 /** Atomically reserve `n` sends for today; throws 429 when it would exceed the limit. */
@@ -72,15 +75,16 @@ export async function reserveSends(
   accountId: string,
   n: number,
   now = Date.now(),
+  standing?: Standing,
 ): Promise<{ used: number; limit: number; day: string }> {
-  const limit = dailyLimit(env);
+  const limit = dailyLimit(env, standing ?? (await standingOf(env, accountId)));
   const day = utcDay(now);
   const deny = () =>
     new ApiError(
       429,
       "daily_limit",
       `Daily send limit reached (${limit} recipients per UTC day).`,
-      "Wait until 00:00 UTC, or ask the operator to raise SEND_DAILY_LIMIT. Each recipient (to, cc, bcc) counts once.",
+      "Wait until 00:00 UTC (each recipient in to, cc and bcc counts once). Accounts a person has claimed (a claim link from the platform site, POST /v1/claim-link there) may have a higher limit.",
       { limit, day },
     );
   if (n > limit) throw deny();
@@ -126,14 +130,16 @@ export async function assertCanSendFrom(env: AppEnv, inbox: InboxRow) {
  * Only mail whose From is authenticated counts: auth.verdict "pass", which needs Cloudflare's own
  * Authentication-Results header with DMARC pass for the From domain, or a DKIM / SPF pass aligned
  * with it (src/extract/auth.ts). Anyone can type any From, so a forged "From: target@victim" sent
- * to your own inbox does not unlock writing to target@victim.
+ * to your own inbox does not unlock writing to target@victim. Mailing-list, bulk and auto-generated
+ * mail (List-Id, Precedence: bulk, Auto-Submitted, ...; messages.automated) does not count either:
+ * anyone can subscribe an inbox to an open list or get a helpdesk to auto-reply to it.
  */
 export async function assertReplyOnly(env: AppEnv, inbox: InboxRow, recipients: string[]) {
   if (env.SHARED_SEND_POLICY !== "reply_only" || inbox.domain !== sharedDomain(env)) return;
   const unknown: string[] = [];
   for (const r of new Set(recipients.map((a) => a.toLowerCase()))) {
     const seen = await env.DB.prepare(
-      "SELECT 1 FROM messages WHERE inbox_id = ? AND direction = 'in' AND lower(from_address) = ? AND json_extract(auth_json, '$.verdict') = 'pass' LIMIT 1",
+      "SELECT 1 FROM messages WHERE inbox_id = ? AND direction = 'in' AND lower(from_address) = ? AND automated = 0 AND json_extract(auth_json, '$.verdict') = 'pass' LIMIT 1",
     )
       .bind(inbox.id, r)
       .first();
@@ -143,8 +149,8 @@ export async function assertReplyOnly(env: AppEnv, inbox: InboxRow, recipients: 
     throw new ApiError(
       403,
       "reply_only",
-      `Inboxes on ${inbox.domain} can only send to addresses that have emailed them with authenticated mail (auth.verdict "pass"). Not yet: ${unknown.join(", ")}.`,
-      'Reply to a message you received whose auth.verdict is "pass" (mail with a forged or unauthenticated From does not count), or add your own domain (POST /v1/domains) and create the inbox there to send to anyone.',
+      `Inboxes on ${inbox.domain} can only send to addresses that have emailed them personally with authenticated mail (auth.verdict "pass"). Not yet: ${unknown.join(", ")}.`,
+      'Reply to a message you received whose auth.verdict is "pass" and that is not list, bulk or auto-generated mail (automated: false; a forged or unauthenticated From does not count either), or add your own domain (POST /v1/domains) and create the inbox there to send to anyone.',
       { recipients_not_allowed: unknown },
     );
   }
@@ -289,10 +295,12 @@ async function sendAndStore(
   thread: { threadId: string | null; inReplyTo: string | null; references: string | null },
   now = Date.now(),
 ) {
+  const standing = await standingOf(env, inbox.account_id);
+  assertActive(standing);
   await assertCanSendFrom(env, inbox);
   await assertReplyOnly(env, inbox, [...p.to, ...p.cc, ...p.bcc]);
   const n = p.to.length + p.cc.length + p.bcc.length;
-  const quota = await reserveSends(env, inbox.account_id, n, now);
+  const quota = await reserveSends(env, inbox.account_id, n, now, standing);
 
   const headers = { ...p.headers };
   if (thread.inReplyTo) headers["In-Reply-To"] = thread.inReplyTo;
@@ -336,7 +344,11 @@ async function sendAndStore(
     ...atts.map((a) => env.BLOBS.put(blobKey.attachment(inbox.id, id, a.id), a.bytes, { httpMetadata: { contentType: a.type } })),
   ]);
   const t = threadUpsert(env, inbox, thread.threadId, p.subject, now);
-  const stored = capText(p.text ?? ""); // the message went out in full; D1 keeps at most MAX_TEXT_BYTES
+  let stored = capText(p.text ?? ""); // the message went out in full; D1 keeps at most MAX_TEXT_BYTES
+  if (await overTextBudget(env, standing, inbox.account_id, utf8Bytes(stored.text))) {
+    const short = capText(p.text ?? "", OVER_BUDGET_TEXT_BYTES); // over the account's text budget: an excerpt
+    stored = { text: short.text, truncated: short.truncated || stored.truncated };
+  }
   const row: Omit<MessageRow, "seq"> = {
     id,
     account_id: inbox.account_id,
@@ -373,6 +385,9 @@ async function sendAndStore(
     error: null,
     received_at: now,
     sent_at: now,
+    sender_key: null,
+    automated: 0,
+    attachments_omitted: 0,
   };
   await env.DB.batch([
     t.stmt,

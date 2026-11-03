@@ -7,7 +7,8 @@ import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { api } from "./routes/api";
 import { createDefaultInbox, pruneCounters, purgeExpiredInboxes, purgeOldSharedMessages, sharedDomain } from "./service/inboxes";
 import { handleEmail } from "./service/ingest";
-import { deliverBatch } from "./service/webhooks";
+import { sweepOrphanBlobs } from "./service/sweep";
+import { deliverBatch, purgeWebhookDeliveries } from "./service/webhooks";
 import { uiHtml } from "./ui";
 
 export { InboxDO } from "./inbox-do";
@@ -87,11 +88,24 @@ export default {
   },
   async scheduled(_controller, env, ctx) {
     // Each purge loops in batches under a wall-time budget (PURGE_BUDGET_MS) and reports `more`
-    // when the next hourly run has to continue.
+    // when the next hourly run has to continue. The blob sweep resumes from its saved cursor.
+    // One failing job does not stop the others.
+    const run = <T extends object>(name: string, p: Promise<T>) =>
+      p.catch((e: unknown) => {
+        console.error(`cron ${name} failed`, e);
+        return { [`${name}_error`]: String(e) };
+      });
     ctx.waitUntil(
-      Promise.all([purgeExpiredInboxes(env), purgeOldSharedMessages(env), pruneCounters(env)]).then(([a, b, c]) =>
-        console.log(JSON.stringify({ event: "cron.purge", purged_inboxes: a.purged, inboxes_more: a.more, ...b, ...c })),
-      ),
+      Promise.all([
+        run(
+          "expiry",
+          purgeExpiredInboxes(env).then((a) => ({ purged_inboxes: a.purged, inboxes_more: a.more })),
+        ),
+        run("retention", purgeOldSharedMessages(env)),
+        run("prune", pruneCounters(env)),
+        run("deliveries", purgeWebhookDeliveries(env)),
+        run("sweep", sweepOrphanBlobs(env)),
+      ]).then((parts) => console.log(JSON.stringify(Object.assign({ event: "cron.purge" }, ...parts)))),
     );
   },
 } satisfies ExportedHandler<AppEnv, WebhookJob>;

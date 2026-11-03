@@ -8,6 +8,8 @@ import { pkceChallenge } from "../src/google";
 import { app } from "../src/index";
 
 export const BASE = "https://afs.test";
+/** The session cookie's name (https, so the __Host- prefixed one). */
+export const SESSION = "__Host-afs_session";
 export const E = rawEnv as unknown as Bindings;
 
 // ---------- the services behind ANALYTICS / TAGS / MAIL ----------
@@ -100,6 +102,8 @@ export interface CallOptions {
   cookie?: string;
   ip?: string;
   body?: BodyInit;
+  /** Cloudflare's request.cf, as the edge would attach it (e.g. { asn }). */
+  cf?: Record<string, unknown>;
 }
 
 export async function call(method: string, path: string, opts: CallOptions = {}): Promise<Res> {
@@ -118,7 +122,8 @@ export async function call(method: string, path: string, opts: CallOptions = {})
   headers.set("cf-connecting-ip", opts.ip ?? "192.0.2.1");
   const ctx = createExecutionContext();
   const url = path.startsWith("http") ? path : `${BASE}${path}`;
-  const res = await app.fetch(new Request(url, { method, headers, body }), opts.env ?? testEnv(), ctx);
+  const init = { method, headers, body, ...(opts.cf ? { cf: opts.cf } : {}) } as RequestInit;
+  const res = await app.fetch(new Request(url, init), opts.env ?? testEnv(), ctx);
   await waitOnExecutionContext(ctx);
   const text = await res.text();
   let json: any = null;
@@ -191,7 +196,7 @@ export class Browser {
 
   async signIn(email: string, next = "/dashboard") {
     const r = await this.get(`/auth/dev-login?email=${encodeURIComponent(email)}&next=${encodeURIComponent(next)}`);
-    if (r.status !== 302 || !this.jar.has("afs_session")) throw new Error(`dev login failed: ${r.status} ${r.text}`);
+    if (r.status !== 302 || !this.jar.has(SESSION)) throw new Error(`dev login failed: ${r.status} ${r.text}`);
     return r;
   }
 }

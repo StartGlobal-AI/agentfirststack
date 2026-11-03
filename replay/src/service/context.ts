@@ -32,9 +32,16 @@ export interface SiteRow {
   require_consent: number;
   analytics_site_id: string | null;
   purged_at: number | null;
+  /** set when verify proved the domain is the account's (homepage loader or DNS TXT) */
+  verified_at?: number | null;
+  verify_method?: string | null;
+  /** last daily kick of the site's Durable Object by the cron */
+  maintained_at?: number | null;
   created_at: number;
   updated_at: number;
 }
+
+export const isVerified = (s: SiteRow) => s.verified_at !== null && s.verified_at !== undefined;
 
 export const jsonList = (s: string | null | undefined): string[] => {
   if (!s) return [];
@@ -59,20 +66,39 @@ export async function loadSite(ctx: Ctx, siteId: string): Promise<SiteRow> {
 }
 
 // Ingest and the loader script read site rows on every request; keep them briefly per isolate.
+// Unknown ids are remembered longer and in their own map, so a flood of random site ids neither
+// costs a D1 read each time it repeats one nor evicts the rows of real sites.
 const SITE_CACHE_MS = 30_000;
-const cache = new Map<string, { row: SiteRow | null; at: number }>();
+const MISS_CACHE_MS = 300_000;
+const cache = new Map<string, { row: SiteRow; at: number }>();
+const misses = new Map<string, number>();
+
+function bounded<K, V>(m: Map<K, V>, max: number) {
+  while (m.size >= max) m.delete(m.keys().next().value as K);
+}
 
 export async function siteById(env: Bindings, siteId: string): Promise<SiteRow | null> {
-  const hit = cache.get(siteId);
   const now = Date.now();
+  const hit = cache.get(siteId);
   if (hit && now - hit.at < SITE_CACHE_MS) return hit.row;
+  const miss = misses.get(siteId);
+  if (miss !== undefined && now - miss < MISS_CACHE_MS) return null;
   const row = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<SiteRow>();
-  if (cache.size > 5000) cache.clear();
-  cache.set(siteId, { row: row ?? null, at: now });
+  if (row) {
+    bounded(cache, 5000);
+    cache.set(siteId, { row, at: now });
+    misses.delete(siteId);
+  } else {
+    bounded(misses, 20_000);
+    misses.set(siteId, now);
+  }
   return row ?? null;
 }
 
-export const forgetSite = (siteId: string) => cache.delete(siteId);
+export const forgetSite = (siteId: string) => {
+  cache.delete(siteId);
+  misses.delete(siteId);
+};
 
 /** DO errors are values; this turns one into an ApiError. */
 export function doFailure(e: { error: { code: string; message: string; hint?: string } }): never {

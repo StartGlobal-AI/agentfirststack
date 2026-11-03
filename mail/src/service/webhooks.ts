@@ -1,6 +1,7 @@
 import { ApiError, badRequest, decryptSecret, encryptSecret, newId, notFound } from "@afs/shared";
-import { type AppEnv, type WebhookEvent, type WebhookJob, positiveIntVar } from "../env";
+import { type AppEnv, type Standing, type WebhookEvent, type WebhookJob, cap, standingOf } from "../env";
 import { newWebhookSecret, signPayload } from "../lib/signing";
+import { assertActive, dailyLimitError, rateLimit, refundDaily, reserveDaily } from "./budgets";
 import { getInboxRow } from "./inboxes";
 
 export const WEBHOOK_EVENTS = ["message.received"] as const;
@@ -17,8 +18,11 @@ export const QUEUE_BATCH_MESSAGES = 100;
 export const QUEUE_BATCH_BYTES = 200 * 1024;
 /** MAX_WEBHOOKS_PER_ACCOUNT default. */
 export const DEFAULT_MAX_WEBHOOKS = 10;
+/** Delivery log rows older than this are purged by the cron. */
+export const DELIVERY_RETENTION_MS = 7 * 86_400_000;
+const PURGE_CHUNK = 500;
 
-export const maxWebhooks = (env: AppEnv) => positiveIntVar(env.MAX_WEBHOOKS_PER_ACCOUNT, DEFAULT_MAX_WEBHOOKS);
+export const maxWebhooks = (env: AppEnv, standing: Standing) => cap(env, standing, "MAX_WEBHOOKS_PER_ACCOUNT", DEFAULT_MAX_WEBHOOKS);
 
 interface WebhookRow {
   id: string;
@@ -117,6 +121,8 @@ export async function createWebhook(
   input: { url: string; events?: string[]; inbox_id?: string | null },
   now = Date.now(),
 ) {
+  const standing = await standingOf(env, accountId);
+  assertActive(standing);
   const url = validateWebhookUrl(input.url);
   const events = [...new Set(input.events?.length ? input.events : ["message.received"])];
   for (const e of events) {
@@ -137,7 +143,7 @@ export async function createWebhook(
       next_steps: [`POST /v1/webhooks/${existing.id}/test sends a signed test event.`],
     };
   }
-  const max = maxWebhooks(env);
+  const max = maxWebhooks(env, standing);
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM webhooks WHERE account_id = ?").bind(accountId).first<{ n: number }>();
   if ((count?.n ?? 0) >= max) {
     throw new ApiError(
@@ -267,6 +273,7 @@ export async function emitEvent(
   data: Record<string, unknown>,
   now = Date.now(),
 ) {
+  if ((await standingOf(env, accountId)).suspended) return 0; // suspended accounts get no webhooks
   const { results } = await env.DB.prepare(
     "SELECT * FROM webhooks WHERE account_id = ? AND enabled = 1 AND (inbox_id IS NULL OR inbox_id = ?) AND (' ' || events || ' ') LIKE ?",
   )
@@ -276,16 +283,64 @@ export async function emitEvent(
   return enqueue(env, results, event, now);
 }
 
+/**
+ * POST /webhooks/:id/test. Bounded three ways, since each test is an outbound request we make for
+ * the caller: the WEBHOOK_TEST_LIMITER binding (bursts), MAX_WEBHOOK_TESTS_PER_DAY (per account
+ * per UTC day), and a test is delivered once (no retries).
+ */
 export async function testWebhook(env: AppEnv, accountId: string, id: string, now = Date.now()) {
+  const standing = await standingOf(env, accountId);
+  assertActive(standing);
   const w = await getWebhookRow(env, accountId, id);
+  await rateLimit(
+    env.WEBHOOK_TEST_LIMITER,
+    `whtest:${accountId}`,
+    "webhook test",
+    `Test events are limited per account per minute. Check the last one with GET /v1/webhooks/${id} before sending another; retry in a minute.`,
+  );
+  const limit = cap(env, standing, "MAX_WEBHOOK_TESTS_PER_DAY");
+  const budget = await reserveDaily(env, accountId, "webhook_test", limit, now);
+  if (!budget.ok)
+    throw dailyLimitError(
+      `this account sent ${limit} webhook tests today`,
+      limit,
+      `GET /v1/webhooks/${id} shows the result of the last test and of real deliveries.`,
+    );
   const event: WebhookEvent = {
     id: newId("evt"),
     type: "webhook.test",
     created_at: now,
     data: { webhook_id: w.id, message: "Test delivery from mail. Verify x-signature with your webhook secret." },
   };
-  await enqueue(env, [w], event, now);
-  return { queued: true, event_id: event.id, next_steps: [`GET /v1/webhooks/${id} shows the delivery result within a few seconds.`] };
+  try {
+    await enqueue(env, [w], event, now);
+  } catch (e) {
+    await refundDaily(env, accountId, "webhook_test", budget.day);
+    throw e;
+  }
+  return {
+    queued: true,
+    event_id: event.id,
+    attempts: 1,
+    next_steps: [`GET /v1/webhooks/${id} shows the delivery result within a few seconds. Test events are sent once, without retries.`],
+  };
+}
+
+/** Cron: delivery log rows older than DELIVERY_RETENTION_MS, in chunks under a wall-time budget. */
+export async function purgeWebhookDeliveries(env: AppEnv, now = Date.now(), budgetMs = 20_000) {
+  const stop = Date.now() + budgetMs;
+  let purged = 0;
+  for (;;) {
+    if (Date.now() >= stop) return { deliveries_purged: purged, deliveries_more: true };
+    const r = await env.DB.prepare(
+      "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE created_at < ? LIMIT ?)",
+    )
+      .bind(now - DELIVERY_RETENTION_MS, PURGE_CHUNK)
+      .run();
+    const n = r.meta.changes ?? 0;
+    purged += n;
+    if (n < PURGE_CHUNK) return { deliveries_purged: purged, deliveries_more: false };
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -346,6 +401,13 @@ export async function deliverBatch(batch: MessageBatch<WebhookJob>, env: AppEnv,
       continue;
     }
     const attempt = msg.attempts;
+    if ((await standingOf(env, w.account_id)).suspended) {
+      await env.DB.prepare("UPDATE webhook_deliveries SET status = 'failed', attempts = ?, error = ?, updated_at = ? WHERE id = ?")
+        .bind(attempt, "account suspended: not delivered", Date.now(), job.delivery_id)
+        .run();
+      msg.ack();
+      continue;
+    }
     let status: number | null = null;
     let error: string | null = null;
     try {
@@ -374,7 +436,8 @@ export async function deliverBatch(batch: MessageBatch<WebhookJob>, env: AppEnv,
     }
     const delivered = status !== null && status >= 200 && status < 300;
     const gone = status === 410;
-    const final = delivered || gone || attempt >= MAX_ATTEMPTS;
+    // A test event is sent once: it checks the receiver, it is not mail to deliver.
+    const final = delivered || gone || attempt >= MAX_ATTEMPTS || job.event.type === "webhook.test";
     const state = delivered ? "delivered" : final ? "failed" : "retrying";
     await env.DB.prepare(
       "UPDATE webhook_deliveries SET status = ?, attempts = ?, response_status = ?, error = ?, updated_at = ? WHERE id = ?",

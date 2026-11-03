@@ -33,7 +33,25 @@
   ],
 
   // Burst limit on /v1/signup per IP; same namespace as the other apps, so it's one shared counter.
-  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+  // The rest are this app's fair-use limits (namespaces 42001-42009; counted per Cloudflare location).
+  // Each binding is optional in code: remove one and that limit is off.
+  "ratelimits": [
+    { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    // POST /e per client network (an IPv4 address or IPv6 prefix; the visitor's IP behind a proxy with the proxy key)
+    { "name": "INGEST_IP_LIMITER", "namespace_id": "42001", "simple": { "limit": 120, "period": 60 } },
+    // POST /e per site
+    { "name": "INGEST_SITE_LIMITER", "namespace_id": "42002", "simple": { "limit": 3000, "period": 60 } },
+    // POST /v1/sites/:id/events and /payments (and their MCP tools) per account; each call carries up to 100
+    { "name": "API_INGEST_LIMITER", "namespace_id": "42003", "simple": { "limit": 120, "period": 60 } },
+    // SQL queries per account
+    { "name": "SQL_LIMITER", "namespace_id": "42004", "simple": { "limit": 30, "period": 60 } },
+    // verify per account, and per verified domain across accounts (each is an outbound fetch)
+    { "name": "VERIFY_LIMITER", "namespace_id": "42005", "simple": { "limit": 6, "period": 60 } },
+    // Stripe webhook deliveries per site id
+    { "name": "WEBHOOK_LIMITER", "namespace_id": "42006", "simple": { "limit": 300, "period": 60 } },
+    // public share dashboard requests per share token
+    { "name": "SHARE_LIMITER", "namespace_id": "42007", "simple": { "limit": 120, "period": 60 } }
+  ],
 
   // One SQLite-backed Durable Object per site: its events, sessions, settings copy and queries.
   "durable_objects": { "bindings": [{ "name": "SITE", "class_name": "SiteDO" }] },
@@ -51,7 +69,11 @@
   },
   // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT, SIGNUP_TOKEN,
   // SQL_MAX_ROWS_READ (rows a /sql query may read after its first row; default 1000000),
-  // MAX_ANNOTATIONS_PER_SITE, MAX_FUNNELS_PER_SITE (unset = no cap).
+  // MAX_ANNOTATIONS_PER_SITE, MAX_FUNNELS_PER_SITE (unset = no cap), MAX_GOALS_PER_SITE (default 100),
+  // MAX_SHARE_LINKS_PER_SITE (default 10), MAX_EVENTS_PER_SITE_PER_DAY, MAX_EVENTS_PER_ACCOUNT_PER_DAY,
+  // DAILY_EVENT_BUDGET, MAX_SITE_STORAGE_MB, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS (unset = off),
+  // SQL_TIME_BUDGET_MS (default 60000 per 10 minutes). Each also has an UNCLAIMED_<NAME> form for
+  // accounts no person has claimed (see README "Config").
   // Secrets (wrangler secret put): SALT_SECRET (required), SIGNUP_TOKEN, ADMIN_TOKEN,
   // ENCRYPTION_KEY (optional: seals the Stripe webhook signing secret; openssl rand -base64 32).
 

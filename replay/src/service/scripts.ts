@@ -1,4 +1,4 @@
-import { sha256Hex } from "@afs/shared";
+import { accountStanding, sha256Hex } from "@afs/shared";
 import LOADER from "../../dist/loader.txt";
 import PLAYER_CSS from "../../dist/player-css.txt";
 import PLAYER from "../../dist/player.txt";
@@ -29,7 +29,12 @@ async function hashOf(name: string, text: string): Promise<string> {
 
 export const recorderHash = () => hashOf("recorder", RECORDER);
 export const playerHash = async () => hashOf("player", PLAYER + PLAYER_CSS);
-export const recorderPath = async () => `/recorder.${await recorderHash()}.js`;
+/**
+ * Under its own directory, so a page's CSP can allow exactly this site's loader and the recorder
+ * (script-src https://<replay>/r/<site>.js https://<replay>/rec/) instead of the whole host.
+ * /recorder.<hash>.js (the old path, in loaders cached before the change) is still served.
+ */
+export const recorderPath = async () => `/rec/${await recorderHash()}.js`;
 
 const JS = {
   "content-type": "application/javascript; charset=utf-8",
@@ -57,8 +62,13 @@ export async function serveLoader(env: Bindings, siteId: string, base: string, i
       status: 404,
       headers: { ...JS, "cache-control": "no-store" },
     });
+  if ((await accountStanding(env, site.account_id)).suspended)
+    return new Response(`/* afs-replay: replay site ${siteId} is not available. */\n`, {
+      status: 403,
+      headers: { ...JS, "cache-control": "public, max-age=300" },
+    });
   const cfg = loaderConfig(site, env, base, await recorderPath());
-  const etag = `W/"${site.id}-${site.updated_at}-${await recorderHash()}"`;
+  const etag = `W/"${site.id}-${site.updated_at}-${site.verified_at ?? 0}-${await recorderHash()}"`;
   const headers = { ...JS, "cache-control": `public, max-age=${LOADER_BROWSER_TTL}`, etag };
   if (ifNoneMatch && ifNoneMatch.split(/\s*,\s*/).includes(etag)) return new Response(null, { status: 304, headers });
   return new Response(`/*! ${LOADER_MARKER} ${site.id} */\n(function(){var __AFSR__=${safeJson(cfg)};\n${LOADER}\n})();\n`, { headers });

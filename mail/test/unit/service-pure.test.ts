@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ftsQuery, likePattern, parseCursor } from "../../src/service/messages";
+import { parseCursor, searchTerms } from "../../src/service/messages";
 import { mapSendError, replyRecipients, utcDay } from "../../src/service/send";
 import { WAIT_GRACE_MS, clampTimeout, parseAfter } from "../../src/service/wait";
 import { fence } from "../../src/service/format";
@@ -25,13 +25,12 @@ describe("wait parameters", () => {
 });
 
 describe("search helpers", () => {
-  it("FTS queries are quoted prefix terms (no injection of FTS syntax)", () => {
-    expect(ftsQuery('verify "code" OR NEAR(x)')).toBe('"verify"* "code"* "OR"* "NEAR"* "x"*');
-    expect(ftsQuery("   ")).toBeNull();
-    expect(ftsQuery("código")).toBe('"código"*');
-  });
-  it("LIKE patterns escape wildcards", () => {
-    expect(likePattern("50%_off\\")).toBe("%50\\%\\_off\\\\%");
+  it("search terms: words of 3+ letters or digits, lowercased, deduplicated, at most 5", () => {
+    expect(searchTerms('Verify "code" OR NEAR(x)')).toEqual(["verify", "code", "near"]);
+    expect(searchTerms("   ")).toEqual([]);
+    expect(searchTerms("a b cd")).toEqual([]); // nothing long enough: the route answers 400
+    expect(searchTerms("Código código")).toEqual(["código"]);
+    expect(searchTerms("one two three four five six seven")).toEqual(["one", "two", "three", "four", "five"]);
   });
   it("cursors", () => {
     expect(parseCursor("1700.42")).toEqual({ at: 1700, seq: 42 });

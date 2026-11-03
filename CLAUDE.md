@@ -50,7 +50,9 @@ live in the app's own `DB`. `KEY_PREFIX=afs` makes every app mint `afs_` keys.
 Agents never need a person. People can sign in with Google to claim projects (`POST /v1/claim-link`),
 manage keys and members in `/dashboard`, and connect MCP clients over OAuth 2.1 (dynamic client
 registration + PKCE). OAuth access tokens are just API keys with `expires_at`, so every service
-accepts them unchanged. The dashboard talks to services with `x-afs-internal` (`INTERNAL_TOKEN`).
+accepts them unchanged. The dashboard talks to services with `x-afs-internal` (`INTERNAL_TOKEN`), which
+is accepted only on service-binding requests to an `https://<svc>.internal` URL. The operator can suspend an
+account (`pnpm afs suspend <profile> <acct>`): its keys and public ingest stop everywhere.
 Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 
 ## Fair-use controls (vars, all off when unset)
@@ -68,6 +70,11 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | 5 / 10 / 128 KB (defaults 10 / 50 / 512 KB) |
 | `SQL_MAX_ROWS_READ` | analytics | 100,000 (default 1,000,000) rows read per SQL query |
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
+| `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (`429 signups_paused`) |
+| `MAX_KEYS_PER_ACCOUNT` / `KEYS_HOURLY_LIMIT` (+ `KEY_LIMITER` binding) | all | 25 active (10 unclaimed) / 20 created an hour |
+| `UNCLAIMED_<NAME>` | all | any account cap or daily budget has a lower value for accounts no person has claimed (`capFor()` in `@afs/shared`) |
+| Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows | analytics / tags / replay | per site or container, per account and per deployment, counters never go down; values in `deploy/hosted.json` |
+| `MAX_CONCURRENT_WAITS` / `MAX_INBOUND_PER_SENDER_PER_DAY` / `MAX_TEXT_BYTES_PER_ACCOUNT` | mail | 3 (2 unclaimed) / 20 / 10 MB |
 | `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` / `MAX_CHUNK_BYTES` / `MAX_SESSION_BYTES` | replay | 5 / 200 / 30 / 14 / 5 / 256 KB / 2 MB (`MAX_SAMPLE_RATE` unset: sites choose); R2 lifecycle deletes chunks after 16 days |
 
 ## Deployments (`pnpm afs`, profiles in `deploy/`)

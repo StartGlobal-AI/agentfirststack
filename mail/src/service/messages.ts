@@ -1,21 +1,23 @@
 import { badRequest, notFound } from "@afs/shared";
 import type { AppEnv } from "../env";
+import { rateLimit } from "./budgets";
 import { type AttachmentRow, type MessageRow, type ThreadRow, messageDetail, messageSummary, threadJson } from "./format";
 import { getInboxRow } from "./inboxes";
 
-/** LIKE pattern with %/_ escaped (use with ESCAPE '\'). */
-export function likePattern(s: string): string {
-  return `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-}
+/** Search words shorter than this are ignored (they would match nearly everything). */
+export const MIN_SEARCH_TERM_CHARS = 3;
+export const MAX_SEARCH_TERMS = 5;
+/** Search looks through at most this many of the newest messages (before the cursor) per query. */
+export const SEARCH_SCAN_ROWS = 2_000;
 
 /**
- * User text -> safe FTS5 query: words only, each a quoted prefix term, AND-ed. Raw FTS5 syntax
- * (NEAR, column filters, unbalanced quotes) would otherwise throw on user input.
+ * User text -> search terms (pure): words of letters and digits, lowercased, at least
+ * MIN_SEARCH_TERM_CHARS characters, deduplicated, at most MAX_SEARCH_TERMS. Every term must occur
+ * (case-insensitive substring) in the subject, sender name, sender address or text.
  */
-export function ftsQuery(q: string): string | null {
-  const words = (q.match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, 8);
-  if (!words.length) return null;
-  return words.map((w) => `"${w}"*`).join(" ");
+export function searchTerms(q: string): string[] {
+  const words = (q.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => [...w].length >= MIN_SEARCH_TERM_CHARS);
+  return [...new Set(words)].slice(0, MAX_SEARCH_TERMS);
 }
 
 /** Pagination cursor: "<received_at>.<seq>" (also accepts a bare unix-ms timestamp). */
@@ -47,8 +49,10 @@ function buildFilters(opts: ListOptions, where: string[], binds: unknown[]) {
     binds.push(opts.direction);
   }
   if (opts.from) {
-    where.push("(m.from_address LIKE ? ESCAPE '\\' OR m.from_name LIKE ? ESCAPE '\\')");
-    binds.push(likePattern(opts.from), likePattern(opts.from));
+    // instr(), not LIKE: D1 refuses LIKE patterns over 50 bytes.
+    where.push("(instr(lower(m.from_address), ?) > 0 OR instr(lower(m.from_name), ?) > 0)");
+    const p = opts.from.toLowerCase();
+    binds.push(p, p);
   }
   const cur = parseCursor(opts.before);
   if (cur) {
@@ -57,17 +61,37 @@ function buildFilters(opts: ListOptions, where: string[], binds: unknown[]) {
   }
 }
 
-async function runList(env: AppEnv, where: string[], binds: unknown[], opts: ListOptions) {
+async function runList(
+  env: AppEnv,
+  where: string[],
+  binds: unknown[],
+  opts: ListOptions,
+  scope?: { column: "account_id" | "inbox_id"; value: string },
+) {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
-  let sql: string;
-  if (opts.q) {
-    const fq = ftsQuery(opts.q);
-    if (!fq) throw badRequest("Search query has no words.", "Pass words to search for, e.g. q=verification.");
-    sql = `SELECT m.* FROM messages_fts f JOIN messages m ON m.seq = f.rowid WHERE messages_fts MATCH ? AND ${where.join(" AND ")} ORDER BY m.received_at DESC, m.seq DESC LIMIT ?`;
-    binds = [fq, ...binds];
-  } else {
-    sql = `SELECT m.* FROM messages m WHERE ${where.join(" AND ")} ORDER BY m.received_at DESC, m.seq DESC LIMIT ?`;
+  if (opts.q !== undefined) {
+    const terms = searchTerms(opts.q);
+    if (!terms.length)
+      throw badRequest(
+        `Search needs a word of at least ${MIN_SEARCH_TERM_CHARS} letters or digits.`,
+        "Pass words to search for, e.g. q=verification (shorter words are ignored; every word must appear).",
+      );
+    // Scoped to this account's (or inbox's) newest messages, newest first: the work is bounded by
+    // the account's own mail, never by everyone's (a global full-text prefix scan could stall D1).
+    for (const t of terms) {
+      where.push(
+        "(instr(lower(m.subject), ?) > 0 OR instr(lower(m.from_name), ?) > 0 OR instr(lower(m.from_address), ?) > 0 OR instr(lower(m.text_body), ?) > 0)",
+      );
+      binds.push(t, t, t, t);
+    }
+    if (scope) {
+      const cur = parseCursor(opts.before);
+      const window = `m.seq IN (SELECT seq FROM messages WHERE ${scope.column} = ?${cur ? " AND (received_at < ? OR (received_at = ? AND seq < ?))" : ""} ORDER BY received_at DESC, seq DESC LIMIT ${SEARCH_SCAN_ROWS})`;
+      where.push(window);
+      binds.push(scope.value, ...(cur ? [cur.at, cur.at, cur.seq] : []));
+    }
   }
+  const sql = `SELECT m.* FROM messages m WHERE ${where.join(" AND ")} ORDER BY m.received_at DESC, m.seq DESC LIMIT ?`;
   const { results } = await env.DB.prepare(sql)
     .bind(...binds, limit + 1)
     .all<MessageRow>();
@@ -75,16 +99,22 @@ async function runList(env: AppEnv, where: string[], binds: unknown[], opts: Lis
   return { messages: page.map(messageSummary), next_before: results.length > limit ? cursorOf(page[page.length - 1]!) : null };
 }
 
+const searchHint =
+  "Search is limited per account per minute. Narrow it with inbox_id, from or more specific words, and page with before=next_before instead of repeating it. Retry in a minute.";
+
 export async function listMessages(env: AppEnv, accountId: string, inboxId: string, opts: ListOptions = {}) {
   await getInboxRow(env, accountId, inboxId);
+  if (opts.q !== undefined && opts.q !== "") await rateLimit(env.SEARCH_LIMITER, `search:${accountId}`, "search", searchHint);
+  else opts = { ...opts, q: undefined };
   const where = ["m.inbox_id = ?"];
   const binds: unknown[] = [inboxId];
   buildFilters(opts, where, binds);
-  return runList(env, where, binds, opts);
+  return runList(env, where, binds, opts, { column: "inbox_id", value: inboxId });
 }
 
 export async function searchMessages(env: AppEnv, accountId: string, opts: ListOptions & { inbox_id?: string }) {
   if (!opts.q?.trim()) throw badRequest("Missing q.", "GET /v1/search?q=invoice searches subject, sender and body across all inboxes.");
+  await rateLimit(env.SEARCH_LIMITER, `search:${accountId}`, "search", searchHint);
   const where = ["m.account_id = ?"];
   const binds: unknown[] = [accountId];
   if (opts.inbox_id) {
@@ -92,7 +122,13 @@ export async function searchMessages(env: AppEnv, accountId: string, opts: ListO
     binds.push(opts.inbox_id);
   }
   buildFilters(opts, where, binds);
-  return runList(env, where, binds, opts);
+  return runList(
+    env,
+    where,
+    binds,
+    opts,
+    opts.inbox_id ? { column: "inbox_id", value: opts.inbox_id } : { column: "account_id", value: accountId },
+  );
 }
 
 export async function getMessageRow(env: AppEnv, accountId: string, id: string): Promise<MessageRow> {

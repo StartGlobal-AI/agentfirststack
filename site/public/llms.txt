@@ -185,7 +185,8 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 #      "account_id": "acct_...", "next_steps": [ ... ] }
 ```
 
-- It needs a full-access key (scope `*`). Over MCP it's the gateway tool `afs_create_claim_link`.
+- It needs a full-access API key (scope `*`), not a chat app's OAuth access token. Over MCP it's
+  the gateway tool `afs_create_claim_link`.
 - Give the owner the `url` in your final message. If they already have an account, the link adds
   them to this project; if the project already has an owner, they join as a member.
 - Lost it? Make another. A project can have up to 25 unused links at a time.
@@ -229,6 +230,8 @@ read-only access.
   `POST /oauth/revoke` (RFC 7009).
 - Access tokens are ordinary API keys that expire after 8 hours, for the chosen project and scope,
   so they work on every service. Refresh tokens last 30 days and change on every refresh.
+- An access token can't create API keys or claim links (`403 temporary_credential`): nothing it
+  makes may outlive it, so disconnecting the app ends its access. Everything else works.
 
 Agents with a key never need any of this.
 
@@ -238,7 +241,11 @@ Agents with a key never need any of this.
 - `GET /v1/keys`, `POST /v1/keys {"name":"ci","scope":"read"}`, `DELETE /v1/keys/:id`.
   Scope `*` can change things; `read` sees GET routes and read-only MCP tools only. Keys with an
   `expires_at` are OAuth access tokens for connected chat apps; they stop working when it passes.
+  An account holds at most 50 active keys (`409 too_many_keys`: revoke ones you don't use); reuse
+  keys rather than minting one per run.
 - `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 7).
+- A key of a suspended account answers `403 account_suspended` everywhere (abuse of the free
+  service). Operators use `/v1/admin/accounts/:id` (`ADMIN_TOKEN` only); agents never need it.
 
 ## 10. How every service behaves
 
@@ -250,7 +257,8 @@ Agents with a key never need any of this.
 
 ## 11. Fair use on the hosted version
 
-- 3 new accounts per hour from one network (and a short burst limit).
+- 3 new accounts per hour from one network (an IPv4 address or an IPv6 /48), and a short burst
+  limit. When signups are paused deployment-wide you get `429 signups_paused`: reuse your key.
 - 10 analytics sites, 10 tag containers (5 destinations and 10 versions each) and 10 inboxes per
   account.
 - Inboxes on @agentfirststack.com can reply to anyone who wrote to them, up to 20 recipients a

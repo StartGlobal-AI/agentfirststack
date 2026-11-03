@@ -173,7 +173,11 @@ export function duration(ms: number): string {
   return m < 60 ? `${m}m${String(s % 60).padStart(2, "0")}s` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
 }
 
-const q = (s: string | null | undefined) => (s ? JSON.stringify(s) : '""');
+// JSON quoting (escapes quotes, backslashes and control characters), plus the line/paragraph
+// separators and bidi controls JSON leaves alone: every recorded value stays one quoted token.
+const SEPARATORS = new RegExp("[\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]", "g");
+const q = (s: string | null | undefined) =>
+  s ? JSON.stringify(s).replace(SEPARATORS, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`) : '""';
 const FLAG: Record<string, string> = {
   rage_click: "RAGE",
   dead_click: "DEAD",
@@ -192,8 +196,8 @@ export function entryLine(e: TimelineEntry): string {
   const at = `[${clock(e.t)}]`;
   switch (e.kind) {
     case "page": {
-      const bits = [`page ${e.path}`, e.nav ?? "load"];
-      if (e.referrer) bits.push(`from ${e.referrer}`);
+      const bits = [`page ${q(e.path)}`, e.nav ?? "load"];
+      if (e.referrer) bits.push(`from ${q(e.referrer)}`);
       if (e.title) bits.push(`title ${q(e.title)}`);
       if (e.stayed_ms !== null && e.stayed_ms !== undefined) bits.push(`stayed ${duration(e.stayed_ms)}`);
       bits.push(`saw ${e.max_scroll_pct ?? 0}% of the page`);
@@ -202,16 +206,18 @@ export function entryLine(e: TimelineEntry): string {
     case "click": {
       const what = `${e.tag || "element"}${e.label ? ` ${q(e.label)}` : ""}${e.label_masked ? " (text masked)" : ""}`;
       const n = e.count && e.count > 1 ? ` x${e.count} in ${((e.span_ms ?? 0) / 1000 || 0).toFixed(1)}s` : "";
-      const extra = [e.interactive ? null : "not interactive", e.href ? `-> ${e.href}` : null, e.detail ?? null].filter(Boolean).join(", ");
-      return `${at} click${n} ${what} {${e.selector}}${extra ? ` (${extra})` : ""}${tail}`;
+      const extra = [e.interactive ? null : "not interactive", e.href ? `-> ${q(e.href)}` : null, e.detail ?? null]
+        .filter(Boolean)
+        .join(", ");
+      return `${at} click${n} ${what} {${q(e.selector)}}${extra ? ` (${extra})` : ""}${tail}`;
     }
     case "input":
-      return `${at} typed into ${e.tag || "field"}${e.label ? ` ${q(e.label)}` : ""}${e.field ? ` name=${e.field}` : ""} {${e.selector}} (value ${e.value_masked ? "masked" : "recorded"})`;
+      return `${at} typed into ${e.tag || "field"}${e.label ? ` ${q(e.label)}` : ""}${e.field ? ` name=${q(e.field)}` : ""} {${q(e.selector)}} (value ${e.value_masked ? "masked" : "recorded"})`;
     case "scroll":
-      return `${at} scrolled to ${e.pct}% of ${e.path}`;
+      return `${at} scrolled to ${e.pct}% of ${q(e.path)}`;
     case "error": {
-      const trig = e.triggered_by ? ` after click on {${e.triggered_by.selector}}` : "";
-      return `${at} ${e.error_kind === "console" ? "console.error" : e.error_kind === "rejection" ? "unhandled rejection" : "JS error"} ${q(e.message)}${e.source ? ` at ${e.source}` : ""}${trig}${tail}`;
+      const trig = e.triggered_by ? ` after click on {${q(e.triggered_by.selector)}}` : "";
+      return `${at} ${e.error_kind === "console" ? "console.error" : e.error_kind === "rejection" ? "unhandled rejection" : "JS error"} ${q(e.message)}${e.source ? ` at ${q(e.source)}` : ""}${trig}${tail}`;
     }
     case "event":
       return `${at} event ${q(e.name)}${e.props ? ` ${JSON.stringify(e.props)}` : ""}`;
@@ -223,7 +229,7 @@ export function entryLine(e: TimelineEntry): string {
         stop: "recording stopped",
         excluded: "navigated to an excluded path (not recorded)",
       };
-      return `${at} ${what[e.detail ?? ""] ?? e.detail}`;
+      return `${at} ${what[e.detail ?? ""] ?? q(e.detail)}`;
     }
     case "idle":
       return `${at} idle: recording paused until the visitor is active again`;

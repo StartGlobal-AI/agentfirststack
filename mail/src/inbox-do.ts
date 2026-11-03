@@ -4,30 +4,32 @@ import type { AppEnv } from "./env";
 export interface WaitResult {
   /** true: a message was committed since `since` (re-check D1); false: the timeout passed. */
   woken: boolean;
-  /** The inbox's notification version now; pass it to the next wait(). */
+  /** The inbox's notification version now; pass it to the next wait. */
   version: number;
 }
 
-interface Waiter {
-  since: number;
-  resolve: (r: WaitResult) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
+/** Most waiters one inbox object accepts at once (D1 slots cap them far lower; this is a backstop). */
+export const MAX_SOCKETS_PER_INBOX = 50;
 
 /**
  * One per inbox (idFromName(inbox_id)). Holds no mail: D1 is the source of truth. It parks
  * wait_for_email callers and wakes them when the email() handler calls notify().
  *
+ * Cost: a waiter is a WebSocket from the Worker to this object, accepted with the Hibernation API
+ * (ctx.acceptWebSocket) and no timers, so the object hibernates while callers wait and is not
+ * billed for duration; the timeout runs in the calling Worker, which is billed for CPU only. (A
+ * parked RPC promise or a setTimeout here would keep the object in memory and billed for the
+ * whole wait.)
+ *
  * Race-free by construction. notify() runs after the message is committed to D1 and bumps a
  * persisted version counter. A waiter reads the version (version()) BEFORE its last D1 check, then
- * parks with wait(version). Any message committed before that read is visible to the D1 check; any
- * notify after it has bumped the version, so wait() either returns at once or is woken by it. A
- * Durable Object handles one event at a time, so the counter has no lost updates. (Comparing
- * received_at timestamps instead is not enough: concurrent deliveries can commit out of order and
- * share a millisecond.)
+ * connects with ?since=<version>. Any message committed before that read is visible to the D1
+ * check; any notify after it has bumped the version, so the connect either answers at once (plain
+ * JSON, no socket) or the socket is woken by it. A Durable Object handles one event at a time, so
+ * the counter has no lost updates. (Comparing received_at timestamps instead is not enough:
+ * concurrent deliveries can commit out of order and share a millisecond.)
  */
 export class InboxDO extends DurableObject<AppEnv> {
-  private waiters = new Set<Waiter>();
   private current: number | null = null;
 
   private async load(): Promise<number> {
@@ -40,21 +42,19 @@ export class InboxDO extends DurableObject<AppEnv> {
     return this.load();
   }
 
-  async wait(since: number, timeoutMs: number): Promise<WaitResult> {
+  /** GET /wait?since=<version> with `Upgrade: websocket`: park a waiter (see parkOnInbox). */
+  override async fetch(req: Request): Promise<Response> {
+    const since = Number(new URL(req.url).searchParams.get("since") ?? "NaN");
+    if (!Number.isFinite(since)) return Response.json({ error: "since is required" }, { status: 400 });
     const version = await this.load();
-    if (version > since) return { woken: true, version };
-    const ms = Math.max(0, Math.min(timeoutMs, 125_000));
-    return new Promise<WaitResult>((resolve) => {
-      const w: Waiter = {
-        since,
-        resolve,
-        timer: setTimeout(() => {
-          this.waiters.delete(w);
-          resolve({ woken: false, version: this.current ?? 0 });
-        }, ms),
-      };
-      this.waiters.add(w);
-    });
+    if (version > since) return Response.json({ woken: true, version } satisfies WaitResult);
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("expected a websocket upgrade", { status: 426 });
+    if (this.ctx.getWebSockets().length >= MAX_SOCKETS_PER_INBOX) return Response.json({ error: "too many waiters" }, { status: 429 });
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ since });
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   /** Called by the email() handler after the message is committed to D1. Returns waiters woken. */
@@ -63,19 +63,38 @@ export class InboxDO extends DurableObject<AppEnv> {
     this.current = version;
     await this.ctx.storage.put("version", version);
     let woken = 0;
-    for (const w of [...this.waiters]) {
-      if (version > w.since) {
-        clearTimeout(w.timer);
-        this.waiters.delete(w);
-        w.resolve({ woken: true, version });
-        woken++;
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = ws.deserializeAttachment() as { since?: number } | null;
+      if (a && typeof a.since === "number" && version <= a.since) continue;
+      try {
+        ws.send(JSON.stringify({ woken: true, version } satisfies WaitResult));
+        ws.close(1000, "woken");
+      } catch {
+        // already closing: the waiter re-checks D1 on close anyway
       }
+      woken++;
     }
     return woken;
   }
 
-  /** Number of parked waiters (diagnostics). */
+  override async webSocketClose(ws: WebSocket, code: number, reason: string) {
+    try {
+      ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
+    } catch {
+      // already closed
+    }
+  }
+
+  override async webSocketError(ws: WebSocket) {
+    try {
+      ws.close(1011, "error");
+    } catch {
+      // already closed
+    }
+  }
+
+  /** Number of parked waiters (diagnostics, tests). */
   async waiting(): Promise<number> {
-    return this.waiters.size;
+    return this.ctx.getWebSockets().length;
   }
 }

@@ -1,4 +1,4 @@
-import { type AuthContext, ApiError, assertWrite, randomString, requireAuth, sha256Hex } from "@afs/shared";
+import { type AuthContext, ApiError, assertPermanentKey, assertWrite, randomString, requireAuth, sha256Hex } from "@afs/shared";
 import { Hono } from "hono";
 import { DAY, type SiteEnv, isDev } from "./env";
 import { googleConfigured, siteBase } from "./google";
@@ -53,6 +53,41 @@ export async function createClaimLink(
   return { url: `${base}/claim/${token}`, expires_at: expiresAt };
 }
 
+/** An unused, unexpired claim or invite link, as the project's owner sees it (never the token). */
+export interface OpenLink {
+  /** First 16 hex characters of the stored hash: enough to name the link, useless to claim it. */
+  ref: string;
+  created_at: number;
+  expires_at: number;
+  created_by_email: string | null;
+  created_by_key_prefix: string | null;
+}
+
+export async function listOpenLinks(db: D1Database, accountId: string, now = Date.now()): Promise<OpenLink[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT substr(l.hash, 1, 16) AS ref, l.created_at, l.expires_at, u.email AS created_by_email, k.prefix AS created_by_key_prefix
+         FROM claim_links l
+         LEFT JOIN users u ON u.id = l.created_by_user_id
+         LEFT JOIN api_keys k ON k.id = l.created_by_key_id
+        WHERE l.account_id = ? AND l.used_at IS NULL AND l.expires_at > ?
+        ORDER BY l.created_at DESC`,
+    )
+    .bind(accountId, now)
+    .all<OpenLink>();
+  return results;
+}
+
+/** Delete one unused link of a project, by its ref. Returns whether there was one. */
+export async function revokeOpenLink(db: D1Database, accountId: string, ref: string): Promise<boolean> {
+  if (!/^[0-9a-f]{16}$/.test(ref)) return false;
+  const res = await db
+    .prepare("DELETE FROM claim_links WHERE account_id = ? AND substr(hash, 1, 16) = ? AND used_at IS NULL")
+    .bind(accountId, ref)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
 /** The response body of POST /v1/claim-link and the afs_create_claim_link MCP tool. */
 export function claimLinkResponse(link: ClaimLink, accountId: string) {
   return {
@@ -67,11 +102,16 @@ export function claimLinkResponse(link: ClaimLink, accountId: string) {
   };
 }
 
-/** POST /v1/claim-link, mounted with requireAuth(). Full-access keys only. */
+/**
+ * POST /v1/claim-link, mounted with requireAuth(). Full-access keys only, and not a connected
+ * app's OAuth access token: claiming with it would turn 8 hours of access into a permanent
+ * membership that survives disconnecting the app.
+ */
 export const claimLinkApi = new Hono<SiteEnv>();
 claimLinkApi.post("/v1/claim-link", requireAuth<SiteEnv>(), async (c) => {
   const auth: AuthContext = c.var.auth;
   assertWrite(auth);
+  assertPermanentKey(auth, "create claim links");
   const link = await createClaimLink(c.env.DB, siteBase(c), auth.accountId, { keyId: auth.keyId });
   return c.json(claimLinkResponse(link, auth.accountId), 201);
 });

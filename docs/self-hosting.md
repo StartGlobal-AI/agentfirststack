@@ -58,7 +58,7 @@ These are what agentfirststack.com uses (see `deploy/hosted.json`). All are off 
 
 | Var | App | Effect |
 |---|---|---|
-| `SIGNUP_HOURLY_LIMIT` | all | New accounts per network (IPv4 address or IPv6 /64) per hour |
+| `SIGNUP_HOURLY_LIMIT` | all | New accounts per network (IPv4 address or IPv6 /48) per hour |
 | `MAX_SITES_PER_ACCOUNT` | analytics | Sites per account |
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | Chart annotations and saved funnels per site |
 | `MAX_CONTAINERS_PER_ACCOUNT` | tags | Tag containers per account |

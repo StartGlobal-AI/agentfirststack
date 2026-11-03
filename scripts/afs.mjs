@@ -6,6 +6,8 @@
 //   pnpm afs deploy <profile> [app ...]    config + D1 migrations + wrangler deploy + secrets
 //   pnpm afs email <profile>               Email Routing catch-all + Email Sending for the mail domain
 //   pnpm afs check <profile>               end-to-end check of a live deployment (cleans up after itself)
+//   pnpm afs suspend <profile> <acct_id> --reason "..."   stop an abusive account: every key, every service
+//   pnpm afs unsuspend <profile> <acct_id>                undo a suspension
 //
 // Each app's wrangler.jsonc is the generic template (local dev, tests, self-host defaults). This
 // script never edits it; it derives a deploy config per app from the template plus the profile.
@@ -416,7 +418,14 @@ async function cmdCheck(name) {
     const r = await call(url);
     step(label, r.status === 200, url);
   }
-  const su = await call(`${base("site")}/v1/signup`, { method: "POST", body: JSON.stringify({ name: "afs-check" }) });
+  // The operator's ADMIN_TOKEN skips signup limits, so running the check never uses up a real
+  // network's daily allowance (or trips the deployment-wide breaker).
+  const admin = loadSecrets(name)?.ADMIN_TOKEN;
+  const su = await call(`${base("site")}/v1/signup`, {
+    method: "POST",
+    headers: admin ? { authorization: `Bearer ${admin}` } : {},
+    body: JSON.stringify({ name: "afs-check" }),
+  });
   const key = su.json?.api_key;
   step("signup returns a key", su.status === 201 && !!key, key ? `${key.slice(0, 5)}...` : su.text.slice(0, 120));
   if (!key) return finish();
@@ -464,6 +473,58 @@ async function cmdCheck(name) {
   }
 }
 
+// ---------- operator: suspend / unsuspend ----------
+
+const ACCOUNT_ID = /^acct_[0-9a-z]{1,64}$/;
+
+/**
+ * POST /v1/admin/accounts/:id/suspend (or /unsuspend) on the site, with the ADMIN_TOKEN as Bearer.
+ * Returns the API's JSON body; throws with the API's message and hint when it refuses.
+ */
+export async function setSuspension({ base, token, accountId, suspend, reason }) {
+  if (!ACCOUNT_ID.test(accountId ?? "")) throw new Error("Give the account id (acct_...). GET /v1/me shows it for a key.");
+  if (suspend && !reason?.trim()) throw new Error('Say why with --reason "..." (it is stored with the suspension).');
+  const res = await fetch(`${base.replace(/\/+$/, "")}/v1/admin/accounts/${accountId}/${suspend ? "suspend" : "unsuspend"}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(suspend ? { reason: reason.trim() } : {}),
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  if (!res.ok) {
+    const e = json?.error;
+    throw new Error(e ? `${res.status} ${e.code}: ${e.message}${e.hint ? ` ${e.hint}` : ""}` : `HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return json;
+}
+
+async function cmdSuspend(name, accountId, opts, suspend) {
+  const profile = loadProfile(name);
+  const token = loadSecrets(name)?.ADMIN_TOKEN;
+  if (!token) die(`deploy/${name}.secrets.json has no ADMIN_TOKEN. \`pnpm afs init ${name}\` adds one; deploy before using it.`);
+  let out;
+  try {
+    out = await setSuspension({
+      base: `https://${profile.domain}`,
+      token,
+      accountId,
+      suspend,
+      reason: typeof opts.reason === "string" ? opts.reason : "",
+    });
+  } catch (e) {
+    die(e.message);
+  }
+  const a = out.account;
+  log(
+    `${suspend ? "Suspended" : "Unsuspended"} ${a.id}${out.existing ? " (it already was)" : ""}: ${a.name ?? "unnamed"}, ${a.active_keys} active keys, ${a.members} members.`,
+  );
+  if (a.suspended_reason) log(`  reason: ${a.suspended_reason}`);
+  for (const step of out.next_steps ?? []) log(`  - ${step}`);
+}
+
 // ---------- main ----------
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -474,7 +535,7 @@ if (isMain) {
     log(
       readFileSync(fileURLToPath(import.meta.url), "utf8")
         .split("\n")
-        .slice(1, 12)
+        .slice(1, 14)
         .join("\n")
         .replace(/^\/\/ ?/gm, ""),
     );
@@ -493,6 +554,10 @@ if (isMain) {
       break;
     case "check":
       await cmdCheck(name);
+      break;
+    case "suspend":
+    case "unsuspend":
+      await cmdSuspend(name, rest[0], opts, cmd === "suspend");
       break;
     default:
       help();

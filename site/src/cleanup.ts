@@ -1,9 +1,11 @@
+import { pruneSignupLog } from "@afs/shared";
 import { DAY } from "./env";
 
 /**
  * Daily cron: delete what has expired in the identity DB. Expired rows already fail every check
  * (authenticate() rejects expired keys, sessions and codes are looked up with their expiry), so
- * this only keeps the tables small.
+ * this only keeps the tables small. signup_log (the shared signup counters) is pruned here too, so
+ * the signup path never scans it.
  */
 export async function purgeExpired(db: D1Database, now = Date.now()) {
   const stale = now - 31 * DAY;
@@ -29,5 +31,15 @@ export async function purgeExpired(db: D1Database, now = Date.now()) {
       .bind(stale),
   ]);
   const n = (i: number) => results[i]?.meta.changes ?? 0;
-  return { keys: n(0), codes: n(1), refresh_tokens: n(2), sessions: n(3), claim_links: n(4), grants: n(5), clients: n(6) };
+  const signupLog = await pruneSignupLog(db, now);
+  return {
+    keys: n(0),
+    codes: n(1),
+    refresh_tokens: n(2),
+    sessions: n(3),
+    claim_links: n(4),
+    grants: n(5),
+    clients: n(6),
+    signup_log: signupLog,
+  };
 }

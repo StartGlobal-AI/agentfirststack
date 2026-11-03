@@ -1,5 +1,5 @@
 import { type IpRule, matchIp, parseCidr } from "./cidr";
-import { hostAllowed } from "./url";
+import { matchesHostPattern } from "./url";
 
 /**
  * Ingest exclusions: drop events from the owner's own IPs (CIDR, v4 and v6), paths, hostnames
@@ -91,7 +91,7 @@ export function excludedBy(c: CompiledExclusions | null, t: ExclusionTarget): { 
   const ip = matchIp(t.ip, c.ips);
   if (ip) return { reason: "excluded_ip", rule: ip.text };
   if (t.hostname) {
-    const h = c.hostnames.find((p) => hostAllowed(t.hostname!, [p]));
+    const h = c.hostnames.find((p) => matchesHostPattern(t.hostname!, p));
     if (h) return { reason: "excluded_hostname", rule: h };
   }
   if (t.pathname) {

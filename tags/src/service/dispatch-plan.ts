@@ -7,7 +7,18 @@ export interface DestinationInfo {
   id: string;
   type: string;
   enabled: boolean;
-  settings: { conversions?: string[] };
+  settings: { conversions?: string[]; all_events?: boolean };
+  /** Circuit breaker (see dispatch.ts): open until this unix ms after too many consecutive failures. */
+  circuit_open_until?: number | null;
+  consecutive_failures?: number;
+}
+
+export interface PlanOptions {
+  /** Only these destination ids (a backend event's `destinations`). */
+  only?: string[];
+  /** The event matched a conversion in the config (false: a backend event with an unknown name). */
+  matched?: boolean;
+  now?: number;
 }
 
 export interface PlannedTarget {
@@ -33,8 +44,9 @@ export function sendToForEvent(conversion: Conversion | undefined, override?: Se
  * Decide which destinations get an event and why the others don't. Pure; the decision only uses
  * server-side config (the browser can't route an event to a destination by itself).
  */
-export function planDispatch(e: DispatchEvent, destinations: DestinationInfo[], only?: string[]): PlannedTarget[] {
+export function planDispatch(e: DispatchEvent, destinations: DestinationInfo[], opts: PlanOptions = {}): PlannedTarget[] {
   const out: PlannedTarget[] = [];
+  const { only, matched = true, now = Date.now() } = opts;
   for (const d of destinations) {
     if (!d.enabled) continue;
     if (only && only.length && !only.includes(d.id)) continue;
@@ -42,7 +54,13 @@ export function planDispatch(e: DispatchEvent, destinations: DestinationInfo[], 
     const connector = getConnector(d.type);
     if (!connector) continue;
     if (connector.needsMapping && !(e.send_to as Record<string, unknown>)[d.type]) continue;
+    // Webhooks get conversions the config defines; every event only when the destination opts in.
+    if (connector.matchedOnly && !matched && !d.settings.all_events) continue;
     const skip = (reason: string) => out.push({ destination_id: d.id, type: d.type, status: "skipped", reason });
+    if (d.circuit_open_until && d.circuit_open_until > now) {
+      skip(circuitReason(d.circuit_open_until, d.consecutive_failures));
+      continue;
+    }
     // `fired` is what this same browser hit says its own tags did, so it may only suppress this
     // hit's own server copy. Backend events never carry it and are never skipped by it: an
     // unauthenticated /collect hit can't block a real server conversion.
@@ -62,6 +80,10 @@ export function planDispatch(e: DispatchEvent, destinations: DestinationInfo[], 
     out.push({ destination_id: d.id, type: d.type, status: "queued" });
   }
   return out;
+}
+
+export function circuitReason(until: number, failures?: number) {
+  return `circuit open until ${new Date(until).toISOString()} after ${failures ?? "repeated"} consecutive failed attempts; fix the destination and run its test (a passing test closes the circuit)`;
 }
 
 export type EventStatus = "logged" | "pending" | "delivered" | "partial" | "failed" | "skipped";

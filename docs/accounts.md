@@ -21,7 +21,12 @@ user (Google identity)  ──<  membership (owner | member)  >──  account =
 - A **user** is a person who signed in with Google. A user can belong to many projects (at most
   100); a project can have many users. The first user to claim a project is its owner.
 - Anyone holding a project's full-access key already controls it, so a key holder may create
-  claim links (that is how the owner gets in).
+  claim links (that is how the owner gets in). A connected app's OAuth access token is not such a
+  key: it expires in 8 hours, so it may use the project but never create API keys or claim links
+  (both would outlive it, and survive disconnecting the app). Those calls answer `403
+  temporary_credential` with a hint; reads work as usual. `AuthContext` carries `oauthGrantId`
+  and `expiresAt` for such tokens (`isTemporaryCredential()`, `assertPermanentKey()` in
+  `@afs/shared`).
 
 All of this lives in the shared identity database (`AUTH_DB`, migrations in `site/migrations`),
 next to `accounts` and `api_keys`, served by the site Worker at the apex. Code: `site/src/`
@@ -47,10 +52,13 @@ Standard OpenID Connect authorization code flow with PKCE (S256), `state` and `n
   `email_verified`; no JWKS fetch is needed (OIDC Core 3.1.3.7).
 - It upserts the user by Google `sub` and starts a session.
 
-Scopes are `openid email profile` only. Sessions are an opaque random cookie (`afs_session`,
-HttpOnly, Secure, SameSite=Lax, host-only so apex only); only its SHA-256 is stored, and it lasts
-30 days, sliding (extended at most once a day). `next` must be a same-origin path: anything with a
-scheme, a host, `//`, a backslash or a control character falls back to `/dashboard`.
+Scopes are `openid email profile` only. Sessions are an opaque random cookie
+(`__Host-afs_session`: HttpOnly, Secure, SameSite=Lax, Path=/, no Domain, so no subdomain can
+plant or overwrite it; plain-http local dev, which can't set Secure cookies, uses `afs_session`);
+only its SHA-256 is stored, and it lasts 30 days, sliding (extended at most once a day). `next`
+must be a same-origin path: anything with a scheme, a host, `//`, a backslash or a control
+character falls back to `/dashboard`, and the check runs again after URL normalisation
+(`/.//evil.example`, `/..//evil.example` and `/%2e//evil.example` all become `//evil.example`).
 
 People-facing pages (`/signin`, `/auth/*`, `/claim/*`, `/dashboard*`, `/oauth/authorize`) redirect
 to the `PUBLIC_BASE_URL` host first (www to apex), so cookies and the Google callback always match.
@@ -63,9 +71,11 @@ Sign out is `POST /auth/signout` (with CSRF): the session row is deleted and the
 
 ### 2. Claiming a project
 
-- **Claim link from the agent.** `POST /v1/claim-link` with a full-access key returns
+- **Claim link from the agent.** `POST /v1/claim-link` with a full-access API key (not an OAuth
+  access token) returns
   `{ "url": "https://agentfirststack.com/claim/<token>", "expires_at": ..., "account_id": ..., "next_steps": [...] }`.
-  It is also the MCP gateway tool `afs_create_claim_link`, listed only for full-access keys.
+  It is also the MCP gateway tool `afs_create_claim_link`, listed only for full-access API keys
+  (not for OAuth access tokens, which get `temporary_credential` if they call it anyway).
   - The token is 40 random characters, stored hashed, and lasts 7 days, single use. A project can
     have at most 25 unused links at once.
   - Opening it signed out asks the person to sign in (and comes back), without showing anything
@@ -92,14 +102,16 @@ invite links and the MCP URL; without it they stay click-to-select:
 |---|---|
 | `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts; "Set up a new project" (a setup prompt for the agent, plus the claim-link prompt for projects an agent already made) |
 | `/dashboard/projects/:id` | An inventory, no numbers: where analytics is installed, which tag containers exist, which inboxes the project uses; key and member counts; rename. "Want a dashboard?" gives three prompts (`src/dashboard-prompt.ts`: analytics dashboard, conversion tracking panel, inbox client) that name the project's resources and have the owner's agent build the screen from the API inside their own app, with the key kept server-side (read-only unless the screen edits tags or sends mail) |
-| `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created, last used); create (shown once) and revoke. OAuth access tokens are listed under connected apps instead |
-| `/dashboard/projects/:id/members` | Members and roles; invite with a claim link (shown once); the owner removes members, anyone can leave. Removing someone revokes the apps they connected to that project |
+| `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created by, created, last used). The owner creates (shown once) and revokes; members see the list. "Created by" is the person who made a key here, or "An agent (API)" for the signup key and keys from `POST /v1/keys`. Creating one counts against the same per-account cap and rate limits as `POST /v1/keys`. OAuth access tokens are listed under connected apps instead |
+| `/dashboard/projects/:id/members` | Members and roles. The owner invites with a claim link (shown once), sees every open invite and claim link (who made it, when it expires; never the token) and revokes them, and removes members; anyone can leave. Removing someone, or leaving, revokes the apps they connected to that project, the API keys they created in the dashboard, and their unused invite links |
 | `/dashboard/apps` | Connected apps (OAuth grants): app name, redirect host, project, access, last used; disconnect |
 | `/dashboard/account` | Profile, sign out, delete my account (type `delete` to confirm) |
 
 - Resource lists come from the services over service bindings with internal auth (below). A
   service that can't be reached shows as unavailable, not empty.
-- Every project route checks the membership first; a user who isn't a member gets a 404.
+- Every project route checks the membership first; a user who isn't a member gets a 404. Keys and
+  invites (create, revoke) also need the owner role; a member gets a 403 that says to ask the
+  owner (or, for an ownerless project, to claim it with a claim link, which makes them owner).
 - All forms are POST with a CSRF token derived from the session cookie (and a browser `Origin`
   from another site is refused). Pages send `frame-ancestors 'none'`, `X-Frame-Options: DENY`,
   `form-action 'self'`, `Cache-Control: no-store` and `Referrer-Policy: same-origin`. Everything
@@ -134,23 +146,34 @@ What MCP clients expect (MCP authorization spec):
   - New registrations are rate-limited per network: the `SIGNUP_LIMITER` burst limit (keyed
     separately from signup) and `OAUTH_REGISTER_HOURLY_LIMIT` per hour (default 30).
 - **Authorize** (`GET /oauth/authorize`):
-  - An unknown `client_id` or a `redirect_uri` that isn't exactly registered is shown as an error
-    page and never redirected. Every other problem goes back to the client with `error`, `state`
-    and `iss`: `response_type` must be `code`, `state` is required, PKCE must be `S256` with a
-    43-character challenge, `scope` may be `*` and/or `read`, and a `resource` (RFC 8707) must be
-    on the issuer's host or a subdomain.
+  - Nothing redirects to a client's `redirect_uri` before a signed-in person has seen the consent
+    page (RFC 9700 section 4.11.2): every client registers itself, so a redirect on a bad request
+    would make `/oauth/authorize` an open redirector. An unknown `client_id`, a `redirect_uri`
+    that isn't exactly registered, and every other problem (`response_type` must be `code`,
+    `state` is required, PKCE must be `S256` with a 43-character challenge, `scope` may be `*`
+    and/or `read`, a `resource` (RFC 8707) must be on the issuer's host or a subdomain) are shown
+    as an error page naming the OAuth error. After consent, on the form post, problems go back to
+    the client with `error`, `state` and `iss`.
   - It requires sign-in, then shows a consent page: "*<client name>* wants to use AgentFirstStack",
-    the host it will send you back to (and the full redirect URI), and a note that the app chose
-    its own name. If the name looks like Claude/Anthropic or ChatGPT/OpenAI but the redirect host
-    isn't theirs, a warning says so. The person picks a project (or creates one) and full or read
-    access; a client that asked only for `read` can only get `read`.
+    the host it will send you back to (and the full redirect URI), and an **Unverified app** label
+    on every client: it registered itself and chose its own name. If the name looks like
+    Claude/Anthropic or ChatGPT/OpenAI but the redirect host isn't theirs, a warning says so. The
+    comparison folds lookalikes first (`nameSkeleton()` in `oauth.ts`: NFKC, accents off,
+    Cyrillic/Greek/digit confusables, punctuation and spacing dropped, rn/m, vv/w, l/i), so
+    "Сlaude" with a Cyrillic С, "Ｃｌａｕｄｅ", "C l a u d e" and "Cl4ude" are caught too. The
+    person picks a project (or creates one) and full or read access; a client that asked only for
+    `read` can only get `read`.
+  - One person holds at most 50 live connected apps (not revoked, used or created in the last 30
+    days); past that the consent post shows a page asking them to disconnect some.
   - Approving (a POST with CSRF, re-validating every parameter and the membership) redirects with
     `code`, `state` and `iss` (RFC 9207). Denying redirects with `error=access_denied`. Codes are
     single use and expire in 10 minutes.
 - **Token** (`POST /oauth/token`, form or JSON):
-  - `authorization_code` marks the code used first, then checks expiry, client, the exact
-    `redirect_uri`, the PKCE verifier and `resource`. A code presented twice revokes the grant it
-    created.
+  - `authorization_code` checks the client, the exact `redirect_uri`, the PKCE verifier and
+    `resource` first, so someone who saw a code but lacks the verifier can't burn it. Then expiry,
+    then it marks the code used (only the request that flips `used_at` gets tokens). A code
+    presented again *with a valid verifier* after a successful exchange revokes the grant it
+    created; an invalid second presentation is just `invalid_grant`.
   - `refresh_token` rotates the refresh token (`afsr_...`). Refresh tokens last 30 days. Presenting
     a rotated one again revokes the whole grant (every refresh and access token). A refresh may
     narrow `*` to `read`, never widen. A user who left the project loses the grant.
@@ -162,16 +185,22 @@ What MCP clients expect (MCP authorization spec):
   `client_id`, when sent, must match.
 
 A daily cron on the site (03:17 UTC) deletes expired keys, codes, refresh tokens, sessions and
-claim links, grants with nothing left that are over a month old, and clients nobody authorized
-within a month.
+claim links, grants with nothing left that are over a month old, clients nobody authorized
+within a month, and `signup_log` rows older than two days (the signup path itself never prunes).
 
 ### 5. Services: internal auth for the dashboard
 
 The site calls each service with `x-afs-internal: <INTERNAL_TOKEN>` and `x-afs-account: acct_...`
-over service bindings. `requireAuth()` accepts that (constant-time compare, and the account must
-exist in the identity DB) as a full-access caller for that account, with key id `internal`. A
-wrong token is a 401, never a fallback to the API key next to it. `INTERNAL_TOKEN` is a secret
-shared by the four Workers; without it, the headers are ignored and nothing changes.
+over service bindings, to `https://<service>.internal/...`. `requireAuth()` accepts that
+(constant-time compare, and the account must exist in the identity DB) as a full-access caller for
+that account, with key id `internal`, **only when the request URL's host ends in `.internal`**
+(`viaServiceBinding()`). The caller of a binding chooses the URL; a request from the internet
+can't have that host, because Cloudflare routes public traffic by hostname and `.internal` isn't
+a routable domain. So the right token sent from the internet (to the site's `/v1/*` or any
+service) is still a 401. A wrong token is a 401, never a fallback to the API key next to it.
+`INTERNAL_TOKEN` is a secret shared by the Workers; without it, the headers are ignored and
+nothing changes. Anything new that calls a service with internal auth must use an `.internal` URL
+(replay already does, for analytics).
 
 ### 6. Privacy and deletion
 
@@ -179,22 +208,48 @@ shared by the four Workers; without it, the headers are ignored and nothing chan
 - We store a signed-in user's Google `sub`, email, name and picture URL, their memberships,
   sessions and OAuth grants (with hashed tokens), and claim links (hashed) until they expire.
 - **Delete my account** removes the user, their memberships, sessions, OAuth grants with their
-  codes and refresh tokens, and the access tokens those grants issued. Projects and their agent
-  keys keep working (they belong to the project, not the person); references to the user on
-  dashboard-made keys and claim links are cleared. A project left with no members simply becomes
+  codes and refresh tokens, and the access tokens those grants issued. As when they leave a
+  project, the API keys they created in the dashboard are revoked and their unused invite links
+  deleted (otherwise deleting your account would dodge being removed). Projects and their agent
+  keys keep working (they belong to the project, not the person); references to the user on the
+  remaining key and claim-link rows are cleared. A project left with no members simply becomes
   unclaimed again.
+
+### 7. Fair use for keys and grants
+
+- `MAX_KEYS_PER_ACCOUNT` (default **50** when unset): active API keys per account, not counting
+  OAuth access tokens. `UNCLAIMED_MAX_KEYS_PER_ACCOUNT` applies instead to accounts no person has
+  claimed. At the cap, `POST /v1/keys` (every app) and the dashboard answer `409 too_many_keys`.
+- `KEYS_HOURLY_LIMIT` (off when unset): new keys per account per rolling hour, revoked ones
+  included, so create-and-revoke churn counts. Counted in the identity DB, so shared by every app.
+- `KEY_LIMITER` (site rate-limit binding, namespace 42041, 10 per minute per account): a burst
+  limit on key creation at the apex and in the dashboard.
+- Connected apps: at most 50 live grants per person (`MAX_GRANTS_PER_USER` in `identity.ts`).
+
+### 8. Operator: suspending an account
+
+`POST /v1/admin/accounts/:id/suspend {"reason": "..."}`, `POST /v1/admin/accounts/:id/unsuspend`
+and `GET /v1/admin/accounts/:id` on the site, with `Authorization: Bearer <ADMIN_TOKEN>` only
+(constant-time compare; API keys and internal auth don't work; without `ADMIN_TOKEN` they refuse
+everyone). Suspending sets `accounts.suspended_at` and `suspended_reason` (migration `0005`):
+every key of the account, OAuth tokens included, answers `403 account_suspended` on every service
+at once (`authenticate()` reads it on each request), and public ingest stops within a minute (the
+per-isolate `accountStanding()` cache). Suspending twice keeps the first time and reason
+(`"existing": true`). `pnpm afs suspend <profile> <acct_id> --reason "..."` and `pnpm afs
+unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 
 ## Routes
 
 | Route | Auth | What |
 |---|---|---|
-| `POST /v1/claim-link` | full-access key | a claim link (also MCP `afs_create_claim_link`) |
+| `POST /v1/claim-link` | full-access API key (not OAuth) | a claim link (also MCP `afs_create_claim_link`) |
+| `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `GET /signin` | none | sign-in page |
 | `GET /auth/google`, `GET /auth/google/callback` | none | Google sign-in |
 | `GET /auth/dev-login` | `DEV_MODE=true` only | fake sign-in for dev and tests |
 | `POST /auth/signout` | session + CSRF | sign out |
 | `GET`, `POST /claim/:token` | session (+ CSRF to claim) | claim page |
-| `GET`, `POST /dashboard/...` | session (+ CSRF) | the pages above |
+| `GET`, `POST /dashboard/...` | session (+ CSRF; owner for keys and invites) | the pages above, incl. `POST /dashboard/projects/:id/invites/:ref/revoke` |
 | `GET /.well-known/oauth-authorization-server` | none | RFC 8414 metadata |
 | `GET /.well-known/oauth-protected-resource[/mcp]` | none | RFC 9728 metadata (every host) |
 | `POST /oauth/register` | none (rate-limited) | RFC 7591 |

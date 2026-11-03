@@ -1,9 +1,9 @@
-import { authIssuer, clientNetwork, createApiKey, newId, randomString, sha256Hex, timingSafeEqual } from "@afs/shared";
+import { authIssuer, cleanName, clientNetwork, createApiKey, newId, randomString, sha256Hex, timingSafeEqual } from "@afs/shared";
 import { type Context, Hono } from "hono";
 import { DAY, type Session, type SiteEnv } from "./env";
 import { pkceChallenge, siteBase } from "./google";
 import { type SafeHtml, csrfField, html, htmlErrorHandler, messagePage, page } from "./html";
-import { createProject, getProject, listProjects, revokeGrant } from "./identity";
+import { assertRoomForGrant, createProject, getProject, listProjects, revokeGrant } from "./identity";
 import { loadSession, readForm, redirect, signinUrl } from "./session";
 
 /**
@@ -298,15 +298,8 @@ oauthApi.post("/oauth/token", async (c) => {
         used_at: number | null;
       }>();
     if (!code) return oauthError(c, 400, "invalid_grant", "Unknown authorization code.");
-    // Single use: whoever flips used_at first wins; a second use revokes what the code granted.
-    const now = Date.now();
-    const used = await db.prepare("UPDATE oauth_codes SET used_at = ? WHERE hash = ? AND used_at IS NULL").bind(now, hash).run();
-    if (!used.meta.changes) {
-      await revokeGrant(db, code.grant_id);
-      return oauthError(c, 400, "invalid_grant", "This authorization code was already used; the tokens it issued are revoked.");
-    }
-    if (code.expires_at <= now)
-      return oauthError(c, 400, "invalid_grant", "The authorization code expired. Start the authorization again.");
+    // Validate before spending the code: someone who saw the code but lacks the PKCE verifier (or
+    // is another client) must not be able to burn it, or revoke what it issued.
     if (code.client_id !== client.id) return oauthError(c, 400, "invalid_grant", "The code was issued to another client.");
     if (code.redirect_uri !== p.redirect_uri)
       return oauthError(c, 400, "invalid_grant", "redirect_uri doesn't match the authorization request.");
@@ -316,6 +309,19 @@ oauthApi.post("/oauth/token", async (c) => {
     if (p.resource && code.resource && p.resource !== code.resource) {
       return oauthError(c, 400, "invalid_target", "resource doesn't match the authorization request.");
     }
+    // A valid second exchange of a code that was already exchanged means the code and verifier
+    // leaked: revoke what the first exchange issued.
+    const reused = async () => {
+      await revokeGrant(db, code.grant_id);
+      return oauthError(c, 400, "invalid_grant", "This authorization code was already used; the tokens it issued are revoked.");
+    };
+    if (code.used_at) return reused();
+    const now = Date.now();
+    if (code.expires_at <= now)
+      return oauthError(c, 400, "invalid_grant", "The authorization code expired. Start the authorization again.");
+    // Single use: of two valid exchanges racing, only the one that flips used_at gets tokens.
+    const used = await db.prepare("UPDATE oauth_codes SET used_at = ? WHERE hash = ? AND used_at IS NULL").bind(now, hash).run();
+    if (!used.meta.changes) return reused();
     const grant = await loadGrant(db, code.grant_id);
     if (!grant || grant.revoked_at || !(await stillMember(db, grant))) {
       return oauthError(c, 400, "invalid_grant", "This authorization was revoked.");
@@ -402,7 +408,13 @@ interface AuthorizeRequest {
   resource: string | null;
 }
 
-type Checked = { ok: true; req: AuthorizeRequest } | { ok: false; response: Response };
+/**
+ * A failed check: `response` is what to show now. For errors the client should hear about,
+ * `redirect` sends them back to it, which only the consent form (POST) uses: before a signed-in
+ * person has seen the consent page, nothing redirects to a client's redirect_uri, so a freshly
+ * registered client can't turn /oauth/authorize into an open redirector (RFC 9700 section 4.11.2).
+ */
+type Checked = { ok: true; req: AuthorizeRequest } | { ok: false; response: Response; redirect?: Response };
 
 /** Append params to a registered redirect URI (keeping any query it already has). */
 function withParams(uri: string, params: Record<string, string | undefined>): string {
@@ -446,7 +458,8 @@ async function checkAuthorize(c: Context<SiteEnv>, p: Record<string, string | un
   const issuer = issuerOf(c);
   const fail = (error: string, description: string): Checked => ({
     ok: false,
-    response: redirect(withParams(redirectUri, { error, error_description: description, state: p.state, iss: issuer }), { status: 302 }),
+    response: badRequestPage(`The app sent a request we can't accept (${error}: ${description}) Go back to the app and connect again.`),
+    redirect: redirect(withParams(redirectUri, { error, error_description: description, state: p.state, iss: issuer }), { status: 303 }),
   });
   if (p.response_type !== "code") return fail("unsupported_response_type", 'response_type must be "code".');
   if (!p.state || p.state.length > 2048) return fail("invalid_request", "state is required.");
@@ -470,17 +483,102 @@ async function checkAuthorize(c: Context<SiteEnv>, p: Record<string, string | un
   };
 }
 
+/**
+ * Lookalike folding for app names: "Сlaude" (Cyrillic С), "Ｃｌａｕｄｅ", "𝐂𝐥𝐚𝐮𝐝𝐞", "C l a u d e",
+ * "Cl4ude", "ClaudeAI" and "CIaude" (capital i) all fold to the same skeleton as "Claude".
+ * NFKC first (full-width, mathematical and other compatibility forms), then accents off, then
+ * the common cross-script and digit confusables, then everything that isn't a letter, then the
+ * pairs that read alike (rn/m, vv/w, l/i).
+ */
+const CONFUSABLES: Record<string, string> = {
+  // Cyrillic
+  а: "a",
+  в: "b",
+  с: "c",
+  ԁ: "d",
+  е: "e",
+  һ: "h",
+  і: "i",
+  ј: "j",
+  к: "k",
+  ӏ: "l",
+  м: "m",
+  н: "h",
+  о: "o",
+  р: "p",
+  ԛ: "q",
+  г: "r",
+  ѕ: "s",
+  т: "t",
+  ѵ: "v",
+  ԝ: "w",
+  х: "x",
+  у: "y",
+  // Greek
+  α: "a",
+  β: "b",
+  ε: "e",
+  η: "n",
+  ι: "i",
+  κ: "k",
+  μ: "u",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "u",
+  χ: "x",
+  γ: "y",
+  ω: "w",
+  // Latin lookalikes NFKC keeps
+  ı: "i",
+  ł: "l",
+  ɡ: "g",
+  ɑ: "a",
+  ø: "o",
+  đ: "d",
+  ħ: "h",
+  ŀ: "l",
+  // Digits and symbols used as letters
+  "0": "o",
+  "1": "l",
+  "3": "e",
+  "4": "a",
+  "5": "s",
+  "7": "t",
+  "@": "a",
+  $: "s",
+  "!": "i",
+  "|": "l",
+};
+
+export function nameSkeleton(name: string): string {
+  return [...name.normalize("NFKC").toLowerCase().normalize("NFD").replace(/\p{M}/gu, "")]
+    .map((ch) => CONFUSABLES[ch] ?? ch)
+    .join("")
+    .replace(/[^a-z]/g, "")
+    .replace(/rn/g, "m")
+    .replace(/vv/g, "w")
+    .replace(/l/g, "i");
+}
+
 // Names people trust, and where those apps really send you back to.
-const KNOWN_APPS: { pattern: RegExp; hosts: string[] }[] = [
-  { pattern: /claude|anthropic/i, hosts: ["claude.ai", "anthropic.com"] },
-  { pattern: /chat\s*gpt|openai/i, hosts: ["chatgpt.com", "openai.com"] },
-];
+const KNOWN_APPS: { names: string[]; hosts: string[] }[] = [
+  { names: ["claude", "anthropic"], hosts: ["claude.ai", "anthropic.com"] },
+  { names: ["chatgpt", "openai"], hosts: ["chatgpt.com", "openai.com"] },
+].map((k) => ({ ...k, names: k.names.map(nameSkeleton) }));
 const hostMatches = (host: string, allowed: string[]) => allowed.some((h) => host === h || host.endsWith(`.${h}`));
+
+/** The trusted app a client's name imitates while sending people somewhere else, if any. */
+export function lookalikeOf(clientName: string, redirectHost: string) {
+  const skeleton = nameSkeleton(clientName);
+  return KNOWN_APPS.find((k) => k.names.some((n) => skeleton.includes(n)) && !hostMatches(redirectHost, k.hosts));
+}
 
 function consentPage(c: Context<SiteEnv>, s: Session, r: AuthorizeRequest, projects: { id: string; name: string | null }[]): Response {
   const target = new URL(r.redirectUri);
   const local = target.hostname === "localhost" || target.hostname === "127.0.0.1";
-  const lookalike = KNOWN_APPS.find((k) => k.pattern.test(r.client.name) && !hostMatches(target.hostname, k.hosts));
+  const lookalike = lookalikeOf(r.client.name, target.hostname);
   const readOnly = r.scope === "read";
   const hidden = (name: string, value: string | null) => html`<input type="hidden" name="${name}" value="${value ?? ""}">`;
   const warning: SafeHtml | string = lookalike
@@ -494,13 +592,13 @@ function consentPage(c: Context<SiteEnv>, s: Session, r: AuthorizeRequest, proje
     allowExternalFormRedirect: true,
     body: html`<section class="consent">
   <div class="tile consent-card">
-    <p class="consent-kind">Connection request</p>
+    <p class="consent-kind">Connection request <span class="tag">Unverified app</span></p>
     <h1><span class="client-name">${r.client.name}</span> wants to use AgentFirstStack</h1>
     <dl class="facts consent-facts">
       <div><dt>You'll be sent back to</dt><dd><b class="host">${target.host}</b><code class="redirect">${r.redirectUri}</code></dd></div>
       <div><dt>Signed in as</dt><dd>${s.user.email}</dd></div>
     </dl>
-    <p class="muted small">The name “${r.client.name}” was chosen by the app that registered it. Only continue if you started this from <b>${target.host}</b>.</p>
+    <p class="muted small"><b>Unverified:</b> AgentFirstStack hasn't checked who made this app. It registered itself and chose the name “${r.client.name}” on its own. Only continue if you started this from <b>${target.host}</b>.</p>
     ${warning}
     <form method="post" action="/oauth/authorize" class="stack consent-form">
       ${csrfField(s)}
@@ -554,7 +652,8 @@ oauthPages.post("/oauth/authorize", async (c) => {
   c.set("session", session);
   const form = await readForm(c);
   const checked = await checkAuthorize(c, form);
-  if (!checked.ok) return checked.response;
+  // The person has seen the consent page for this client by now: client errors go back to it.
+  if (!checked.ok) return checked.redirect ?? checked.response;
   const r = checked.req;
   const issuer = issuerOf(c);
   const back = (params: Record<string, string>) =>
@@ -562,13 +661,11 @@ oauthPages.post("/oauth/authorize", async (c) => {
   if (form.decision !== "allow") return back({ error: "access_denied", error_description: "The person denied access." });
 
   const db = c.env.DB;
+  // Each connected app can mint access tokens: one person holds a bounded number of them.
+  await assertRoomForGrant(db, session.user.id);
   let accountId = form.project ?? "";
   if (accountId === "new") {
-    const name =
-      (form.project_name ?? "")
-        .replace(/[\u0000-\u001f\u007f]/g, "")
-        .trim()
-        .slice(0, 200) || `${r.client.name} project`;
+    const name = cleanName(form.project_name, 200) ?? cleanName(`${r.client.name} project`, 200);
     accountId = await createProject(db, session.user.id, name);
   } else if (!(await getProject(db, session.user.id, accountId))) {
     return messagePage({ title: "Not found", message: "Project not found.", status: 404, session });

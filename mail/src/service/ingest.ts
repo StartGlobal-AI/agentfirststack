@@ -1,12 +1,14 @@
 import { newId } from "@afs/shared";
 import PostalMime, { type Address, type Email } from "postal-mime";
-import { type AppEnv, positiveIntVar } from "../env";
-import { extractAll } from "../extract";
+import { type AppEnv, type Standing, cap, standingOf } from "../env";
+import { type ExtractedLink, extractAll } from "../extract";
 import { normalizeRecipient } from "../lib/address";
-import { isMimeType } from "../lib/headers";
+import { headerSafe, isMimeType } from "../lib/headers";
+import { isAutomated, senderIdentity, senderKeyOf } from "../lib/sender";
 import { bracketMessageId, hasReplyPrefix, normalizeSubject, threadLookupIds } from "../lib/threading";
-import { type Addr, type InboxRow, type MessageRow, messageSummary, utcDay } from "./format";
-import { findInboxForRecipient } from "./inboxes";
+import { type Addr, type InboxRow, type MessageRow, UNTRUSTED_NOTICE, messageSummary, utcDay } from "./format";
+import { findInboxForRecipient, sharedDomain } from "./inboxes";
+import { deleteMessageRows } from "./messages";
 import { emitEvent } from "./webhooks";
 
 /** Email Routing's inbound limit. */
@@ -21,7 +23,15 @@ export const MAX_SUBJECT_CHARS = 2_000;
 export const MAX_NAME_CHARS = 500;
 export const MAX_LISTED_ADDRESSES = 100;
 export const MAX_REFERENCES_CHARS = 8_000;
+/** Attachments stored per inbound message (R2 object + D1 row each); the rest stay in the raw MIME. */
+export const MAX_STORED_ATTACHMENTS = 50;
+export const MAX_FILENAME_CHARS = 255;
+/** Over MAX_TEXT_BYTES_PER_ACCOUNT, a message keeps this much text and this many links in D1. */
+export const OVER_BUDGET_TEXT_BYTES = 2 * 1024;
+export const OVER_BUDGET_LINKS = 10;
 const THREAD_WINDOW_MS = 30 * 86_400_000;
+/** Bound for "no cap" in SQL (Infinity cannot be bound). */
+const NO_CAP = 1_000_000_000;
 
 /** Cut text to at most `maxBytes` of UTF-8 without splitting a character. Pure. */
 export function capText(text: string, maxBytes = MAX_TEXT_BYTES): { text: string; truncated: boolean } {
@@ -40,32 +50,33 @@ function capReferences(refs: string | null | undefined): string | null {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Inbound admission: MAX_MESSAGES_PER_INBOX and MAX_INBOUND_PER_ACCOUNT_PER_DAY (unset = off).
+// Inbound admission (all off when unset; UNCLAIMED_* variants via capFor):
+//   MAX_INBOUND_PER_ACCOUNT_PER_DAY  the account's inbound mail per UTC day (before the body is read)
+//   MAX_INBOUND_PER_SENDER_PER_DAY   one sender's mail to one inbox per UTC day; and one sender
+//                                    never gets more than half of the account's daily quota
+//   MAX_MESSAGES_PER_INBOX           what an inbox holds: beyond it the oldest mail of the sender
+//                                    holding the most is evicted (one flooder cannot fill it)
 
-export const maxMessagesPerInbox = (env: AppEnv) => positiveIntVar(env.MAX_MESSAGES_PER_INBOX, 0);
-export const maxInboundPerDay = (env: AppEnv) => positiveIntVar(env.MAX_INBOUND_PER_ACCOUNT_PER_DAY, 0);
+export const maxMessagesPerInbox = (env: AppEnv, standing: Standing) => Math.max(1, cap(env, standing, "MAX_MESSAGES_PER_INBOX"));
+export const maxInboundPerDay = (env: AppEnv, standing: Standing) => cap(env, standing, "MAX_INBOUND_PER_ACCOUNT_PER_DAY");
 
 export type Admission = { ok: true; day: string | null } | { ok: false; reason: string };
 
 /**
- * Decide, before the body is read, whether an inbox may take one more message: one row read for
- * the inbox count (already on the inbox row) and one atomic upsert for the account's daily count.
- * Reserves the daily slot; call refundInbound() if the message is not stored after all.
+ * Decide, before the body is read, whether the inbox's account may take one more message today:
+ * one atomic upsert for the account's daily count. Reserves the daily slot; call refundInbound()
+ * if the message is not stored after all.
  */
-export async function admitInbound(env: AppEnv, inbox: InboxRow, now = Date.now()): Promise<Admission> {
-  const perInbox = maxMessagesPerInbox(env);
-  if (perInbox && (inbox.inbound_count ?? 0) >= perInbox) {
-    return { ok: false, reason: `Mailbox full: ${inbox.address} already holds the maximum of ${perInbox} messages` };
-  }
-  const perDay = maxInboundPerDay(env);
-  if (!perDay) return { ok: true, day: null };
+export async function admitInbound(env: AppEnv, inbox: InboxRow, standing: Standing, now = Date.now()): Promise<Admission> {
+  const perDay = maxInboundPerDay(env, standing);
+  if (!Number.isFinite(perDay)) return { ok: true, day: null };
   const day = utcDay(now);
   const row = await env.DB.prepare(
-    `INSERT INTO inbound_counters (account_id, day, count) VALUES (?, ?, 1)
+    `INSERT INTO inbound_counters (account_id, day, count) SELECT ?, ?, 1 WHERE ? >= 1
      ON CONFLICT(account_id, day) DO UPDATE SET count = inbound_counters.count + 1
      WHERE inbound_counters.count + 1 <= ? RETURNING count`,
   )
-    .bind(inbox.account_id, day, perDay)
+    .bind(inbox.account_id, day, perDay, perDay)
     .first<{ count: number }>();
   if (!row)
     return {
@@ -77,6 +88,84 @@ export async function admitInbound(env: AppEnv, inbox: InboxRow, now = Date.now(
 
 export async function refundInbound(env: AppEnv, accountId: string, day: string) {
   await env.DB.prepare("UPDATE inbound_counters SET count = MAX(0, count - 1) WHERE account_id = ? AND day = ?").bind(accountId, day).run();
+}
+
+/**
+ * Per-sender admission, once the sender is known (after parsing): at most
+ * MAX_INBOUND_PER_SENDER_PER_DAY messages from one sender key to one inbox per UTC day, and at
+ * most half of MAX_INBOUND_PER_ACCOUNT_PER_DAY from one sender key across the account, so one
+ * outsider can neither fill an inbox nor use up the account's daily quota. One atomic statement.
+ */
+export async function admitSender(env: AppEnv, standing: Standing, inbox: InboxRow, sender: string, now = Date.now()): Promise<Admission> {
+  const perInbox = cap(env, standing, "MAX_INBOUND_PER_SENDER_PER_DAY");
+  const perDay = maxInboundPerDay(env, standing);
+  const perAccount = Number.isFinite(perDay) ? Math.max(1, Math.floor(perDay / 2)) : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(perInbox) && !Number.isFinite(perAccount)) return { ok: true, day: null };
+  const bound = (n: number) => (Number.isFinite(n) ? n : NO_CAP);
+  const day = utcDay(now);
+  const sum = "(SELECT COALESCE(SUM(count), 0) FROM sender_counters WHERE account_id = ?4 AND sender = ?2 AND day = ?3)";
+  const row = await env.DB.prepare(
+    `INSERT INTO sender_counters (inbox_id, sender, day, account_id, count)
+     SELECT ?1, ?2, ?3, ?4, 1 WHERE ?5 >= 1 AND ${sum} < ?6
+     ON CONFLICT(inbox_id, sender, day) DO UPDATE SET count = sender_counters.count + 1
+     WHERE sender_counters.count < ?5 AND ${sum} < ?6
+     RETURNING count`,
+  )
+    .bind(inbox.id, sender, day, inbox.account_id, bound(perInbox), bound(perAccount))
+    .first<{ count: number }>();
+  if (!row) return { ok: false, reason: `Too much mail from ${sender} to ${inbox.address} today (UTC); retry after 00:00 UTC` };
+  return { ok: true, day };
+}
+
+async function refundSender(env: AppEnv, inboxId: string, sender: string, day: string | null) {
+  if (!day) return;
+  await env.DB.prepare("UPDATE sender_counters SET count = MAX(0, count - 1) WHERE inbox_id = ? AND sender = ? AND day = ?")
+    .bind(inboxId, sender, day)
+    .run();
+}
+
+/** MAX_TEXT_BYTES_PER_ACCOUNT: would `addBytes` more of stored text pass the account's budget? */
+export async function overTextBudget(env: AppEnv, standing: Standing, accountId: string, addBytes: number): Promise<boolean> {
+  const budget = cap(env, standing, "MAX_TEXT_BYTES_PER_ACCOUNT");
+  if (!Number.isFinite(budget)) return false;
+  const row = await env.DB.prepare("SELECT text_bytes FROM account_usage WHERE account_id = ?")
+    .bind(accountId)
+    .first<{ text_bytes: number }>();
+  return (row?.text_bytes ?? 0) + addBytes > budget;
+}
+
+export const utf8Bytes = (s: string | null | undefined) => (s ? new TextEncoder().encode(s).byteLength : 0);
+
+/** Over budget: action links first, at most OVER_BUDGET_LINKS. Pure. */
+export function trimLinks(links: ExtractedLink[]): ExtractedLink[] {
+  return [...links.filter((l) => l.kind !== "other"), ...links.filter((l) => l.kind === "other")].slice(0, OVER_BUDGET_LINKS);
+}
+
+/**
+ * A full inbox makes room: while it holds more than `limit` inbound messages, delete the oldest
+ * messages of the sender key that holds the most of them (ties: the one whose mail is oldest),
+ * never `keepId`. With many different senders that is simply the oldest mail; with one flooder it
+ * is the flooder's. Returns how many were evicted.
+ */
+export async function evictOverflow(env: AppEnv, inboxId: string, keepId: string, limit: number): Promise<number> {
+  let evicted = 0;
+  for (let round = 0; round < 5; round++) {
+    const row = await env.DB.prepare("SELECT inbound_count FROM inboxes WHERE id = ?").bind(inboxId).first<{ inbound_count: number }>();
+    const excess = (row?.inbound_count ?? 0) - limit;
+    if (excess <= 0) break;
+    const { results } = await env.DB.prepare(
+      `SELECT id, thread_id, raw_key, html_key FROM messages
+       WHERE inbox_id = ?1 AND direction = 'in' AND id != ?2 AND sender_key IS (
+         SELECT sender_key FROM messages WHERE inbox_id = ?1 AND direction = 'in' AND id != ?2
+         GROUP BY sender_key ORDER BY COUNT(*) DESC, MIN(received_at) ASC LIMIT 1)
+       ORDER BY received_at ASC, seq ASC LIMIT ?3`,
+    )
+      .bind(inboxId, keepId, Math.min(excess, 200))
+      .all<Pick<MessageRow, "id" | "thread_id" | "raw_key" | "html_key">>();
+    if (!results.length) break;
+    evicted += await deleteMessageRows(env, results);
+  }
+  return evicted;
 }
 
 export type IngestResult =
@@ -126,11 +215,13 @@ export async function resolveThread(
     const key = normalizeSubject(m.subject);
     if (key) {
       const hit = await env.DB.prepare(
-        `SELECT t.id FROM threads t WHERE t.inbox_id = ? AND t.subject_key = ? AND t.last_message_at > ?
-           AND EXISTS (SELECT 1 FROM messages x WHERE x.thread_id = t.id AND (x.from_address = ? OR x.to_json LIKE ?))
+        `SELECT t.id FROM threads t WHERE t.inbox_id = ?1 AND t.subject_key = ?2 AND t.last_message_at > ?3
+           AND EXISTS (SELECT 1 FROM messages x WHERE x.thread_id = t.id AND (x.from_address = ?4
+             OR EXISTS (SELECT 1 FROM json_each(x.to_json) j WHERE lower(json_extract(j.value, '$.address')) = ?4)))
          ORDER BY t.last_message_at DESC LIMIT 1`,
       )
-        .bind(inboxId, key, now - THREAD_WINDOW_MS, m.counterparty, `%"${m.counterparty.replace(/["%_\\]/g, "")}"%`)
+        // json_each equality, not LIKE: D1 refuses LIKE patterns over 50 bytes (long addresses).
+        .bind(inboxId, key, now - THREAD_WINDOW_MS, m.counterparty.toLowerCase())
         .first<{ id: string }>();
       if (hit) return hit.id;
     }
@@ -198,7 +289,12 @@ export const MESSAGE_COLUMNS = [
   "error",
   "received_at",
   "sent_at",
+  "sender_key",
+  "automated",
+  "attachments_omitted",
 ] as const;
+
+const ZERO_DEFAULT = new Set<string>(["text_truncated", "read", "attachment_count", "automated", "attachments_omitted"]);
 
 /**
  * `ignoreDuplicate`: insert-or-ignore on the inbound Message-ID unique index
@@ -208,7 +304,7 @@ export function insertMessage(env: AppEnv, row: Omit<MessageRow, "seq">, opts: {
   const cols = MESSAGE_COLUMNS.join(", ");
   const ph = MESSAGE_COLUMNS.map(() => "?").join(", ");
   return env.DB.prepare(`INSERT INTO messages (${cols}) VALUES (${ph})${opts.ignoreDuplicate ? " ON CONFLICT DO NOTHING" : ""}`).bind(
-    ...MESSAGE_COLUMNS.map((c) => row[c] ?? null),
+    ...MESSAGE_COLUMNS.map((c) => row[c] ?? (ZERO_DEFAULT.has(c) ? 0 : null)),
   );
 }
 
@@ -219,6 +315,10 @@ const ifStored = (env: AppEnv, id: string, sql: string, ...binds: unknown[]) =>
 /**
  * Store one inbound message. `raw` is the full MIME as received. Safe to call twice for the same
  * message (Email Routing retries): a repeated Message-ID in the same inbox is a no-op.
+ *
+ * Order matters for cost: every D1 read and admission check runs before anything is written to
+ * R2, and the R2 objects of a message that does not get committed (an error, a duplicate) are
+ * deleted again, so blobs never outlive their D1 row (the cron's orphan sweep catches a crash).
  */
 export async function ingestRaw(
   env: AppEnv,
@@ -227,6 +327,7 @@ export async function ingestRaw(
     envelopeTo: string;
     raw: ArrayBuffer | Uint8Array;
     inbox?: { inbox: InboxRow; via: "address" | "catch_all" };
+    standing?: Standing;
   },
   now = Date.now(),
 ): Promise<IngestResult> {
@@ -237,6 +338,8 @@ export async function ingestRaw(
   const { inbox, via } = target;
   const size = input.raw.byteLength;
   if (size > MAX_MESSAGE_BYTES) return { status: "rejected", reason: "Message too large (25 MB limit)" };
+  const standing = input.standing ?? (await standingOf(env, inbox.account_id));
+  if (standing.suspended) return { status: "rejected", reason: suspendedReason(inbox.address) };
 
   const parsed: Email = await PostalMime.parse(input.raw, { attachmentEncoding: "arraybuffer" });
   const msgIdHeader = bracketMessageId(parsed.messageId);
@@ -260,135 +363,179 @@ export async function ingestRaw(
     fromAddress: from.address,
     otpHeader: parsed.otp?.code ?? null,
   });
-  const id = newId("msg");
-  const rawKey = blobKey.raw(inbox.id, id);
-  const htmlKey = parsed.html ? blobKey.html(inbox.id, id) : null;
+  const envelopeFrom = input.envelopeFrom.toLowerCase();
+  const senderKey = senderKeyOf(senderIdentity({ fromAddress: from.address, envelopeFrom, auth: ex.auth }), [sharedDomain(env)]);
+  const sender = await admitSender(env, standing, inbox, senderKey, now);
+  if (!sender.ok) return { status: "rejected", reason: sender.reason };
 
-  const attachments = parsed.attachments.map((a) => {
-    const content = typeof a.content === "string" ? new TextEncoder().encode(a.content) : new Uint8Array(a.content as ArrayBuffer);
-    const attId = newId("att");
-    return {
-      id: attId,
-      filename: a.filename,
-      // Served back as a Content-Type header on download: only well-formed types.
-      content_type: a.mimeType && isMimeType(a.mimeType) ? a.mimeType : "application/octet-stream",
-      size: content.byteLength,
-      content_id: a.contentId ?? null,
-      disposition: a.disposition ?? null,
-      r2_key: blobKey.attachment(inbox.id, id, attId),
-      content,
-    };
-  });
-
-  await Promise.all([
-    env.BLOBS.put(rawKey, input.raw, { httpMetadata: { contentType: "message/rfc822" } }),
-    htmlKey ? env.BLOBS.put(htmlKey, parsed.html!, { httpMetadata: { contentType: "text/html; charset=utf-8" } }) : null,
-    ...attachments.map((a) => env.BLOBS.put(a.r2_key, a.content, { httpMetadata: { contentType: a.content_type } })),
-  ]);
-
-  const threadId = await resolveThread(
-    env,
-    inbox.id,
-    { inReplyTo: parsed.inReplyTo, references: parsed.references, subject, counterparty: from.address },
-    now,
-  );
-  const thread = threadUpsert(env, inbox, threadId, subject, now);
-  const sentAt = parsed.date ? Date.parse(parsed.date) : NaN;
-  const text = capText(ex.text);
-  const row: Omit<MessageRow, "seq"> = {
-    id,
-    account_id: inbox.account_id,
-    inbox_id: inbox.id,
-    thread_id: thread.threadId,
-    direction: "in",
-    message_id_header: msgIdHeader,
-    in_reply_to: bracketMessageId(parsed.inReplyTo),
-    references_header: capReferences(parsed.references),
-    envelope_from: input.envelopeFrom.toLowerCase(),
-    envelope_to: input.envelopeTo.toLowerCase(),
-    from_address: from.address,
-    from_name: from.name ? from.name.slice(0, MAX_NAME_CHARS) : null,
-    to_json: JSON.stringify(flattenAddresses(parsed.to).slice(0, MAX_LISTED_ADDRESSES)),
-    cc_json: JSON.stringify(flattenAddresses(parsed.cc).slice(0, MAX_LISTED_ADDRESSES)),
-    bcc_json: "[]",
-    reply_to: firstMailbox(parsed.replyTo?.[0])?.address ?? null,
-    subject,
-    preview: ex.preview,
-    text_body: text.text,
-    text_truncated: text.truncated ? 1 : 0,
-    html_key: htmlKey,
-    html_size: parsed.html ? parsed.html.length : null,
-    raw_key: rawKey,
-    size,
-    code: ex.code,
-    verify_link: ex.verify_link,
-    codes_json: JSON.stringify(ex.codes),
-    links_json: JSON.stringify(ex.links),
-    auth_json: JSON.stringify(ex.auth),
-    attachment_count: attachments.length,
-    read: 0,
-    status: null,
-    error: null,
-    received_at: now,
-    sent_at: Number.isNaN(sentAt) ? null : sentAt,
-  };
-
-  // One transaction. The message goes first with insert-or-ignore on (inbox, Message-ID); every
-  // other statement only runs if it was stored, so a concurrent duplicate changes nothing.
-  const batch = await env.DB.batch([
-    insertMessage(env, row, { ignoreDuplicate: true }),
-    thread.threadId === threadId
-      ? ifStored(
-          env,
-          id,
-          "UPDATE threads SET message_count = message_count + 1, last_message_at = MAX(last_message_at, ?) WHERE id = ?",
-          now,
-          thread.threadId,
-        )
-      : env.DB.prepare(
-          "INSERT INTO threads (id, account_id, inbox_id, subject, subject_key, message_count, last_message_at, created_at) SELECT ?, ?, ?, ?, ?, 1, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
-        ).bind(thread.threadId, inbox.account_id, inbox.id, subject, normalizeSubject(subject), now, now, id),
-    ...attachments.map((a) =>
-      env.DB.prepare(
-        "INSERT INTO attachments (id, message_id, filename, content_type, size, content_id, disposition, r2_key) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
-      ).bind(a.id, id, a.filename, a.content_type, a.size, a.content_id, a.disposition, a.r2_key, id),
-    ),
-    ifStored(env, id, "UPDATE inboxes SET last_message_at = ? WHERE id = ?", now, inbox.id),
-  ]);
-  if (!batch[0]?.meta.changes) {
-    // Lost the race to an identical delivery: drop the blobs written for this copy.
-    await env.BLOBS.delete([rawKey, ...(htmlKey ? [htmlKey] : []), ...attachments.map((a) => a.r2_key)]);
-    const winner = await findDup();
-    return { status: "duplicate", message_id: winner?.id ?? id, inbox_id: inbox.id };
-  }
-
-  // Wake parked wait_for_email callers. Mail is already committed; a failure here only means
-  // waiters fall back to their timeout re-check.
+  let stored = false;
   try {
-    await env.INBOX.get(env.INBOX.idFromName(inbox.id)).notify(now);
-  } catch (e) {
-    console.error("InboxDO notify failed", e);
-  }
-  try {
-    await emitEvent(
+    const id = newId("msg");
+    const rawKey = blobKey.raw(inbox.id, id);
+    const htmlKey = parsed.html ? blobKey.html(inbox.id, id) : null;
+
+    const kept = parsed.attachments.slice(0, MAX_STORED_ATTACHMENTS);
+    const attachments = kept.map((a) => {
+      const content = typeof a.content === "string" ? new TextEncoder().encode(a.content) : new Uint8Array(a.content as ArrayBuffer);
+      const attId = newId("att");
+      return {
+        id: attId,
+        filename: a.filename ? headerSafe(a.filename).slice(0, MAX_FILENAME_CHARS) || null : null,
+        // Served back as a Content-Type header on download: only well-formed types.
+        content_type: a.mimeType && isMimeType(a.mimeType) ? a.mimeType : "application/octet-stream",
+        size: content.byteLength,
+        content_id: a.contentId ? a.contentId.slice(0, MAX_FILENAME_CHARS) : null,
+        disposition: a.disposition ?? null,
+        r2_key: blobKey.attachment(inbox.id, id, attId),
+        content,
+      };
+    });
+
+    // D1 reads first: nothing is in R2 yet if one of them throws.
+    const threadId = await resolveThread(
       env,
-      inbox.account_id,
       inbox.id,
-      "message.received",
-      {
-        inbox: { id: inbox.id, address: inbox.address },
-        message: messageSummary({ ...row, seq: 0 }),
-        links: ex.links.filter((l) => l.kind !== "other").slice(0, 10),
-        auth: ex.auth,
-        url: `/v1/messages/${id}`,
-      },
+      { inReplyTo: parsed.inReplyTo, references: parsed.references, subject, counterparty: from.address },
       now,
     );
-  } catch (e) {
-    console.error("webhook enqueue failed", e);
+    let text = capText(ex.text);
+    let links = ex.links;
+    if (await overTextBudget(env, standing, inbox.account_id, utf8Bytes(text.text) + utf8Bytes(JSON.stringify(links)))) {
+      // Over the account's text budget: keep an excerpt (codes and links were extracted from all of it).
+      const short = capText(ex.text, OVER_BUDGET_TEXT_BYTES);
+      text = { text: short.text, truncated: short.truncated || text.truncated };
+      links = trimLinks(ex.links);
+    }
+    const thread = threadUpsert(env, inbox, threadId, subject, now);
+    const sentAt = parsed.date ? Date.parse(parsed.date) : NaN;
+    const row: Omit<MessageRow, "seq"> = {
+      id,
+      account_id: inbox.account_id,
+      inbox_id: inbox.id,
+      thread_id: thread.threadId,
+      direction: "in",
+      message_id_header: msgIdHeader,
+      in_reply_to: bracketMessageId(parsed.inReplyTo),
+      references_header: capReferences(parsed.references),
+      envelope_from: envelopeFrom,
+      envelope_to: input.envelopeTo.toLowerCase(),
+      from_address: from.address,
+      from_name: from.name ? from.name.slice(0, MAX_NAME_CHARS) : null,
+      to_json: JSON.stringify(flattenAddresses(parsed.to).slice(0, MAX_LISTED_ADDRESSES)),
+      cc_json: JSON.stringify(flattenAddresses(parsed.cc).slice(0, MAX_LISTED_ADDRESSES)),
+      bcc_json: "[]",
+      reply_to: firstMailbox(parsed.replyTo?.[0])?.address ?? null,
+      subject,
+      preview: ex.preview,
+      text_body: text.text,
+      text_truncated: text.truncated ? 1 : 0,
+      html_key: htmlKey,
+      html_size: parsed.html ? parsed.html.length : null,
+      raw_key: rawKey,
+      size,
+      code: ex.code,
+      verify_link: ex.verify_link,
+      codes_json: JSON.stringify(ex.codes),
+      links_json: JSON.stringify(links),
+      auth_json: JSON.stringify(ex.auth),
+      attachment_count: attachments.length,
+      read: 0,
+      status: null,
+      error: null,
+      received_at: now,
+      sent_at: Number.isNaN(sentAt) ? null : sentAt,
+      sender_key: senderKey,
+      automated: isAutomated(parsed.headers, input.envelopeFrom) ? 1 : 0,
+      attachments_omitted: parsed.attachments.length - attachments.length,
+    };
+
+    const keys = [rawKey, ...(htmlKey ? [htmlKey] : []), ...attachments.map((a) => a.r2_key)];
+    try {
+      await Promise.all([
+        env.BLOBS.put(rawKey, input.raw, { httpMetadata: { contentType: "message/rfc822" } }),
+        htmlKey ? env.BLOBS.put(htmlKey, parsed.html!, { httpMetadata: { contentType: "text/html; charset=utf-8" } }) : null,
+        ...attachments.map((a) => env.BLOBS.put(a.r2_key, a.content, { httpMetadata: { contentType: a.content_type } })),
+      ]);
+      // One transaction. The message goes first with insert-or-ignore on (inbox, Message-ID); every
+      // other statement only runs if it was stored, so a concurrent duplicate changes nothing.
+      const batch = await env.DB.batch([
+        insertMessage(env, row, { ignoreDuplicate: true }),
+        thread.threadId === threadId
+          ? ifStored(
+              env,
+              id,
+              "UPDATE threads SET message_count = message_count + 1, last_message_at = MAX(last_message_at, ?) WHERE id = ?",
+              now,
+              thread.threadId,
+            )
+          : env.DB.prepare(
+              "INSERT INTO threads (id, account_id, inbox_id, subject, subject_key, message_count, last_message_at, created_at) SELECT ?, ?, ?, ?, ?, 1, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
+            ).bind(thread.threadId, inbox.account_id, inbox.id, subject, normalizeSubject(subject), now, now, id),
+        ...attachments.map((a) =>
+          env.DB.prepare(
+            "INSERT INTO attachments (id, message_id, filename, content_type, size, content_id, disposition, r2_key) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
+          ).bind(a.id, id, a.filename, a.content_type, a.size, a.content_id, a.disposition, a.r2_key, id),
+        ),
+        ifStored(env, id, "UPDATE inboxes SET last_message_at = ? WHERE id = ?", now, inbox.id),
+      ]);
+      stored = !!batch[0]?.meta.changes;
+    } finally {
+      // Not committed (an error, or lost the race to an identical delivery): drop this copy's blobs.
+      if (!stored) await env.BLOBS.delete(keys).catch((e) => console.error("blob cleanup failed (the cron sweep retries)", e));
+    }
+    if (!stored) {
+      const winner = await findDup();
+      return { status: "duplicate", message_id: winner?.id ?? id, inbox_id: inbox.id };
+    }
+
+    // A full inbox makes room by evicting the dominant sender's oldest mail (never this one).
+    const perInbox = maxMessagesPerInbox(env, standing);
+    if (Number.isFinite(perInbox)) {
+      try {
+        const evicted = await evictOverflow(env, inbox.id, id, perInbox);
+        if (evicted) console.log(JSON.stringify({ event: "mail.evicted", inbox_id: inbox.id, evicted, limit: perInbox }));
+      } catch (e) {
+        console.error("eviction failed", e);
+      }
+    }
+
+    // Wake parked wait_for_email callers. Mail is already committed; a failure here only means
+    // waiters fall back to their timeout re-check.
+    try {
+      await env.INBOX.get(env.INBOX.idFromName(inbox.id)).notify(now);
+    } catch (e) {
+      console.error("InboxDO notify failed", e);
+    }
+    try {
+      await emitEvent(
+        env,
+        inbox.account_id,
+        inbox.id,
+        "message.received",
+        {
+          untrusted: {
+            notice: UNTRUSTED_NOTICE,
+            fields: ["data.message.subject", "data.message.preview", "data.message.from.name", "data.message.to[].name", "data.links"],
+          },
+          inbox: { id: inbox.id, address: inbox.address },
+          message: messageSummary({ ...row, seq: 0 }),
+          links: ex.links.filter((l) => l.kind !== "other").slice(0, 10),
+          auth: ex.auth,
+          url: `/v1/messages/${id}`,
+        },
+        now,
+      );
+    } catch (e) {
+      console.error("webhook enqueue failed", e);
+    }
+    return { status: "stored", message_id: id, inbox_id: inbox.id, thread_id: thread.threadId, via };
+  } finally {
+    if (!stored) await refundSender(env, inbox.id, senderKey, sender.day).catch(() => {});
   }
-  return { status: "stored", message_id: id, inbox_id: inbox.id, thread_id: thread.threadId, via };
 }
+
+/** The SMTP reason a suspended account's mail gets: polite, and says nothing about why. */
+export const suspendedReason = (address: string) => `Mailbox unavailable: ${address} is not accepting mail`;
 
 /** The Worker's email() handler. */
 export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv): Promise<void> {
@@ -403,7 +550,13 @@ export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv)
     message.setReject("Message too large (25 MB limit)");
     return;
   }
-  const admit = await admitInbound(env, target.inbox);
+  const standing = await standingOf(env, target.inbox.account_id);
+  if (standing.suspended) {
+    console.log(JSON.stringify({ event: "mail.rejected", reason: "account_suspended", inbox_id: target.inbox.id }));
+    message.setReject(suspendedReason(target.inbox.address));
+    return;
+  }
+  const admit = await admitInbound(env, target.inbox, standing);
   if (!admit.ok) {
     console.log(JSON.stringify({ event: "mail.rejected", reason: admit.reason, inbox_id: target.inbox.id }));
     message.setReject(admit.reason);
@@ -413,12 +566,14 @@ export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv)
   let res: IngestResult;
   try {
     const raw = await new Response(message.raw).arrayBuffer(); // the stream is single-use
-    res = await ingestRaw(env, { envelopeFrom: message.from, envelopeTo: message.to, raw, inbox: target });
+    res = await ingestRaw(env, { envelopeFrom: message.from, envelopeTo: message.to, raw, inbox: target, standing });
   } catch (e) {
     await refund();
     throw e;
   }
   if (res.status !== "stored") await refund();
-  if (res.status === "rejected") message.setReject(res.reason);
-  else console.log(JSON.stringify({ event: "mail.received", ...res, to: rcpt!.address }));
+  if (res.status === "rejected") {
+    console.log(JSON.stringify({ event: "mail.rejected", reason: res.reason, inbox_id: target.inbox.id }));
+    message.setReject(res.reason);
+  } else console.log(JSON.stringify({ event: "mail.received", ...res, to: rcpt!.address }));
 }

@@ -1,4 +1,5 @@
-import { ApiError, badRequest, newId, notFound, parse } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, newId, notFound, parse } from "@afs/shared";
+import { quotaExceeded, siteCap } from "../lib/limits";
 import { z } from "zod";
 import { FunnelError, type FunnelStep, parseFunnelSteps } from "../lib/query";
 import { type Ctx, loadGoals, loadSite } from "./context";
@@ -78,13 +79,11 @@ export async function createFunnel(ctx: Ctx, siteId: string, raw: unknown) {
       next_steps: next.map((s) => s.replace("{id}", existing.id)),
     };
   }
-  const max = Number(ctx.env.MAX_FUNNELS_PER_SITE || 0);
-  if (max > 0) {
+  const max = siteCap(ctx.env, await accountStanding(ctx.env, ctx.accountId), "MAX_FUNNELS_PER_SITE", Number.POSITIVE_INFINITY);
+  if (Number.isFinite(max)) {
     const n = await db.prepare("SELECT COUNT(*) AS n FROM funnels WHERE site_id = ?").bind(site.id).first<{ n: number }>();
     if ((n?.n ?? 0) >= max)
-      throw new ApiError(
-        403,
-        "quota_exceeded",
+      throw quotaExceeded(
         `This site already has ${max} saved funnels, the most allowed here.`,
         "Delete one you no longer need (DELETE /v1/sites/:id/funnels/:funnel_id), or self-host for more.",
       );

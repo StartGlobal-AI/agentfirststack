@@ -6,6 +6,18 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **Abuse and cost controls across the platform**, after a full audit of the free hosted service.
+  - Account suspension (`pnpm afs suspend`), and lower `UNCLAIMED_*` caps for accounts no person has claimed.
+  - Signup limits per network per day (IPv6 grouped by /48) and a deployment-wide hourly breaker; caps on API keys.
+  - Daily budgets that never reset for analytics events, tags deliveries and events, replay sessions, chunks, bytes and derived rows, and mail inbound per sender; Workers rate-limit bindings in every app; Cloudflare edge rules on the hosted zone.
+  - Replay requires a browser Origin and the page host, verifies domain ownership (snippet on the homepage or a `_afs-verify` TXT record) before more than a trial, purges through per-site alarms, masks more, and quotes transcript fields.
+  - Tags: webhooks get matched conversions only, a circuit breaker per destination, the analytics destination is locked to the deployment's analytics, custom code needs a verified domain and a claimed account, and browser hits can no longer claim users or consent.
+  - Analytics: a stricter SQL guard with a query-plan cost bound, hostnames default to the site's domain, storage and retention bounds, opt-in browser revenue.
+  - Mail: waits hibernate and are capped, attachments can't leak in R2, per-sender caps, `latest-code` trusts only authenticated mail from the exact domain, forged `Authentication-Results` and mailing lists no longer unlock replies.
+  - Site: removing a member revokes their keys and invites, OAuth tokens can't mint permanent keys, gateway batches are capped, an open redirect is fixed, and the session cookie is now `__Host-` prefixed (everyone signs in again once).
+
 ### Added
 
 - **Replay** ([replay/README.md](replay/README.md)), the fourth service: headless session replay at `replay.<domain>`.

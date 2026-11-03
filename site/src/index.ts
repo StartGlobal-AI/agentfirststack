@@ -1,5 +1,6 @@
 import { accountRoutes, onError, onNotFound, protectedResourceRoutes } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
+import { adminApi } from "./admin";
 import { claimLinkApi, claimRoutes } from "./claims";
 import { purgeExpired } from "./cleanup";
 import { dashboard } from "./dashboard";
@@ -14,7 +15,8 @@ import { redirect } from "./session";
 // privacy and terms, /.well-known/*) are served by the assets binding. This Worker runs first for:
 //   /             content negotiation (Accept: text/markdown -> /index.md) and discovery Link headers
 //   /mcp          the MCP gateway over every service
-//   /v1/*         the one signup endpoint for the whole platform, key management, claim links
+//   /v1/*         the one signup endpoint for the whole platform, key management, claim links,
+//                 and the operator's /v1/admin/* (ADMIN_TOKEN only)
 //   /signin, /auth/*, /claim/*, /dashboard/*   optional accounts for people (docs/accounts.md)
 //   /oauth/*, /.well-known/oauth-*             the OAuth 2.1 server for MCP connectors
 const app = new Hono<SiteEnv>();
@@ -98,6 +100,7 @@ app.route("/", oauthPages);
 app.route("/", authRoutes);
 app.route("/", claimRoutes);
 app.route("/", claimLinkApi);
+app.route("/", adminApi);
 app.route("/dashboard", dashboard);
 
 app.route(

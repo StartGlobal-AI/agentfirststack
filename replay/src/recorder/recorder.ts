@@ -5,10 +5,13 @@
  *
  * What leaves the browser:
  * - rrweb events (one DOM snapshot, then mutations, pointer, scroll, input, viewport), with all
- *   text and every input value masked before they are emitted (site mask_mode and selectors),
- *   text attributes (title, alt, placeholder, aria-label, ...) masked the same way, query strings
- *   and fragments removed from the page URL and from links and form actions, hidden input values
- *   masked, blocked elements replaced by a placeholder of the same size;
+ *   text and every input value masked before they are emitted (site mask_mode and selectors; a
+ *   value is shown only inside [data-afsr-unmask] on the page itself, never because of a setting),
+ *   attributes reduced to an allowlist (layout and state as they are, text-like ones such as
+ *   title, alt, placeholder, aria-label and data-* masked the same way, everything else dropped),
+ *   query strings removed from every URL (links, forms, images, srcset, iframes, CSS url()),
+ *   id-like path segments of links and the page URL as ":id", mailto:/tel: reduced to the scheme,
+ *   blocked elements replaced by a placeholder of the same size;
  * - custom events (protocol.ts TAGS) describing each pageview, click (stable selector, masked
  *   label, interactive or not, position), the first input into each field, scroll position,
  *   errors (scrubbed message and stack), afsr('event') calls, tab hidden / page left / idle.
@@ -17,6 +20,7 @@
  */
 
 import { record } from "@rrweb/record";
+import { scrubAttributes } from "../lib/attrs";
 import { type El, clickTarget, rawLabel, stableSelector, tagDescriptor } from "../lib/describe";
 import {
   BUILTIN_BLOCK,
@@ -25,9 +29,12 @@ import {
   BUILTIN_UNMASK,
   type TextRule,
   applyRule,
-  inputAlwaysMasked,
+  inputValueVisible,
   maskAll,
-  pathMatches,
+  pathExcluded,
+  scrubCss,
+  scrubLink,
+  scrubPath,
   scrubText,
   stripQuery,
   textRule,
@@ -44,6 +51,7 @@ interface SNode {
   type: number;
   id: number;
   tagName?: string;
+  isSVG?: boolean;
   attributes?: Record<string, unknown>;
   childNodes?: SNode[];
 }
@@ -77,22 +85,34 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   const UNMASK = valid([BUILTIN_UNMASK, C.unmask].filter(Boolean).join(","));
   const MASK = valid([BUILTIN_MASK, C.maskSel].filter(Boolean).join(","));
   const BLOCK = valid([BUILTIN_BLOCK, C.block].filter(Boolean).join(","));
-  const within = (el: Element | null, s: string) => {
-    try {
-      return !!(el && s && el.closest(s));
-    } catch {
-      return false;
+  /** The nearest element matching `s` at or above `el`, crossing shadow roots up to their hosts. */
+  const closestAcross = (el: Element | null, s: string): Element | null => {
+    let cur = el;
+    for (let hops = 0; cur && s && hops < 20; hops++) {
+      try {
+        const hit = cur.closest(s);
+        if (hit) return hit;
+      } catch {
+        return null;
+      }
+      const root = cur.getRootNode ? cur.getRootNode() : null;
+      cur = root && (root as ShadowRoot).host ? (root as ShadowRoot).host : null;
     }
+    return null;
   };
+  const within = (el: Element | null, s: string) => !!closestAcross(el, s);
   const ruleFor = (el: Element | null): TextRule => textRule(C.mask, within(el, UNMASK), within(el, MASK));
+  // A typed value is shown only when the page itself marks the field [data-afsr-unmask] (never
+  // through unmask_selectors, a setting anyone with the site's API key could change), and never
+  // for passwords, card, one-time-code and secret-named fields.
   const inputVisible = (el: HTMLElement) =>
-    !inputAlwaysMasked(
+    inputValueVisible(
       (el as HTMLInputElement).type || el.getAttribute("type"),
       el.getAttribute("autocomplete"),
       el.getAttribute("name") || el.id,
-    ) &&
-    within(el, UNMASK) &&
-    !within(el, MASK);
+      within(el, BUILTIN_UNMASK),
+      within(el, MASK),
+    );
 
   let buffer: RREvent[] = [];
   let stopRec: (() => void) | null = null;
@@ -119,53 +139,36 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   };
 
   // ---------------------------------------------------------------- scrubbing rrweb events
-  const TEXT_ATTRS = [
-    "title",
-    "alt",
-    "placeholder",
-    "aria-label",
-    "aria-description",
-    "aria-placeholder",
-    "aria-valuetext",
-    "aria-roledescription",
-    "label",
-    "data-tooltip",
-    "data-title",
-  ];
-  const URL_ATTRS: Record<string, string[]> = {
-    a: ["href"],
-    area: ["href"],
-    form: ["action"],
-    button: ["formaction"],
-    input: ["formaction"],
-  };
-  const scrubAttrs = (tag: string, attrs: Record<string, unknown> | undefined, el: Element | null) => {
+  // Attributes are an allowlist (lib/attrs.ts): layout and state kept, text-like values masked by
+  // the element's rule, URLs scrubbed, everything else dropped.
+  const scrubAttrs = (tag: string, attrs: Record<string, unknown> | undefined, el: Element | null, svg: boolean) => {
     if (!attrs) return;
-    for (const k of URL_ATTRS[tag] || []) if (typeof attrs[k] === "string") attrs[k] = stripQuery(attrs[k] as string);
-    let rule: TextRule | undefined;
-    for (const k of TEXT_ATTRS) {
-      const v = attrs[k];
-      if (typeof v === "string" && v) attrs[k] = applyRule((rule ??= ruleFor(el)), v);
-    }
-    if (tag === "input" && String(attrs.type).toLowerCase() === "hidden" && typeof attrs.value === "string")
-      attrs.value = maskAll(attrs.value);
-    if (tag === "iframe" && typeof attrs.srcdoc === "string") attrs.srcdoc = "";
+    let r: TextRule | undefined;
+    scrubAttributes(tag, attrs, { rule: () => (r ??= ruleFor(el)), svg, metaName: el ? el.getAttribute("name") : null });
   };
   const walk = (n: SNode | undefined) => {
     if (!n) return;
-    if (n.type === 2 && n.tagName) scrubAttrs(n.tagName, n.attributes, record.mirror.getNode(n.id) as Element | null);
+    if (n.type === 2 && n.tagName) scrubAttrs(n.tagName, n.attributes, record.mirror.getNode(n.id) as Element | null, !!n.isSVG);
     if (n.childNodes) for (const c of n.childNodes) walk(c);
   };
   const scrub = (e: RREvent) => {
     const data = e.data;
-    if (e.type === 4 && typeof data.href === "string") data.href = stripQuery(data.href);
+    if (e.type === 4 && typeof data.href === "string") data.href = scrubLink(data.href);
     else if (e.type === 2) walk(data.node as SNode);
     else if (e.type === 3 && data.source === 0) {
       for (const a of (data.adds as { node: SNode }[]) || []) walk(a.node);
       for (const a of (data.attributes as { id: number; attributes: Record<string, unknown> }[]) || []) {
         const el = record.mirror.getNode(a.id) as Element | null;
-        if (el && el.tagName) scrubAttrs(el.tagName.toLowerCase(), a.attributes, el);
+        if (el && el.tagName)
+          scrubAttrs(el.tagName.toLowerCase(), a.attributes, el, typeof SVGElement !== "undefined" && el instanceof SVGElement);
+        else a.attributes = {};
       }
+    } else if (e.type === 3 && (data.source === 8 || data.source === 13)) {
+      // stylesheet rule and style declaration changes: url() references inside them
+      const sc = (v: unknown) => (typeof v === "string" ? scrubCss(v) : v);
+      for (const a of (data.adds as { rule: string }[]) || []) a.rule = sc(a.rule) as string;
+      const set = data.set as { value?: string } | undefined;
+      if (set) set.value = sc(set.value) as string;
     }
   };
 
@@ -178,6 +181,9 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       return undefined;
     }
   };
+  // keepalive fetch is a CORS request, so it always carries the page's real Origin (a beacon can
+  // send "Origin: null" under a no-referrer policy, and ingest refuses that).
+  const KEEPALIVE = typeof Request !== "undefined" && "keepalive" in Request.prototype;
   const post = (url: string, body: BodyInit, keepalive: boolean) =>
     fetch(url, { method: "POST", body, keepalive, headers: { "content-type": "text/plain" } })
       .then((r) => r.json())
@@ -204,7 +210,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     const json = JSON.stringify(env);
     const url = (z: 0 | 1) => `${api}?s=${C.site}&sid=${S.id}&q=${env.seq}&z=${z}`;
     if (unloading || typeof CompressionStream === "undefined") {
-      if (json.length < BEACON_MAX && nav.sendBeacon && nav.sendBeacon(url(0), json)) return;
+      if (json.length < BEACON_MAX && !KEEPALIVE && nav.sendBeacon && nav.sendBeacon(url(0), json)) return;
       void post(url(0), json, json.length < BEACON_MAX);
       return;
     }
@@ -315,11 +321,12 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   const referrer = () => {
     try {
       const u = new URL(d.referrer);
-      return u.host === loc.host ? u.pathname : u.hostname;
+      return u.host === loc.host ? scrubPath(u.pathname) : u.hostname;
     } catch {
       return undefined;
     }
   };
+  const excluded = (p: string) => pathExcluded(p, C.site, C.ex, C.exh);
   const loadType = (): NavType => {
     const entry = performance.getEntriesByType
       ? (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)
@@ -336,7 +343,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     curPath = p;
     typed = new WeakSet();
     errorsThisPage = 0;
-    if (pathMatches(p, C.ex)) {
+    if (excluded(p)) {
       if (stopRec) custom(TAGS.hide, { pv: S.pv, k: "excluded" });
       pause("excluded");
       return;
@@ -349,10 +356,10 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     boot.save();
     custom(TAGS.page, {
       pv: S.pv,
-      p,
+      p: scrubPath(p),
       h: loc.hostname,
       t: title(),
-      r: fresh ? referrer() : prev || undefined,
+      r: fresh ? referrer() : prev ? scrubPath(prev) : undefined,
       nav,
       w: innerWidth,
       vh: innerHeight,
@@ -379,7 +386,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     try {
       const u = new URL(href, loc.href);
       if (!/^https?:$/.test(u.protocol)) return undefined;
-      return u.host === loc.host ? u.pathname : `${u.origin}${u.pathname}`;
+      return u.host === loc.host ? scrubPath(u.pathname) : `${u.origin}${scrubPath(u.pathname)}`;
     } catch {
       return undefined;
     }
@@ -391,7 +398,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       let t = e.target as Element | null;
       if (t && t.nodeType !== 1) t = (t as Node).parentElement;
       if (!t || within(t, BUILTIN_IGNORE)) return;
-      const blockEl = BLOCK ? t.closest(BLOCK) : null;
+      const blockEl = BLOCK ? closestAcross(t, BLOCK) : null;
       const ct = clickTarget((blockEl || t) as unknown as El);
       const el = ct.el as unknown as Element;
       let pointer = false;
@@ -400,7 +407,30 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       } catch {
         /* detached */
       }
-      const raw = blockEl ? "" : rawLabel(ct.el);
+      // The label is built from the element's own text with each part masked by its own rule, and
+      // blocked or masked descendants never named (a [data-afsr-mask] price inside a button).
+      let partMasked = false;
+      const textOf = (root: El) => {
+        let out = "";
+        let n = 0;
+        const visit = (node: Node) => {
+          if (out.length > 200 || n++ > 400) return;
+          if (node.nodeType === 3) {
+            const v = node.textContent || "";
+            if (!v.trim()) return void (out += v);
+            const r = ruleFor(node.parentElement);
+            if (r !== "show") partMasked = true;
+            out += applyRule(r, v);
+          } else if (node.nodeType === 1) {
+            const x = node as Element;
+            if ((BLOCK && within(x, BLOCK)) || /^(SCRIPT|STYLE|TEMPLATE|NOSCRIPT)$/.test(x.tagName)) return void (partMasked = true);
+            for (const c of Array.from(x.childNodes)) visit(c);
+          }
+        };
+        visit(root as unknown as Node);
+        return out;
+      };
+      const raw = blockEl ? "" : rawLabel(ct.el, textOf);
       const rule = ruleFor(el);
       const rect = el.getBoundingClientRect();
       const dh = docH();
@@ -410,7 +440,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
         pv: S.pv,
         s: stableSelector(ct.el),
         l: raw ? applyRule(rule, raw) : "",
-        lm: raw && rule !== "show" ? 1 : 0,
+        lm: raw && (rule !== "show" || partMasked) ? 1 : 0,
         tg: tagDescriptor(ct.el),
         i: ct.interactive || pointer ? 1 : 0,
         x: Math.round(ev.pageX),
@@ -595,7 +625,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     boot.save();
   }, 5000);
 
-  if (!pathMatches(loc.pathname, C.ex)) start();
+  if (!excluded(loc.pathname)) start();
   pageview(loadType());
   boot.cmd = run;
   for (const q of boot.queue.splice(0)) run(q);

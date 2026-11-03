@@ -30,13 +30,34 @@
     // Prefix of the API keys this app mints ("afs" everywhere, so shared keys look alike).
     "KEY_PREFIX": "afs"
   },
-  // Optional vars a deployment can add (set them in deploy/<profile>.json, not here):
+  // Optional vars a deployment can add (set them in deploy/<profile>.json, not here). Each cap also
+  // reads UNCLAIMED_<NAME> for accounts no person has claimed; "0" turns a cap off:
   //   SIGNUP_HOURLY_LIMIT, MAX_CONTAINERS_PER_ACCOUNT,
   //   MAX_DESTINATIONS_PER_CONTAINER (default 10), MAX_VERSIONS_PER_CONTAINER (default 50),
-  //   MAX_DRAFT_BYTES (default 524288). "0" turns one of the last three off.
+  //   MAX_DRAFT_BYTES (default 524288), MAX_TAGS_BYTES_PER_ACCOUNT (default 20971520),
+  //   MAX_CUSTOM_CODE_BYTES, ALLOW_CUSTOM_CODE / UNCLAIMED_ALLOW_CUSTOM_CODE (default true / false),
+  //   MAX_DELIVERIES_PER_CONTAINER_PER_DAY, MAX_DELIVERIES_PER_ACCOUNT_PER_DAY, MAX_DELIVERIES_PER_DAY,
+  //   MAX_EVENTS_PER_CONTAINER_PER_DAY, MAX_VISITORS_PER_CONTAINER (default 250000),
+  //   MAX_CONTAINER_DB_BYTES (default 1073741824), CIRCUIT_BREAKER_FAILURES (default 20),
+  //   CIRCUIT_BREAKER_MINUTES (default 60). See README.md "Config".
   // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN.
 
-  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+  // SIGNUP_LIMITER is shared by every app (the deploy tool sets its namespace); the others are this
+  // app's own (namespaces 42011-42019) and are counted per Cloudflare location. Keys: client network
+  // (IPv4 or IPv6 /48), container id or account id.
+  "ratelimits": [
+    { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    // /collect: every hit per client network, and per container.
+    { "name": "COLLECT_IP_LIMITER", "namespace_id": "42011", "simple": { "limit": 600, "period": 60 } },
+    { "name": "COLLECT_CONTAINER_LIMITER", "namespace_id": "42012", "simple": { "limit": 6000, "period": 60 } },
+    // /collect conversions (they fan out to every destination): per client network, and per container.
+    { "name": "CONVERSION_IP_LIMITER", "namespace_id": "42013", "simple": { "limit": 60, "period": 60 } },
+    { "name": "CONVERSION_CONTAINER_LIMITER", "namespace_id": "42014", "simple": { "limit": 1200, "period": 60 } },
+    // Per account: scan + verify (outbound fetches), destination tests, server event requests.
+    { "name": "SCAN_LIMITER", "namespace_id": "42015", "simple": { "limit": 5, "period": 60 } },
+    { "name": "TEST_LIMITER", "namespace_id": "42016", "simple": { "limit": 10, "period": 60 } },
+    { "name": "SERVER_EVENTS_LIMITER", "namespace_id": "42017", "simple": { "limit": 120, "period": 60 } }
+  ],
 
   "d1_databases": [
     {

@@ -1,5 +1,6 @@
 import { ApiError, badRequest } from "@afs/shared";
 import type { ContainerConfig, Conversion, Tag, Trigger, Variable } from "../config/schema";
+import { fetchableHost } from "../lib/domain";
 import { readTextBounded } from "../lib/http";
 
 /**
@@ -342,6 +343,8 @@ export interface ScanResult {
   pages: { url: string; status: number | null; bytes: number; error?: string }[];
   detected: DetectedTags;
   container_installed: boolean;
+  /** This container's <script src> is on https://<domain>/ (that verifies the domain). */
+  snippet_on_homepage?: boolean;
   page_content: {
     _untrusted: string;
     title: string | null;
@@ -505,12 +508,26 @@ export function suggestConfig(d: DetectedTags, forms: FormInfo[], ctas: CtaInfo[
 /** Most bytes read per page, and redirect hops followed (each re-checked against the domain). */
 export const MAX_HTML = 1024 * 1024;
 export const MAX_REDIRECTS = 3;
+/** Pages fetched per scan (homepage + paths + linked pages), and how many at once. */
+export const MAX_SCAN_PAGES = 6;
+export const SCAN_CONCURRENCY = 2;
 const SCAN_HEADERS = { "user-agent": "Mozilla/5.0 (compatible; afs-tags-scan/1; +https://agentfirststack.com)", accept: "text/html,*/*" };
 
-/** The container's domain or a subdomain, over http(s). */
+/**
+ * The container's domain or a subdomain, over https on the default port, and a host this Worker
+ * may fetch (no IP literal, no localhost or local-only suffix).
+ */
 export function onDomain(u: URL, domain: string): boolean {
   const h = u.hostname.toLowerCase();
-  return /^https?:$/.test(u.protocol) && (h === domain || h.endsWith(`.${domain}`));
+  if (u.protocol !== "https:" || (u.port !== "" && u.port !== "443") || u.username || u.password) return false;
+  return (h === domain || h.endsWith(`.${domain}`)) && fetchableHost(h);
+}
+
+/** This container's snippet in a <script src> (direct or through a first-party proxy prefix). */
+export function hasSnippet(html: string, containerId: string): boolean {
+  if (!/^ctr_[a-z0-9]{8,32}$/.test(containerId)) return false;
+  const re = new RegExp(`<script\\b[^>]*\\bsrc\\s*=\\s*["']?[^"'\\s>]*/c/${containerId}\\.js(?:[?#][^"'\\s>]*)?["'\\s>]`, "i");
+  return re.test(html);
 }
 
 export interface FetchedPage {
@@ -522,13 +539,15 @@ export interface FetchedPage {
 
 /**
  * Fetch one page of the container's site. Redirects are followed by hand (at most
- * MAX_REDIRECTS hops), and only while they stay on the container's domain; the body is read up
- * to MAX_HTML bytes.
+ * MAX_REDIRECTS hops), and only while they stay on the container's domain over https; the body
+ * is read up to MAX_HTML bytes.
  */
 export async function fetchPage(url: string, domain: string, fetchImpl: typeof fetch = (...a) => fetch(...a)): Promise<FetchedPage> {
   let current = url;
   const signal = AbortSignal.timeout(10_000);
   try {
+    if (!onDomain(new URL(current), domain))
+      return { url: current, status: null, html: "", error: `Only https pages on ${domain} (default port) are fetched.` };
     for (let hop = 0; ; hop++) {
       const res = await fetchImpl(current, { headers: SCAN_HEADERS, redirect: "manual", signal });
       const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
@@ -548,7 +567,7 @@ export async function fetchPage(url: string, domain: string, fetchImpl: typeof f
           url: current,
           status: res.status,
           html: "",
-          error: `Redirects to ${next.hostname}, which isn't on ${domain}; not followed.`,
+          error: `Redirects to ${next.protocol === "https:" ? next.hostname : next.protocol + "//" + next.hostname}, which isn't https on ${domain}; not followed.`,
         };
       if (hop >= MAX_REDIRECTS)
         return { url: current, status: res.status, html: "", error: `More than ${MAX_REDIRECTS} redirects; scan the final URL directly.` };
@@ -559,14 +578,47 @@ export async function fetchPage(url: string, domain: string, fetchImpl: typeof f
   }
 }
 
-/** Only the container's own site (domain or subdomain) can be scanned. */
+/** Only the container's own site (domain or subdomain), over https on the default port. */
 export function scanTarget(domain: string, url?: string, path?: string): URL {
-  const u = new URL(url ?? `https://${domain}${path ?? "/"}`);
-  if (!/^https?:$/.test(u.protocol)) throw badRequest("Only http(s) URLs can be scanned.");
-  const h = u.hostname.toLowerCase();
-  if (h !== domain && !h.endsWith(`.${domain}`))
-    throw new ApiError(400, "bad_request", `${h} isn't on ${domain}.`, "Scan pages of the container's own domain (or a subdomain).");
+  if (!fetchableHost(domain))
+    throw new ApiError(
+      400,
+      "bad_request",
+      `${domain} can't be scanned.`,
+      "Scan and verify only fetch real public domains (no IP addresses, localhost or shared-hosting suffixes).",
+    );
+  let u: URL;
+  try {
+    u = new URL(url ?? `https://${domain}${path ?? "/"}`);
+  } catch {
+    throw badRequest("url must be an absolute https URL on the container's domain.");
+  }
+  if (u.protocol !== "https:") throw badRequest("Only https URLs can be scanned.", `Use https://${domain}/...`);
+  if ((u.port !== "" && u.port !== "443") || u.username || u.password)
+    throw badRequest("Only the default https port can be scanned, without credentials in the URL.");
+  if (!onDomain(u, domain))
+    throw new ApiError(
+      400,
+      "bad_request",
+      `${u.hostname} isn't on ${domain}.`,
+      "Scan pages of the container's own domain (or a subdomain).",
+    );
   return u;
+}
+
+/** Run `fn` over `items` with at most `n` in flight. */
+async function pool<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return out;
 }
 
 export async function scanSite(
@@ -577,14 +629,17 @@ export async function scanSite(
 ): Promise<ScanResult> {
   const first = scanTarget(domain, opts.url);
   const urls = [
-    first.toString(),
-    ...(opts.paths ?? []).slice(0, 5).map((p) => scanTarget(domain, undefined, p.startsWith("/") ? p : `/${p}`).toString()),
-  ];
+    ...new Set([
+      first.toString(),
+      ...(opts.paths ?? []).slice(0, 5).map((p) => scanTarget(domain, undefined, p.startsWith("/") ? p : `/${p}`).toString()),
+    ]),
+  ].slice(0, MAX_SCAN_PAGES);
   const get = (u: string) => fetchPage(u, domain, fetchImpl);
-  const fetched = await Promise.all(urls.map(get));
-  if (opts.follow_links !== false && fetched[0]?.html) {
+  const fetched = await pool(urls, SCAN_CONCURRENCY, get);
+  const room = Math.min(3, MAX_SCAN_PAGES - urls.length);
+  if (opts.follow_links !== false && fetched[0]?.html && room > 0) {
     const extra = interestingLinks(fetched[0].html, fetched[0].url).filter((u) => !urls.includes(u) && onDomain(new URL(u), domain));
-    fetched.push(...(await Promise.all(extra.slice(0, 3).map(get))));
+    fetched.push(...(await pool(extra.slice(0, room), SCAN_CONCURRENCY, get)));
   }
   const ok = fetched.filter((p) => p.html);
   if (!ok.length) {
@@ -595,9 +650,12 @@ export async function scanSite(
       `Check the site is reachable over https (${fetched[0]?.error ?? `status ${fetched[0]?.status}`}). Pass { "url": "https://..." } to scan a specific page.`,
     );
   }
+  const home = fetched[0]!;
+  const homepage = first.toString() === `https://${domain}/` && !!home.html && new URL(home.url).protocol === "https:";
   return {
     url: first.toString(),
     pages: fetched.map((p) => ({ url: p.url, status: p.status, bytes: p.html.length, ...(p.error ? { error: p.error } : {}) })),
+    snippet_on_homepage: homepage && hasSnippet(home.html, containerId),
     ...analyze(ok, containerId),
   };
 }

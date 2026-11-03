@@ -1,16 +1,22 @@
+import { addressParser } from "postal-mime";
+
 /**
  * SPF / DKIM / DMARC results from the headers the receiving server added.
  *
- * Email Routing prepends an `Authentication-Results: mx.cloudflare.net; ...` header. Anything
- * further down was written by earlier hops or by the sender, and a sender can forge it. So:
- * use the first Authentication-Results whose authserv-id is Cloudflare's (`trusted: true`);
- * failing that the first one at all (`trusted: false`, verdict "unknown"); failing that
- * Received-SPF.
+ * Email Routing prepends an `Authentication-Results: mx.cloudflare.net; ...` header before it
+ * invokes the Worker. Anything further down was written by earlier hops or by the sender, and a
+ * sender can forge it (including one that claims to be mx.cloudflare.net). So only the FIRST
+ * Authentication-Results header counts, and only when its authserv-id is exactly
+ * `mx.cloudflare.net` (`trusted: true`), as Cloudflare's docs prescribe. Otherwise the first
+ * header's results are reported with `trusted: false` and verdict "unknown". Without an spf result,
+ * Received-SPF fills in `spf` (informational only).
  *
  * `verdict: "pass"` means the From address's domain is authenticated, on the trusted header only:
  * DMARC pass for that domain (header.from, when given, must be the From domain), or a DKIM pass
- * (header.d) or SPF pass (smtp.mailfrom) whose domain is aligned with it. SHARED_SEND_POLICY=
- * reply_only relies on this, so a forged From never counts.
+ * (header.d) or SPF pass (smtp.mailfrom) whose domain is aligned with it. Never "pass" when the
+ * message is ambiguous about its author: more than one From header, more than one mailbox in From,
+ * or a trusted header that reports dmarc or spf more than once (a sign of injected text).
+ * SHARED_SEND_POLICY=reply_only and latest-code rely on this, so a forged From never counts.
  */
 
 export type AuthResult = "pass" | "fail" | "softfail" | "neutral" | "none" | "temperror" | "permerror" | "policy" | null;
@@ -24,7 +30,7 @@ export interface AuthResults {
   dkim_domains: string[];
   /** Who wrote the header we read, e.g. "mx.cloudflare.net". */
   authserv_id: string | null;
-  /** True when that header came from Cloudflare Email Routing (not forgeable by the sender). */
+  /** True when the first Authentication-Results header is Cloudflare Email Routing's (not forgeable by the sender). */
   trusted: boolean;
   /**
    * pass: the From domain is authenticated (DMARC pass for it, or an aligned DKIM or SPF pass).
@@ -103,6 +109,18 @@ function aligned(a: string, b: string): boolean {
 const domainOf = (v: string | undefined) =>
   v ? (v.includes("@") ? v.slice(v.lastIndexOf("@") + 1) : v).toLowerCase().replace(/\.$/, "") : null;
 
+/** The authserv-id Email Routing writes. */
+export const CLOUDFLARE_AUTHSERV_ID = "mx.cloudflare.net";
+
+/** Mailboxes named by one From header value (groups flattened). */
+function mailboxCount(value: string): number {
+  try {
+    return addressParser(value).reduce((n, a) => n + (a.group ? a.group.length : a.address ? 1 : 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
 export function extractAuth(headers: HeaderLike[], fromAddress?: string | null): AuthResults {
   const empty: AuthResults = {
     spf: null,
@@ -114,25 +132,31 @@ export function extractAuth(headers: HeaderLike[], fromAddress?: string | null):
     trusted: false,
     verdict: "unknown",
   };
-  const ars = headers.filter((h) => h.key.toLowerCase() === "authentication-results").map((h) => parseAuthenticationResults(h.value));
-  const chosen = ars.find((a) => /(^|\.)cloudflare\.(net|com)$/.test(a.authservId)) ?? ars[0];
+  // Only the topmost header: Email Routing prepends its own, so a sender cannot place one above it.
+  const firstAr = headers.find((h) => h.key.toLowerCase() === "authentication-results");
+  const chosen = firstAr ? parseAuthenticationResults(firstAr.value) : null;
   const res = { ...empty };
   let dmarcFrom: string[] = [];
   let spfDomains: string[] = [];
+  let duplicated = false;
 
   if (chosen) {
     res.authserv_id = chosen.authservId || null;
-    res.trusted = /(^|\.)cloudflare\.(net|com)$/.test(chosen.authservId);
+    res.trusted = chosen.authservId === CLOUDFLARE_AUTHSERV_ID;
     const by = (m: string) => chosen.methods.filter((x) => x.method === m);
-    const pick = (m: string): AuthResult => {
+    // DKIM may legitimately appear once per signature (any pass counts); DMARC and SPF are
+    // evaluated once per message, so the first result is the result.
+    const pickAny = (m: string): AuthResult => {
       const all = by(m);
       if (!all.length) return null;
       return asResult(all.find((x) => x.result === "pass")?.result ?? all[0]!.result);
     };
-    res.spf = pick("spf");
-    res.dkim = pick("dkim");
-    res.dmarc = pick("dmarc");
-    res.arc = pick("arc");
+    const pickFirst = (m: string): AuthResult => asResult(by(m)[0]?.result);
+    duplicated = by("dmarc").length > 1 || by("spf").length > 1;
+    res.spf = pickFirst("spf");
+    res.dkim = pickAny("dkim");
+    res.dmarc = pickFirst("dmarc");
+    res.arc = pickFirst("arc");
     res.dkim_domains = [
       ...new Set(
         by("dkim")
@@ -140,20 +164,27 @@ export function extractAuth(headers: HeaderLike[], fromAddress?: string | null):
           .map((x) => x.props["header.d"]!),
       ),
     ];
-    const passing = (m: string, prop: string) =>
-      by(m)
-        .filter((x) => x.result === "pass")
-        .map((x) => domainOf(x.props[prop]));
-    dmarcFrom = passing("dmarc", "header.from").map((d) => d ?? "");
-    spfDomains = passing("spf", "smtp.mailfrom").filter((d): d is string => !!d);
+    const first = (m: string) => by(m).slice(0, 1);
+    dmarcFrom = first("dmarc")
+      .filter((x) => x.result === "pass")
+      .map((x) => domainOf(x.props["header.from"]) ?? "");
+    spfDomains = first("spf")
+      .filter((x) => x.result === "pass")
+      .map((x) => domainOf(x.props["smtp.mailfrom"]))
+      .filter((d): d is string => !!d);
   }
   if (!res.spf) {
     const rs = headers.find((h) => h.key.toLowerCase() === "received-spf");
     if (rs) res.spf = asResult(/^\s*([a-z]+)/i.exec(rs.value)?.[1]?.toLowerCase());
   }
 
+  const froms = headers.filter((h) => h.key.toLowerCase() === "from");
+  const ambiguousFrom = froms.length > 1 || (froms.length === 1 && mailboxCount(froms[0]!.value) > 1);
   const fromDomain = fromAddress?.split("@")[1]?.toLowerCase() ?? null;
-  if (res.trusted && fromDomain) {
+  if (res.trusted && duplicated) {
+    // Cloudflare writes each of these once; a second one was smuggled in (e.g. by header folding).
+    res.verdict = res.dmarc === "fail" ? "fail" : "unknown";
+  } else if (res.trusted && fromDomain && !ambiguousFrom) {
     // A DMARC pass counts for the From domain it names ("" = not named, i.e. the From Cloudflare saw).
     const dmarcPass = dmarcFrom.some((d) => d === "" || d === fromDomain);
     if (dmarcPass) res.verdict = "pass";

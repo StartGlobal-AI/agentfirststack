@@ -66,8 +66,9 @@ export function clientIp(req: Request): string | null {
 }
 
 /**
- * The unit abuse limits should count: an IPv4 address as is, an IPv6 address by its /64 prefix
- * (one subscriber usually controls a whole /64, so per-address limits are trivially bypassed).
+ * The unit abuse limits should count: an IPv4 address as is, an IPv6 address by its /48 prefix.
+ * One subscriber usually controls at least a /64, and free tunnel brokers hand out whole /48s
+ * (65,536 /64s), so per-address or per-/64 limits are trivially bypassed over IPv6.
  */
 export function clientNetwork(req: Request): string {
   return networkKey(clientIp(req));
@@ -76,13 +77,22 @@ export function clientNetwork(req: Request): string {
 export function networkKey(ip: string | null): string {
   if (!ip) return "unknown";
   if (!ip.includes(":")) return ip;
+  // IPv4-mapped IPv6 (::ffff:192.0.2.1) is the IPv4 address.
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped?.[1]) return mapped[1];
   const [head = "", tail = ""] = ip.toLowerCase().split("::");
   const left = head ? head.split(":") : [];
   const right = tail ? tail.split(":") : [];
-  // Expand "::" so the first four groups are known, then keep them.
+  // Expand "::" so the first three groups are known, then keep them.
   const groups = ip.includes("::") ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left;
   return `${groups
-    .slice(0, 4)
+    .slice(0, 3)
     .map((g) => g.replace(/^0+(?=.)/, ""))
-    .join(":")}::/64`;
+    .join(":")}::/48`;
+}
+
+/** The client's network operator (autonomous system number), from Cloudflare's request.cf. */
+export function clientAsn(req: Request): number | null {
+  const asn = (req as { cf?: { asn?: unknown } }).cf?.asn;
+  return typeof asn === "number" && Number.isInteger(asn) && asn > 0 ? asn : null;
 }

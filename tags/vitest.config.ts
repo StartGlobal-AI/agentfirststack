@@ -29,6 +29,19 @@ export default defineConfig({
             miniflare: {
               // The pool bundles an older workerd than wrangler 4.156; pin a date it supports.
               compatibilityDate: "2026-08-01",
+              // The app's own rate limiters stay out of the way (tests send many hits from one
+              // "network"); their logic is tested with stub limiters.
+              ratelimits: Object.fromEntries(
+                [
+                  ["COLLECT_IP_LIMITER", "42011"],
+                  ["COLLECT_CONTAINER_LIMITER", "42012"],
+                  ["CONVERSION_IP_LIMITER", "42013"],
+                  ["CONVERSION_CONTAINER_LIMITER", "42014"],
+                  ["SCAN_LIMITER", "42015"],
+                  ["TEST_LIMITER", "42016"],
+                  ["SERVER_EVENTS_LIMITER", "42017"],
+                ].map(([name, namespace_id]) => [name, { namespace_id: namespace_id!, simple: { limit: 1_000_000, period: 60 as const } }]),
+              ),
               bindings: {
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
                 // The shared identity DB (AUTH_DB), as on the hosted platform.
@@ -38,6 +51,20 @@ export default defineConfig({
                 ANALYTICS_BASE_URL: "",
                 SIGNUP_HOURLY_LIMIT: "0",
                 MAX_CONTAINERS_PER_ACCOUNT: "",
+                UNCLAIMED_MAX_CONTAINERS_PER_ACCOUNT: "",
+                MAX_TAGS_BYTES_PER_ACCOUNT: "",
+                UNCLAIMED_MAX_TAGS_BYTES_PER_ACCOUNT: "",
+                MAX_CUSTOM_CODE_BYTES: "",
+                ALLOW_CUSTOM_CODE: "",
+                UNCLAIMED_ALLOW_CUSTOM_CODE: "",
+                MAX_DELIVERIES_PER_CONTAINER_PER_DAY: "",
+                MAX_DELIVERIES_PER_ACCOUNT_PER_DAY: "",
+                MAX_DELIVERIES_PER_DAY: "",
+                MAX_EVENTS_PER_CONTAINER_PER_DAY: "",
+                MAX_VISITORS_PER_CONTAINER: "",
+                MAX_CONTAINER_DB_BYTES: "",
+                CIRCUIT_BREAKER_FAILURES: "",
+                CIRCUIT_BREAKER_MINUTES: "",
                 ENCRYPTION_KEY: "q0n3d6Vf1w8Hq7m4Zt2yXb9cLr5sKp1uJe6aNg3hTiY=",
                 DEV_MODE: "true",
                 ANALYTICS_BASE_URL: "https://analytics.test",

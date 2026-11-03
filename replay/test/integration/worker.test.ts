@@ -136,11 +136,14 @@ describe("browser scripts", () => {
       sr: 0.25,
       mask: "relaxed",
       maskSel: ".price",
-      ex: ["/admin*"],
+      ex: [],
       on: true,
       base: "http://replay.test",
     });
-    expect(cfg.rec).toMatch(/^\/recorder\.[0-9a-f]{12}\.js$/);
+    // exclude_paths aren't listed in the public script
+    expect(cfg.exh).toHaveLength(1);
+    expect(r.text).not.toContain("/admin");
+    expect(cfg.rec).toMatch(/^\/rec\/[0-9a-f]{12}\.js$/);
     const etag = r.headers.get("etag")!;
     expect((await call("GET", `/r/${site}.js`, { headers: { "if-none-match": etag } })).status).toBe(304);
     expect((await call("GET", `/_r/r/${site}.js`)).status).toBe(200);
@@ -201,7 +204,7 @@ describe("ingest -> sessions, transcript, summary, heatmap, errors, funnel", () 
     const text = await call("GET", `/v1/sites/${site}/sessions/${sid}/transcript`, { key });
     expect(text.json.format).toBe("text");
     expect(text.json.transcript).toContain("<<<UNTRUSTED_REPLAY_TRANSCRIPT_");
-    expect(text.json.transcript).toMatch(/click x3 in 0\.4s button "Pay" \{#pay\}\s+\[RAGE DEAD ERROR-CLICK\]/);
+    expect(text.json.transcript).toMatch(/click x3 in 0\.4s button "Pay" \{"#pay"\}\s+\[RAGE DEAD ERROR-CLICK\]/);
     expect(text.json.transcript).toContain('JS error "TypeError: card is undefined"');
     const json = await call("GET", `/v1/sites/${site}/sessions/${sid}/transcript?format=json&kinds=click,error`, { key });
     expect(json.json.untrusted.timeline.map((e: any) => e.kind)).toEqual(["click", "click", "error"]);
@@ -294,7 +297,8 @@ describe("ingest -> sessions, transcript, summary, heatmap, errors, funnel", () 
       "hostname_not_allowed",
       "origin_not_allowed",
     ]);
-    expect(data.dropped_last_7d.origin_not_allowed.sample).toBe("evil.test");
+    expect(data.dropped_last_7d.origin_not_allowed.sample).toBeUndefined();
+    expect((await call("GET", `/v1/sites/${site}`, { key })).json.untrusted.drop_samples.origin_not_allowed).toBe("evil.test");
     // disabled sites tell the recorder to stop
     await call("PATCH", `/v1/sites/${site}`, { key, body: { enabled: false } });
     expect((await sendChunk(site, newSid(), 0, ev, o)).json).toMatchObject({ error: "disabled", stop: true });

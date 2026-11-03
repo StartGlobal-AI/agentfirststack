@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import type { Bindings } from "../../src/env";
 import { app } from "../../src/index";
+import { forgetSite } from "../../src/service/context";
 
 export const E = env as unknown as Bindings;
 export const B = "http://replay.test";
@@ -59,10 +60,27 @@ export async function signup() {
   return { key: r.json.api_key as string, account: r.json.account_id as string };
 }
 
-export async function newSite(domain: string, settings: Record<string, unknown> = {}, envOverride?: Bindings) {
+/**
+ * A new account with one site. Verified by default (as if verify had found the loader on the
+ * homepage), so tests see full quotas; `verified: false` keeps the trial state.
+ */
+export async function newSite(
+  domain: string,
+  settings: Record<string, unknown> = {},
+  envOverride?: Bindings,
+  opts: { verified?: boolean } = {},
+) {
   const { key, account } = await signup();
   const r = await call("POST", "/v1/sites", { key, body: { domain, ...settings }, env: envOverride });
-  return { key, account, site: r.json.site.id as string, created: r };
+  const site = r.json.site.id as string;
+  if (opts.verified !== false) await markVerified(site);
+  return { key, account, site, created: r };
+}
+
+/** Mark a site verified directly in D1 (what a successful verify does). */
+export async function markVerified(site: string) {
+  await E.DB.prepare("UPDATE sites SET verified_at = ?, verify_method = 'homepage' WHERE id = ?").bind(Date.now(), site).run();
+  forgetSite(site);
 }
 
 export async function gzipText(s: string): Promise<Uint8Array> {

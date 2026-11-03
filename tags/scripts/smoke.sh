@@ -144,7 +144,8 @@ check "server event carries stored gclid" "$(jq -r '.identity.click_ids | join("
 check "sink saw signed payloads with gclid" "$(jq -r 'select(.body.test==false) | [.signature_valid, .body.event.click_ids.gclid] | join(" ")' "$SINK_LOG" | sort -u | tr '\n' '|')" "true Cj0KCQsmokegclid|"
 check "plaintext email never forwarded" "$(grep -c 'jane@example.com' "$SINK_LOG" || true)" "0"
 VIS=$(api GET "/v1/containers/$C/visitors/$VID")
-check "visitor record" "$(jq -r '.visitor.click_ids.gclid.v, .visitor.first_touch.utm_source' <<<"$VIS" | tr '\n' ' ')" "Cj0KCQsmokegclid google "
+check "visitor record (browser-written fields under untrusted)" "$(jq -r '.visitor.click_ids.gclid.v, .visitor.untrusted.first_touch.utm_source' <<<"$VIS" | tr '\n' ' ')" "Cj0KCQsmokegclid google "
+check "backend linked the visitor to its user" "$(jq -r '.visitor.linked.email_hash' <<<"$VIS")" "true"
 
 echo "9b. first-party proxy: X-Forwarded-For trusted only with the container's proxy key"
 PKEY=$(api GET "/v1/containers/$C/install" | jq -r .first_party_proxy.proxy_key)
@@ -168,6 +169,19 @@ for i in $(seq 1 30); do
   sleep 1
 done
 check "webhook got the backend's value, not the forged one" "$V3" "42"
+
+echo "9d. abuse controls"
+LOGV=$(api GET "/v1/containers/$C/events?since=10m&verbose=true")
+check "third-party strings only under untrusted" "$(jq -r --arg ev "$EV" '.events[] | select(.event_id==$ev and .source=="browser") | (.untrusted.transaction_id // "none"), (.transaction_id // "null")' <<<"$LOGV" | tr '\n' ' ')" "T-SMOKE-1 null "
+UNM=$(api POST "/v1/containers/$C/events" -d '{"events":[{"name":"not_a_conversion","event_id":"smoke_unmatched_1"}]}')
+check "webhook skips backend events that match no conversion" "$(jq -r '.results[0].destinations | length' <<<"$UNM")" "0"
+check "*.com can't be an allowed hostname" "$(api PATCH "/v1/containers/$C" -d '{"allowed_hostnames":["*.com"]}' -o /dev/null -w '%{http_code}')" "400"
+check "analytics base_url must be the analytics app" "$(api POST "/v1/containers/$C/destinations" -d '{"type":"analytics","credentials":{"site_id":"site_abc123","api_key":"ana_xxxxxxxx","base_url":"https://evil.test/x?y="}}' -o /dev/null -w '%{http_code}')" "400"
+CJ=$(api POST "/v1/containers/$C/draft/validate" -d '{"config":{"triggers":[{"id":"all","type":"page_view"}],"tags":[{"id":"j","type":"custom_js","params":{"code":"1"},"triggers":["all"]}]}}')
+check "custom code can't be published from an unclaimed account / unverified domain" "$(jq -r '.valid, ([.errors[].code] | map(select(. == "custom_code_not_allowed" or . == "domain_not_verified")) | length > 0)' <<<"$CJ" | tr '\n' ' ')" "false true "
+VER=$(api POST "/v1/containers/$C/verify" -d '{"method":"dns"}')
+check "verify answers with the TXT record to add" "$(jq -r '.verified, .dns_record.name' <<<"$VER" | tr '\n' ' ')" "false _afs-verify.$DOMAIN "
+check "stats show today's usage" "$(api GET "/v1/containers/$C" | jq -r '.stats.today.deliveries > 0, .stats.storage.full')" "$(printf 'true\nfalse')"
 
 echo "10. MCP"
 MCP_LIST=$(curl -sS -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \

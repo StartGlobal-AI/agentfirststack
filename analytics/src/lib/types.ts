@@ -23,6 +23,8 @@ export interface Goal {
 /** The copy of a site's settings that lives in its Durable Object (pushed on every change). */
 export interface SiteSettings {
   id: string;
+  /** the owning account (suspension and fair-use caps); missing in copies pushed by older releases */
+  account_id?: string;
   domain: string;
   name: string | null;
   timezone: string;
@@ -32,6 +34,10 @@ export interface SiteSettings {
   respect_dnt: boolean;
   /** ingest exclusions (null = none). Older settings copies have no field: treat as null. */
   exclusions?: Exclusions | null;
+  /** count revenue sent by the browser tracker ($ / afsa('revenue')); default false: anyone can send it */
+  browser_revenue?: boolean;
+  /** let user ids from afsa('identify') link payments that carry only a user id; default false */
+  trust_browser_user_id?: boolean;
   created_at: number;
   goals: Goal[];
 }
@@ -99,6 +105,8 @@ export interface IngestResponse {
   known_site: boolean;
   persistent: boolean;
   results: IngestOutcome[];
+  /** every event was refused for this one reason (suspended account, storage or daily budget) */
+  refused?: "account_suspended" | "storage_full" | "daily_limit" | "account_daily_limit" | "platform_daily_budget";
 }
 
 export interface PeriodParams {

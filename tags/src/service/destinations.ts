@@ -1,10 +1,12 @@
-import { ApiError, badRequest, decryptSecret, encryptSecret, newId, notFound } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, decryptSecret, encryptSecret, newId, notFound } from "@afs/shared";
 import { z } from "zod";
 import { getConnector, DESTINATION_TYPES } from "../destinations";
 import type { Connector, DeliveryResult, DispatchEvent } from "../destinations/types";
 import type { Bindings } from "../env";
 import { getContainerRow, syncToDO } from "./containers";
 import { limits } from "./limits";
+import { assertRate } from "./ratelimit";
+import { summarizeResponse } from "./sanitize";
 
 export interface DestinationRow {
   id: string;
@@ -19,6 +21,11 @@ export interface DestinationRow {
   enabled: number;
   created_at: number;
   updated_at: number;
+  /** Circuit breaker (migration 0006). */
+  consecutive_failures?: number;
+  circuit_open_until?: number | null;
+  last_failure?: string | null;
+  last_failure_at?: number | null;
 }
 
 export const destinationSettings = z.strictObject({
@@ -27,6 +34,12 @@ export const destinationSettings = z.strictObject({
     .max(100)
     .optional()
     .describe("Only these conversion/event names (default: all that map to this destination)."),
+  all_events: z
+    .boolean()
+    .optional()
+    .describe(
+      "webhook only: also receive backend events whose name matches no conversion in the config (default false: only matched conversions).",
+    ),
 });
 
 function encryptionKey(env: Bindings): string {
@@ -78,6 +91,18 @@ function publicFields(connector: Connector, creds: Record<string, unknown>) {
   return out;
 }
 
+/** Circuit breaker state, as GET /destinations and the test show it. */
+export function destinationHealth(row: DestinationRow, now = Date.now()) {
+  const open = !!row.circuit_open_until && row.circuit_open_until > now;
+  return {
+    circuit: open ? ("open" as const) : ("closed" as const),
+    consecutive_failures: row.consecutive_failures ?? 0,
+    open_until: open ? row.circuit_open_until! : null,
+    last_failure: row.last_failure ?? null,
+    last_failure_at: row.last_failure_at ?? null,
+  };
+}
+
 export function presentDestination(row: DestinationRow) {
   return {
     id: row.id,
@@ -87,6 +112,7 @@ export function presentDestination(row: DestinationRow) {
     enabled: !!row.enabled,
     credentials: { configured: true, ...(JSON.parse(row.public) as Record<string, unknown>) },
     settings: JSON.parse(row.settings) as Record<string, unknown>,
+    health: destinationHealth(row),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -120,7 +146,7 @@ export async function createDestination(
     .first<DestinationRow>();
   if (found) return { row: found, existing: true };
   // Every server conversion fans out to each destination (with retries), so cap them.
-  const max = limits(env).maxDestinations;
+  const max = limits(env, await accountStanding(env, accountId)).maxDestinations;
   if (Number.isFinite(max)) {
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM destinations WHERE container_id = ?")
       .bind(containerId)
@@ -148,6 +174,8 @@ export async function createDestination(
     enabled: input.enabled === false ? 0 : 1,
     created_at: now,
     updated_at: now,
+    consecutive_failures: 0,
+    circuit_open_until: null,
   };
   await env.DB.prepare(
     "INSERT INTO destinations (id, container_id, account_id, type, name, natural_key, public, credentials, settings, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -206,6 +234,8 @@ export async function updateDestination(
   )
     .bind(next.name, next.credentials, next.public, next.natural_key, next.settings, next.enabled, next.updated_at, id)
     .run();
+  // An open circuit stays open across edits: only a passing test (rate limited) or the timeout
+  // closes it, so editing a destination can't be used to reset the breaker over and over.
   await resync(env, accountId, containerId);
   return next;
 }
@@ -215,6 +245,17 @@ export async function deleteDestination(env: Bindings, accountId: string, contai
   await env.DB.prepare("DELETE FROM destinations WHERE id = ?").bind(id).run();
   await resync(env, accountId, containerId);
 }
+
+export async function closeCircuit(env: Bindings, id: string) {
+  await env.DB.prepare(
+    "UPDATE destinations SET consecutive_failures = 0, circuit_open_until = NULL WHERE id = ? AND (consecutive_failures > 0 OR circuit_open_until IS NOT NULL)",
+  )
+    .bind(id)
+    .run();
+}
+
+/** Destination types whose URL the account chooses: tests return a summary, never the raw body. */
+const USER_URL_TYPES = new Set(["webhook", "analytics"]);
 
 export async function loadCredentials(env: Bindings, row: DestinationRow): Promise<Record<string, unknown>> {
   return JSON.parse(await decryptSecret(encryptionKey(env), row.credentials)) as Record<string, unknown>;
@@ -265,6 +306,12 @@ export async function testDestination(
   const container = await getContainerRow(env, accountId, containerId);
   const row = await getRow(env, accountId, containerId, id);
   const connector = connectorOr400(row.type);
+  await assertRate(
+    env.TEST_LIMITER,
+    accountId,
+    "destination tests",
+    "Wait a minute before testing again (tests are rate limited per account).",
+  );
   const creds = await loadCredentials(env, row);
   if (opts.test_event_code) creds.test_event_code = opts.test_event_code;
   if ((row.type === "meta" || row.type === "tiktok") && !creds.test_event_code) {
@@ -283,9 +330,22 @@ export async function testDestination(
     destinationId: id,
     containerId,
   });
+  if (USER_URL_TYPES.has(row.type)) {
+    // The URL is the account's choice: report the status and a short summary, not the body.
+    result.response = summarizeResponse(result.response);
+    if (result.request) result.request = { url: result.request.url };
+  }
+  // A passing test closes an open circuit (deliveries resume now).
+  const health = destinationHealth(row);
+  if (result.ok && (health.circuit === "open" || health.consecutive_failures > 0)) {
+    await closeCircuit(env, id);
+    row.consecutive_failures = 0;
+    row.circuit_open_until = null;
+    await resync(env, accountId, containerId);
+  }
   const next = result.ok
     ? [
-        `The ${row.type} test passed. Publish a config whose conversions have server: true and send_to.${row.type} (webhook/analytics get every server conversion).`,
+        `The ${row.type} test passed. Publish a config whose conversions have server: true and send_to.${row.type} (analytics gets every server conversion; webhooks every matched conversion, or every event with settings.all_events).`,
         `After real traffic, GET /v1/containers/${containerId}/events shows each delivery and the platform's response.`,
       ]
     : [
@@ -293,5 +353,9 @@ export async function testDestination(
           ? "The platform was unreachable or rate-limited; retry in a minute."
           : "Read result.response: it's the platform's own error. Fix the credentials with PATCH /v1/containers/:id/destinations/:did { credentials: {...} } and test again.",
       ];
+  if (!result.ok && destinationHealth(row).circuit === "open")
+    next.push(
+      "The destination's circuit is open (too many consecutive failures): deliveries are skipped until a test passes or it times out.",
+    );
   return { destination: presentDestination(row), test_mode: connector.testMode, result, next_steps: next };
 }

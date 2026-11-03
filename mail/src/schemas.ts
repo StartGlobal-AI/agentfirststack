@@ -31,7 +31,13 @@ export const updateInboxShape = {
 };
 
 export const waitShape = {
-  from: z.string().max(320).optional().describe('Substring of the sender address or name, e.g. "facebookmail.com" or "GitHub".'),
+  from: z
+    .string()
+    .max(320)
+    .optional()
+    .describe(
+      'Loose filter: substring of the sender address or name, e.g. "facebookmail.com" or "GitHub" (a display name is easy to fake; get_latest_code matches the sender domain exactly).',
+    ),
   subject: z.string().max(500).optional().describe("Substring of the subject."),
   contains: z.string().max(500).optional().describe("Substring of the subject or body."),
   after: z
@@ -41,6 +47,23 @@ export const waitShape = {
       "Only mail received after this (unix ms, unix seconds or ISO date). Default: now minus 60 s, so mail that arrived just before the call counts. 0 = any.",
     ),
   timeout: z.coerce.number().min(0).max(MAX_TIMEOUT_S).optional().describe(`Seconds to block (default 30, max ${MAX_TIMEOUT_S}).`),
+};
+
+export const latestCodeShape = {
+  ...waitShape,
+  from: z
+    .string()
+    .max(320)
+    .optional()
+    .describe(
+      'The sender\'s domain, e.g. "github.com" (mail from its subdomains matches too; "github.com.evil.example" and display names never do), or a full address. Not a bare word.',
+    ),
+  allow_unauthenticated: z
+    .boolean()
+    .optional()
+    .describe(
+      'Default false: only mail whose sender domain is authenticated (auth_verdict "pass") counts, so a forged sender cannot feed you a code. true also accepts unauthenticated mail.',
+    ),
 };
 
 export const listMessagesShape = {

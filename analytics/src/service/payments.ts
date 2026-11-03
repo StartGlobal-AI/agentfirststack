@@ -1,4 +1,5 @@
 import { ApiError, decryptSecret, encryptSecret, newId, notFound, parse, sha256Hex } from "@afs/shared";
+import { allow, enforce, limitVars } from "../lib/limits";
 import { z } from "zod";
 import type { Bindings } from "../env";
 import { readTextCapped } from "../lib/body";
@@ -53,7 +54,8 @@ export function linkingInstructions() {
     stripe_payment_links: "Append ?client_reference_id=<afsa.visitorId()> to the Payment Link URL.",
     stripe_payment_intents:
       "Your own PaymentIntents: set metadata.afs_visitor_id and also enable the payment_intent.succeeded event on the webhook.",
-    user_ids: "If you identify users (afsa('identify', id)), client_reference_id or metadata.afs_user_id set to that user id links too.",
+    user_ids:
+      "If you identify users, client_reference_id or metadata.afs_user_id set to that user id links too: to sessions your server identified (user_id on POST /v1/sites/:id/events), or to afsa('identify', id) ones when the site sets trust_browser_user_id.",
     other_providers: "POST /v1/sites/:id/payments with visitor_id (or session_id / user_id / customer_id).",
   };
 }
@@ -194,14 +196,14 @@ export async function disconnectStripe(ctx: Ctx, siteId: string) {
     throw notFound("Stripe integration", `Nothing to disconnect. GET /v1/sites/${site.id}/integrations/stripe shows how to connect.`);
   return {
     disconnected: true,
-    note: "The signing secret is deleted; webhooks to this site's URL now get 404. Payments already recorded are kept (DELETE /v1/sites/:id/payments/:payment_id removes one).",
+    note: "The signing secret is deleted; deliveries to this site's webhook URL are now rejected (400 webhook_rejected). Payments already recorded are kept (DELETE /v1/sites/:id/payments/:payment_id removes one).",
   };
 }
 
 // ------------------------------------------------------------------ webhook (public, signed)
 
 export interface WebhookResult {
-  status: 200 | 400 | 404 | 413 | 503;
+  status: 200 | 400 | 413 | 429 | 503;
   body: Record<string, unknown>;
 }
 
@@ -210,23 +212,36 @@ const fail = (status: WebhookResult["status"], error: string, hint: string): Web
   body: { error: { code: error, message: error.replaceAll("_", " "), hint } },
 });
 
+/**
+ * One answer for every unauthenticated failure: an unknown site, a site without Stripe, a missing
+ * or wrong signature, a stale timestamp. Nobody can tell from outside which sites have Stripe
+ * connected, and nothing is written for a request that isn't Stripe's (so it can't put a
+ * misleading last_error in front of the site's owner or verify).
+ */
+const REJECTED: WebhookResult = fail(
+  400,
+  "webhook_rejected",
+  "Signature verification failed for this endpoint. Check that the URL is the webhook_url from GET /v1/sites/:id/integrations/stripe and that the connected signing secret is the endpoint's current whsec_ (re-connect with POST /v1/sites/:id/integrations/stripe), and that the server clock is right (5 minute tolerance).",
+);
+
 export async function stripeWebhook(
   env: Bindings,
   siteId: string,
   req: Request,
   waitUntil: (p: Promise<unknown>) => void,
 ): Promise<WebhookResult> {
-  if (!SITE_ID_RE.test(siteId))
-    return fail(404, "not_found", "The webhook URL is /webhooks/stripe/<site id> (from GET /v1/sites/:id/integrations/stripe).");
-  const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<SiteRow>();
-  const row = site ? await integrationRow(env, site.id) : null;
-  if (!site || !row)
-    return fail(404, "not_found", "No Stripe integration for this site. Connect it with POST /v1/sites/:id/integrations/stripe.");
+  // Deployment-wide answers first: they say nothing about any one site.
   if (!env.ENCRYPTION_KEY) return fail(503, "not_configured", "The deployment's ENCRYPTION_KEY is missing; the operator must set it.");
+  if (!(await allow(env.WEBHOOK_LIMITER, `stripe:${siteId}`)))
+    return fail(429, "rate_limited", "Too many deliveries for this endpoint; Stripe retries later.");
   if (Number(req.headers.get("content-length")) > MAX_WEBHOOK_BYTES)
     return fail(413, "payload_too_large", "Stripe events are far smaller than 1 MB.");
   const { text, truncated } = await readTextCapped(req.body, MAX_WEBHOOK_BYTES);
   if (truncated) return fail(413, "payload_too_large", "Stripe events are far smaller than 1 MB.");
+  if (!SITE_ID_RE.test(siteId) || !req.headers.get("stripe-signature")) return REJECTED;
+  const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<SiteRow>();
+  const row = site ? await integrationRow(env, site.id) : null;
+  if (!site || !row) return REJECTED;
   const now = Date.now();
   const status = (sql: string, ...args: (string | number | null)[]) =>
     waitUntil(
@@ -239,24 +254,14 @@ export async function stripeWebhook(
   try {
     secret = await decryptSecret(env.ENCRYPTION_KEY, row.secret_sealed);
   } catch {
-    status("UPDATE integrations SET last_error = ?, last_error_at = ? WHERE id = ?", "secret_unreadable", now);
-    return fail(
-      503,
-      "secret_unreadable",
-      "The stored signing secret can't be decrypted (ENCRYPTION_KEY changed). Connect Stripe again with the secret.",
-    );
+    // A deployment fault (ENCRYPTION_KEY changed), not caller input: noted once for the owner.
+    if (row.last_error !== "secret_unreadable")
+      status("UPDATE integrations SET last_error = ?, last_error_at = ? WHERE id = ?", "secret_unreadable", now);
+    return REJECTED;
   }
   const sig = await verifyStripeSignature(text, req.headers.get("stripe-signature"), secret, now);
-  if (!sig.ok) {
-    status("UPDATE integrations SET last_error = ?, last_error_at = ? WHERE id = ?", sig.reason, now);
-    return fail(
-      400,
-      sig.reason,
-      sig.reason === "timestamp_outside_tolerance"
-        ? `The Stripe-Signature timestamp is more than ${STRIPE_TOLERANCE_S}s from now.`
-        : "Stripe-Signature does not match the connected signing secret. Re-connect with the endpoint's current whsec_ secret.",
-    );
-  }
+  if (!sig.ok) return REJECTED;
+  // Authenticated from here on: Stripe signed this body with the site's secret.
   let event: unknown;
   try {
     event = JSON.parse(text);
@@ -284,7 +289,8 @@ export async function stripeWebhook(
     return { status: 200, body: { received: true, ignored: "test_mode" } };
   }
   const record: PaymentInput = { ...rec, customer: rec.customer ? await hashCustomer(site.id, "stripe", rec.customer) : null };
-  const res = await callSite(env, site, (s) => s.ingestPayments([record]));
+  // Signed provider events skip the daily caps (revenue matters most); suspension and storage still apply.
+  const res = await callSite(env, site, (s) => s.ingestPayments([record], { vars: limitVars(env), exempt: true }));
   const out = res.results[0]!;
   mark(
     out.duplicate_event
@@ -317,7 +323,11 @@ const paymentSchema = z.object({
     .describe("When it was paid: unix ms or ISO 8601. Default now. Within the site's retention."),
   visitor_id: z.string().regex(VISITOR_ID_RE).optional().describe("From afsa.visitorId() in the browser."),
   session_id: z.string().regex(SESSION_ID_RE).optional().describe("A session id (from server event results)."),
-  user_id: z.string().max(200).optional().describe("Your user id, if you identify users with afsa('identify', id)."),
+  user_id: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("Your user id: links to sessions your server identified (or afsa('identify') ones with trust_browser_user_id)."),
   customer_id: z
     .string()
     .max(200)
@@ -339,6 +349,11 @@ export const paymentsShape = { payments: z.array(paymentSchema).min(1).max(100) 
 
 export async function recordPayments(ctx: Ctx, siteId: string, raw: unknown) {
   const { payments } = parse(recordPaymentsInput, raw);
+  await enforce(
+    [[ctx.env.API_INGEST_LIMITER, `acct:${ctx.accountId}`]],
+    "ingest requests",
+    "Batch payments (up to 100 per request) and retry in a minute.",
+  );
   const site = await loadSite(ctx, siteId);
   const now = Date.now();
   const oldest = now - site.retention_days * 86_400_000;
@@ -369,7 +384,7 @@ export async function recordPayments(ctx: Ctx, siteId: string, raw: unknown) {
     }),
   );
   const valid = prepared.filter((x): x is PaymentInput => typeof x !== "string");
-  const res = valid.length ? await callSite(ctx.env, site, (s) => s.ingestPayments(valid)) : { results: [] };
+  const res = valid.length ? await callSite(ctx.env, site, (s) => s.ingestPayments(valid, { vars: limitVars(ctx.env) })) : { results: [] };
   let vi = 0;
   const results = prepared.map((p, index) => (typeof p === "string" ? { index, ok: false, reason: p } : { index, ...res.results[vi++]! }));
   const accepted = results.filter((r) => r.ok).length;

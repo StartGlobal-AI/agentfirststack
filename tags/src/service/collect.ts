@@ -1,14 +1,16 @@
-import { ApiError, parse } from "@afs/shared";
+import { ApiError, accountSuspended, networkKey, parse } from "@afs/shared";
 import UAParser from "ua-parser-js";
 import type { ContainerConfig } from "../config/schema";
 import type { CollectResult } from "../do/container-do";
 import type { Bindings } from "../env";
 import { CLICK_ID_DAYS, clickCookieName, VISITOR_COOKIE } from "../lib/clickids";
 import { containerStub, resyncById } from "./containers";
-import type { CollectHit, Enrichment } from "./ingest";
+import { type CollectHit, cleanClickIds, cleanCollectPayload, type Enrichment } from "./ingest";
 import { collectSchema } from "./ingest-schema";
 import { originHost } from "./origin";
 import { fromTrustedProxy } from "./proxy";
+import { overLimit, rateLimited } from "./ratelimit";
+import { MAX_USER_AGENT } from "./sanitize";
 import { previewContainer } from "./versions";
 
 const BOT =
@@ -87,14 +89,38 @@ export function identityCookies(
   const ads = c.ad_storage === "granted";
   if (store && payload.visitor_id) out.push(`${VISITOR_COOKIE}=${encodeURIComponent(payload.visitor_id)}${attrs(395)}`);
   if (ads) {
-    for (const [k, v] of Object.entries(payload.click_ids ?? {})) {
-      if (/^[A-Za-z0-9._~-]{4,500}$/.test(v)) out.push(`${clickCookieName(k)}=${encodeURIComponent(v)}${attrs(CLICK_ID_DAYS)}`);
+    // Known click ids only: a raw key from the body would end up in the Set-Cookie name.
+    for (const [k, v] of Object.entries(cleanClickIds(payload.click_ids))) {
+      out.push(`${clickCookieName(k)}=${encodeURIComponent(v)}${attrs(CLICK_ID_DAYS)}`);
     }
     if (payload.fbc && /^fb\.\d\.\d+\.[A-Za-z0-9._~-]+$/.test(payload.fbc))
       out.push(`_fbc=${encodeURIComponent(payload.fbc)}${attrs(CLICK_ID_DAYS)}`);
     if (payload.fbp && /^fb\.\d\.\d+\.\d+$/.test(payload.fbp)) out.push(`_fbp=${encodeURIComponent(payload.fbp)}${attrs(CLICK_ID_DAYS)}`);
   }
   return out;
+}
+
+const RATE_HINT =
+  "The runtime sends a few hits per page; this many from one network or for one container in a minute looks like a flood. Retry later.";
+
+/**
+ * Edge rate limits (Workers rate-limit bindings, per Cloudflare location): every hit per client
+ * network (IPv4 address or IPv6 /48; the visitor's IP behind the container's own proxy) and per
+ * container, and conversions (which fan out to destinations) tighter on both.
+ */
+export async function collectRateLimited(env: Bindings, ipKey: string, containerId: string, conversion: boolean): Promise<string | null> {
+  const checks: [RateLimit | undefined, string, string][] = [
+    [env.COLLECT_IP_LIMITER, ipKey, "hits from this network"],
+    [env.COLLECT_CONTAINER_LIMITER, containerId, "hits for this container"],
+    ...(conversion
+      ? ([
+          [env.CONVERSION_IP_LIMITER, ipKey, "conversions from this network"],
+          [env.CONVERSION_CONTAINER_LIMITER, containerId, "conversions for this container"],
+        ] as [RateLimit | undefined, string, string][])
+      : []),
+  ];
+  for (const [limiter, key, what] of checks) if (await overLimit(limiter, key)) return what;
+  return null;
 }
 
 export async function handleCollect(env: Bindings, req: Request): Promise<Response> {
@@ -115,8 +141,8 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
     } catch {
       throw new ApiError(400, "bad_request", "Body is not JSON.", "POST a JSON object (text/plain is fine) as the runtime does.");
     }
-    const payload = parse(collectSchema, raw);
-    const ua = req.headers.get("user-agent") ?? undefined;
+    const payload = cleanCollectPayload(parse(collectSchema, raw));
+    const ua = req.headers.get("user-agent")?.slice(0, MAX_USER_AGENT) ?? undefined;
     // Bots are dropped, except preview traffic (agents verify setups with headless browsers).
     if (ua && BOT.test(ua) && !payload.preview)
       return json({
@@ -124,6 +150,10 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
         ignored: "bot",
         hint: "Known bot/headless user agent. Use a preview link (POST /v1/containers/:id/preview) to test with a headless browser.",
       });
+    // Rate limits before any storage is touched (the preview lookup reads D1).
+    const ip = clientIpFrom(req, await fromTrustedProxy(env, req, payload.container_id));
+    const limited = await collectRateLimited(env, networkKey(ip ?? null), payload.container_id, payload.type === "conversion");
+    if (limited) throw rateLimited(limited, RATE_HINT);
     const host = originHost(req.headers.get("origin") ?? undefined, payload.page_url);
     let previewConfig: ContainerConfig | undefined;
     if (payload.preview) {
@@ -136,7 +166,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
     const hit: CollectHit = {
       payload,
       enrich: {
-        ip: clientIpFrom(req, await fromTrustedProxy(env, req, payload.container_id)),
+        ip,
         user_agent: ua,
         geo: geoFrom(req),
         device: deviceFrom(ua, req.headers.get("accept-language")),
@@ -157,6 +187,21 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
       result = await stub.collect(hit);
     }
     if (!result.ok) {
+      if (result.error === "suspended") throw accountSuspended();
+      if (result.error === "quota")
+        throw new ApiError(
+          429,
+          "quota_exceeded",
+          `This container received its ${result.limit} browser events for today; hits are dropped until 00:00 UTC.`,
+          "GET /v1/containers/:id shows stats.today. Backend events (POST /v1/containers/:id/events) have their own daily quota.",
+        );
+      if (result.error === "storage_full")
+        throw new ApiError(
+          507,
+          "storage_full",
+          `This container's event store is over its ${result.limit} byte limit; new hits aren't stored.`,
+          "Old events (7 days) and visitors (180 days) are purged daily; GET /v1/containers/:id shows stats.storage.",
+        );
       throw new ApiError(
         403,
         "origin_not_allowed",

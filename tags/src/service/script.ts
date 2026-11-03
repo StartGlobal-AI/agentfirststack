@@ -1,7 +1,8 @@
-import { sha256Hex } from "@afs/shared";
+import { accountStanding, sha256Hex } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { Bindings } from "../env";
 import type { BootConfig } from "../runtime/types";
+import { customCodeProblem, stripCustomCode } from "./verify";
 import { previewContainer } from "./versions";
 
 /**
@@ -32,7 +33,12 @@ async function runtimeVersion(runtime: string) {
 interface CachedBoot {
   boot: BootConfig;
   live_version: number;
+  /** For the suspension check (absent in entries cached by older code). */
+  account_id?: string;
 }
+
+const SUSPENDED_JS = "/* AgentFirstStack tags: this container's account is suspended. */\n";
+const suspendedScript = () => new Response(SUSPENDED_JS, { status: 403, headers: { ...JS_HEADERS, "cache-control": "no-store" } });
 
 const cacheKey = (origin: string, id: string) => new Request(`${origin.replace(/\/$/, "")}/c/${id}.js?__afst_boot=1`);
 
@@ -53,15 +59,16 @@ export async function purgeScriptCache(id: string, origins: string[]) {
 
 async function loadBoot(env: Bindings, id: string): Promise<CachedBoot | null> {
   const row = await env.DB.prepare(
-    "SELECT c.id, c.domain, c.live_version, v.config FROM containers c LEFT JOIN container_versions v ON v.container_id = c.id AND v.version = c.live_version WHERE c.id = ?",
+    "SELECT c.id, c.account_id, c.domain, c.live_version, v.config FROM containers c LEFT JOIN container_versions v ON v.container_id = c.id AND v.version = c.live_version WHERE c.id = ?",
   )
     .bind(id)
-    .first<{ id: string; domain: string; live_version: number | null; config: string | null }>();
+    .first<{ id: string; account_id: string; domain: string; live_version: number | null; config: string | null }>();
   if (!row) return null;
   const cfg = row.config ? (JSON.parse(row.config) as ContainerConfig) : {};
   return {
     boot: { id: row.id, v: row.live_version ?? 0, d: row.domain, cfg, ab: env.ANALYTICS_BASE_URL || undefined },
     live_version: row.live_version ?? 0,
+    account_id: row.account_id,
   };
 }
 
@@ -90,20 +97,30 @@ export async function serveScript(
   if (req.preview) {
     const owner = await previewContainer(env, req.preview);
     if (owner === id) {
-      const row = await env.DB.prepare("SELECT id, domain, draft FROM containers WHERE id = ?")
+      const row = await env.DB.prepare("SELECT id, account_id, domain, draft, verified_at FROM containers WHERE id = ?")
         .bind(id)
-        .first<{ id: string; domain: string; draft: string }>();
+        .first<{ id: string; account_id: string; domain: string; draft: string; verified_at: number | null }>();
       if (row) {
+        const standing = await accountStanding(env, row.account_id);
+        if (standing.suspended) return suspendedScript();
+        let cfg = JSON.parse(row.draft) as ContainerConfig;
+        let prelude = "";
+        // A preview link is a public URL too: custom code runs in it only where publish would allow it.
+        const custom = customCodeProblem(env, row, cfg, standing);
+        if (custom) {
+          cfg = stripCustomCode(cfg, env);
+          prelude = `console.warn(${JSON.stringify(`[afst] preview: custom code tags are left out (${custom.code}). ${custom.hint}`)});\n`;
+        }
         const boot: BootConfig = {
           id,
           v: "draft",
           d: row.domain,
-          cfg: JSON.parse(row.draft) as ContainerConfig,
+          cfg,
           preview: req.preview,
           ab: env.ANALYTICS_BASE_URL || undefined,
           base: req.origin,
         };
-        return new Response(compileScript(runtime, boot, req.geo), { headers: { ...JS_HEADERS, "cache-control": "no-store" } });
+        return new Response(compileScript(runtime, boot, req.geo, prelude), { headers: { ...JS_HEADERS, "cache-control": "no-store" } });
       }
     }
     // Expired/invalid token: clear the preview flag and fall through to the live container.
@@ -144,6 +161,7 @@ async function serveLive(
       ctx.waitUntil(cache.put(key, res).catch(() => undefined));
     }
   }
+  if (cached.account_id && (await accountStanding(env, cached.account_id)).suspended) return suspendedScript();
   const boot = { ...cached.boot, base: req.origin };
   const etag = `W/"${req.id}-v${cached.live_version}-${await runtimeVersion(runtime)}-${req.geo?.country ?? "xx"}${req.geo?.region ? `-${req.geo.region}` : ""}"`;
   const headers = {

@@ -22,6 +22,12 @@ export interface VisitorData {
   geo?: { country?: string; region?: string; region_code?: string; city?: string; postal_code?: string };
   device?: Record<string, string | undefined>;
   consent?: Record<string, "granted" | "denied">;
+  /**
+   * Identities your backend tied to this visitor (a server event carrying this visitor_id plus a
+   * user_id / email / phone). Only these feed the user_id/email/phone join; user ids and hashes a
+   * browser posts to /collect (which anyone can) never do.
+   */
+  linked?: { user_id?: string; em?: string; ph?: string };
   visits: number;
   conversions: number;
 }
@@ -43,6 +49,8 @@ export interface VisitorUpdate {
   geo?: VisitorData["geo"];
   device?: VisitorData["device"];
   consent?: Record<string, "granted" | "denied">;
+  /** Server-side only: identities the backend asserted for this visitor. */
+  link?: { user_id?: string; em?: string; ph?: string };
   visit?: boolean;
   conversion?: boolean;
 }
@@ -72,6 +80,11 @@ export function mergeVisitor(prev: VisitorData | null, u: VisitorUpdate, now = D
   if (u.geo && u.geo.country) v.geo = u.geo;
   if (u.device && Object.keys(u.device).length) v.device = u.device;
   if (u.consent && Object.keys(u.consent).length) v.consent = { ...(v.consent ?? {}), ...u.consent };
+  if (u.link) {
+    const linked = { ...(v.linked ?? {}) };
+    for (const k of ["user_id", "em", "ph"] as const) if (u.link[k]) linked[k] = u.link[k];
+    if (Object.keys(linked).length) v.linked = linked;
+  }
   if (u.visit) v.visits++;
   if (u.conversion) v.conversions++;
   return v;

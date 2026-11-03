@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { isIpLiteral } from "../lib/domain";
+import { deploymentOrigins, targetsDeployment } from "../lib/http";
 import { compact, type Connector, type DispatchEvent, execute, type SendContext } from "./types";
 
 /**
@@ -12,9 +14,51 @@ import { compact, type Connector, type DispatchEvent, execute, type SendContext 
 export const analyticsCredentials = z.strictObject({
   site_id: z.string().regex(/^site_[a-z0-9]+$/, "The analytics site id (site_...)."),
   api_key: z.string().min(8).describe("An analytics API key (ana_...) with write scope."),
-  base_url: z.url().optional().describe("Analytics app base URL; default ANALYTICS_BASE_URL."),
+  base_url: z
+    .url()
+    .optional()
+    .describe(
+      "Analytics app base URL; default ANALYTICS_BASE_URL. Must be https on the same host as ANALYTICS_BASE_URL (when the deployment sets it), with no query string.",
+    ),
 });
 export type AnalyticsCredentials = z.infer<typeof analyticsCredentials>;
+
+const LOCAL = (h: string) => ["localhost", "127.0.0.1", "[::1]"].includes(h) || h.endsWith(".localhost");
+
+/**
+ * Why a base_url can't be used, or null. The destination POSTs events there and its test returns
+ * the answer, so it must be the analytics app itself: https, the host of ANALYTICS_BASE_URL when
+ * the deployment sets one, no credentials, query or fragment, no IP literal, not this deployment.
+ */
+export function analyticsBaseUrlProblem(raw: string | undefined, env: SendContext["env"], origins: string[] = []): string | null {
+  if (!raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "base_url is not a URL.";
+  }
+  const dev = String(env.DEV_MODE) === "true";
+  const local = dev && LOCAL(u.hostname.toLowerCase());
+  if (u.protocol !== "https:" && !(local && u.protocol === "http:")) return "base_url must be an https URL.";
+  if (u.username || u.password) return "base_url can't contain credentials.";
+  if (u.search || u.hash || raw.includes("?") || raw.includes("#")) return "base_url can't have a query string or fragment.";
+  if (u.port && u.port !== "443" && !local) return "base_url must use the default https port.";
+  if (isIpLiteral(u.hostname) && !local) return "base_url can't be an IP address.";
+  if (targetsDeployment(u, deploymentOrigins(env, origins), dev))
+    return "base_url points at this tags deployment; use the analytics app's URL.";
+  if (env.ANALYTICS_BASE_URL) {
+    let own: URL | null = null;
+    try {
+      own = new URL(env.ANALYTICS_BASE_URL);
+    } catch {
+      own = null;
+    }
+    if (own && own.hostname.toLowerCase() !== u.hostname.toLowerCase())
+      return `base_url must be on ${own.hostname} (this deployment's analytics app); leave it out to use ${env.ANALYTICS_BASE_URL}.`;
+  }
+  return null;
+}
 
 export function analyticsBaseUrl(c: AnalyticsCredentials, env: SendContext["env"]): string | null {
   const b = c.base_url || env.ANALYTICS_BASE_URL;
@@ -85,7 +129,14 @@ export const analytics: Connector<AnalyticsCredentials> = {
   testMode: "No test mode: sends one real event named tags_test with props.test = true.",
   example: { site_id: "site_3k9x2m7q8w1e5r4t", api_key: "ana_xxxxxxxx", base_url: "https://analytics.example.com" },
   docs: "analytics/README.md (POST /v1/sites/:id/events)",
+  check(c, env, origins) {
+    const problem = analyticsBaseUrlProblem(c.base_url, env, origins);
+    if (problem) throw new Error(problem);
+  },
   async send(e, c, ctx) {
+    // Re-checked at send time: destinations saved by older code, or vars changed since.
+    const problem = analyticsBaseUrlProblem(c.base_url, ctx.env);
+    if (problem) return { ok: false, retryable: false, error: `${problem} PATCH credentials.base_url (null uses the default).` };
     const base = analyticsBaseUrl(c, ctx.env);
     if (!base) return { ok: false, retryable: false, error: "No base_url in credentials and ANALYTICS_BASE_URL is not set." };
     const body = buildAnalyticsBody(ctx.test ? { ...e, name: "tags_test", test: true, send_to: {} } : e);

@@ -2,8 +2,10 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { sha256Hex, timingSafeEqual } from "./crypto";
 import { ApiError, accountSuspended, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
-import { clientNetwork, publicBaseUrl, readJson } from "./http";
+import { clientAsn, clientNetwork, publicBaseUrl, readJson } from "./http";
 import { newId, randomString } from "./ids";
+import { accountStanding, capFor } from "./standing";
+import { cleanName } from "./text";
 
 /**
  * Accounts and API keys, shared by every app.
@@ -37,8 +39,21 @@ export interface AuthBindings {
   AUTH_DB?: D1Database;
   /** Overrides the app's key prefix, e.g. "afs" so a multi-app deployment mints one style of key. */
   KEY_PREFIX?: string;
-  /** Max signups per client network (IPv4 address or IPv6 /64) per rolling hour (needs signup_log). */
+  /** Max signups per client network (IPv4 address or IPv6 /48) per rolling hour (needs signup_log). */
   SIGNUP_HOURLY_LIMIT?: string;
+  /** Max signups per client network per rolling day (needs signup_log). */
+  SIGNUP_DAILY_LIMIT?: string;
+  /** Max signups per network operator (request.cf.asn) per rolling day (needs signup_log). */
+  SIGNUP_ASN_DAILY_LIMIT?: string;
+  /** Max signups on the whole deployment per rolling hour: a circuit breaker (needs signup_log). */
+  SIGNUP_GLOBAL_HOURLY_LIMIT?: string;
+  /** Active API keys per account (default 50). UNCLAIMED_MAX_KEYS_PER_ACCOUNT for agent-only accounts. */
+  MAX_KEYS_PER_ACCOUNT?: string;
+  UNCLAIMED_MAX_KEYS_PER_ACCOUNT?: string;
+  /** New API keys per account per rolling hour, revoked ones included (off when unset). */
+  KEYS_HOURLY_LIMIT?: string;
+  /** Optional Workers rate-limit binding, keyed by account, applied to API key creation. */
+  KEY_LIMITER?: RateLimit;
   /**
    * Secret shared by the Workers of one deployment. A request with `x-afs-internal: <token>` and
    * `x-afs-account: acct_...` is a full-access caller for that account (the site's dashboard
@@ -80,6 +95,10 @@ export interface AuthContext {
   accountId: string;
   keyId: string;
   scopes: string[];
+  /** Set on OAuth access tokens: the grant (connected app) that issued the key. */
+  oauthGrantId?: string;
+  /** Set on keys that expire (OAuth access tokens): unix ms. */
+  expiresAt?: number;
 }
 
 export type AuthEnv = { Bindings: AuthBindings; Variables: { auth: AuthContext } };
@@ -90,6 +109,23 @@ export const canWrite = (auth: AuthContext) => auth.scopes.includes("*");
 
 export function assertWrite(auth: AuthContext): void {
   if (!canWrite(auth)) throw forbidden("This is a read-only key.", 'Use a key with scope "*" for changes.');
+}
+
+/**
+ * An expiring credential: an OAuth access token a connected app holds for a few hours. It may use
+ * the project, but must not mint anything that outlives it (API keys, claim links), or
+ * disconnecting the app wouldn't end its access.
+ */
+export const isTemporaryCredential = (auth: AuthContext) => !!auth.oauthGrantId || auth.expiresAt !== undefined;
+
+export function assertPermanentKey(auth: AuthContext, action: string): void {
+  if (!isTemporaryCredential(auth)) return;
+  throw new ApiError(
+    403,
+    "temporary_credential",
+    `A connected app's access token can't ${action}.`,
+    "Access tokens from OAuth expire, and nothing they create may outlive them. Use the project's own API key, or a person can do this in the dashboard.",
+  );
 }
 
 /** Bearer token from `Authorization: Bearer <key>` or `x-api-key: <key>`. */
@@ -104,28 +140,28 @@ export function extractKey(req: Request): string | null {
 
 export async function authenticate(db: D1Database, token: string, waitUntil?: (p: Promise<unknown>) => void): Promise<AuthContext | null> {
   const hash = await sha256Hex(token);
+  // k.*: the optional columns (expires_at, oauth_grant_id) exist in the identity DB, and only some
+  // of them in a standalone app's DB; selecting them by name would fail there.
   type KeyRow = {
     id: string;
     account_id: string;
     scopes: string;
     last_used_at: number | null;
-    expires_at: number | null;
+    expires_at?: number | null;
+    oauth_grant_id?: string | null;
     suspended_at?: number | null;
   };
   let row: KeyRow | null;
   try {
     row = await db
       .prepare(
-        "SELECT k.id, k.account_id, k.scopes, k.last_used_at, k.expires_at, a.suspended_at FROM api_keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ? AND k.revoked_at IS NULL",
+        "SELECT k.*, a.suspended_at AS suspended_at FROM api_keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ? AND k.revoked_at IS NULL",
       )
       .bind(hash)
       .first<KeyRow>();
   } catch {
     // A database that hasn't run the account_standing migration yet: no suspension to check.
-    row = await db
-      .prepare("SELECT id, account_id, scopes, last_used_at, expires_at FROM api_keys WHERE hash = ? AND revoked_at IS NULL")
-      .bind(hash)
-      .first<KeyRow>();
+    row = await db.prepare("SELECT * FROM api_keys WHERE hash = ? AND revoked_at IS NULL").bind(hash).first<KeyRow>();
   }
   if (!row) return null;
   // A suspended account's keys all stop at once, with an error that says why.
@@ -137,7 +173,10 @@ export async function authenticate(db: D1Database, token: string, waitUntil?: (p
   if (waitUntil && (!row.last_used_at || now - row.last_used_at > 600_000)) {
     waitUntil(db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").bind(now, row.id).run());
   }
-  return { accountId: row.account_id, keyId: row.id, scopes: row.scopes.split(" ").filter(Boolean) };
+  const auth: AuthContext = { accountId: row.account_id, keyId: row.id, scopes: row.scopes.split(" ").filter(Boolean) };
+  if (row.oauth_grant_id) auth.oauthGrantId = row.oauth_grant_id;
+  if (row.expires_at !== null && row.expires_at !== undefined) auth.expiresAt = row.expires_at;
+  return auth;
 }
 
 /** keyId of callers authenticated with INTERNAL_TOKEN instead of an API key. */
@@ -146,15 +185,34 @@ export const INTERNAL_KEY_ID = "internal";
 const ACCOUNT_ID = /^acct_[0-9a-z]{1,64}$/;
 
 /**
- * Internal auth between the Workers of one deployment: `x-afs-internal` must equal INTERNAL_TOKEN
- * (constant-time) and `x-afs-account` names an existing account.
+ * Requests between the Workers of a deployment go over service bindings to `https://<app>.internal`
+ * (the caller of a binding picks the URL). A request from the internet can't carry that host:
+ * Cloudflare routes public traffic by hostname, and `.internal` is not a routable domain, so it
+ * only ever reaches a Worker through a binding.
+ */
+export const INTERNAL_HOST_SUFFIX = ".internal";
+
+export function viaServiceBinding(req: Request): boolean {
+  try {
+    return new URL(req.url).hostname.endsWith(INTERNAL_HOST_SUFFIX);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Internal auth between the Workers of one deployment: the request came over a service binding
+ * (see viaServiceBinding), `x-afs-internal` equals INTERNAL_TOKEN (constant-time) and
+ * `x-afs-account` names an existing account.
  * Returns null when the request doesn't use it (no header, or INTERNAL_TOKEN unset), false when
- * it does but the token or account is wrong, else a full-access AuthContext for that account.
+ * it does but arrived from the internet or the token or account is wrong, else a full-access
+ * AuthContext for that account.
  */
 export async function internalAuth(env: AuthBindings, req: Request): Promise<AuthContext | null | false> {
   const secret = env.INTERNAL_TOKEN;
   const presented = req.headers.get("x-afs-internal");
   if (!secret || presented === null) return null;
+  if (!viaServiceBinding(req)) return false;
   if (!timingSafeEqual(presented, secret)) return false;
   const accountId = req.headers.get("x-afs-account") ?? "";
   if (!ACCOUNT_ID.test(accountId)) return false;
@@ -180,7 +238,11 @@ function waitUntilOf(c: { executionCtx: { waitUntil(p: Promise<unknown>): void }
 export function requireAuth<E extends AuthEnv>(): MiddlewareHandler<E> {
   return async (c, next) => {
     const internal = await internalAuth(c.env, c.req.raw);
-    if (internal === false) throw unauthorized("The internal credentials are wrong. Use an API key instead.");
+    if (internal === false) {
+      throw unauthorized(
+        "Internal credentials are wrong, or not accepted here (they only work between this deployment's Workers). Use an API key.",
+      );
+    }
     if (internal) {
       c.set("auth", internal);
       await next();
@@ -263,6 +325,197 @@ export async function createAccount(
   return { accountId, apiKey };
 }
 
+// ---------- fair use: API keys per account ----------
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+
+/** Active API keys an account may hold when MAX_KEYS_PER_ACCOUNT is unset. */
+export const DEFAULT_MAX_KEYS_PER_ACCOUNT = 50;
+
+/** A positive whole number from a var, else 0 (off). */
+const limitOf = (v: string | undefined) => {
+  const n = Number(v || 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+
+/**
+ * An account's API keys, not counting OAuth access tokens (those come and go with refreshes and
+ * are bounded by their grants): how many are active now, and how many were created in the last
+ * hour (revoked ones included, so create-and-revoke churn counts too).
+ */
+async function keyCounts(db: D1Database, accountId: string, now: number): Promise<{ active: number; lastHour: number }> {
+  const sql = (activeExpr: string, where: string) =>
+    `SELECT coalesce(sum(CASE WHEN ${activeExpr} THEN 1 ELSE 0 END), 0) AS active,
+            coalesce(sum(CASE WHEN created_at > ?2 THEN 1 ELSE 0 END), 0) AS last_hour
+       FROM api_keys WHERE account_id = ?3${where}`;
+  // The identity DB has oauth_grant_id and expires_at; a standalone app's DB may have neither.
+  const attempts = [
+    sql("revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?1)", " AND oauth_grant_id IS NULL"),
+    sql("revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?1)", ""),
+    sql("revoked_at IS NULL AND ?1 = ?1", ""),
+  ];
+  let lastError: unknown;
+  for (const q of attempts) {
+    try {
+      const row = await db
+        .prepare(q)
+        .bind(now, now - HOUR_MS, accountId)
+        .first<{ active: number; last_hour: number }>();
+      return { active: Number(row?.active ?? 0), lastHour: Number(row?.last_hour ?? 0) };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Refuse a new API key when the account already holds MAX_KEYS_PER_ACCOUNT active keys (default
+ * 50; UNCLAIMED_MAX_KEYS_PER_ACCOUNT for accounts no person has claimed), has created
+ * KEYS_HOURLY_LIMIT keys in the last hour, or trips the KEY_LIMITER burst limit. Counted in the
+ * identity DB, so every app (and the site's dashboard) shares one count per account.
+ */
+export async function assertCanCreateKey(env: AuthBindings, accountId: string): Promise<void> {
+  if (env.KEY_LIMITER) {
+    const { success } = await env.KEY_LIMITER.limit({ key: `keys|${accountId}` });
+    if (!success) throw tooManyRequests("Creating API keys too fast. Wait a minute, then retry.");
+  }
+  const standing = await accountStanding(env, accountId);
+  const max = capFor(env as unknown as Record<string, unknown>, standing, "MAX_KEYS_PER_ACCOUNT", DEFAULT_MAX_KEYS_PER_ACCOUNT);
+  const hourly = limitOf(env.KEYS_HOURLY_LIMIT);
+  const { active, lastHour } = await keyCounts(identityDb(env), accountId, Date.now());
+  if (active >= max) {
+    throw new ApiError(
+      409,
+      "too_many_keys",
+      `This account already has ${active} active API keys (at most ${max}).`,
+      "Reuse a key you already have, or revoke ones you no longer use (GET /v1/keys lists them, DELETE /v1/keys/:id revokes one), then retry.",
+    );
+  }
+  if (hourly && lastHour >= hourly) {
+    throw tooManyRequests(`At most ${hourly} new API keys per hour for one account. Reuse an existing key, or retry later.`);
+  }
+}
+
+// ---------- fair use: signups ----------
+
+interface SignupLimit {
+  key: string;
+  windowMs: number;
+  max: number;
+  error: () => ApiError;
+}
+
+const signupKey = async (s: string) => (await sha256Hex(s)).slice(0, 32);
+
+/** The signup limits that are on, each counted in signup_log under its own key. */
+async function signupLimits(env: AuthBindings, req: Request): Promise<SignupLimit[]> {
+  const prefix = env.KEY_PREFIX ?? "";
+  const out: SignupLimit[] = [];
+  const hourly = limitOf(env.SIGNUP_HOURLY_LIMIT);
+  const daily = limitOf(env.SIGNUP_DAILY_LIMIT);
+  if (hourly || daily) {
+    // Same key as before the daily limit existed, so counts carry over a deploy.
+    const key = await signupKey(`signup|${clientNetwork(req)}|${prefix}`);
+    if (hourly) {
+      out.push({
+        key,
+        windowMs: HOUR_MS,
+        max: hourly,
+        error: () =>
+          tooManyRequests(`At most ${hourly} new accounts per hour from one network. Reuse your existing key, or try again later.`),
+      });
+    }
+    if (daily) {
+      out.push({
+        key,
+        windowMs: DAY_MS,
+        max: daily,
+        error: () =>
+          tooManyRequests(`At most ${daily} new accounts per day from one network. Reuse your existing key, or try again tomorrow.`),
+      });
+    }
+  }
+  const asnDaily = limitOf(env.SIGNUP_ASN_DAILY_LIMIT);
+  const asn = clientAsn(req);
+  if (asnDaily && asn !== null) {
+    out.push({
+      key: await signupKey(`signup-asn|${asn}|${prefix}`),
+      windowMs: DAY_MS,
+      max: asnDaily,
+      error: () =>
+        tooManyRequests(
+          `At most ${asnDaily} new accounts per day from one network provider (AS${asn}). Reuse your existing key, or try again tomorrow.`,
+        ),
+    });
+  }
+  const global = limitOf(env.SIGNUP_GLOBAL_HOURLY_LIMIT);
+  if (global) {
+    out.push({
+      key: await signupKey(`signup-global|${prefix}`),
+      windowMs: HOUR_MS,
+      max: global,
+      error: () =>
+        new ApiError(
+          429,
+          "signups_paused",
+          "New signups are paused for a while: this deployment is getting unusually many.",
+          "Existing keys keep working. Reuse yours if you have one, or retry in 15 minutes.",
+        ),
+    });
+  }
+  return out;
+}
+
+/**
+ * Take a signup slot: insert first, then count, so concurrent signups each see the others' rows
+ * and can't overrun a limit by racing (two racers at the limit are both refused, never both let
+ * in). A refused signup takes its rows back out, so refused attempts don't count: a blocked
+ * network can't trip the deployment-wide breaker by hammering. Returns a release function for a
+ * signup that fails after taking the slot. Rows are pruned by the site's daily cron
+ * (pruneSignupLog), never on this path.
+ */
+async function takeSignupSlot(db: D1Database, limits: SignupLimit[]): Promise<() => Promise<void>> {
+  if (!limits.length) return async () => {};
+  const now = Date.now();
+  const keys = [...new Set(limits.map((l) => l.key))];
+  const inserted = await db.batch(keys.map((k) => db.prepare("INSERT INTO signup_log (ip_hash, created_at) VALUES (?, ?)").bind(k, now)));
+  const rowids = inserted.map((r) => Number(r.meta.last_row_id));
+  const release = async () => {
+    await db
+      .prepare(`DELETE FROM signup_log WHERE rowid IN (${rowids.map(() => "?").join(", ")})`)
+      .bind(...rowids)
+      .run();
+  };
+  // One query over the (ip_hash, created_at) index: a count per limit.
+  const cols = limits.map((_, i) => `coalesce(sum(CASE WHEN ip_hash = ? AND created_at > ? THEN 1 ELSE 0 END), 0) AS n${i}`);
+  const oldest = now - Math.max(...limits.map((l) => l.windowMs));
+  const counts = await db
+    .prepare(`SELECT ${cols.join(", ")} FROM signup_log WHERE ip_hash IN (${keys.map(() => "?").join(", ")}) AND created_at > ?`)
+    .bind(...limits.flatMap((l) => [l.key, now - l.windowMs]), ...keys, oldest)
+    .first<Record<string, number>>();
+  // Our own row is in each count, so a limit of N allows N.
+  const over = limits.find((l, i) => Number(counts?.[`n${i}`] ?? 0) > l.max);
+  if (over) {
+    await release();
+    throw over.error();
+  }
+  return release;
+}
+
+/**
+ * Delete signup_log rows older than the longest window (a day), with a margin. The site's daily
+ * cron calls it for the identity DB; a standalone app can call it from its own scheduled handler.
+ */
+export async function pruneSignupLog(db: D1Database, now = Date.now()): Promise<number> {
+  const r = await db
+    .prepare("DELETE FROM signup_log WHERE created_at < ?")
+    .bind(now - 2 * DAY_MS)
+    .run();
+  return r.meta.changes ?? 0;
+}
+
 export interface AccountRoutesOptions<B extends AuthBindings> {
   /** Short key prefix, e.g. "sga" -> keys look like "sga_3k9x...". */
   keyPrefix: string;
@@ -294,7 +547,7 @@ const createKeyBody = z.object({
  *   POST   /v1/signup     -> new account + API key (no auth)
  *   GET    /v1/me         -> who am I
  *   GET    /v1/keys       -> list keys
- *   POST   /v1/keys       -> create key { name?, scope?: "*" | "read" }
+ *   POST   /v1/keys       -> create key { name?, scope?: "*" | "read" } (not with an OAuth access token; capped per account)
  *   DELETE /v1/keys/:id   -> revoke key
  */
 export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions<B>) {
@@ -306,7 +559,7 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
     const idb = identityDb(env);
     const keyPrefix = env.KEY_PREFIX || opts.keyPrefix;
     const bearer = extractKey(c.req.raw);
-    let ipHash: string | null = null;
+    let release = async () => {};
     const isAdmin = !!env.ADMIN_TOKEN && !!bearer && timingSafeEqual(bearer, env.ADMIN_TOKEN);
 
     if (!isAdmin) {
@@ -324,31 +577,24 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
         const { success } = await env.SIGNUP_LIMITER.limit({ key: clientNetwork(c.req.raw) });
         if (!success) throw tooManyRequests();
       }
-      const hourly = Number(env.SIGNUP_HOURLY_LIMIT || 0);
-      if (hourly > 0) {
-        ipHash = (await sha256Hex(`signup|${clientNetwork(c.req.raw)}|${env.KEY_PREFIX ?? ""}`)).slice(0, 32);
-        const row = await idb
-          .prepare("SELECT count(*) AS n FROM signup_log WHERE ip_hash = ? AND created_at > ?")
-          .bind(ipHash, Date.now() - 3_600_000)
-          .first<{ n: number }>();
-        if ((row?.n ?? 0) >= hourly) {
-          throw tooManyRequests(`At most ${hourly} new accounts per hour from one network. Reuse your existing key, or try again later.`);
-        }
-      }
+      // One shared count per network, provider and deployment, in the identity DB (every app's
+      // signup counts against the same rows).
+      release = await takeSignupSlot(idb, await signupLimits(env, c.req.raw));
     }
 
-    const { accountId, apiKey } = await createAccount(idb, {
-      keyPrefix,
-      name: body.name ?? null,
-      email: body.email ?? null,
-    });
-    if (ipHash) {
-      const now = Date.now();
-      await idb.batch([
-        idb.prepare("INSERT INTO signup_log (ip_hash, created_at) VALUES (?, ?)").bind(ipHash, now),
-        idb.prepare("DELETE FROM signup_log WHERE created_at < ?").bind(now - 86_400_000),
-      ]);
+    let created: Awaited<ReturnType<typeof createAccount>>;
+    try {
+      // Names show up in the dashboard and in prompts people paste into their agent: one line of text.
+      created = await createAccount(idb, {
+        keyPrefix,
+        name: cleanName(body.name, 200),
+        email: cleanName(body.email, 320),
+      });
+    } catch (e) {
+      await release().catch(() => {});
+      throw e;
     }
+    const { accountId, apiKey } = created;
     await ensureLocalAccount(env, accountId);
     const extra = (await opts.onSignup?.(env, accountId)) ?? {};
     const base = publicBaseUrl(c);
@@ -396,10 +642,14 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
   });
 
   app.post("/v1/keys", async (c) => {
+    const auth = c.var.auth;
+    // An 8-hour OAuth token minting a permanent key would survive disconnecting the app.
+    assertPermanentKey(auth, "create API keys");
     const body = await readJson(c, createKeyBody);
-    const k = await createApiKey(identityDb(c.env), c.var.auth.accountId, {
+    await assertCanCreateKey(c.env, auth.accountId);
+    const k = await createApiKey(identityDb(c.env), auth.accountId, {
       keyPrefix: c.env.KEY_PREFIX || opts.keyPrefix,
-      name: body.name,
+      name: cleanName(body.name, 200),
       scope: body.scope,
     });
     return c.json({ id: k.id, api_key: k.key, scopes: k.scopes, note: "Store api_key now; it is not shown again." }, 201);

@@ -28,6 +28,8 @@ import {
 } from "./destinations";
 import { eventLog, ingestServerEvents, parseSince, visitor } from "./events";
 import { proxyKey } from "./proxy";
+import { assertRate } from "./ratelimit";
+import { checkDomain, dnsRecord, markVerified, verificationInfo } from "./verify";
 import type { ServerEvent } from "./ingest-schema";
 import type { RecipeInput } from "./recipe";
 import { scanSite } from "./scan";
@@ -74,9 +76,17 @@ export const destinationPatch = z.strictObject({
   enabled: z.boolean().optional(),
 });
 export const scanInput = z.strictObject({
-  url: z.string().max(2048).optional().describe("Page to scan (must be on the container's domain). Default https://<domain>/."),
+  url: z.string().max(2048).optional().describe("https page to scan (on the container's domain, default port). Default https://<domain>/."),
   paths: z.array(z.string().max(500)).max(5).optional().describe("Extra paths to scan, e.g. ['/contact', '/checkout']."),
   follow_links: z.boolean().optional().describe("Also scan up to 3 linked contact/signup/pricing pages (default true)."),
+});
+export const verifyInput = z.strictObject({
+  method: z
+    .enum(["auto", "dns", "snippet"])
+    .optional()
+    .describe(
+      "dns: the _afs-verify TXT record; snippet: this container's <script> on https://<domain>/; auto (default): dns, then snippet.",
+    ),
 });
 export const eventsQuery = z.object({
   name: z.string().max(64).optional(),
@@ -117,11 +127,23 @@ export const ops = {
   async getContainer(o: OpCtx, id: string) {
     const row = await getContainerRow(o.env, o.auth.accountId, id);
     const dest = await listDestinations(o.env, o.auth.accountId, id);
-    const stats = await containerStats(o.env, id);
+    const stats = (await containerStats(o.env, id)) as Record<string, unknown> & {
+      storage?: { full: boolean };
+      quota_reached?: boolean;
+    };
+    const warnings: string[] = [];
+    if (stats.storage?.full)
+      warnings.push("The container's event store is full: /collect hits aren't stored until old rows are purged (daily).");
+    if (stats.quota_reached) warnings.push("Today's browser event quota is used up: /collect hits are dropped until 00:00 UTC.");
+    for (const d of dest.map(presentDestination))
+      if (d.health.circuit === "open")
+        warnings.push(`Destination ${d.id} (${d.type}) has an open circuit after repeated failures; fix it and run its test.`);
     return {
       container: publicContainer(row, o.base),
+      verification: { ...verificationInfo(row), dns_record: await dnsRecord(o.env, row), verify: `POST /v1/containers/${id}/verify` },
       destinations: dest.map(presentDestination),
       stats,
+      ...(warnings.length ? { warnings } : {}),
       next_steps:
         row.live_version == null
           ? containerNextSteps(id, false, false)
@@ -148,12 +170,61 @@ export const ops = {
 
   async scan(o: OpCtx, id: string, input: z.infer<typeof scanInput>) {
     const row = await getContainerRow(o.env, o.auth.accountId, id);
+    await assertRate(
+      o.env.SCAN_LIMITER,
+      o.auth.accountId,
+      "scans",
+      "Scans and verifications are rate limited per account; retry in a minute.",
+    );
     const r = await scanSite(row.domain, id, input);
+    // The snippet on https://<domain>/ proves control of the domain (needed to publish custom code).
+    let verified_at = row.verified_at ?? null;
+    if (r.snippet_on_homepage && !verified_at) verified_at = await markVerified(o.env, id, "snippet");
     return {
       ...r,
+      domain_verified: !!verified_at,
       next_steps: [
         ...(r.container_installed ? [] : [`Install the snippet: ${snippet(o.base, row.id)}`]),
         `Review suggested_config, fill in what's missing, then PUT /v1/containers/${id}/draft (or use setup_conversion_tracking).`,
+      ],
+    };
+  },
+
+  async verify(o: OpCtx, id: string, input: z.infer<typeof verifyInput>) {
+    const row = await getContainerRow(o.env, o.auth.accountId, id);
+    const dns_record = await dnsRecord(o.env, row);
+    if (row.verified_at) return { container_id: id, ...verificationInfo(row), dns_record, checks: [], next_steps: ["Already verified."] };
+    await assertRate(
+      o.env.SCAN_LIMITER,
+      o.auth.accountId,
+      "verifications",
+      "Scans and verifications are rate limited per account; retry in a minute.",
+    );
+    const r = await checkDomain(o.env, row, input.method ?? "auto");
+    if (r.verified) {
+      const at = await markVerified(o.env, id, r.verified);
+      return {
+        container_id: id,
+        verified: true,
+        method: r.verified,
+        verified_at: at,
+        dns_record,
+        checks: r.checks,
+        next_steps: [`Custom code (custom_html, custom_js) can now be published on ${row.domain} (POST /v1/containers/${id}/publish).`],
+      };
+    }
+    return {
+      container_id: id,
+      verified: false,
+      method: null,
+      verified_at: null,
+      dns_record,
+      checks: r.checks,
+      next_steps: [
+        ...(dns_record
+          ? [`Add a DNS TXT record ${dns_record.name} = "${dns_record.value}", wait for it to resolve, then verify again.`]
+          : []),
+        `Or install the snippet on https://${row.domain}/ (${snippet(o.base, id)}) and verify again (or run scan).`,
       ],
     };
   },
@@ -249,9 +320,11 @@ export const ops = {
         existing,
         next_steps: [
           `POST /v1/containers/${id}/destinations/${row.id}/test sends a test event in ${row.type}'s test mode and returns the raw answer.`,
-          row.type === "webhook" || row.type === "analytics"
+          row.type === "analytics"
             ? "It receives every conversion with server: true (and every server event)."
-            : `Conversions reach it when they have server: true and send_to.${row.type} in the published config.`,
+            : row.type === "webhook"
+              ? "It receives every conversion with server: true, and backend events whose name matches a conversion (settings.all_events: true for every backend event)."
+              : `Conversions reach it when they have server: true and send_to.${row.type} in the published config.`,
         ],
       },
     };

@@ -5,6 +5,7 @@ import { hashUserData, type HashedUserData } from "../lib/pii";
 import { sendToForEvent } from "./dispatch-plan";
 import { activeClickIds, type VisitorData, type VisitorUpdate } from "./identity";
 import type { CollectPayload, ServerEvent } from "./ingest-schema";
+import { cleanConsent, cleanDevice, cleanId, cleanParams, cleanTouch, cleanUtm, MAX_USER_AGENT, withoutClickIds } from "./sanitize";
 
 /** Server-side facts about the request, never taken from the client. */
 export interface Enrichment {
@@ -32,6 +33,43 @@ export function cleanClickIds(raw: Record<string, string> | undefined): Record<s
     if (key && CLICK_ID_SET.has(key) && typeof v === "string" && /^[A-Za-z0-9._~\-]{4,500}$/.test(v)) out[key] = v;
   }
   return out;
+}
+
+const nonEmpty = <T extends Record<string, unknown>>(o: T): T | undefined => (Object.keys(o).length ? o : undefined);
+
+/**
+ * The /collect payload as it may be stored: known click ids, utm_* and consent keys only, scalar
+ * params (25 at most), bounded first touch, id-shaped fbp/fbc/_ttp/GA ids. Applied before the
+ * ContainerDO sees the hit, so nothing posted to /collect writes unbounded data.
+ */
+export function cleanCollectPayload(p: CollectPayload): CollectPayload {
+  return {
+    ...p,
+    click_ids: nonEmpty(cleanClickIds(p.click_ids)),
+    utm: cleanUtm(p.utm),
+    first_touch: cleanTouch(p.first_touch) as CollectPayload["first_touch"],
+    consent: cleanConsent(p.consent),
+    params: cleanParams(p.params, "browser"),
+    fbp: cleanId(p.fbp),
+    fbc: cleanId(p.fbc, 600),
+    ttp: cleanId(p.ttp),
+    ga_client_id: cleanId(p.ga_client_id, 100),
+    ga_session_id: cleanId(p.ga_session_id, 40),
+    analytics_visitor_id: cleanId(p.analytics_visitor_id, 100),
+  };
+}
+
+/** A backend event as it may be stored: same key rules, params up to 50 (small JSON values allowed). */
+export function cleanServerEvent(ev: ServerEvent): ServerEvent {
+  return {
+    ...ev,
+    click_ids: nonEmpty(cleanClickIds(ev.click_ids)),
+    consent: cleanConsent(ev.consent),
+    params: cleanParams(ev.params, "server"),
+    fbp: cleanId(ev.fbp),
+    fbc: cleanId(ev.fbc, 600),
+    user_agent: ev.user_agent?.slice(0, MAX_USER_AGENT),
+  };
 }
 
 export function findConversion(config: ContainerConfig | null | undefined, name: string | undefined): Conversion | undefined {
@@ -83,9 +121,9 @@ export function visitorUpdateFromHit(hit: CollectHit): VisitorUpdate {
     user: p.user_data as HashedUserData | undefined,
     user_id: p.user_id,
     ip: e.ip,
-    user_agent: e.user_agent,
+    user_agent: e.user_agent?.slice(0, MAX_USER_AGENT),
     geo: e.geo,
-    device: e.device as Record<string, string | undefined> | undefined,
+    device: cleanDevice(e.device as Record<string, string | undefined> | undefined),
     consent: p.consent,
     visit: p.type === "visit",
     conversion: p.type === "conversion",
@@ -118,8 +156,8 @@ export function browserDispatchEvent(
     page_title: p.page_title,
     referrer: p.referrer,
     ip: e.ip,
-    user_agent: e.user_agent,
-    device: e.device,
+    user_agent: e.user_agent?.slice(0, MAX_USER_AGENT),
+    device: cleanDevice(e.device),
     geo: e.geo,
     visitor_id: p.visitor_id,
     user_id: p.user_id ?? visitor?.user_id,
@@ -170,6 +208,12 @@ export function serverUserData(ev: ServerEvent, phoneCountryCode?: string): Hash
   );
 }
 
+/**
+ * A backend event joined with the stored visitor. `inherit` is true only for a visitor_id join:
+ * through a user_id / email / phone join the visitor's consent and click ids (gclid, fbc, ...)
+ * are never inherited, so whoever wrote that visitor can't decide whether, or with whose
+ * attribution, the backend's conversion is delivered.
+ */
 export function serverDispatchEvent(
   ev: ServerEvent,
   ctx: {
@@ -180,9 +224,11 @@ export function serverDispatchEvent(
     conversion?: Conversion;
     test: boolean;
     now: number;
+    inherit?: boolean;
   },
 ): DispatchEvent {
   const v = ctx.visitor;
+  const inherit = ctx.inherit ?? true;
   return {
     event_id: ctx.eventId,
     name: ev.name,
@@ -205,15 +251,15 @@ export function serverDispatchEvent(
     ga_client_id: v?.ga_client_id,
     ga_session_id: v?.ga_session_id,
     analytics_visitor_id: v?.analytics_visitor_id,
-    click_ids: { ...activeClickIds(v, ctx.now), ...cleanClickIds(ev.click_ids) },
+    click_ids: { ...(inherit ? activeClickIds(v, ctx.now) : {}), ...cleanClickIds(ev.click_ids) },
     fbp: ev.fbp ?? v?.fbp,
-    fbc: ev.fbc ?? v?.fbc,
+    fbc: ev.fbc ?? (inherit ? v?.fbc : undefined),
     ttp: v?.ttp,
     user: { ...(v?.user ?? {}), ...ctx.user },
-    consent: consentOf(ev.consent ?? v?.consent),
+    consent: consentOf(ev.consent ?? (inherit ? v?.consent : undefined)),
     send_to: sendToForEvent(ctx.conversion, ev.send_to),
     action_source: ev.action_source,
-    first_touch: v?.first_touch,
+    first_touch: inherit ? v?.first_touch : withoutClickIds(v?.first_touch),
   };
 }
 

@@ -49,7 +49,8 @@ deploy.
 
 - **site**, daily at 03:17 UTC: deletes expired OAuth access tokens (API keys with `expires_at`),
   authorization codes, refresh tokens, sessions and claim links, unusable grants older than a
-  month and OAuth clients nobody authorized. Logged as `cron.purge` with counts.
+  month, OAuth clients nobody authorized, and `signup_log` rows older than two days (the shared
+  signup counters; signup itself never prunes). Logged as `cron.purge` with counts.
 - **mail**, hourly: retention purges (see the mail README).
 
 ## Watching it
@@ -71,18 +72,61 @@ deploy.
 
 ## Abuse handling
 
-Free, instant signup attracts abuse. In order of escalation:
+Free, instant signup attracts abuse. What bounds it, outermost first:
 
-1. **Limits.** The fair-use vars (see [self-hosting.md](self-hosting.md)) bound what one account
-   or network can do. Tighten them in the profile and deploy.
-2. **Revoke an account's keys.** This immediately blocks it on every service:
+- **Cloudflare edge rules** on the zone (dashboard, Security rules; not in this repo): a per-IP
+  rate-limit rule on POST requests, and custom rules block
+  replay uploads (`/i`) without a browser `Origin` and verified crawlers on `/e`, `/collect` and
+  `/i`. Budget and usage notifications (Alerts) email the operator; they never cap spend.
+- **Workers rate-limit bindings** in each app (namespaces 42001-42049) before any storage access.
+- **Daily budgets** per site or container, per account and per deployment (analytics events, tags
+  deliveries and events, replay sessions, chunks, bytes and derived rows, mail inbound per sender).
+  Counters never go down, so deleting and re-creating things frees nothing; past a budget the
+  service answers 429 (or skips the delivery with a logged reason).
+- **Unclaimed accounts** (no person has claimed them) get the lower `UNCLAIMED_<NAME>` value of
+  any cap or budget; custom tag code and replay beyond its trial need a claimed account and a
+  verified domain.
+- **Retention**: replay chunks also expire through an R2 lifecycle rule (16 days on hosted).
+
+When something gets through, in order of escalation:
+
+1. **Limits.** The fair-use vars (see [self-hosting.md](self-hosting.md) and the table below)
+   bound what one account or network can do. Tighten them in the profile and deploy.
+2. **Suspend the account.** Every key it has (OAuth tokens included) stops on every service at
+   once with `403 account_suspended`, and its public ingest stops within a minute. Its data and
+   keys are kept, so it can be undone:
    ```sh
-   cd site && pnpm exec wrangler d1 execute DB --remote -c wrangler.deploy.json \
-     --command "UPDATE api_keys SET revoked_at = unixepoch() * 1000 WHERE account_id = 'acct_...'"
+   pnpm afs suspend hosted acct_... --reason "spam inboxes, report #123"
+   pnpm afs unsuspend hosted acct_...
    ```
+   These call `POST /v1/admin/accounts/:id/suspend` and `/unsuspend` on the site with the
+   profile's `ADMIN_TOKEN` (from `deploy/<profile>.secrets.json`); `GET /v1/admin/accounts/:id`
+   shows an account's standing, key and member counts. Suspending twice keeps the first reason.
 3. **Remove its resources.** Delete its inboxes, sites and containers through the API with a
    temporary key, or with SQL on the app's database.
-4. **Close signup** temporarily: set `vars.all.SIGNUP_MODE` to `token` and deploy.
+4. **Close signup** temporarily: set `vars.all.SIGNUP_MODE` to `token` and deploy. For a burst
+   from many networks, `SIGNUP_GLOBAL_HOURLY_LIMIT` already pauses new signups deployment-wide
+   (`429 signups_paused`, existing keys unaffected) without a deploy.
+
+### Signup and key limits
+
+All in the identity database, so one count is shared by every app (`accountRoutes()` runs in all
+of them). Signup counts insert first, then count, so racing requests can't overrun a limit, and a
+refused attempt takes its rows back out (a blocked network hammering can't trip the global
+breaker). Set them under `vars.all` so every app's `/v1/signup` and `/v1/keys` applies them.
+
+| Var | Default | Effect |
+|---|---|---|
+| `SIGNUP_HOURLY_LIMIT` | off | New accounts per network per rolling hour. A network is an IPv4 address or an IPv6 /48 (free tunnel brokers hand out whole /48s) |
+| `SIGNUP_DAILY_LIMIT` | off | New accounts per network per rolling day |
+| `SIGNUP_ASN_DAILY_LIMIT` | off | New accounts per network operator (`request.cf.asn`) per rolling day; skipped when Cloudflare gives no ASN |
+| `SIGNUP_GLOBAL_HOURLY_LIMIT` | off | New accounts on the whole deployment per rolling hour: a circuit breaker |
+| `MAX_KEYS_PER_ACCOUNT` | 50 | Active API keys per account (OAuth access tokens don't count) |
+| `UNCLAIMED_MAX_KEYS_PER_ACCOUNT` | unset | The same cap for accounts no person has claimed |
+| `KEYS_HOURLY_LIMIT` | off | New API keys per account per rolling hour, revoked ones included |
+
+Bindings on the site: `SIGNUP_LIMITER` (5 per minute per network, signup and OAuth registration)
+and `KEY_LIMITER` (namespace 42041, 10 key creations per minute per account).
 
 Reports arrive at `abuse@<domain>`. Role addresses (abuse, postmaster, security, admin and others)
 can't be claimed by users, so route them to a person: in the dashboard under Email > Email
@@ -103,6 +147,11 @@ Routing > Routing rules, add a custom address rule for each one that forwards to
 - Raise `compatibility_date` in a `wrangler.jsonc` deliberately: read the Workers changelog first.
   The integration-test runtime bundled with `@cloudflare/vitest-pool-workers` caps how far it can
   go.
+
+## Releases that sign people out
+
+The session cookie became `__Host-afs_session` (it was `afs_session`): the first deploy with it
+signs every person out once. Nothing changes for agents or API keys.
 
 ## Incident checklist
 

@@ -241,8 +241,10 @@ export function installInstructions(site: SiteLike, baseUrl: string, framework: 
     tracker: {
       pageviews: "automatic, including SPA navigations (pushState/replaceState/popstate)",
       custom_event: "afsa('event', 'signup', { plan: 'pro' })",
-      revenue: "afsa('revenue', 'purchase', 49.00, 'USD', { order_id: 'A-1' })",
-      identify: "afsa('identify', 'user_123')  // attaches user_id to this page's following events",
+      revenue:
+        "afsa('revenue', 'purchase', 49.00, 'USD', { order_id: 'A-1' })  // counted only with the site setting browser_revenue: true (anyone can send browser events); prefer server events, payments or Stripe",
+      identify:
+        "afsa('identify', 'user_123')  // attaches user_id to this page's following events; it links payments only with trust_browser_user_id: true (a user_id on a server event always does)",
       visitor_id: "afsa.visitorId()  // id to send as visitor_id on server events, after the first pageview",
       auto_events: 'outbound_click and file_download events are sent automatically; disable with data-auto="false"',
       engagement:

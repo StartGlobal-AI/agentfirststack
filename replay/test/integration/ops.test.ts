@@ -56,7 +56,9 @@ describe("verify_install", () => {
       });
       expect(before.json.ok).toBe(false);
       expect(before.json.installed).toBe(true);
-      expect(before.json.fixes.join(" ")).toContain("http://replay.test to script-src and connect-src");
+      expect(before.json.fixes.join(" ")).toContain(
+        `script-src http://replay.test/r/${site}.js http://replay.test/rec/; connect-src http://replay.test/i`,
+      );
       expect(before.json.fixes.join(" ")).toContain("?afsr=1");
       await session(site);
       const after = await tool(key, "verify_install", { site_id: site });
@@ -179,6 +181,7 @@ describe("retention, deletion and the cron", () => {
         viewport: null,
         hosts: [],
         dropped: 0,
+        invalid: 0,
         truncated: false,
       },
       meta: {
@@ -197,6 +200,8 @@ describe("retention, deletion and the cron", () => {
       end: false,
       limits: { session_bytes: 1e9, max_session_ms: 1e9, daily_sessions: null },
       forward: false,
+      account_id: "acct_x",
+      config: { site_id: site, retention_days: 30, heatmap_retention_days: 180 },
     });
     expect(late).toEqual({ status: "rejected", reason: "unknown_site", stop: true });
     expect((await E.CHUNKS.list({ prefix: `${site}/` })).objects.length).toBe(2);

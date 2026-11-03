@@ -1,4 +1,13 @@
-import { type AuthContext, authenticate, canWrite, extractKey, mcpChallenge } from "@afs/shared";
+import {
+  ApiError,
+  type AuthContext,
+  assertPermanentKey,
+  authenticate,
+  canWrite,
+  extractKey,
+  isTemporaryCredential,
+  mcpChallenge,
+} from "@afs/shared";
 import { claimLinkResponse, createClaimLink } from "./claims";
 import type { Bindings } from "./env";
 
@@ -11,7 +20,11 @@ import type { Bindings } from "./env";
  * scoping, read-only keys and errors behave exactly as on the service itself.
  *
  * Tools prefixed `afs_` are the gateway's own (platform-wide, not one service's):
- * `afs_create_claim_link`, shown to full-access keys only.
+ * `afs_create_claim_link`, shown to full-access API keys only (not to OAuth access tokens).
+ *
+ * Cost per HTTP request is bounded: a JSON-RPC batch holds at most MAX_BATCH messages (batching
+ * left MCP in 2025-06-18; older clients still send small ones), and the merged tool list is built
+ * once per request however many tools/list calls the batch holds.
  */
 
 type Service = "analytics" | "tags" | "mail" | "replay";
@@ -23,6 +36,7 @@ const SERVICES: { key: Service; binding: "ANALYTICS" | "TAGS" | "MAIL" | "REPLAY
 ];
 const SUPPORTED = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const VERSION = "0.1.0";
+export const MAX_BATCH = 10;
 
 interface RpcRequest {
   jsonrpc: "2.0";
@@ -64,7 +78,12 @@ interface Caller {
   auth: AuthContext;
   /** Public base URL of the site, for links in tool results. */
   base: string;
+  /** The merged tool list, built at most once per HTTP request. */
+  tools?: Promise<Tool[]>;
 }
+
+/** The claim tool is for an agent's own full-access key, never a connected app's expiring token. */
+const offersClaimTool = (auth: AuthContext) => canWrite(auth) && !isTemporaryCredential(auth);
 
 const toolResult = (data: unknown, isError = false) => ({
   content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -88,7 +107,12 @@ async function callService(env: Bindings, service: Service, authHeader: string, 
   }
 }
 
-async function listTools(env: Bindings, caller: Caller): Promise<Tool[]> {
+function listTools(env: Bindings, caller: Caller): Promise<Tool[]> {
+  caller.tools ??= buildToolList(env, caller);
+  return caller.tools;
+}
+
+async function buildToolList(env: Bindings, caller: Caller): Promise<Tool[]> {
   const authHeader = caller.authHeader;
   const lists = await Promise.all(
     SERVICES.map(async (s) => {
@@ -97,7 +121,7 @@ async function listTools(env: Bindings, caller: Caller): Promise<Tool[]> {
       return tools.map((t) => ({ ...t, name: `${s.key}_${t.name}`, description: `[${s.label}] ${t.description ?? ""}`.trim() }));
     }),
   );
-  return [...(canWrite(caller.auth) ? [CLAIM_TOOL] : []), ...lists.flat()];
+  return [...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []), ...lists.flat()];
 }
 
 async function callGatewayTool(env: Bindings, caller: Caller, name: string) {
@@ -107,6 +131,11 @@ async function callGatewayTool(env: Bindings, caller: Caller, name: string) {
         { error: { code: "forbidden", message: "This is a read-only key.", hint: 'Claim links need a key with scope "*".' } },
         true,
       );
+    }
+    try {
+      assertPermanentKey(caller.auth, "create claim links");
+    } catch (err) {
+      return toolResult((err as ApiError).toJSON(), true);
     }
     try {
       const link = await createClaimLink(env.DB, caller.base, caller.auth.accountId, { keyId: caller.auth.keyId });
@@ -169,6 +198,19 @@ async function handle(env: Bindings, caller: Caller, msg: RpcRequest): Promise<u
   }
 }
 
+/** A JSON-RPC request or notification: an object with a string method. */
+function isRequest(m: unknown): m is RpcRequest {
+  return !!m && typeof m === "object" && !Array.isArray(m) && typeof (m as { method?: unknown }).method === "string";
+}
+
+/** Anything else: a response (we never send requests, so there's nothing to match) is ignored; the rest is an error. */
+function invalidMessage(m: unknown): unknown | null {
+  const obj = m && typeof m === "object" && !Array.isArray(m) ? (m as Record<string, unknown>) : null;
+  if (obj && !("method" in obj) && ("result" in obj || "error" in obj)) return null;
+  const id = obj && (typeof obj.id === "string" || typeof obj.id === "number") ? obj.id : null;
+  return rpcError(id, -32600, "Invalid request: each message must be a JSON-RPC 2.0 object with a string method.");
+}
+
 export async function mcpGateway(req: Request, env: Bindings): Promise<Response> {
   if (req.method !== "POST") {
     return json({ error: { code: "method_not_allowed", message: "POST JSON-RPC to /mcp (Streamable HTTP, stateless)." } }, 405, {
@@ -202,8 +244,21 @@ export async function mcpGateway(req: Request, env: Bindings): Promise<Response>
     return json(rpcError(null, -32700, "Body is not valid JSON."), 400);
   }
   const batch = Array.isArray(body);
-  const messages = (batch ? body : [body]) as RpcRequest[];
-  const answers = (await Promise.all(messages.map((m) => handle(env, caller, m)))).filter((a) => a !== null);
+  const messages: unknown[] = batch ? (body as unknown[]) : [body];
+  if (batch && !messages.length) return json(rpcError(null, -32600, "Empty batch: send one JSON-RPC message, or a few."), 400);
+  if (messages.length > MAX_BATCH) {
+    return json(
+      rpcError(
+        null,
+        -32600,
+        `A batch may hold at most ${MAX_BATCH} messages. Send one message per request (batching isn't part of MCP since 2025-06-18).`,
+      ),
+      400,
+    );
+  }
+  const answers = (await Promise.all(messages.map((m) => (isRequest(m) ? handle(env, caller, m) : invalidMessage(m))))).filter(
+    (a) => a !== null,
+  );
   if (!answers.length) return new Response(null, { status: 202 });
   return json(batch ? answers : answers[0]);
 }

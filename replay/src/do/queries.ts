@@ -464,7 +464,7 @@ export function heatmap(db: Db, q: HeatmapRequest) {
     for (const r of db.all(
       `SELECT path, selector, MAX(label) AS label, MAX(tag) AS tag, MAX(interactive) AS interactive, COUNT(*) AS clicks, COUNT(DISTINCT session_id) AS sessions,
          SUM(rage) AS rage, SUM(dead) AS dead, SUM(error_click) AS error_clicks, COALESCE(SUM(top_pct), 0) AS top_sum, COUNT(top_pct) AS top_n
-       FROM events WHERE kind = 'click' AND path GLOB ? AND ts >= ? AND ts <= ? AND selector IS NOT NULL${devSql}
+       FROM events WHERE kind IN ('click', 'error') AND kind = 'click' AND path GLOB ? AND ts >= ? AND ts <= ? AND selector IS NOT NULL${devSql}
        GROUP BY path, selector`,
       a,
     ))
@@ -578,7 +578,8 @@ export interface ErrorsRequest {
 }
 
 export function listErrors(db: Db, q: ErrorsRequest) {
-  const w = ["e.kind = 'error'", "e.ts >= ?", "e.ts <= ?"];
+  // The first term is the partial index events_ce's own (SQLite uses it only when repeated).
+  const w = ["e.kind IN ('click', 'error')", "e.kind = 'error'", "e.ts >= ?", "e.ts <= ?"];
   const a: SqlValue[] = [q.start, q.end];
   if (q.page) {
     w.push("e.path GLOB ?");

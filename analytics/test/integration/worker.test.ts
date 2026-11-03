@@ -174,7 +174,8 @@ describe("analytics worker (workerd + D1 + SiteDO)", () => {
     // a proxied path without a valid key is counted as a warning that get_site (and verify) report
     await send("9.9.9.9", {}, "/_a");
     const got = await call(`/v1/sites/${site}`, { key });
-    expect(got.body.data.warnings_last_7d).toMatchObject({ proxy_key_missing: { count: 1, sample: "geo.test" } });
+    expect(got.body.data.warnings_last_7d).toMatchObject({ proxy_key_missing: { count: 1 } });
+    expect(got.body.data.untrusted.warning_samples).toEqual({ proxy_key_missing: "geo.test" });
     expect(got.body.data.dropped_last_7d).toEqual({});
     // every proxy snippet carries the key and the renamed geo headers
     const inst = (await call(`/v1/sites/${site}/install`, { key })).body.first_party_proxy;
@@ -240,8 +241,8 @@ describe("analytics worker (workerd + D1 + SiteDO)", () => {
       expect(m.body.result.isError).toBe(true);
       expect(JSON.parse(m.body.result.content[0].text).error.code).toBe("sql_rejected");
     }
-    // generate_series would be an unbounded generator; it is not compiled into the DO's SQLite
-    expect((await sql("SELECT COUNT(*) FROM generate_series(1, 1000000000000)")).body.error.code).toBe("sql_error");
+    // generate_series would be an unbounded generator: refused by name (it isn't in the DO's SQLite either)
+    expect((await sql("SELECT COUNT(*) FROM generate_series(1, 1000000000000)")).body.error.code).toBe("sql_rejected");
     // legitimate queries still run (the integration config sets SQL_MAX_ROWS_READ=2000)
     expect((await sql("SELECT COUNT(*) AS n FROM events e JOIN sessions s ON s.id = e.session_id")).body.rows).toEqual([{ n: 60 }]);
     expect((await sql("SELECT pathname FROM events ORDER BY id")).body.row_count).toBe(60);

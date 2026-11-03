@@ -1,4 +1,4 @@
-import { ApiError, parse, randomString, timingSafeEqual } from "@afs/shared";
+import { ApiError, accountSuspended, networkKey, parse, randomString, timingSafeEqual } from "@afs/shared";
 import { z } from "zod";
 import { type Bindings, isDev } from "../env";
 import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/channel";
@@ -6,7 +6,8 @@ import { EMPTY_GEO, type Geo, PROXY_KEY_HEADER, geoFromFields, geoFromRequest, r
 import { botReason, parseUserAgent } from "../lib/ua";
 import { parsePage, parseReferrer } from "../lib/url";
 import { proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
-import type { Attribution, EnrichedEvent } from "../lib/types";
+import type { Attribution, EnrichedEvent, IngestResponse } from "../lib/types";
+import { allow, enforce, limitVars } from "../lib/limits";
 import { type Ctx, SITE_ID_RE, type SiteStub, loadSite, pushSettings, siteStub } from "./context";
 
 const DEV_SALT = "insecure-dev-salt";
@@ -35,21 +36,85 @@ export async function proxyKeyFor(env: Bindings, siteId: string): Promise<string
 
 type Props = Record<string, string>;
 
-/** Props are stored as strings: max 30 keys, 64-char keys, 500-char values. */
+export const MAX_PROPS = 30;
+export const MAX_PROP_KEY = 64;
+export const MAX_PROP_VALUE = 500;
+/** All props of one event together, as stored (JSON). Keys past it are dropped. */
+export const MAX_PROPS_BYTES = 2048;
+/** POST /v1/sites/:id/events bodies (100 events). */
+export const MAX_SERVER_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Props are stored as strings: at most 30 keys of 64 characters, values of 500, and 2 KB of JSON
+ * in all (keys past that are dropped, in order).
+ */
 export function cleanProps(input: unknown): string | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const out: Props = {};
   let n = 0;
+  let size = 2;
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
-    if (n >= 30) break;
+    if (n >= MAX_PROPS) break;
     if (v == null || typeof v === "object") continue;
-    const key = String(k).trim().slice(0, 64);
+    const key = String(k).trim().slice(0, MAX_PROP_KEY);
     if (!/^[A-Za-z0-9_.-]+$/.test(key)) continue;
-    out[key] = String(v).slice(0, 500);
+    const value = String(v).slice(0, MAX_PROP_VALUE);
+    const add = JSON.stringify(key).length + JSON.stringify(value).length + 2;
+    if (size + add > MAX_PROPS_BYTES) break;
+    out[key] = value;
+    size += add;
     n++;
   }
   return n ? JSON.stringify(out) : null;
 }
+
+/** The claim hint (only where this deployment names the platform site, AUTH_ISSUER). */
+const claimHint = (env: Bindings) =>
+  env.AUTH_ISSUER ? ` Accounts a person has claimed (POST ${env.AUTH_ISSUER.replace(/\/$/, "")}/v1/claim-link) get higher limits.` : "";
+
+/** The error for a batch the site's DO refused as a whole. */
+export function refusalError(env: Bindings, reason: NonNullable<IngestResponse["refused"]>): ApiError {
+  switch (reason) {
+    case "account_suspended":
+      return accountSuspended();
+    case "storage_full":
+      return new ApiError(
+        507,
+        "storage_full",
+        "This site's storage budget is used up, so new events are not stored.",
+        "Lower retention_days (PATCH /v1/sites/:id: older data is purged at once), keep junk out with allowed_hostnames or exclusions, or delete the site's data. GET /v1/sites/:id shows storage and limits.",
+      );
+    case "daily_limit":
+      return new ApiError(
+        429,
+        "daily_limit",
+        "This site reached its daily event limit; new events are refused until 00:00 UTC.",
+        `GET /v1/sites/:id shows usage_today and limits. If the traffic isn't yours, set allowed_hostnames or exclusions.${claimHint(env)}`,
+      );
+    case "account_daily_limit":
+      return new ApiError(
+        429,
+        "daily_limit",
+        "This account reached its daily event limit across its sites; new events are refused until 00:00 UTC.",
+        `GET /v1/sites/:id shows usage_today and limits.${claimHint(env)}`,
+      );
+    case "platform_daily_budget":
+      return new ApiError(
+        429,
+        "over_capacity",
+        "This service reached its daily event budget; new events are refused until 00:00 UTC.",
+        `Retry after 00:00 UTC, or self-host (the code is open source, see /llms.txt).${claimHint(env)}`,
+      );
+  }
+}
+
+const REFUSAL_STATUS = {
+  account_suspended: 403,
+  storage_full: 507,
+  daily_limit: 429,
+  account_daily_limit: 429,
+  platform_daily_budget: 429,
+} as const;
 
 function attribution(pageHost: string | null, page: ReturnType<typeof parsePage>, referrerRaw: string | null | undefined): Attribution {
   const ref = parseReferrer(referrerRaw);
@@ -117,9 +182,14 @@ export function engagementMetrics(p: Record<string, unknown>) {
   };
 }
 export interface BrowserResult {
-  status: 202 | 400 | 404 | 413 | 503;
+  status: 202 | 400 | 403 | 404 | 413 | 429 | 503 | 507;
   body: Record<string, unknown>;
 }
+
+const RATE_LIMITED: BrowserResult = {
+  status: 429,
+  body: { ok: false, error: "rate_limited", hint: "Too many events from this network or for this site; slow down and retry in a minute." },
+};
 
 export async function ingestBrowser(
   env: Bindings,
@@ -143,6 +213,22 @@ export async function ingestBrowser(
     return { status: 400, body: { ok: false, error: "bad_site_id", hint: 'Set data-site="site_..." on the script tag.' } };
   const name = clip(p.n, 120) ?? "pageview";
   const stub = siteStub(env, siteId);
+  let salt: string;
+  try {
+    salt = saltSecret(env);
+  } catch {
+    return { status: 503, body: { ok: false, error: "not_configured", hint: "SALT_SECRET is not set on this deployment." } };
+  }
+  // Forwarded IP / geo headers are trusted only with the site's proxy key (anyone can set them).
+  // A request under a path prefix (/_a/e) came through a first-party proxy: without a valid key its
+  // IP and geo are the proxy's, which the DO counts as a warning that verify reports.
+  const presented = req.headers.get(PROXY_KEY_HEADER);
+  const trusted = !!presented && timingSafeEqual(presented, await proxyKey(salt, siteId));
+  const ip = requestIp(req, trusted);
+  // Edge rate limits before any storage: per client network (behind a keyed proxy, the visitor's),
+  // then per site.
+  if (!(await allow(env.INGEST_IP_LIMITER, `ip:${networkKey(ip)}`)) || !(await allow(env.INGEST_SITE_LIMITER, `site:${siteId}`)))
+    return RATE_LIMITED;
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf;
   const ua = req.headers.get("user-agent");
   const bm = cf?.botManagement as { verifiedBot?: boolean } | undefined;
@@ -156,26 +242,14 @@ export async function ingestBrowser(
     waitUntil(stub.recordDrop(`bot:${bot}`, ua?.slice(0, 200) ?? null).catch(() => {}));
     return { status: 202, body: { ok: false, dropped: "bot", reason: bot } };
   }
-  let salt: string;
-  try {
-    salt = saltSecret(env);
-  } catch {
-    return { status: 503, body: { ok: false, error: "not_configured", hint: "SALT_SECRET is not set on this deployment." } };
-  }
   const now = Date.now();
   const page = parsePage(clip(p.u, 2000));
   // Browser events always come from a real page; anything else (javascript:, file:, junk) is noise.
   if (typeof p.u !== "string" || !/^https?:\/\//i.test(p.u) || !page.hostname) {
     return { status: 400, body: { ok: false, error: "bad_url", hint: "u must be the page's absolute http(s) URL (location.href)." } };
   }
-  // Forwarded IP / geo headers are trusted only with the site's proxy key (anyone can set them).
-  // A request under a path prefix (/_a/e) came through a first-party proxy: without a valid key its
-  // IP and geo are the proxy's, which the DO counts as a warning that verify reports.
-  const presented = req.headers.get(PROXY_KEY_HEADER);
-  const trusted = !!presented && timingSafeEqual(presented, await proxyKey(salt, siteId));
   const viaProxy = new URL(req.url).pathname !== "/e";
   const geo = geoFromRequest(req, { devMode: isDev(env), trustForwarded: trusted });
-  const ip = requestIp(req, trusted);
   const ev: EnrichedEvent = {
     ts: now,
     name,
@@ -199,12 +273,16 @@ export async function ingestBrowser(
     ...geo,
     ...parseUserAgent(ua),
   };
-  const res = await stub.ingest([ev]);
+  const res = await stub.ingest([ev], { vars: limitVars(env) });
   if (!res.known_site) {
     return {
       status: 404,
       body: { ok: false, error: "unknown_site", hint: `No site ${siteId}. Create one with POST /v1/sites and use its id in data-site.` },
     };
+  }
+  if (res.refused) {
+    const e = refusalError(env, res.refused);
+    return { status: REFUSAL_STATUS[res.refused], body: { ok: false, error: e.code, hint: e.hint } };
   }
   const r = res.results[0];
   if (!r?.ok) return { status: 202, body: { ok: false, dropped: r?.reason ?? "rejected" } };
@@ -213,7 +291,7 @@ export async function ingestBrowser(
 
 // ------------------------------------------------------------------ server: POST /v1/sites/:id/events
 
-const propValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const propValue = z.union([z.string().max(MAX_PROP_VALUE * 4), z.number(), z.boolean(), z.null()]);
 
 export const serverEventSchema = z.object({
   name: z.string().min(1).max(120).describe('"pageview" or a custom event name, e.g. "purchase".'),
@@ -239,7 +317,11 @@ export const serverEventSchema = z.object({
   utm_content: z.string().max(200).optional(),
   click_id_type: z.enum(CLICK_ID_PARAMS).optional().describe("e.g. gclid, with click_id."),
   click_id: z.string().max(500).optional(),
-  props: z.record(z.string(), propValue).optional(),
+  props: z
+    .record(z.string().max(MAX_PROP_KEY * 4), propValue)
+    .refine((o) => Object.keys(o).length <= 100, "at most 100 keys (30 are kept)")
+    .optional()
+    .describe("String / number / boolean values. Kept: 30 keys of 64 characters, values of 500, 2 KB in all."),
   revenue: z.object({ amount: z.number(), currency: z.string().regex(/^[A-Za-z]{3}$/) }).optional(),
 });
 export type ServerEvent = z.infer<typeof serverEventSchema>;
@@ -303,17 +385,25 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
 
 export async function ingestServer(ctx: Ctx, siteId: string, raw: unknown) {
   const { events } = parse(serverIngestInput, raw);
+  await enforce(
+    [[ctx.env.API_INGEST_LIMITER, `acct:${ctx.accountId}`]],
+    "ingest requests",
+    "Batch events (up to 100 per request) and retry in a minute.",
+  );
   const site = await loadSite(ctx, siteId);
   const salt = saltSecret(ctx.env);
   const now = Date.now();
   const enriched = await Promise.all(events.map((e) => enrichServerEvent(site.id, e, salt, now)));
   const valid = enriched.filter((e): e is EnrichedEvent => typeof e !== "string");
   const stub: SiteStub = siteStub(ctx.env, site.id);
-  let res = valid.length ? await stub.ingest(valid) : { known_site: true, persistent: false, results: [] };
+  const policy = { vars: limitVars(ctx.env) };
+  let res: IngestResponse = valid.length ? await stub.ingest(valid, policy) : { known_site: true, persistent: false, results: [] };
   if (!res.known_site) {
     await pushSettings(ctx.env, site);
-    res = await stub.ingest(valid);
+    res = await stub.ingest(valid, policy);
   }
+  // Every event refused for one reason (and none rejected for its own): answer with that error.
+  if (res.refused && valid.length === enriched.length) throw refusalError(ctx.env, res.refused);
   let vi = 0;
   const results = enriched.map((e, index) => {
     if (typeof e === "string") return { index, ok: false, reason: e };

@@ -1,6 +1,6 @@
-import { ApiError, createApiKey } from "@afs/shared";
+import { ApiError, assertCanCreateKey, cleanName, createApiKey } from "@afs/shared";
 import { type Context, Hono } from "hono";
-import { createClaimLink } from "./claims";
+import { type OpenLink, createClaimLink, listOpenLinks, revokeOpenLink } from "./claims";
 import type { SiteEnv } from "./env";
 import { siteBase } from "./google";
 import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
@@ -28,13 +28,20 @@ const projectId = (c: Context<SiteEnv>) => {
   return id;
 };
 const projectName = (p: { name: string | null }) => p.name || "Untitled project";
-const cleanName = (raw: string | undefined) => {
-  const name = (raw ?? "")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
-    .slice(0, 200);
-  return name || null;
-};
+
+/**
+ * Keys and invites are access to the project, so only its owner hands them out or takes them
+ * back. Members see the lists.
+ */
+function requireOwner(p: Project, what: string) {
+  if (p.role === "owner") return;
+  throw new ApiError(
+    403,
+    "forbidden",
+    `Only the project's owner can ${what}.`,
+    "Ask the owner. If the project has no owner, ask your agent for a claim link: claiming it makes you the owner.",
+  );
+}
 
 function tabs(p: Project, active: "overview" | "keys" | "members"): SafeHtml {
   const tab = (key: string, href: string, label: string) =>
@@ -206,7 +213,7 @@ ${resourcesView(resources, { asks: true })}
 dashboard.post("/projects/:id/rename", async (c) => {
   const form = await readForm(c);
   const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
-  await c.env.DB.prepare("UPDATE accounts SET name = ? WHERE id = ?").bind(cleanName(form.name), p.id).run();
+  await c.env.DB.prepare("UPDATE accounts SET name = ? WHERE id = ?").bind(cleanName(form.name, 200), p.id).run();
   return redirect(`/dashboard/projects/${p.id}`);
 });
 
@@ -219,25 +226,37 @@ interface KeyRow {
   scopes: string;
   created_at: number;
   last_used_at: number | null;
+  created_by_email: string | null;
 }
 
-async function keysPage(c: Context<SiteEnv>, p: Project, created?: { key: string; name: string | null; scopes: string }) {
+interface KeysPageExtra {
+  created?: { key: string; name: string | null; scopes: string };
+  error?: { message: string; status: number };
+}
+
+async function keysPage(c: Context<SiteEnv>, p: Project, extra: KeysPageExtra = {}) {
   const s = c.var.session;
-  // OAuth access tokens are listed as connected apps, not here.
+  const { created } = extra;
+  const owner = p.role === "owner";
+  // OAuth access tokens are listed as connected apps, not here. Keys without a person behind them
+  // came from the API: the signup, or an agent's POST /v1/keys.
   const { results: keys } = await c.env.DB.prepare(
-    `SELECT id, name, prefix, scopes, created_at, last_used_at FROM api_keys
-      WHERE account_id = ? AND revoked_at IS NULL AND oauth_grant_id IS NULL ORDER BY created_at`,
+    `SELECT k.id, k.name, k.prefix, k.scopes, k.created_at, k.last_used_at, u.email AS created_by_email
+       FROM api_keys k LEFT JOIN users u ON u.id = k.created_by_user_id
+      WHERE k.account_id = ? AND k.revoked_at IS NULL AND k.oauth_grant_id IS NULL ORDER BY k.created_at`,
   )
     .bind(p.id)
     .all<KeyRow>();
+  const createdBy = (k: KeyRow) => (k.created_by_email ? k.created_by_email : html`<span class="muted">An agent (API)</span>`);
   const access = (scopes: string) =>
     scopes === "*" ? html`<span class="tag tag-full">Full access</span>` : html`<span class="tag">Read only</span>`;
   return page({
     title: `API keys · ${projectName(p)}`,
     session: s,
     nav: "projects",
-    status: created ? 201 : 200,
+    status: created ? 201 : (extra.error?.status ?? 200),
     body: html`${tabs(p, "keys")}
+${notice(extra.error?.message)}
 <div class="bento">
 ${
   created
@@ -257,20 +276,27 @@ ${
   ${
     keys.length
       ? html`<table class="table">
-    <thead><tr><th scope="col">Name</th><th scope="col">Key</th><th scope="col">Access</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col"><span class="sr-only">Revoke</span></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Key</th><th scope="col">Access</th><th scope="col">Created by</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col"><span class="sr-only">Revoke</span></th></tr></thead>
     <tbody>${keys.map(
       (k) => html`<tr>
       <td data-label="Name"><b>${k.name || "unnamed"}</b></td><td data-label="Key"><code>${k.prefix}…</code></td><td data-label="Access">${access(k.scopes)}</td>
+      <td data-label="Created by">${createdBy(k)}</td>
       <td data-label="Created">${fmtDate(k.created_at)}</td><td data-label="Last used">${fmtDate(k.last_used_at)}</td>
-      <td class="cell-action"><form method="post" action="/dashboard/projects/${p.id}/keys/${k.id}/revoke">${csrfField(s)}<button class="btn btn-danger btn-small" type="submit">Revoke</button></form></td>
+      <td class="cell-action">${
+        owner
+          ? html`<form method="post" action="/dashboard/projects/${p.id}/keys/${k.id}/revoke">${csrfField(s)}<button class="btn btn-danger btn-small" type="submit">Revoke</button></form>`
+          : ""
+      }</td>
     </tr>`,
     )}</tbody>
   </table>`
       : html`<p class="tile-body muted">No active keys.</p>`
   }
-  <p class="tile-foot">Revoking a key stops it at once, including for any agent that uses it. Chat apps you connected are under <a href="/dashboard/apps">Connected apps</a>.</p>
+  <p class="tile-foot">Revoking a key stops it at once, including for any agent that uses it. Keys someone created here are revoked when they leave the project. Chat apps you connected are under <a href="/dashboard/apps">Connected apps</a>.</p>
 </section>
-<form class="tile stack create-key" method="post" action="/dashboard/projects/${p.id}/keys">
+${
+  owner
+    ? html`<form class="tile stack create-key" method="post" action="/dashboard/projects/${p.id}/keys">
   <h2>Create a key</h2>
   ${csrfField(s)}
   <div class="inline-fields">
@@ -279,7 +305,13 @@ ${
     <button class="btn btn-primary" type="submit">Create key</button>
   </div>
   ${askLine("Create a read-only AgentFirstStack key for our CI.", "Or ask your agent")}
-</form>
+</form>`
+    : html`<section class="tile stack create-key">
+  <h2>Create a key</h2>
+  <p class="muted small">Only the project's owner can create and revoke keys here.</p>
+  ${askLine("Create a read-only AgentFirstStack key for our CI.", "Or ask your agent")}
+</section>`
+}
 </div>`,
   });
 }
@@ -292,20 +324,30 @@ dashboard.get("/projects/:id/keys", async (c) => {
 dashboard.post("/projects/:id/keys", async (c) => {
   const form = await readForm(c);
   const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
+  requireOwner(p, "create keys");
   const scope = form.scope === "read" ? "read" : "*";
-  const name = cleanName(form.name)?.slice(0, 100) ?? null;
+  const name = cleanName(form.name, 100);
+  // The same per-account cap and rate limits as POST /v1/keys.
+  try {
+    await assertCanCreateKey(c.env, p.id);
+  } catch (e) {
+    if (e instanceof ApiError)
+      return keysPage(c, p, { error: { message: [e.message, e.hint].filter(Boolean).join(" "), status: e.status } });
+    throw e;
+  }
   const k = await createApiKey(c.env.DB, p.id, {
     keyPrefix: c.env.KEY_PREFIX || "afs",
     name,
     scope,
     createdByUserId: c.var.session.user.id,
   });
-  return keysPage(c, p, { key: k.key, name, scopes: k.scopes });
+  return keysPage(c, p, { created: { key: k.key, name, scopes: k.scopes } });
 });
 
 dashboard.post("/projects/:id/keys/:key/revoke", async (c) => {
   await readForm(c);
   const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
+  requireOwner(p, "revoke keys");
   await c.env.DB.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND account_id = ? AND revoked_at IS NULL")
     .bind(Date.now(), c.req.param("key"), p.id)
     .run();
@@ -316,7 +358,14 @@ dashboard.post("/projects/:id/keys/:key/revoke", async (c) => {
 
 async function membersPage(c: Context<SiteEnv>, p: Project, invite?: { url: string; expires_at: number }) {
   const s = c.var.session;
-  const members = await listMembers(c.env.DB, p.id);
+  const owner = p.role === "owner";
+  const [members, links] = await Promise.all([listMembers(c.env.DB, p.id), owner ? listOpenLinks(c.env.DB, p.id) : Promise.resolve([])]);
+  const madeBy = (l: OpenLink) =>
+    l.created_by_email
+      ? html`${l.created_by_email}`
+      : l.created_by_key_prefix
+        ? html`An agent (key <code>${l.created_by_key_prefix}…</code>)`
+        : html`<span class="muted">Unknown</span>`;
   return page({
     title: `Members · ${projectName(p)}`,
     session: s,
@@ -354,14 +403,41 @@ ${
     </tr>`;
     })}</tbody>
   </table>
-  <p class="tile-foot">Removing someone also disconnects the chat apps they connected to this project.</p>
+  <p class="tile-foot">Removing someone (or leaving) disconnects the chat apps they connected to this project, revokes the API keys they created here and deletes their unused invite links.</p>
+</section>
+${
+  owner
+    ? html`<section class="tile tile-flush invites">
+  <div class="tile-head">
+    <h2>Open invite and claim links</h2>
+    <p class="tile-count"><b>${links.length}</b> unused</p>
+  </div>
+  ${
+    links.length
+      ? html`<table class="table">
+    <thead><tr><th scope="col">Created by</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col"><span class="sr-only">Revoke</span></th></tr></thead>
+    <tbody>${links.map(
+      (l) => html`<tr>
+      <td data-label="Created by">${madeBy(l)}</td><td data-label="Created">${fmtDate(l.created_at)}</td><td data-label="Expires">${fmtDate(l.expires_at)}</td>
+      <td class="cell-action"><form method="post" action="/dashboard/projects/${p.id}/invites/${l.ref}/revoke">${csrfField(s)}<button class="btn btn-danger btn-small" type="submit">Revoke</button></form></td>
+    </tr>`,
+    )}</tbody>
+  </table>`
+      : html`<p class="tile-body muted">No unused links.</p>`
+  }
+  <p class="tile-foot">Anyone who opens one of these and signs in joins the project. Revoke the ones you didn't mean to send.</p>
 </section>
 <form class="tile stack invite" method="post" action="/dashboard/projects/${p.id}/members/invite">
   <h2>Invite someone</h2>
   <p class="muted small">Creates a single-use link. Whoever opens it and signs in joins this project as a member.</p>
   ${csrfField(s)}
   <p class="row"><button class="btn btn-primary" type="submit">Create invite link</button></p>
-</form>
+</form>`
+    : html`<section class="tile stack invite">
+  <h2>Invite someone</h2>
+  <p class="muted small">Only the project's owner can invite people.</p>
+</section>`
+}
 </div>`,
   });
 }
@@ -374,8 +450,19 @@ dashboard.get("/projects/:id/members", async (c) => {
 dashboard.post("/projects/:id/members/invite", async (c) => {
   await readForm(c);
   const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
+  requireOwner(p, "invite people");
   const link = await createClaimLink(c.env.DB, siteBase(c), p.id, { userId: c.var.session.user.id });
   return membersPage(c, p, link);
+});
+
+dashboard.post("/projects/:id/invites/:ref/revoke", async (c) => {
+  await readForm(c);
+  const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
+  requireOwner(p, "revoke invite links");
+  if (!(await revokeOpenLink(c.env.DB, p.id, c.req.param("ref")))) {
+    throw new ApiError(404, "not_found", "That link was already used, revoked or expired.");
+  }
+  return redirect(`/dashboard/projects/${p.id}/members`);
 });
 
 dashboard.post("/projects/:id/members/:user/remove", async (c) => {

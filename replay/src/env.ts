@@ -9,10 +9,18 @@ export interface Bindings extends AuthBindings {
   CHUNKS: R2Bucket;
   /**
    * Optional service binding to the analytics Worker. With INTERNAL_TOKEN set, signals and JS
-   * errors of a site with analytics_site_id are forwarded there as events, and analytics funnels
-   * can be read for get_funnel_dropoffs. Unbound = off.
+   * errors of a verified site with analytics_site_id are forwarded there as events, and analytics
+   * funnels can be read for get_funnel_dropoffs. Unbound = off.
    */
   ANALYTICS?: Fetcher;
+  /**
+   * Edge rate limits on the public browser routes (Workers rate-limit bindings, per Cloudflare
+   * location): per client network (loader + ingest, before any D1 read), per site and network,
+   * and per site. Unbound = off.
+   */
+  INGEST_IP_LIMITER?: RateLimit;
+  INGEST_SITE_IP_LIMITER?: RateLimit;
+  INGEST_SITE_LIMITER?: RateLimit;
   PUBLIC_BASE_URL?: string;
   SIGNUP_MODE?: string;
   SIGNUP_TOKEN?: string;
@@ -20,24 +28,46 @@ export interface Bindings extends AuthBindings {
   /** "true" in local dev only: x-dev-geo-country, localhost origins, verify may fetch localhost. */
   DEV_MODE?: string;
   /**
-   * Hosted fair-use controls. All optional; unset (or empty) = off, i.e. only the built-in hard
-   * limits apply (see src/lib/limits.ts and README "Config").
+   * Hosted fair-use controls (README "Config"). Count caps read through capFor(), so each also has
+   * an UNCLAIMED_<NAME> variant for accounts no person has claimed. Unset = the built-in default
+   * named in src/lib/limits.ts (DEFAULTS), or no cap.
    */
   MAX_SITES_PER_ACCOUNT?: string;
+  MAX_UNVERIFIED_SITES_PER_ACCOUNT?: string;
   /** Cap on every site's sample_rate (0..1). */
   MAX_SAMPLE_RATE?: string;
   /** Cap on every site's max_session_minutes. */
   MAX_SESSION_MINUTES?: string;
   /** Recorded sessions a site may start per UTC day; more are refused (the recorder stops). */
   MAX_SESSIONS_PER_SITE_PER_DAY?: string;
+  MAX_UNVERIFIED_SESSIONS_PER_SITE_PER_DAY?: string;
+  MAX_FORCED_SESSIONS_PER_SITE_PER_DAY?: string;
+  MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY?: string;
+  MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY?: string;
   /** Bytes per ingest request (compressed). Lower than the built-in 1 MB only. */
   MAX_CHUNK_BYTES?: string;
   /** Stored bytes per session (compressed). Lower than the built-in 20 MB only. */
   MAX_SESSION_BYTES?: string;
+  MAX_CHUNKS_PER_SESSION?: string;
+  MAX_DERIVED_PER_CHUNK?: string;
+  MAX_DERIVED_PER_SESSION?: string;
+  MAX_SESSIONS_PER_ACCOUNT_PER_DAY?: string;
+  MAX_CHUNKS_PER_ACCOUNT_PER_DAY?: string;
+  MAX_BYTES_PER_ACCOUNT_PER_DAY?: string;
+  MAX_DERIVED_PER_ACCOUNT_PER_DAY?: string;
+  MAX_PLATFORM_SESSIONS_PER_DAY?: string;
+  MAX_PLATFORM_CHUNKS_PER_DAY?: string;
+  MAX_PLATFORM_BYTES_PER_DAY?: string;
+  MAX_PLATFORM_DERIVED_PER_DAY?: string;
   /** Cap on every site's retention_days. */
   MAX_RETENTION_DAYS?: string;
+  MAX_HEATMAP_RETENTION_DAYS?: string;
   /** Active (unexpired, unrevoked) share links per site. */
   MAX_LINKS_PER_SITE?: string;
+  MAX_LINK_BYTES_PER_DAY?: string;
+  MAX_VERIFY_PER_ACCOUNT_PER_HOUR?: string;
+  /** "false" = new sites start with capture_console_errors off. */
+  CAPTURE_CONSOLE_ERRORS_DEFAULT?: string;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: { auth: AuthContext } };

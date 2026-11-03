@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Browser, E, call, csrfOf, nextIp, paramsOf, pkce, registerClient, signup, testEnv, uniqueEmail } from "./helpers";
+import { Browser, E, SESSION, call, csrfOf, nextIp, paramsOf, pkce, registerClient, signup, testEnv, uniqueEmail } from "./helpers";
 
 const REDIRECT = "https://claude.ai/api/mcp/auth_callback";
 
@@ -23,7 +23,7 @@ async function authorize(opts: {
   browser?: Browser;
 }) {
   const b = opts.browser ?? new Browser();
-  if (!b.jar.has("afs_session")) await b.signIn(uniqueEmail("oauth"));
+  if (!b.jar.has(SESSION)) await b.signIn(uniqueEmail("oauth"));
   const params = {
     response_type: "code",
     client_id: opts.clientId,
@@ -213,11 +213,28 @@ describe("authorization code flow", () => {
     const list = await mcp(t.json.access_token, "tools/list");
     expect(list.status).toBe(200);
     const names = (list.json.result.tools as { name: string }[]).map((x) => x.name);
-    expect(names).toEqual(
-      expect.arrayContaining(["afs_create_claim_link", "analytics_whoami", "analytics_create_thing", "tags_whoami", "mail_whoami"]),
-    );
+    expect(names).toEqual(expect.arrayContaining(["analytics_whoami", "analytics_create_thing", "tags_whoami", "mail_whoami"]));
     const who = await mcp(t.json.access_token, "tools/call", { name: "mail_whoami", arguments: {} });
     expect(JSON.parse(who.json.result.content[0].text)).toEqual({ service: "mail", account_id: key!.account_id });
+
+    // But an 8-hour token can't mint anything that outlives it: no API keys, no claim links
+    // (claiming would make a permanent member). Disconnecting the app really ends its access.
+    expect(names).not.toContain("afs_create_claim_link");
+    const claimTool = await mcp(t.json.access_token, "tools/call", { name: "afs_create_claim_link", arguments: {} });
+    expect(claimTool.json.result.isError).toBe(true);
+    expect(JSON.parse(claimTool.json.result.content[0].text).error.code).toBe("temporary_credential");
+    const claimRest = await call("POST", "/v1/claim-link", { key: t.json.access_token });
+    expect(claimRest.status).toBe(403);
+    expect(claimRest.json.error).toMatchObject({ code: "temporary_credential", hint: expect.stringMatching(/dashboard/) });
+    const minted = await call("POST", "/v1/keys", { key: t.json.access_token, json: { name: "persist" } });
+    expect(minted.status).toBe(403);
+    expect(minted.json.error.code).toBe("temporary_credential");
+    expect(
+      await E.DB.prepare("SELECT count(*) AS n FROM api_keys WHERE account_id = ? AND name = 'persist'").bind(key!.account_id).first("n"),
+    ).toBe(0);
+    expect(await E.DB.prepare("SELECT count(*) AS n FROM claim_links WHERE account_id = ?").bind(key!.account_id).first("n")).toBe(0);
+    // Read paths keep working.
+    expect((await call("GET", "/v1/keys", { key: t.json.access_token })).status).toBe(200);
 
     // Connected apps lists it.
     const apps = await b.get("/dashboard/apps");
@@ -309,8 +326,12 @@ describe("authorization code flow", () => {
     expect(wrong.status).toBe(400);
     expect(wrong.json.error).toBe("invalid_grant");
     expect(wrong.json.error_description).toMatch(/PKCE/);
-    // The code is burned even though the verifier was wrong.
-    expect((await exchange(ca, a.verifier)).json.error).toBe("invalid_grant");
+    // Someone with the code but not the verifier can't burn it: the real client still gets tokens.
+    const real = await exchange(ca, a.verifier);
+    expect(real.status).toBe(200);
+    // Nor revoke them by replaying the spent code without the verifier.
+    expect((await exchange(ca, (await pkce()).verifier)).json.error).toBe("invalid_grant");
+    expect((await call("GET", "/v1/me", { key: real.json.access_token })).status).toBe(200);
 
     // A redirect_uri that differs from the authorization request (even if registered).
     const b = await pkce();
@@ -374,20 +395,39 @@ describe("authorization code flow", () => {
     }
     expect((await b.get(authorizeQuery({ ...base, client_id: "client_unknown" }))).status).toBe(400);
 
-    const back = async (overrides: Record<string, string>) => {
-      const r = await b.get(authorizeQuery({ ...base, ...overrides }));
-      expect(r.status).toBe(302);
-      expect(r.location!.startsWith(`${REDIRECT}?`)).toBe(true);
-      return paramsOf(r.location);
+    // Before anyone has seen the consent page, a bad request is shown, never redirected to the
+    // client: otherwise any registered client turns /oauth/authorize into an open redirector.
+    const shown = async (overrides: Record<string, string>, error: string, who = b) => {
+      const r = await who.get(authorizeQuery({ ...base, ...overrides }));
+      expect(r.status).toBe(400);
+      expect(r.location).toBeNull();
+      expect(r.text).toContain(error);
     };
-    expect((await back({ code_challenge_method: "plain" })).get("error")).toBe("invalid_request");
-    expect((await back({ code_challenge: "short" })).get("error")).toBe("invalid_request");
-    expect((await back({ response_type: "token" })).get("error")).toBe("unsupported_response_type");
-    expect((await back({ scope: "admin" })).get("error")).toBe("invalid_scope");
-    expect((await back({ resource: "https://evil.example/mcp" })).get("error")).toBe("invalid_target");
-    const noState = await back({ state: "" });
-    expect(noState.get("error")).toBe("invalid_request");
-    expect(noState.get("iss")).toBe("https://afs.test");
+    const signedOut = new Browser();
+    for (const who of [b, signedOut]) {
+      await shown({ code_challenge_method: "plain" }, "invalid_request", who);
+      await shown({ code_challenge: "short" }, "invalid_request", who);
+      await shown({ response_type: "token" }, "unsupported_response_type", who);
+      await shown({ scope: "admin" }, "invalid_scope", who);
+      await shown({ resource: "https://evil.example/mcp" }, "invalid_target", who);
+      await shown({ state: "" }, "invalid_request", who);
+    }
+
+    // After consent (the form post), errors go back to the client with state and iss.
+    const page = await b.get(authorizeQuery(base));
+    const afterConsent = await b.post("/oauth/authorize", {
+      ...base,
+      scope: "admin",
+      csrf: csrfOf(page.text),
+      project: "new",
+      access: "*",
+      decision: "allow",
+    });
+    expect(afterConsent.status).toBe(303);
+    expect(afterConsent.location!.startsWith(`${REDIRECT}?`)).toBe(true);
+    expect(paramsOf(afterConsent.location).get("error")).toBe("invalid_scope");
+    expect(paramsOf(afterConsent.location).get("state")).toBe("s1");
+    expect(paramsOf(afterConsent.location).get("iss")).toBe("https://afs.test");
 
     // Denying sends access_denied back with the state.
     const consent = await b.get(authorizeQuery(base));

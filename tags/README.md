@@ -20,7 +20,7 @@ curl -X POST $BASE/v1/containers/$C/setup -d @recipe.json       # or: whole draf
 curl -X POST $BASE/v1/containers/$C/destinations -d '{"type":"meta","credentials":{...}}'
 curl -X PUT  $BASE/v1/containers/$C/draft -d @config.json       # tags, triggers, conversions
 curl -X POST $BASE/v1/containers/$C/draft/validate              # errors + warnings with hints
-curl -X POST $BASE/v1/containers/$C/destinations/$D/test        # real test event, raw response
+curl -X POST $BASE/v1/containers/$C/destinations/$D/test        # real test event, the platform's answer
 curl -X POST $BASE/v1/containers/$C/preview                     # preview_url runs the draft on the live site
 curl -X POST $BASE/v1/containers/$C/publish -d '{"note":"purchase tracking"}'
 curl $BASE/v1/containers/$C/events                              # live log, per-destination result
@@ -64,14 +64,19 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
   against backend rows, so the dedupe window is the 7-day log retention; a daily alarm purges
   events after 7 days and visitors 180 days after they were last seen. Each row is written
   before its queue messages are sent, so concurrent copies of one event are delivered once.
+  A `usage` table counts browser events, backend events and deliveries per UTC day (only ever
+  incremented) for the daily quotas and budgets; visitor rows are capped
+  (`MAX_VISITORS_PER_CONTAINER`, least recently seen evicted) and `/collect` stops writing when
+  the database passes `MAX_CONTAINER_DB_BYTES` (see "Abuse and cost controls").
   Storage is created only when the control plane syncs a container (create, publish,
   rollback, destination change, or a resync of an id that exists in D1): `/collect` for an id
   nobody created answers 404 and writes nothing.
 - **Queue** `tags-dispatch`: one message per (event, destination). The consumer decrypts the
   destination's credentials, sends, and writes the result back to the event log. Transient
   failures (network, 429, 5xx, Meta transient codes) retry with backoff (30 s doubling, max
-  1 h) for up to 6 attempts; other failures are final. `GET /events` shows exactly what each
-  platform answered.
+  1 h) for up to 6 attempts (webhooks: 3); other failures are final. `GET /events` shows exactly
+  what each platform answered. Consecutive failed attempts open the destination's circuit
+  breaker; suspended accounts' messages are dropped.
 
 ## Config model (the draft, validated by zod; `GET /v1/schema` returns JSON Schema + examples)
 
@@ -154,7 +159,22 @@ receive nothing, Google Ads tag + upload double counting, and consent gaps (ad p
 consent config, opt-in without a banner call, EEA without GB, ad tags with `consent: []`).
 Drafts are capped at `MAX_DRAFT_BYTES` (default 512 KB of JSON; `413 draft_too_large`), and
 publish keeps the newest `MAX_VERSIONS_PER_CONTAINER` versions (default 50; older ones are
-deleted, the live one never).
+deleted, the live one never). An account's drafts plus kept versions are capped at
+`MAX_TAGS_BYTES_PER_ACCOUNT` (default 20 MB; `413 storage_quota_exceeded`; shrinking a draft
+always works).
+
+**Custom code** (`custom_html`, `custom_js`, and an `analytics` tag whose `base_url` isn't on
+`ANALYTICS_BASE_URL`'s host) is served from this deployment's domain to every visitor, so a
+version containing it is published (or rolled back to) only when the account may publish custom
+code (`ALLOW_CUSTOM_CODE`, default true; unclaimed, agent-only accounts need
+`UNCLAIMED_ALLOW_CUSTOM_CODE=true`), the container's domain is verified, and it fits
+`MAX_CUSTOM_CODE_BYTES` (when set; also checked when the draft is saved). Otherwise validation
+returns an error (`custom_code_not_allowed`, `domain_not_verified`, `custom_code_too_large`)
+and publish answers 422. Verification: a DNS TXT record `_afs-verify.<domain>` with the value
+from `GET /v1/containers/:id` (`verification.dns_record`, an HMAC of the container id), checked
+over DNS-over-HTTPS (cloudflare-dns.com) by `POST /v1/containers/:id/verify`, or this
+container's snippet in a `<script src>` on `https://<domain>/`, found by `verify` or `scan`.
+Preview links of a draft that may not run custom code are served without those tags.
 
 A **conversion** is defined once. When its trigger fires the runtime creates one `event_id`,
 fires the matching client tags with it (gtag `transaction_id` when there's no order id, fbq
@@ -182,17 +202,28 @@ line in `src/destinations/index.ts`.
 | `meta` | Conversions API (Graph v26.0) | pixel_id, access_token, test_event_code? | `test_event_code` (required for `test`) |
 | `google_ads` | offline click conversions: Data Manager API `events:ingest` (default) or Google Ads API v26 `uploadClickConversions` (`api: "google_ads_api"`); gclid/gbraid/wbraid + hashed email/phone | customer_id, conversion_action_id (an "Import from clicks" action), oauth client_id/client_secret/refresh_token, login_customer_id?, developer_token? (google_ads_api only), api? | `validateOnly: true` |
 | `tiktok` | Events API 2.0 | pixel_code, access_token, test_event_code? | `test_event_code` (required for `test`) |
-| `analytics` | our analytics app server ingest | site_id, api_key, base_url? (default `ANALYTICS_BASE_URL`) | none: sends one `tags_test` event |
+| `analytics` | our analytics app server ingest | site_id, api_key, base_url? (default `ANALYTICS_BASE_URL`; https, same host as `ANALYTICS_BASE_URL` when set, no query string, no IP literal, not this deployment; re-checked when sent) | none: sends one `tags_test` event |
 | `webhook` | POST JSON, `x-signature` HMAC-SHA256 | url (https; http://localhost only with `DEV_MODE=true`; not this deployment's own host), secret | `"test": true` in the payload |
 
 - Platform destinations (`ga4`, `meta`, `google_ads`, `tiktok`) receive server conversions
-  whose `send_to` has their type; `webhook` and `analytics` receive every server conversion.
+  whose `send_to` has their type; `analytics` receives every server conversion and backend
+  event; `webhook` receives every server conversion and backend events whose name matches a
+  conversion in the live config (`settings.all_events: true` for every backend event).
   `settings.conversions` restricts a destination to named conversions. A container has at most
   `MAX_DESTINATIONS_PER_CONTAINER` destinations (default 10; `403 quota_exceeded`), since each
   server conversion fans out to all of them.
+- Circuit breaker: `CIRCUIT_BREAKER_FAILURES` (default 20) consecutive failed attempts (retries
+  count) open a destination's circuit for `CIRCUIT_BREAKER_MINUTES` (default 60): deliveries are
+  logged as `skipped` with the reason, queued ones are dropped unsent, `validate` warns
+  (`destination_circuit_open`) and the destination shows `health.circuit: "open"`. After the
+  timeout deliveries flow again (one more failure re-opens it); a passing test closes it.
+- Webhooks retry at most 3 attempts (platforms 6), and only a short sanitized summary of their
+  answer is kept (at most 8 scalar JSON fields or 200 characters of text, tags stripped).
 - Deliveries never follow redirects (a 3xx is a failed delivery) and read at most 64 KB of the
   answer. Webhook URLs can't point at this deployment's own host (`PUBLIC_BASE_URL` or the
-  host the API was called on), checked when saved and again when sent.
+  host the API was called on), checked when saved and again when sent. Tests of webhook and
+  analytics destinations (URLs the account chooses) return the HTTP status and a short
+  sanitized summary, never the body.
 - Consent: meta/tiktok/google_ads need `ad_user_data` granted, ga4 needs `analytics_storage`;
   otherwise the delivery is recorded as `skipped` with the reason. Google Ads also skips events
   with no click id and no hashed email/phone.
@@ -238,7 +269,12 @@ ids or UTMs, or the first page of a session (`settings.send_page_views: false` t
 Server conversions from the backend (`POST /v1/containers/:id/events` with `visitor_id`,
 `user_id` or `email`/`phone` (hashed on arrival)) are joined to the stored visitor in that
 order, so a purchase reported by Stripe a week later still carries the original gclid/fbclid,
-IP and user agent. Backend events are the source of truth: they're deduped only against
+IP and user agent. `user_id`/email/phone joins only match identities your backend linked to a
+visitor (an earlier backend event carrying that `visitor_id` plus the user id or email); user
+ids and hashes a browser posts to `/collect` (`afst('identify')`) never make a join, and a
+user_id/email/phone join never inherits the visitor's consent or click ids (pass them in the
+event, or pass `visitor_id`). Visitors stored before this rule have their join keys cleared once
+(visitor_id joins are unaffected; the next backend event re-links). Backend events are the source of truth: they're deduped only against
 earlier backend events (same `event_id`, or same name + `order_id`), and nothing a browser
 posts to `/collect` (which anyone can) can make one a duplicate, change its values, lend it
 an event_id or attach another visitor's click ids; the order id is never used to join a
@@ -266,7 +302,8 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | POST, GET | `/containers` | `{ domain, name?, allowed_hostnames? }`; same domain returns existing |
 | GET, PATCH, DELETE | `/containers/:id` | GET includes destinations and last-24h stats; PATCH `{ name?, allowed_hostnames? }` |
 | GET | `/containers/:id/install` | snippet + first-party proxy instructions (Cloudflare Worker, Next.js middleware, Vercel, netlify.toml, nginx) with the container's `proxy_key` |
-| POST | `/containers/:id/scan` | `{ url?, paths?, follow_links? }`: fetch the site (own domain only; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics), consent platforms, CMS, forms, CTAs, thank-you pages; suggested config |
+| POST | `/containers/:id/scan` | `{ url?, paths?, follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; at most 6 pages, 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics), consent platforms, CMS, forms, CTAs, thank-you pages; suggested config |
+| POST | `/containers/:id/verify` | `{ method?: "auto"\|"dns"\|"snippet" }`: domain verification (needed to publish custom code), rate limited with scan |
 | POST | `/containers/:id/setup` | the `setup_conversion_tracking` recipe over REST |
 | GET, PUT, PATCH | `/containers/:id/draft` | full replace (PUT) or JSON merge patch (PATCH); optional `?revision=` guards concurrent edits; `413 draft_too_large` over `MAX_DRAFT_BYTES` |
 | POST | `/containers/:id/draft/validate` | errors and warnings with hints; optional `{ config }` validates without saving |
@@ -275,29 +312,64 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | GET | `/containers/:id/versions`, `/versions/:n` | newest `max_versions` kept |
 | POST | `/containers/:id/rollback` | `{ version }`: moves the live pointer to that version; the draft is unchanged |
 | POST, GET, PATCH, DELETE | `/containers/:id/destinations[/:did]` | POST: `403 quota_exceeded` past `MAX_DESTINATIONS_PER_CONTAINER` |
-| POST | `/containers/:id/destinations/:did/test` | `{ event_name?, test_event_code? }`: sends a test event, returns the platform's raw answer |
+| POST | `/containers/:id/destinations/:did/test` | `{ event_name?, test_event_code? }`: sends a test event, returns the platform's answer (webhook/analytics: status + short summary); `TEST_LIMITER` per account; a pass closes an open circuit |
 | POST | `/containers/:id/events` | server-side conversions (batch of up to 100), joined to visitors |
-| GET | `/containers/:id/events` | event log with per-destination results; filters `name`, `status`, `source`, `since` (ms, ISO or `15m`/`2h`/`7d`), `before` (cursor), `limit`, `include_visits`, `verbose` (adds the exact request sent) |
+| GET | `/containers/:id/events` | event log with per-destination results; filters `name`, `status`, `source`, `since` (ms, ISO or `15m`/`2h`/`7d`), `before` (cursor), `limit`, `include_visits`, `verbose` (adds the event data and the exact request sent). Third-party strings (page data, params, items, browser order ids, destination answers, requests) are only under `untrusted` keys |
 | GET | `/containers/:id/visitors/:vid` | stored identity/click record (debugging) |
 
 Also from `@afs/shared`: `GET /v1/me`, `GET|POST /v1/keys`, `DELETE /v1/keys/:id`.
 
-Public (no key): `GET /c/:id.js` (header `x-afs-version: <live version>`), `POST /collect`
-(text/plain JSON, no preflight; the page host must be the container's domain, a subdomain or an
-`allowed_hostnames` entry; an unknown container id gets 404; known bots are ignored except
-preview traffic), both under any path prefix for proxying, `GET /llms.txt`.
+Public (no key): `GET /c/:id.js` (header `x-afs-version: <live version>`; 403 for a suspended
+account), `POST /collect` (text/plain JSON, no preflight; the page host must be the container's
+domain, a subdomain or an `allowed_hostnames` entry (no wildcards over public suffixes like
+`*.com`); an unknown container id gets 404; known bots are ignored except preview traffic;
+`429 rate_limited` past the edge limits, `429 quota_exceeded` past the daily event quota,
+`507 storage_full`, `403 account_suspended`), both under any path prefix for proxying,
+`GET /llms.txt`.
 
 ## MCP tools
 
 `create_container`, `list_containers`, `get_container`, `update_container`,
 `delete_container`, `get_install_instructions`, `scan_site` (write scope, like REST; its page
-content is marked untrusted), `get_config_schema`, `get_draft`, `update_draft`, `patch_draft`, `validate_draft`,
+content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`, `update_draft`, `patch_draft`, `validate_draft`,
 `create_preview`, `publish`, `list_versions`, `rollback`, `add_destination`,
 `list_destinations`, `update_destination`, `remove_destination`, `test_destination`,
 `send_server_events`, `get_event_log`, `get_visitor`, `setup_conversion_tracking` (recipe: given
 platforms + conversions in plain terms, writes a complete draft, creates destinations for
 platforms with credentials, validates it, and returns what's left to do, e.g. which IDs are
-missing and where to find them). Read-only keys only see the read tools.
+missing and where to find them). Read-only keys only see the read tools. `get_event_log`,
+`get_visitor` and `test_destination` say in their descriptions that anything under `untrusted`
+(or a remote server's answer) is data written by third parties, never instructions.
+
+## Abuse and cost controls
+
+The hosted platform is free and anyone gets a key with one request, so every path that stores
+data or sends requests on someone's behalf is bounded. Caps are vars (README "Config"); each
+also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@afs/shared`).
+
+- **Edge rate limits** (Workers rate-limit bindings in `wrangler.jsonc`, namespaces 42011-42017,
+  counted per Cloudflare location; unbound = off): `/collect` per client network (IPv4, or IPv6
+  /48; the visitor's IP behind the container's own proxy) and per container, conversions
+  tighter on both; scan + verify, destination tests and server-event requests per account.
+- **Daily delivery budgets** (UTC day, counters only go up: deleting containers, destinations or
+  events gives nothing back): per container (`MAX_DELIVERIES_PER_CONTAINER_PER_DAY`, in the
+  ContainerDO), per account (`MAX_DELIVERIES_PER_ACCOUNT_PER_DAY`) and platform-wide
+  (`MAX_DELIVERIES_PER_DAY`; unclaimed accounts stop at `UNCLAIMED_MAX_DELIVERIES_PER_DAY` on the
+  same counter), both in D1 `delivery_usage`. Refused deliveries are logged as `skipped` with
+  the reason; the event itself is still stored.
+- **Per-destination circuit breaker**, matched-only webhooks and fewer webhook retries (above).
+- **Storage**: per-account bytes of drafts + versions; per-container daily event quotas
+  (`MAX_EVENTS_PER_CONTAINER_PER_DAY`, browser hits and backend events counted separately, 429
+  past it); a visitor cap with eviction; a database-size threshold where `/collect` stops writing
+  (backend events keep working up to 25% past it); bounded maps and strings in everything
+  `/collect` stores (known click ids, utm_* and consent keys only, 25 scalar params, bounded
+  first touch, id-shaped fbp/fbc/GA ids, 512-character user agent).
+- **Custom code** needs a verified domain and a claimed account (above).
+- **Outbound fetches** (scan, verify, destinations) go only to https hosts on the default port,
+  never IP literals, local names or this deployment; analytics destinations only to the
+  analytics app's host.
+- **Suspended accounts** (`accounts.suspended_at`, see `@afs/shared` `accountStanding`): their
+  keys stop working, `/collect` and `/c/:id.js` answer 403 and queued deliveries are dropped.
 
 ## Config
 
@@ -309,10 +381,24 @@ missing and where to find them). Read-only keys only see the read tools.
 | `ENCRYPTION_KEY` | secret, 32 bytes base64 (`openssl rand -base64 32`) |
 | `ANALYTICS_BASE_URL` | var; default base URL of the analytics app for `analytics` tags/destinations |
 | `DEV_MODE` | var; `true` only locally (allows `http://localhost` webhooks) |
-| `MAX_CONTAINERS_PER_ACCOUNT` | optional var; containers per account (unset = no cap) |
+| `MAX_CONTAINERS_PER_ACCOUNT` | optional var; containers per account (unset or `0` = no cap) |
 | `MAX_DESTINATIONS_PER_CONTAINER` | optional var; destinations per container, default `10` (`0` = no cap) |
 | `MAX_VERSIONS_PER_CONTAINER` | optional var; published versions kept per container, newest first, default `50` (`0` = keep all; the live version is never deleted) |
 | `MAX_DRAFT_BYTES` | optional var; largest draft (serialised JSON), default `524288` (512 KB; `0` = no cap below D1's row limit) |
+| `MAX_TAGS_BYTES_PER_ACCOUNT` | optional var; bytes of drafts + kept versions across an account's containers, default `20971520` (20 MB) |
+| `MAX_CUSTOM_CODE_BYTES` | optional var; custom_html + custom_js bytes per config (unset = only the 50 KB per-tag limit) |
+| `ALLOW_CUSTOM_CODE`, `UNCLAIMED_ALLOW_CUSTOM_CODE` | optional vars; whether claimed (default `true`) and unclaimed (default `false`) accounts may publish custom code (a verified domain is always needed) |
+| `MAX_DELIVERIES_PER_CONTAINER_PER_DAY`, `MAX_DELIVERIES_PER_ACCOUNT_PER_DAY`, `MAX_DELIVERIES_PER_DAY` | optional vars; daily delivery budgets per container, per account and platform-wide (unset = off) |
+| `MAX_EVENTS_PER_CONTAINER_PER_DAY` | optional var; browser hits per container per UTC day, and separately backend events (unset = off) |
+| `MAX_VISITORS_PER_CONTAINER` | optional var; visitor rows kept per container, least recently seen evicted, default `250000` |
+| `MAX_CONTAINER_DB_BYTES` | optional var; ContainerDO database size above which `/collect` stops writing (backend events up to 25% more), default `1073741824` (1 GiB) |
+| `CIRCUIT_BREAKER_FAILURES`, `CIRCUIT_BREAKER_MINUTES` | optional vars; consecutive failed attempts that open a destination's circuit (default `20`, `0` = off) and minutes it stays open (default `60`) |
+
+Every cap above (and `MAX_CONTAINERS_PER_ACCOUNT`, `MAX_DESTINATIONS_PER_CONTAINER`,
+`MAX_VERSIONS_PER_CONTAINER`, `MAX_DRAFT_BYTES`) also reads `UNCLAIMED_<NAME>` for accounts no
+person has claimed; `0` turns a cap off. Rate-limit bindings: `COLLECT_IP_LIMITER`,
+`COLLECT_CONTAINER_LIMITER`, `CONVERSION_IP_LIMITER`, `CONVERSION_CONTAINER_LIMITER`,
+`SCAN_LIMITER`, `TEST_LIMITER`, `SERVER_EVENTS_LIMITER` (each optional; see `wrangler.jsonc`).
 
 ## Development
 
@@ -326,5 +412,5 @@ browser; integration tests in workerd via `@cloudflare/vitest-pool-workers`), `p
 
 Built-in consent banner UI, more CAPI connectors, A/B testing, Google Ads conversion
 adjustments / enhanced conversions for web (`uploadConversionAdjustments`; click uploads already
-carry hashed email/phone), offline conversion CSV import, per-tag sampling, /collect rate
-limiting, a global (all-colo) cache purge on publish.
+carry hashed email/phone), offline conversion CSV import, per-tag sampling, signed browser `identify` (so a browser can
+link a user id without the backend), a global (all-colo) cache purge on publish.

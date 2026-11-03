@@ -7,7 +7,9 @@
  *     and deletes.
  *
  * Linking, first match wins: afs_session_id -> the visitor's latest session at or before the
- * payment -> the user_id's latest session -> the provider customer's earlier link (so renewals
+ * payment -> the user_id's latest session (a session whose user id a server event sent, unless the
+ * site trusts browser user ids: anyone can call afsa('identify', ...) with someone else's id to
+ * pre-seed a session) -> the provider customer's earlier link (so renewals
  * keep the original source) -> for refunds, the refunded payment. Nothing matched: the payment is
  * kept as channel "Unattributed" and linked later if the customer turns up (a subscription checkout
  * that arrives after its first invoice).
@@ -24,9 +26,18 @@ type Target = { dims: Row | null; linked_by: string | null };
 
 const sessionDims = (s: Row | undefined): Row | null => (s ? { ...s, session_id: s.id ?? null } : null);
 
-function latestSession(db: Db, col: "visitor_id" | "user_id", value: string, ts: number): Row | null {
-  const before = db.all(`SELECT * FROM sessions WHERE ${col} = ? AND started_at <= ? ORDER BY started_at DESC LIMIT 1`, [value, ts])[0];
-  return sessionDims(before ?? db.all(`SELECT * FROM sessions WHERE ${col} = ? ORDER BY started_at LIMIT 1`, [value])[0]);
+function latestSession(db: Db, col: "visitor_id" | "user_id", value: string, ts: number, trustBrowserUserId = true): Row | null {
+  const trusted = col === "user_id" && !trustBrowserUserId ? " AND user_source = 'server'" : "";
+  const before = db.all(`SELECT * FROM sessions WHERE ${col} = ?${trusted} AND started_at <= ? ORDER BY started_at DESC LIMIT 1`, [
+    value,
+    ts,
+  ])[0];
+  return sessionDims(before ?? db.all(`SELECT * FROM sessions WHERE ${col} = ?${trusted} ORDER BY started_at LIMIT 1`, [value])[0]);
+}
+
+export interface PaymentOptions {
+  /** user ids sent by the browser (afsa('identify')) may link payments; default: only server-sent ones */
+  trustBrowserUserId?: boolean;
 }
 
 function paymentEventOf(db: Db, where: string, args: (string | number)[]): Row | null {
@@ -38,7 +49,7 @@ function paymentEventOf(db: Db, where: string, args: (string | number)[]): Row |
   );
 }
 
-function resolve(db: Db, p: PaymentInput): Target {
+function resolve(db: Db, p: PaymentInput, o: PaymentOptions): Target {
   if (p.type === "refund" && p.original_refs.length) {
     for (const ref of p.original_refs) {
       const e = paymentEventOf(db, "p.ref = ?", [`${p.provider}:${ref}`]);
@@ -54,7 +65,7 @@ function resolve(db: Db, p: PaymentInput): Target {
     if (s) return { dims: s, linked_by: "visitor" };
   }
   if (p.user_id) {
-    const s = latestSession(db, "user_id", p.user_id, p.ts);
+    const s = latestSession(db, "user_id", p.user_id, p.ts, !!o.trustBrowserUserId);
     if (s) return { dims: s, linked_by: "user" };
   }
   if (p.customer) {
@@ -117,13 +128,13 @@ function insertEvent(db: Db, p: PaymentInput & { type: keyof typeof EVENT_NAME }
   return num(row?.id);
 }
 
-function one(db: Db, p: PaymentInput, now: number): PaymentOutcome {
+function one(db: Db, p: PaymentInput, now: number, o: PaymentOptions): PaymentOutcome {
   if (p.event_id) {
     const key = `${p.provider}:${p.event_id}`;
     if (db.all("SELECT 1 FROM provider_events WHERE id = ?", [key]).length) return { ok: true, duplicate_event: true };
     db.run("INSERT INTO provider_events (id, received_at) VALUES (?, ?)", [key, now]);
   }
-  const t = resolve(db, p);
+  const t = resolve(db, p, o);
   if (p.type === "link") {
     if (p.customer && t.dims && t.linked_by !== "customer") {
       upsertLink(db, p.customer, t.dims, now);
@@ -159,10 +170,10 @@ function one(db: Db, p: PaymentInput, now: number): PaymentOutcome {
   return { ok: true, id, existing: false, linked_by: t.linked_by };
 }
 
-export function ingestPayments(db: Db, records: PaymentInput[], now = Date.now()): PaymentOutcome[] {
+export function ingestPayments(db: Db, records: PaymentInput[], now = Date.now(), o: PaymentOptions = {}): PaymentOutcome[] {
   const out: PaymentOutcome[] = [];
   db.transaction(() => {
-    for (const r of records) out.push(one(db, r, now));
+    for (const r of records) out.push(one(db, r, now, o));
   });
   return out;
 }

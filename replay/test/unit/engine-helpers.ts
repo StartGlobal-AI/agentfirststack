@@ -1,5 +1,5 @@
 import type { Db } from "../../src/do/db";
-import { type IngestRequest, ingestChunk, type SessionMeta } from "../../src/do/engine";
+import { type IngestRequest, ingestChunk, type SessionMeta, type UsageSnapshot } from "../../src/do/engine";
 import { deriveChunk } from "../../src/lib/derive";
 import { envelope, T0 } from "../fixtures/rrweb";
 
@@ -28,6 +28,8 @@ export interface Opts {
   skew?: number;
   limits?: Partial<IngestRequest["limits"]>;
   forward?: boolean;
+  net?: string;
+  usage?: UsageSnapshot;
 }
 
 /** Derive a chunk from fixture events and ingest it, as the Worker + DO do. */
@@ -45,6 +47,8 @@ export function feed(db: Db, sid: string, seq: number, ev: unknown[], o: Opts = 
     end: !!o.end,
     limits: { session_bytes: 1e9, max_session_ms: 30 * 60_000, daily_sessions: null, ...o.limits },
     forward: !!o.forward,
+    net: o.net ?? null,
+    usage: o.usage ?? null,
   });
 }
 

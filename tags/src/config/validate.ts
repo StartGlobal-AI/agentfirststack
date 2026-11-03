@@ -32,9 +32,19 @@ export interface ValidationResult {
 }
 
 export interface ValidationContext {
-  /** Server-side destinations configured on the container. */
-  destinations?: { id: string; type: string; enabled: boolean }[];
+  /** Server-side destinations configured on the container (with their circuit breaker state). */
+  destinations?: {
+    id: string;
+    type: string;
+    enabled: boolean;
+    settings?: { all_events?: boolean };
+    circuit_open_until?: number | null;
+    consecutive_failures?: number;
+  }[];
   domain?: string;
+  /** Whether the config's custom code may be published here (src/service/verify.ts); an issue blocks publish. */
+  customCode?: (config: ContainerConfig) => Issue | null;
+  now?: number;
 }
 
 /** Client tag type that fires each send_to platform in the browser. */
@@ -455,6 +465,22 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
     );
   }
 
+  // ---- custom code: account standing, domain verification, size
+  const custom = ctx.customCode?.(cfg);
+  if (custom) err(custom.path, custom.code, custom.message, custom.hint);
+
+  // ---- destinations whose circuit breaker is open (deliveries are skipped)
+  const now = ctx.now ?? Date.now();
+  for (const d of destinations) {
+    if (d.circuit_open_until && d.circuit_open_until > now)
+      warn(
+        "destinations",
+        "destination_circuit_open",
+        `Destination ${d.id} (${d.type}) failed ${d.consecutive_failures ?? "many"} times in a row; deliveries are skipped until ${new Date(d.circuit_open_until).toISOString()}.`,
+        `Read its last errors in GET /v1/containers/:id/events, fix the credentials or URL (PATCH the destination), then POST /v1/containers/:id/destinations/${d.id}/test: a passing test closes the circuit.`,
+      );
+  }
+
   // ---- destinations with nothing to send
   for (const d of destinations) {
     if (d.type === "webhook" || d.type === "analytics") {
@@ -463,7 +489,9 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
           "destinations",
           "destination_idle",
           `Destination ${d.id} (${d.type}) receives server conversions, but none have server: true.`,
-          "Set server: true on the conversions it should receive (server events from POST /v1/containers/:id/events also reach it).",
+          d.type === "webhook"
+            ? "Set server: true on the conversions it should receive (backend events reach it when their name matches a conversion, or every one with settings.all_events: true)."
+            : "Set server: true on the conversions it should receive (server events from POST /v1/containers/:id/events also reach it).",
         );
       continue;
     }

@@ -77,7 +77,7 @@ describe("SQL guard", () => {
     "select count(*) from events;",
     "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
     "SELECT 'delete from events; drop table x' AS s",
-    "SELECT replace(pathname, '/', '') FROM events",
+    "SELECT substr(pathname, 2) FROM events",
     "SELECT name FROM sqlite_master",
   ])("accepts %s", (q) => expect(guardSql(q).ok).toBe(true));
   it.each([

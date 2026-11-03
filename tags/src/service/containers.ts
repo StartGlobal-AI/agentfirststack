@@ -1,10 +1,13 @@
-import { ApiError, badRequest, newId, notFound } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, newId, notFound } from "@afs/shared";
 import { type ContainerConfig, EMPTY_CONFIG } from "../config/schema";
 import { validateConfig } from "../config/validate";
 import type { ContainerState } from "../do/container-do";
 import type { Bindings } from "../env";
+import { isIpLiteral, isPublicSuffix, numericTld } from "../lib/domain";
 import type { DestinationInfo } from "./dispatch-plan";
+import { limits } from "./limits";
 import { PROXY_KEY_HEADER } from "./proxy";
+import { customCodeProblem, verificationInfo } from "./verify";
 
 export interface ContainerRow {
   id: string;
@@ -19,6 +22,9 @@ export interface ContainerRow {
   published_at: number | null;
   created_at: number;
   updated_at: number;
+  /** Domain verification (migration 0006): needed to publish custom code. */
+  verified_at?: number | null;
+  verified_method?: string | null;
 }
 
 /** "https://www.Example.com/path" -> "example.com". */
@@ -36,6 +42,15 @@ export function normalizeDomain(input: string): string {
   ) {
     throw badRequest(`"${input}" is not a valid domain.`, 'Pass the site\'s domain, e.g. "example.com" (no path).');
   }
+  // A container's domain is what /collect accepts hits from (and its subdomains), what scan
+  // fetches and what verification proves: a registrable name, not an address or a suffix.
+  if (s !== "localhost" && (isIpLiteral(s) || numericTld(s)))
+    throw badRequest(`"${input}" is an IP address.`, 'Use the site\'s domain name, e.g. "example.com".');
+  if (s !== "localhost" && isPublicSuffix(s))
+    throw badRequest(
+      `"${input}" is a public suffix (anyone can register names under it).`,
+      'Use your own domain, e.g. "example.co.uk" or "myapp.github.io".',
+    );
   return s;
 }
 
@@ -52,6 +67,11 @@ export function normalizeHostnames(list: string[]): string[] {
           .replace(/[/:].*$/, "");
         if (!/^[a-z0-9.-]+$/.test(d))
           throw badRequest(`"${h}" is not a hostname.`, 'Use hostnames like "shop.example.net", "*.example.net" or "localhost".');
+        if (wild && (isPublicSuffix(d) || isIpLiteral(d)))
+          throw badRequest(
+            `"${h}" would allow every site under ${d}.`,
+            'Wildcards must be over a domain you own, e.g. "*.example.net" (not "*.com", "*.co.uk" or "*.github.io").',
+          );
         return wild ? `*.${d}` : d;
       }),
     ),
@@ -70,6 +90,7 @@ export function publicContainer(row: ContainerRow, base: string) {
     draft_updated_at: row.draft_updated_at,
     script_url: `${base}/c/${row.id}.js`,
     snippet: snippet(base, row.id),
+    domain_verified: !!row.verified_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -89,15 +110,24 @@ export function containerStub(env: Bindings, id: string) {
 
 export async function destinationInfos(env: Bindings, containerId: string): Promise<DestinationInfo[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, type, enabled, settings FROM destinations WHERE container_id = ? ORDER BY created_at",
+    "SELECT id, type, enabled, settings, consecutive_failures, circuit_open_until FROM destinations WHERE container_id = ? ORDER BY created_at",
   )
     .bind(containerId)
-    .all<{ id: string; type: string; enabled: number; settings: string }>();
+    .all<{
+      id: string;
+      type: string;
+      enabled: number;
+      settings: string;
+      consecutive_failures: number;
+      circuit_open_until: number | null;
+    }>();
   return results.map((r) => ({
     id: r.id,
     type: r.type,
     enabled: !!r.enabled,
     settings: JSON.parse(r.settings) as DestinationInfo["settings"],
+    circuit_open_until: r.circuit_open_until ?? null,
+    consecutive_failures: r.consecutive_failures ?? 0,
   }));
 }
 
@@ -209,9 +239,9 @@ export async function createContainer(
     .bind(accountId, domain)
     .first<ContainerRow>();
   if (found) return { row: found, existing: true };
-  // MAX_CONTAINERS_PER_ACCOUNT (hosted fair use). Unset = no cap.
-  const max = Number(env.MAX_CONTAINERS_PER_ACCOUNT || 0);
-  if (max > 0) {
+  // MAX_CONTAINERS_PER_ACCOUNT (UNCLAIMED_MAX_CONTAINERS_PER_ACCOUNT for agent-only accounts). Unset = no cap.
+  const max = limits(env, await accountStanding(env, accountId)).maxContainers;
+  if (Number.isFinite(max)) {
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM containers WHERE account_id = ?").bind(accountId).first<{ n: number }>();
     if ((n?.n ?? 0) >= max) {
       throw new ApiError(
@@ -304,10 +334,20 @@ export function draftConfig(row: ContainerRow): ContainerConfig {
   return JSON.parse(row.draft) as ContainerConfig;
 }
 
+/**
+ * Full validation of the draft (or `config`) for this container: destinations (with their
+ * circuit state) and whether its custom code may be published (account standing, domain
+ * verification, MAX_CUSTOM_CODE_BYTES).
+ */
 export async function draftValidation(env: Bindings, row: ContainerRow, config?: unknown) {
   const dest = await destinationInfos(env, row.id);
-  return validateConfig(config ?? draftConfig(row), { destinations: dest, domain: row.domain });
+  const candidate = config ?? draftConfig(row);
+  const standing = await accountStanding(env, row.account_id);
+  const custom = (cfg: ContainerConfig) => customCodeProblem(env, row, cfg, standing);
+  return validateConfig(candidate, { destinations: dest, domain: row.domain, customCode: custom });
 }
+
+export { verificationInfo };
 
 export function assertConfigObject(v: unknown): asserts v is Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) {

@@ -2,6 +2,7 @@ import { hmacSha256Hex } from "@afs/shared";
 import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { AppEnv, WebhookJob } from "../../src/env";
+import { parkOnInbox } from "../../src/lib/park";
 import { app } from "../../src/index";
 import { addDomain, ownershipToken, verifyDomain } from "../../src/service/domains";
 import { createInbox, getInboxRow, purgeExpiredInboxes, purgeOldSharedMessages } from "../../src/service/inboxes";
@@ -284,20 +285,17 @@ describe("3. one tenant cannot fill D1", () => {
     expect((await call("GET", `/v1/messages/${small.id}`, { key })).json.message.text_truncated).toBe(false);
   });
 
-  it("MAX_MESSAGES_PER_INBOX: a full inbox rejects mail with a clear SMTP reason; deleting frees room", async () => {
+  it("MAX_MESSAGES_PER_INBOX: a full inbox makes room by evicting the oldest mail instead of rejecting", async () => {
     const env = hosted({ MAX_MESSAGES_PER_INBOX: "2" });
-    const { key, inbox } = await signup();
-    for (const n of [1, 2])
+    const s = await signup();
+    const { key, inbox } = s;
+    for (const n of [1, 2, 3])
       expect((await deliver("a@sender.example", inbox.address, note("a@sender.example", inbox.address, `m${n}`), env)).rejected).toBeNull();
-    const full = await deliver("a@sender.example", inbox.address, note("a@sender.example", inbox.address, "m3"), env);
-    expect(full.rejected).toBe(`Mailbox full: ${inbox.address} already holds the maximum of 2 messages`);
-    const w = await call("GET", `/v1/inboxes/${inbox.id}/wait?from=nobody&timeout=0`, { key, env });
-    expect(w.status).toBe(408);
-    expect(w.json.error.hint).toMatch(/inbox is full/);
-    // sent mail does not count against it
-    const first = (await call("GET", `/v1/inboxes/${inbox.id}/messages`, { key })).json.messages[0];
-    await call("DELETE", `/v1/messages/${first.id}`, { key });
-    expect((await deliver("a@sender.example", inbox.address, note("a@sender.example", inbox.address, "m4"), env)).rejected).toBeNull();
+    const msgs = (await call("GET", `/v1/inboxes/${inbox.id}/messages`, { key })).json.messages;
+    expect(msgs.map((m: { subject: string }) => m.subject)).toEqual(["m3", "m2"]); // m1 was evicted
+    expect((await getInboxRow(E, acctOf(s), inbox.id)).inbound_count).toBe(2);
+    const blobs = await E.BLOBS.list({ prefix: `inbox/${inbox.id}/` });
+    expect(blobs.objects).toHaveLength(2); // the evicted message's blob went with it
   });
 
   it("MAX_INBOUND_PER_ACCOUNT_PER_DAY caps an account across inboxes; redeliveries are not counted", async () => {
@@ -313,10 +311,9 @@ describe("3. one tenant cannot fill D1", () => {
     });
     expect((await deliver("a@sender.example", s.inbox.address, once, env)).rejected).toBeNull();
     expect((await deliver("a@sender.example", s.inbox.address, once, env)).rejected).toBeNull(); // duplicate: refunded
-    expect(
-      (await deliver("a@sender.example", other.inbox.address, note("a@sender.example", other.inbox.address), env)).rejected,
-    ).toBeNull();
-    const over = await deliver("a@sender.example", other.inbox.address, note("a@sender.example", other.inbox.address), env);
+    // (one sender may use at most half of the daily quota, so the next ones come from elsewhere)
+    expect((await deliver("b@other.example", other.inbox.address, note("b@other.example", other.inbox.address), env)).rejected).toBeNull();
+    const over = await deliver("c@third.example", other.inbox.address, note("c@third.example", other.inbox.address), env);
     expect(over.rejected).toMatch(/^Daily limit reached: .* maximum of 2 messages today \(UTC\)/);
     // another account is unaffected
     const t = await signup();
@@ -413,7 +410,11 @@ describe("5. shared-domain addresses are never recycled", () => {
     const gone = uniq("gone");
     expect((await call("POST", "/v1/inboxes", { key: a.key, body: { username: live } })).status).toBe(201);
     const g = await call("POST", "/v1/inboxes", { key: a.key, body: { username: gone } });
-    expect((await call("DELETE", `/v1/inboxes/${g.json.inbox.id}`, { key: a.key })).status).toBe(200);
+    // Only addresses that received mail are reserved (they may have been used to sign up somewhere).
+    await deliver("x@sender.example", g.json.inbox.address, note("x@sender.example", g.json.inbox.address));
+    const del = await call("DELETE", `/v1/inboxes/${g.json.inbox.id}`, { key: a.key });
+    expect(del.status).toBe(200);
+    expect(del.json.address_reserved_until).toBeGreaterThan(Date.now() + 89 * 86_400_000);
 
     const taken = await call("POST", "/v1/inboxes", { key: b.key, body: { username: live } });
     const recycled = await call("POST", "/v1/inboxes", { key: b.key, body: { username: gone } });
@@ -436,6 +437,7 @@ describe("5. shared-domain addresses are never recycled", () => {
     const b = await signup();
     const name = uniq("ttl");
     const c = await call("POST", "/v1/inboxes", { key: a.key, body: { username: name, ttl_days: 1 } });
+    await deliver("x@sender.example", c.json.inbox.address, note("x@sender.example", c.json.inbox.address));
     await E.DB.prepare("UPDATE inboxes SET expires_at = 1 WHERE id = ?").bind(c.json.inbox.id).run();
     await purgeExpiredInboxes(E);
     expect((await call("GET", `/v1/inboxes/${c.json.inbox.id}`, { key: a.key })).status).toBe(404);
@@ -484,7 +486,7 @@ describe("6. webhook fan-out is bounded", () => {
     const job: WebhookJob = {
       delivery_id: `whd_${uniq("t")}`,
       webhook_id: w.webhook.id,
-      event: { id: "evt_t", type: "webhook.test", created_at: 1, data: {} },
+      event: { id: "evt_t", type: "message.received", created_at: 1, data: {} }, // test events are not retried
     };
     await E.DB.prepare(
       "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, status, attempts, created_at, updated_at) VALUES (?, ?, 'evt_t', 'webhook.test', 'pending', 0, 1, 1)",
@@ -639,11 +641,13 @@ describe("7. dedupe and wait races", () => {
     const v = await stub.version();
     const now = Date.now();
     await stub.notify(now);
-    expect(await stub.wait(v, 5_000)).toEqual({ woken: true, version: v + 1 });
-    const parked = stub.wait(v + 1, 5_000);
+    expect(await parkOnInbox(stub, v, 5_000)).toEqual({ woken: true, version: v + 1 }); // answered without parking
+    const parked = parkOnInbox(stub, v + 1, 5_000);
     await new Promise((r) => setTimeout(r, 50));
+    expect(await stub.waiting()).toBe(1); // parked as a hibernatable WebSocket
     await stub.notify(now); // same received_at as before
     expect(await parked).toEqual({ woken: true, version: v + 2 });
+    expect(await parkOnInbox(stub, v + 2, 100)).toEqual({ woken: false, version: v + 2 }); // timeout runs in the Worker
   });
 });
 

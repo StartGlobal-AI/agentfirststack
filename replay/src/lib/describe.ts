@@ -144,11 +144,12 @@ function childCount(el: El): number {
 }
 
 /**
- * The text a person would call the element by, before masking: aria-label, a button's value, an
- * image's alt, its own text (only for small elements: a click on a page-wide container gets no
- * label), or its title. Input values are never used.
+ * The text a person would call the element by: aria-label, a button's value, an image's alt, its
+ * own text (only for small elements: a click on a page-wide container gets no label), or its
+ * title. Input values are never used. `text` reads the element's text; the recorder passes one
+ * that masks each descendant by its own rule and skips blocked ones (default: textContent).
  */
-export function rawLabel(el: El): string {
+export function rawLabel(el: El, text?: (el: El) => string): string {
   const aria = el.getAttribute("aria-label");
   if (aria && collapse(aria)) return clip(collapse(aria), MAX_LABEL);
   const tag = el.tagName.toLowerCase();
@@ -161,8 +162,8 @@ export function rawLabel(el: El): string {
   if (tag === "select" || tag === "textarea") return clip(collapse(el.getAttribute("placeholder") ?? ""), MAX_LABEL);
   if (tag === "img") return clip(collapse(el.getAttribute("alt") ?? el.getAttribute("title") ?? ""), MAX_LABEL);
   if (childCount(el) <= 12) {
-    const text = collapse((el.textContent ?? "").slice(0, 2000));
-    if (text) return clip(text, MAX_LABEL);
+    const own = collapse((text ? text(el) : (el.textContent ?? "")).slice(0, 2000));
+    if (own) return clip(own, MAX_LABEL);
   }
   const title = el.getAttribute("title");
   return title ? clip(collapse(title), MAX_LABEL) : "";

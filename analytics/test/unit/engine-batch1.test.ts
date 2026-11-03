@@ -137,7 +137,7 @@ describe("in-DO schema migration", () => {
     half.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1')");
     half.run("ALTER TABLE events ADD COLUMN revenue_type TEXT");
     engine.migrate(half);
-    expect(engine.schemaVersion(half)).toBe(2);
+    expect(engine.schemaVersion(half)).toBe(engine.SCHEMA_VERSION);
     expect(engine.hasColumn(half, "events", "cls")).toBe(true);
   });
 
@@ -177,8 +177,8 @@ describe("exclusions at ingest", () => {
       "excluded_ip",
     ]);
     const drops = engine.summary(db, NOW).dropped_last_7d;
-    expect(drops.excluded_ip).toMatchObject({ count: 3, sample: "203.0.113.0/24" }); // engagement not counted twice
-    expect(drops.excluded_path).toMatchObject({ count: 1, sample: "/admin/*" });
+    expect(drops.excluded_ip).toMatchObject({ count: 3, rule: "203.0.113.0/24" }); // engagement not counted twice
+    expect(drops.excluded_path).toMatchObject({ count: 1, rule: "/admin/*" });
     const everything = JSON.stringify([db.all("SELECT * FROM events"), db.all("SELECT * FROM drops"), db.all("SELECT * FROM sessions")]);
     expect(everything).not.toContain("203.0.113.9");
     expect(everything).not.toContain("198.51.100.1");

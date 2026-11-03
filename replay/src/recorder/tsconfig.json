@@ -1,5 +1,5 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": { "lib": ["ES2022", "DOM", "DOM.Iterable"], "target": "ES2020", "types": [] },
-  "include": ["./*.ts", "../lib/mask-rules.ts", "../lib/describe.ts", "../lib/protocol.ts"]
+  "include": ["./*.ts", "../lib/mask-rules.ts", "../lib/attrs.ts", "../lib/describe.ts", "../lib/protocol.ts"]
 }

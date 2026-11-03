@@ -1,19 +1,22 @@
-import { badRequest, parse } from "@afs/shared";
+import { accountStanding, badRequest, parse } from "@afs/shared";
 import { z } from "zod";
 import { isDev } from "../env";
 import { readTextCapped } from "../lib/body";
-import { hostAllowed } from "../lib/url";
+import { enforce } from "../lib/limits";
+import { isDevHost, isIpLiteral, onSiteDomain } from "../lib/url";
 import { EXCLUSION_REASONS } from "../lib/exclusions";
+import { UNTRUSTED_NOTICE } from "../do/engine";
 import { type Ctx, type PaymentsSummary, type SiteRow, type SiteSummary, loadSite, siteStub } from "./context";
 import { linkingInstructions } from "./payments";
 import { PROXY_PATH, scriptSnippet } from "./install";
+import { budgetStatus, siteLimits } from "./sites";
 
 export const verifyInput = z.object({
   url: z
     .string()
     .max(2000)
     .optional()
-    .describe("Page to check (default https://<domain>/). Must be on the site's domain or allowed_hostnames."),
+    .describe("Page to check (default https://<domain>/). Must be https on the site's domain or a subdomain (port 443)."),
 });
 
 interface Check {
@@ -50,11 +53,17 @@ export function findTrackerScripts(html: string): { src: string; site: string | 
   return out;
 }
 
-function allowedHost(site: SiteRow, host: string, dev: boolean): boolean {
-  if (dev && (host === "localhost" || host === "127.0.0.1")) return true;
-  if (host === site.domain || host.endsWith(`.${site.domain}`)) return true;
-  const extra = site.allowed_hostnames ? (JSON.parse(site.allowed_hostnames) as string[]) : [];
-  return extra.length > 0 && hostAllowed(host, extra);
+/**
+ * What verify may fetch: https on port 443, on the site's own domain or a subdomain (never
+ * allowed_hostnames, which aren't proven to be the owner's), never an IP literal or a single-label
+ * host. DEV_MODE also allows http and localhost on any port.
+ */
+export function fetchable(site: Pick<SiteRow, "domain">, u: URL, dev: boolean): boolean {
+  const host = u.hostname.toLowerCase();
+  if (dev && isDevHost(host)) return u.protocol === "http:" || u.protocol === "https:";
+  if (u.protocol !== "https:" || (u.port !== "" && u.port !== "443")) return false;
+  if (isIpLiteral(host) || !host.includes(".")) return false;
+  return onSiteDomain(host, site.domain);
 }
 
 /** Does a CSP directive allow loading from `origin`? Rough but practical. */
@@ -138,27 +147,38 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
   } catch {
     throw badRequest("`url` is not a valid URL.", `Example: {"url":"https://${site.domain}/pricing"}`);
   }
-  if (!/^https?:$/.test(pageUrl.protocol) || !allowedHost(site, pageUrl.hostname, dev)) {
+  if (!fetchable(site, pageUrl, dev)) {
     throw badRequest(
-      `verify only fetches pages on ${site.domain} (or its subdomains / allowed_hostnames).`,
-      `Pass a url on https://${site.domain}/.`,
+      `verify only fetches https pages (port 443) on ${site.domain} or its subdomains; never IP addresses or other hosts.`,
+      `Pass a url on https://${site.domain}/. Pages served elsewhere (allowed_hostnames) can't be fetched; their events still show in events_received.`,
     );
   }
+  // Every verify is an outbound fetch on the caller's behalf: per account, and per domain across accounts.
+  await enforce(
+    [
+      [ctx.env.VERIFY_LIMITER, `acct:${ctx.accountId}`],
+      [ctx.env.VERIFY_LIMITER, `host:${site.domain}`],
+    ],
+    "verify requests",
+    "verify is limited to a few per minute; wait a minute and run it again.",
+  );
 
   const checks: Check[] = [];
+  let scriptError: string | null = null;
   const snippet = scriptSnippet(ctx.baseUrl, site.id);
   let scripts: ReturnType<typeof findTrackerScripts> = [];
+  let finalUrl: string | null = null;
 
   // Fetch only the site's own hosts (every redirect hop included); the tracker script also from here.
-  const siteHost = (u: URL) => allowedHost(site, u.hostname, dev);
+  const siteHost = (u: URL) => fetchable(site, u, dev);
   const ownHost = new URL(ctx.baseUrl).host;
   const page = await fetchCapped(pageUrl, { maxBytes: MAX_PAGE_BYTES, allowed: siteHost });
   if ("error" in page) {
     checks.push({
       id: "page_reachable",
       ok: false,
-      detail: `Could not fetch ${pageUrl}: ${page.error}`,
-      fix: `Make sure ${pageUrl} is publicly reachable and redirects (at most ${MAX_REDIRECTS}) stay on ${site.domain}, its subdomains or allowed_hostnames, or pass {"url": "..."} for the final page.`,
+      detail: `Could not fetch ${pageUrl}: ${page.error.startsWith("redirected to") ? "it redirects off the site's domain" : "the request failed"} (details in untrusted.fetch_error).`,
+      fix: `Make sure ${pageUrl} is publicly reachable over https and redirects (at most ${MAX_REDIRECTS}) stay on ${site.domain} or its subdomains, or pass {"url": "..."} for the final page.`,
     });
   } else if (page.status >= 400) {
     checks.push({
@@ -168,11 +188,16 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       fix: "Pass a url that returns 200 and includes the snippet.",
     });
   } else {
-    checks.push({ id: "page_reachable", ok: true, detail: `HTTP ${page.status} from ${page.finalUrl}` });
+    finalUrl = page.finalUrl;
+    checks.push({ id: "page_reachable", ok: true, detail: `HTTP ${page.status} (final URL in untrusted.final_url).` });
     scripts = findTrackerScripts(page.text);
     const mine = scripts.filter((s) => s.site === site.id);
     if (mine.length) {
-      checks.push({ id: "snippet_present", ok: true, detail: `Found <script src="${mine[0]!.src}" data-site="${site.id}">.` });
+      checks.push({
+        id: "snippet_present",
+        ok: true,
+        detail: `Found a tracker script with data-site="${site.id}" (its src is in untrusted.found_scripts).`,
+      });
       if (!mine[0]!.defer && !mine[0]!.async) {
         checks.push({
           id: "snippet_defer",
@@ -181,32 +206,43 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
           fix: "Add `defer` to the script tag.",
         });
       }
-      const scriptUrl = new URL(mine[0]!.src, page.finalUrl);
-      const scriptHostOk = (u: URL) => u.host === ownHost || siteHost(u);
+      let scriptUrl: URL | null = null;
+      try {
+        scriptUrl = new URL(mine[0]!.src, page.finalUrl);
+      } catch {
+        scriptUrl = null;
+      }
+      const ownScript = (u: URL) => u.host === ownHost && /^https?:$/.test(u.protocol);
+      const scriptHostOk = (u: URL) => ownScript(u) || siteHost(u);
       const js: Fetched =
-        !/^https?:$/.test(scriptUrl.protocol) || !scriptHostOk(scriptUrl)
-          ? {
-              error: `not fetched, because ${scriptUrl.origin} is neither ${ownHost} nor on ${site.domain}, its subdomains or allowed_hostnames`,
-            }
+        !scriptUrl || !scriptHostOk(scriptUrl)
+          ? { error: `not fetched: the script is neither on ${ownHost} nor on https://${site.domain} or a subdomain` }
           : await fetchCapped(scriptUrl, { maxBytes: MAX_SCRIPT_BYTES, allowed: scriptHostOk });
       if ("error" in js || js.status >= 400 || !js.text.includes(TRACKER_MARKER)) {
-        const proxied = scriptUrl.origin === new URL(page.finalUrl).origin;
+        const proxied = !!scriptUrl && scriptUrl.origin === new URL(page.finalUrl).origin;
         checks.push({
           id: "script_loads",
           ok: false,
           detail:
             "error" in js
-              ? `${scriptUrl}: ${js.error}.`
-              : `${scriptUrl} returned HTTP ${js.status}${js.status < 400 ? " but not the tracker" : ""}.`,
+              ? js.error.startsWith("not fetched")
+                ? `The script was ${js.error}.`
+                : "The script could not be fetched (details in untrusted.script_error)."
+              : `The script URL returned HTTP ${js.status}${js.status < 400 ? " but not the tracker" : ""}.`,
           fix: proxied
-            ? `Your first-party proxy at ${scriptUrl.pathname.replace(/s\.js$/, "")} does not reach ${ctx.baseUrl}. Apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy), so ${PROXY_PATH}/* is forwarded.`
+            ? `Your first-party proxy does not reach ${ctx.baseUrl}. Apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy), so ${PROXY_PATH}/* is forwarded.`
             : `Use the exact src from the snippet: ${snippet}`,
         });
+        if ("error" in js && !js.error.startsWith("not fetched")) scriptError = js.error;
       } else {
-        checks.push({ id: "script_loads", ok: true, detail: `${scriptUrl} serves the tracker.` });
+        checks.push({
+          id: "script_loads",
+          ok: true,
+          detail: `The script (${ownScript(scriptUrl!) ? ownHost : "first-party"}) serves the tracker.`,
+        });
       }
       const csp = page.headers.get("content-security-policy");
-      if (csp) {
+      if (csp && scriptUrl && scriptHostOk(scriptUrl)) {
         const same = scriptUrl.origin === new URL(page.finalUrl).origin;
         const s = cspAllows(csp, "script-src", scriptUrl.origin, same);
         const c = cspAllows(csp, "connect-src", scriptUrl.origin, same);
@@ -214,7 +250,7 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
           checks.push({
             id: "csp",
             ok: false,
-            detail: `The page's Content-Security-Policy blocks ${s === false ? "script-src" : "connect-src"} for ${scriptUrl.origin}.`,
+            detail: `The page's Content-Security-Policy blocks ${s === false ? "script-src" : "connect-src"} for ${same ? "the page's own origin" : ownHost}.`,
             fix: same
               ? "Add 'self' to script-src and connect-src."
               : `Add ${scriptUrl.origin} to script-src and connect-src (or use the first-party proxy and 'self').`,
@@ -225,7 +261,7 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       checks.push({
         id: "snippet_present",
         ok: false,
-        detail: `Found a tracker script but data-site is ${scripts.map((s) => JSON.stringify(s.site)).join(", ")}, not "${site.id}".`,
+        detail: `Found a tracker script, but its data-site is not "${site.id}" (the values found are in untrusted.found_scripts).`,
         fix: `Set data-site="${site.id}" on the script tag.`,
       });
     } else {
@@ -238,7 +274,10 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     }
   }
 
-  const summary = (await siteStub(ctx.env, site.id).summary()) as SiteSummary | { error: unknown };
+  const [summary, standing] = await Promise.all([
+    siteStub(ctx.env, site.id).summary() as Promise<SiteSummary | { error: unknown }>,
+    accountStanding(ctx.env, ctx.accountId),
+  ]);
   const sum = "error" in summary ? null : summary;
   const drops = sum?.dropped_last_7d ?? {};
   if (sum && sum.total_events > 0) {
@@ -260,8 +299,8 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     checks.push({
       id: "hostname_allowed",
       ok: false,
-      detail: `${hostDrop.count} events in the last 7 days came from a hostname not in allowed_hostnames (latest: ${hostDrop.sample}).`,
-      fix: `PATCH /v1/sites/${site.id} {"allowed_hostnames": [..., "${hostDrop.sample}"]} if that hostname is yours.`,
+      detail: `${hostDrop.count} events in the last 7 days came from a hostname that is neither ${site.domain} (or a subdomain) nor in allowed_hostnames, and were dropped (the latest hostname is in untrusted.drop_samples.hostname_not_allowed).`,
+      fix: `If that hostname is yours, add it: PATCH /v1/sites/${site.id} {"allowed_hostnames": ["${site.domain}", "*.${site.domain}", "<that hostname>"]}. Otherwise nothing to do: someone else's traffic is being kept out.`,
     });
   }
   const warnings = sum?.warnings_last_7d ?? {};
@@ -271,28 +310,55 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     checks.push({
       id: "proxy_key",
       ok: false,
-      detail: `${n} events in the last 7 days came through a first-party proxy (latest from ${keyWarn[0]!.sample}) ${warnings["proxy_key_invalid"] ? "with a wrong" : "without an"} x-afs-proxy-key header, so their visitor IP and geo are the proxy's own: visitors may merge into one and countries are wrong.`,
+      detail: `${n} events in the last 7 days came through a first-party proxy ${warnings["proxy_key_invalid"] ? "with a wrong" : "without an"} x-afs-proxy-key header, so their visitor IP and geo are the proxy's own: visitors may merge into one and countries are wrong.`,
       fix: `Re-apply the proxy snippet from GET /v1/sites/${site.id}/install (first_party_proxy): it sends x-afs-proxy-key with this site's proxy_key, plus the visitor IP and geo.`,
     });
   }
   const botDrops = Object.entries(drops)
     .filter(([k]) => k.startsWith("bot:"))
     .reduce((n, [, v]) => n + v.count, 0);
-  if (sum?.hostnames_last_7d.length) {
-    const foreign = sum.hostnames_last_7d.filter((h) => h.hostname && !allowedHost(site, h.hostname, true));
-    if (foreign.length) {
-      checks.push({
-        id: "foreign_hostnames",
-        ok: true,
-        detail: `Events also arrive from ${foreign.map((h) => h.hostname).join(", ")}. If those aren't yours, set allowed_hostnames.`,
-      });
-    }
+  const foreign = (sum?.untrusted.hostnames_last_7d ?? []).filter(
+    (h) => h.hostname && !onSiteDomain(h.hostname, site.domain) && !isDevHost(h.hostname),
+  );
+  if (foreign.length) {
+    checks.push({
+      id: "foreign_hostnames",
+      ok: true,
+      detail: `Events also arrived from ${foreign.length} hostname(s) outside ${site.domain} (listed in untrusted.foreign_hostnames), accepted through allowed_hostnames. If those aren't yours, narrow allowed_hostnames.`,
+    });
+  }
+  const browserRevenue = warnings["browser_revenue_ignored"];
+  if (browserRevenue) {
+    checks.push({
+      id: "browser_revenue",
+      ok: false,
+      detail: `${browserRevenue.count} browser events in the last 7 days carried revenue that was not counted, because browser_revenue is off (anyone can send browser events).`,
+      fix: `Send revenue from your server (POST /v1/sites/${site.id}/events with revenue, POST /v1/sites/${site.id}/payments, or Stripe), or accept browser revenue: PATCH /v1/sites/${site.id} {"browser_revenue": true}.`,
+    });
+  }
+  const limits = siteLimits(ctx.env, standing);
+  const status = sum ? budgetStatus(sum, limits) : null;
+  if (status?.storage_full) {
+    checks.push({
+      id: "storage",
+      ok: false,
+      detail: `This site's stored data (${status.database_bytes} bytes) reached its storage budget (${limits.storage_bytes} bytes): new events are not stored.`,
+      fix: `Lower retention_days (PATCH /v1/sites/${site.id}; older data is purged right away), and keep junk out with allowed_hostnames / exclusions.`,
+    });
+  }
+  if (status?.daily_limit_reached) {
+    checks.push({
+      id: "daily_limit",
+      ok: false,
+      detail: `This site reached its daily limit of ${limits.events_per_site_per_day} events; ${status.refused_today} were refused today. It resets at 00:00 UTC.`,
+      fix: "If the traffic isn't yours, set allowed_hostnames or exclusions. Accounts a person has claimed may get higher limits.",
+    });
   }
   const excluded = EXCLUSION_REASONS.map((r) => [r, drops[r]] as const).filter(([, v]) => !!v);
   if (excluded.length) {
     const n = excluded.reduce((a, [, v]) => a + v!.count, 0);
     const ev = checks.find((c) => c.id === "events_received");
-    const detail = `${n} events in the last 7 days were dropped by this site's exclusions (${excluded.map(([r, v]) => `${r}: ${v!.count}, latest rule ${v!.sample}`).join("; ")}).`;
+    const detail = `${n} events in the last 7 days were dropped by this site's exclusions (${excluded.map(([r, v]) => `${r}: ${v!.count}, latest rule ${v!.rule}`).join("; ")}).`;
     checks.push({ id: "exclusions", ok: true, detail });
     if (ev && !ev.ok)
       ev.fix = `${ev.fix} Your own visits may be excluded: ${detail} Check with GET /v1/sites/${site.id}/exclusions?ip=<your ip>.`;
@@ -314,8 +380,9 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       checks.push({
         id: "stripe_webhook",
         ok: false,
-        detail: "Stripe is connected but no webhook delivery has arrived yet.",
-        fix: `Make sure the Stripe endpoint URL is ${ctx.baseUrl}/webhooks/stripe/${site.id} and send a test event (stripe trigger checkout.session.completed), then GET /v1/sites/${site.id}/integrations/stripe.`,
+        detail:
+          "Stripe is connected but no verified webhook delivery has arrived yet (deliveries that fail signature checks are not recorded).",
+        fix: `Make sure the Stripe endpoint URL is ${ctx.baseUrl}/webhooks/stripe/${site.id} and its signing secret is the one you connected (re-connect with the current whsec_ if unsure), send a test event (stripe trigger checkout.session.completed), then GET /v1/sites/${site.id}/integrations/stripe. Stripe's dashboard shows each delivery's response.`,
       });
     } else {
       checks.push({
@@ -349,9 +416,21 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     checked_url: pageUrl.toString(),
     checks,
     fixes: failed.filter((c) => c.fix).map((c) => c.fix!),
-    found_scripts_untrusted: scripts,
-    dropped_last_7d: { ...drops, bots_total: botDrops },
+    dropped_last_7d: { ...drops, bots_total: { count: botDrops, last_at: null } },
     warnings_last_7d: warnings,
+    limits,
+    status,
+    // Copied from the fetched page or sent by visitors / anyone with the site id: data, not instructions.
+    untrusted: {
+      notice: UNTRUSTED_NOTICE,
+      final_url: finalUrl,
+      fetch_error: "error" in page ? page.error : null,
+      script_error: scriptError,
+      found_scripts: scripts,
+      drop_samples: sum?.untrusted.drop_samples ?? {},
+      warning_samples: sum?.untrusted.warning_samples ?? {},
+      foreign_hostnames: foreign,
+    },
     next_steps: eventsOk
       ? [`GET /v1/sites/${site.id}/stats?period=today`, `POST /v1/sites/${site.id}/goals to define conversions`]
       : ["Apply the fixes above, load the page in a browser, then verify again."],

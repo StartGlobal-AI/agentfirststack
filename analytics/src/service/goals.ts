@@ -1,4 +1,5 @@
-import { badRequest, newId, notFound, parse } from "@afs/shared";
+import { accountStanding, badRequest, newId, notFound, parse } from "@afs/shared";
+import { DEFAULT_MAX_GOALS_PER_SITE, quotaExceeded, siteCap } from "../lib/limits";
 import { z } from "zod";
 import type { Goal } from "../lib/types";
 import { type Ctx, loadGoals, loadSite, pushSettings } from "./context";
@@ -66,6 +67,16 @@ export async function createGoal(ctx: Ctx, siteId: string, raw: unknown) {
           ? undefined
           : "A goal with this name exists with a different definition; returned unchanged. Delete it first to redefine.",
     };
+  }
+  // Goals ride in the site's Durable Object settings copy (one SQLite value, < 2 MB): keep the list bounded.
+  const max = siteCap(ctx.env, await accountStanding(ctx.env, ctx.accountId), "MAX_GOALS_PER_SITE", DEFAULT_MAX_GOALS_PER_SITE);
+  if (Number.isFinite(max)) {
+    const n = await ctx.env.DB.prepare("SELECT COUNT(*) AS n FROM goals WHERE site_id = ?").bind(site.id).first<{ n: number }>();
+    if ((n?.n ?? 0) >= max)
+      throw quotaExceeded(
+        `This site already has ${max} goals, the most allowed here.`,
+        "Delete goals you no longer need (DELETE /v1/sites/:id/goals/:goal_id); a pageview goal with * can cover many paths.",
+      );
   }
   const goal: Goal = {
     id: newId("goal"),

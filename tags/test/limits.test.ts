@@ -1,21 +1,71 @@
 import { describe, expect, it } from "vitest";
 import { MAX_RESPONSE_BYTES, readTextBounded, targetsDeployment } from "../src/lib/http";
 import { escapeHtml, interpolateHtml } from "../src/lib/html";
-import { capVar, limits } from "../src/service/limits";
+import { capVar, circuitBreaker, containerCaps, deliveryBudgets, limits, standingCap, standingFlag, utcDay } from "../src/service/limits";
+
+const claimed = { suspended: false, claimed: true };
+const unclaimed = { suspended: false, claimed: false };
 
 describe("storage and fan-out caps", () => {
   it("safe defaults when unset; 0 turns a cap off; junk falls back to the default", () => {
-    expect(limits({})).toEqual({ maxVersions: 50, maxDraftBytes: 512 * 1024, maxDestinations: 10 });
-    expect(limits({ MAX_VERSIONS_PER_CONTAINER: "5", MAX_DRAFT_BYTES: "1000", MAX_DESTINATIONS_PER_CONTAINER: "3" })).toEqual({
+    expect(limits({})).toEqual({
+      maxVersions: 50,
+      maxDraftBytes: 512 * 1024,
+      maxDestinations: 10,
+      maxContainers: Number.POSITIVE_INFINITY,
+      maxAccountBytes: 20 * 1024 * 1024,
+      maxCustomCodeBytes: Number.POSITIVE_INFINITY,
+    });
+    expect(limits({ MAX_VERSIONS_PER_CONTAINER: "5", MAX_DRAFT_BYTES: "1000", MAX_DESTINATIONS_PER_CONTAINER: "3" })).toMatchObject({
       maxVersions: 5,
       maxDraftBytes: 1000,
       maxDestinations: 3,
+    });
+    expect(limits({ MAX_TAGS_BYTES_PER_ACCOUNT: "0", MAX_CONTAINERS_PER_ACCOUNT: "0" })).toMatchObject({
+      maxAccountBytes: Number.POSITIVE_INFINITY,
+      maxContainers: Number.POSITIVE_INFINITY,
     });
     expect(capVar("0", 10)).toBe(Number.POSITIVE_INFINITY);
     expect(capVar("", 10)).toBe(10);
     expect(capVar("-3", 10)).toBe(10);
     expect(capVar("1.5", 10)).toBe(10);
     expect(capVar("lots", 10)).toBe(10);
+  });
+  it("every cap reads UNCLAIMED_<NAME> first for unclaimed accounts (capFor), with 0 = off", () => {
+    const vars = { MAX_CONTAINERS_PER_ACCOUNT: "10", UNCLAIMED_MAX_CONTAINERS_PER_ACCOUNT: "2", MAX_TAGS_BYTES_PER_ACCOUNT: "1000" };
+    expect(limits(vars, unclaimed)).toMatchObject({ maxContainers: 2, maxAccountBytes: 1000 });
+    expect(limits(vars, claimed)).toMatchObject({ maxContainers: 10 });
+    expect(standingCap({ X: "5", UNCLAIMED_X: "0" }, unclaimed, "X", 7)).toBe(Number.POSITIVE_INFINITY);
+    expect(standingCap({ X: "junk" }, claimed, "X", 7)).toBe(7);
+    expect(
+      containerCaps({ MAX_EVENTS_PER_CONTAINER_PER_DAY: "50000", UNCLAIMED_MAX_EVENTS_PER_CONTAINER_PER_DAY: "100" }, unclaimed),
+    ).toEqual({
+      eventsPerDay: 100,
+      deliveriesPerDay: Number.POSITIVE_INFINITY,
+      visitors: 250_000,
+      dbBytes: 1024 * 1024 * 1024,
+    });
+    expect(deliveryBudgets({ MAX_DELIVERIES_PER_DAY: "1000", UNCLAIMED_MAX_DELIVERIES_PER_DAY: "10" }, unclaimed)).toEqual({
+      perAccount: Number.POSITIVE_INFINITY,
+      platform: 10,
+    });
+    expect(deliveryBudgets({ MAX_DELIVERIES_PER_DAY: "1000", UNCLAIMED_MAX_DELIVERIES_PER_DAY: "10" }, claimed).platform).toBe(1000);
+  });
+  it("custom code flag: claimed accounts default to allowed, unclaimed to refused", () => {
+    expect(standingFlag({}, claimed, "ALLOW_CUSTOM_CODE", true, false)).toBe(true);
+    expect(standingFlag({}, unclaimed, "ALLOW_CUSTOM_CODE", true, false)).toBe(false);
+    expect(standingFlag({ UNCLAIMED_ALLOW_CUSTOM_CODE: "true" }, unclaimed, "ALLOW_CUSTOM_CODE", true, false)).toBe(true);
+    expect(standingFlag({ ALLOW_CUSTOM_CODE: "false" }, claimed, "ALLOW_CUSTOM_CODE", true, false)).toBe(false);
+    // The claimed switch doesn't open it up for unclaimed accounts.
+    expect(standingFlag({ ALLOW_CUSTOM_CODE: "true" }, unclaimed, "ALLOW_CUSTOM_CODE", true, false)).toBe(false);
+  });
+  it("circuit breaker defaults and the UTC day", () => {
+    expect(circuitBreaker({})).toEqual({ failures: 20, openMs: 60 * 60_000 });
+    expect(circuitBreaker({ CIRCUIT_BREAKER_FAILURES: "0", CIRCUIT_BREAKER_MINUTES: "0" })).toEqual({
+      failures: Number.POSITIVE_INFINITY,
+      openMs: 60 * 60_000,
+    });
+    expect(utcDay(Date.UTC(2026, 10, 3, 23, 59))).toBe("2026-11-03");
   });
 });
 

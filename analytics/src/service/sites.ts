@@ -1,6 +1,19 @@
-import { ApiError, badRequest, newId, parse } from "@afs/shared";
+import { type Standing, accountStanding, badRequest, capFor, newId, parse } from "@afs/shared";
 import { z } from "zod";
-import { normalizeDomain } from "../lib/url";
+import type { Bindings } from "../env";
+import { isPublicSuffix, isPublicSuffixWildcard, normalizeDomain } from "../lib/url";
+import {
+  DEFAULT_MAX_GOALS_PER_SITE,
+  DEFAULT_MAX_SHARE_LINKS_PER_SITE,
+  DEFAULT_SQL_TIME_BUDGET_MS,
+  RETENTION_SCHEMA,
+  SQL_BUDGET_WINDOW_MS,
+  effectiveRetention,
+  ingestCaps,
+  quotaExceeded,
+  retentionBounds,
+  siteCap,
+} from "../lib/limits";
 import {
   EXCLUSION_REASONS,
   MAX_EXCLUSION_RULES,
@@ -17,7 +30,11 @@ import { type Framework, installInstructions, scriptSnippet } from "./install";
 const hostnamePattern = z
   .string()
   .max(253)
-  .regex(/^(\*\.)?[a-z0-9.-]+$/i, "hostname or *.example.com");
+  .regex(/^(\*\.)?[a-z0-9.-]+$/i, "hostname or *.example.com")
+  .refine(
+    (h) => !isPublicSuffixWildcard(h.toLowerCase()),
+    "a wildcard over a public suffix (*.com, *.co.uk, *.vercel.app) would match other people's sites",
+  );
 
 const settingsShape = {
   name: z.string().max(200).nullable().optional(),
@@ -26,14 +43,34 @@ const settingsShape = {
     .enum(["cookieless", "persistent"])
     .optional()
     .describe("cookieless (default): daily-salted hash, no storage. persistent: random id in localStorage, links returning visitors."),
-  retention_days: z.number().int().min(1).max(3650).optional().describe("Raw events older than this are purged daily. Default 400."),
+  retention_days: z
+    .number()
+    .int()
+    .min(RETENTION_SCHEMA.min)
+    .max(RETENTION_SCHEMA.max)
+    .optional()
+    .describe("Raw events older than this are purged daily. Default 400. The deployment may bound it (MIN_/MAX_RETENTION_DAYS)."),
   allowed_hostnames: z
     .array(hostnamePattern)
     .max(50)
     .nullable()
     .optional()
-    .describe('Only accept browser events from these hostnames ("*.example.com" allowed). null = accept any.'),
+    .describe(
+      'Accept browser events only from these hostnames ("*.example.com" allowed; not *.com or other public suffixes). null (default) = the site\'s domain and its subdomains.',
+    ),
   respect_dnt: z.boolean().optional().describe("Drop browser events when the visitor sends Global Privacy Control / Do Not Track."),
+  browser_revenue: z
+    .boolean()
+    .optional()
+    .describe(
+      "Count revenue sent from the browser (afsa('revenue', ...)). Default false: anyone can send browser events, so revenue should come from your server (track_events, payments, Stripe).",
+    ),
+  trust_browser_user_id: z
+    .boolean()
+    .optional()
+    .describe(
+      "Let user ids from afsa('identify', id) link payments that carry only a user id (metadata.afs_user_id / client_reference_id). Default false: only user ids sent by your server (track_events user_id) link payments, so nobody can pre-seed another user's attribution.",
+    ),
   exclusions: z
     .object({
       ips: z
@@ -73,9 +110,40 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     allowed_hostnames: s.allowed_hostnames ? (JSON.parse(s.allowed_hostnames) as string[]) : null,
     respect_dnt: !!s.respect_dnt,
     exclusions: parseExclusions(s.exclusions),
+    browser_revenue: !!s.browser_revenue,
+    trust_browser_user_id: !!s.trust_browser_user_id,
     created_at: s.created_at,
     updated_at: s.updated_at,
     snippet: scriptSnippet(baseUrl, s.id),
+  };
+}
+
+const standingOf = (ctx: Ctx): Promise<Standing> => accountStanding(ctx.env, ctx.accountId);
+
+function checkRetention(days: number | undefined, b: { min: number; max: number }) {
+  if (days !== undefined && (days < b.min || days > b.max))
+    throw badRequest(
+      `retention_days must be between ${b.min} and ${b.max} on this deployment.`,
+      `Pick a value in ${b.min}..${b.max}.${b.min > 1 ? " The minimum keeps a site's storage budget meaningful (no fill-and-purge)." : ""}`,
+    );
+}
+
+/** The fair-use limits that apply to an account's sites, for get_site (null = no limit). */
+export function siteLimits(env: Bindings, standing: Standing) {
+  const caps = ingestCaps(env as unknown as Record<string, string | undefined>, standing);
+  const fin = (n: number) => (Number.isFinite(n) ? n : null);
+  const sqlBudget = capFor(env as unknown as Record<string, unknown>, standing, "SQL_TIME_BUDGET_MS", DEFAULT_SQL_TIME_BUDGET_MS);
+  return {
+    account_claimed: standing.claimed,
+    events_per_site_per_day: fin(caps.siteDaily),
+    events_per_account_per_day: fin(caps.accountDaily),
+    storage_bytes: fin(caps.storageBytes),
+    retention_days: retentionBounds(env, standing),
+    goals_per_site: fin(siteCap(env, standing, "MAX_GOALS_PER_SITE", DEFAULT_MAX_GOALS_PER_SITE)),
+    share_links_per_site: fin(siteCap(env, standing, "MAX_SHARE_LINKS_PER_SITE", DEFAULT_MAX_SHARE_LINKS_PER_SITE)),
+    sites_per_account: fin(siteCap(env, standing, "MAX_SITES_PER_ACCOUNT", Number.POSITIVE_INFINITY)),
+    sql_time_ms_per_10_min: fin(sqlBudget),
+    note: `Daily counts reset at 00:00 UTC. Unclaimed accounts may have lower limits than claimed ones. SQL time is measured per ${SQL_BUDGET_WINDOW_MS / 60_000} minutes.`,
   };
 }
 
@@ -88,11 +156,19 @@ function exclusionsColumn(input: z.infer<typeof updateSiteInput>["exclusions"]):
 }
 
 function cleanDomain(input: string): string {
+  let d: string;
   try {
-    return normalizeDomain(input);
+    d = normalizeDomain(input);
   } catch {
     throw badRequest(`"${input}" is not a valid domain.`, 'Pass a bare domain like "example.com".');
   }
+  // A public suffix (vercel.app, co.uk) would make every site under it "this site's domain".
+  if (d !== "localhost" && isPublicSuffix(d))
+    throw badRequest(
+      `"${d}" is a public suffix, shared by many owners.`,
+      'Pass your own hostname, e.g. "myapp.vercel.app" or "example.co.uk".',
+    );
+  return d;
 }
 
 function checkTimezone(tz: string | undefined) {
@@ -105,6 +181,8 @@ function nextSteps(ctx: Ctx, s: SiteRow): string[] {
     `Add the snippet to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework-specific code: GET /v1/sites/${s.id}/install?framework=nextjs|astro|react|wordpress|gtm|tags).`,
     `Optional but recommended: proxy ${"/_a/*"} on your domain to ${ctx.baseUrl} so tracking is first-party (snippets in install.first_party_proxy).`,
     `Open the site in a browser, then confirm: POST /v1/sites/${s.id}/verify (MCP: verify_install).`,
+    `Browser events are accepted from ${s.domain} and its subdomains only; other hostnames (a preview or staging domain) go in allowed_hostnames (PATCH /v1/sites/${s.id}).`,
+    `Revenue from the browser tracker (afsa('revenue')) counts only with browser_revenue: true; prefer server events, POST /v1/sites/${s.id}/payments or Stripe.`,
     `Define conversions: POST /v1/sites/${s.id}/goals {"name":"Signup","type":"event","match":"signup"}.`,
     `Read numbers: GET /v1/sites/${s.id}/stats?period=7d&breakdown=channel (MCP: get_stats).`,
   ];
@@ -114,6 +192,8 @@ export async function createSite(ctx: Ctx, raw: unknown) {
   const input = parse(createSiteInput, raw);
   const domain = cleanDomain(input.domain);
   checkTimezone(input.timezone);
+  const standing = await standingOf(ctx);
+  const retention = retentionBounds(ctx.env, standing);
   const db = ctx.env.DB;
   const find = () => db.prepare("SELECT * FROM sites WHERE account_id = ? AND domain = ?").bind(ctx.accountId, domain).first<SiteRow>();
   const existing = await find();
@@ -126,14 +206,13 @@ export async function createSite(ctx: Ctx, raw: unknown) {
       next_steps: nextSteps(ctx, existing),
     };
   }
-  // MAX_SITES_PER_ACCOUNT (hosted fair use). Unset = no cap.
-  const max = Number(ctx.env.MAX_SITES_PER_ACCOUNT || 0);
-  if (max > 0) {
+  checkRetention(input.retention_days, retention);
+  // MAX_SITES_PER_ACCOUNT (hosted fair use; UNCLAIMED_ for unclaimed accounts). Unset = no cap.
+  const max = siteCap(ctx.env, standing, "MAX_SITES_PER_ACCOUNT", Number.POSITIVE_INFINITY);
+  if (Number.isFinite(max)) {
     const n = await db.prepare("SELECT COUNT(*) AS n FROM sites WHERE account_id = ?").bind(ctx.accountId).first<{ n: number }>();
     if ((n?.n ?? 0) >= max) {
-      throw new ApiError(
-        403,
-        "quota_exceeded",
+      throw quotaExceeded(
         `This account already has ${max} sites, the most allowed here.`,
         "Delete a site you no longer need (DELETE /v1/sites/:id), or self-host for more (see /llms.txt).",
       );
@@ -147,18 +226,21 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     name: input.name ?? null,
     timezone: input.timezone ?? "UTC",
     visitor_id_mode: input.visitor_id_mode ?? "cookieless",
-    retention_days: input.retention_days ?? 400,
+    retention_days: input.retention_days ?? retention.default,
     allowed_hostnames: input.allowed_hostnames?.length ? JSON.stringify(input.allowed_hostnames.map((h) => h.toLowerCase())) : null,
     respect_dnt: input.respect_dnt ? 1 : 0,
     exclusions: exclusionsColumn(input.exclusions),
+    browser_revenue: input.browser_revenue ? 1 : 0,
+    trust_browser_user_id: input.trust_browser_user_id ? 1 : 0,
     created_at: now,
     updated_at: now,
   };
   try {
     await db
       .prepare(
-        `INSERT INTO sites (id, account_id, domain, name, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sites (id, account_id, domain, name, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions,
+           browser_revenue, trust_browser_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         row.id,
@@ -171,6 +253,8 @@ export async function createSite(ctx: Ctx, raw: unknown) {
         row.allowed_hostnames,
         row.respect_dnt,
         row.exclusions ?? null,
+        row.browser_revenue ?? 0,
+        row.trust_browser_user_id ?? 0,
         now,
         now,
       )
@@ -198,14 +282,38 @@ export async function listSites(ctx: Ctx) {
 
 export async function getSite(ctx: Ctx, siteId: string) {
   const s = await loadSite(ctx, siteId);
-  const summary = await siteStub(ctx.env, s.id).summary();
-  return { site: siteJson(s, ctx.baseUrl), data: "error" in summary ? null : summary };
+  const [summary, standing] = await Promise.all([siteStub(ctx.env, s.id).summary(), standingOf(ctx)]);
+  const data = "error" in summary ? null : summary;
+  const limits = siteLimits(ctx.env, standing);
+  return {
+    site: { ...siteJson(s, ctx.baseUrl), effective_retention_days: effectiveRetention(ctx.env, standing, s.retention_days) },
+    data,
+    limits,
+    status: data ? budgetStatus(data, limits) : null,
+  };
+}
+
+/** Is the site currently refusing events (storage budget, daily limit)? */
+export function budgetStatus(
+  d: { usage_today?: { events: number; refused: number }; database_bytes?: number },
+  l: { events_per_site_per_day: number | null; storage_bytes: number | null },
+) {
+  const storageFull = l.storage_bytes != null && (d.database_bytes ?? 0) >= l.storage_bytes;
+  const dailyLimit = l.events_per_site_per_day != null && (d.usage_today?.events ?? 0) >= l.events_per_site_per_day;
+  return {
+    storage_full: storageFull,
+    daily_limit_reached: dailyLimit,
+    database_bytes: d.database_bytes ?? null,
+    events_today: d.usage_today?.events ?? 0,
+    refused_today: d.usage_today?.refused ?? 0,
+  };
 }
 
 export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   const input = parse(updateSiteInput, raw);
   const s = await loadSite(ctx, siteId);
   checkTimezone(input.timezone);
+  if (input.retention_days !== undefined) checkRetention(input.retention_days, retentionBounds(ctx.env, await standingOf(ctx)));
   const next: SiteRow = { ...s, updated_at: Date.now() };
   if (input.domain !== undefined) {
     next.domain = cleanDomain(input.domain);
@@ -224,8 +332,11 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
     next.allowed_hostnames = input.allowed_hostnames?.length ? JSON.stringify(input.allowed_hostnames.map((h) => h.toLowerCase())) : null;
   if (input.respect_dnt !== undefined) next.respect_dnt = input.respect_dnt ? 1 : 0;
   if (input.exclusions !== undefined) next.exclusions = exclusionsColumn(input.exclusions);
+  if (input.browser_revenue !== undefined) next.browser_revenue = input.browser_revenue ? 1 : 0;
+  if (input.trust_browser_user_id !== undefined) next.trust_browser_user_id = input.trust_browser_user_id ? 1 : 0;
   await ctx.env.DB.prepare(
-    `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, exclusions = ?, updated_at = ?
+    `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, exclusions = ?,
+       browser_revenue = ?, trust_browser_user_id = ?, updated_at = ?
      WHERE id = ? AND account_id = ?`,
   )
     .bind(
@@ -237,6 +348,8 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
       next.allowed_hostnames,
       next.respect_dnt,
       next.exclusions ?? null,
+      next.browser_revenue ?? 0,
+      next.trust_browser_user_id ?? 0,
       next.updated_at,
       s.id,
       ctx.accountId,

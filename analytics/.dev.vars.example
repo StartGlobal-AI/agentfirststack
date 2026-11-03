@@ -8,9 +8,23 @@ DEV_MODE=true
 # Optional: seals the Stripe webhook signing secret (32 bytes, base64): openssl rand -base64 32.
 # Without it POST /v1/sites/:id/integrations/stripe returns 503 not_configured.
 # ENCRYPTION_KEY=
-# Optional fair-use caps (unset = no cap)
+# Optional fair-use caps (unset = no cap). Each also reads UNCLAIMED_<NAME> for accounts nobody has claimed.
+# MAX_SITES_PER_ACCOUNT=
 # MAX_ANNOTATIONS_PER_SITE=
 # MAX_FUNNELS_PER_SITE=
+# MAX_GOALS_PER_SITE=100
+# MAX_SHARE_LINKS_PER_SITE=10
+# Daily (UTC) event caps per site / per account, and for the whole deployment (unset = off)
+# MAX_EVENTS_PER_SITE_PER_DAY=
+# MAX_EVENTS_PER_ACCOUNT_PER_DAY=
+# DAILY_EVENT_BUDGET=
+# Stop storing a site's events past this database size (unset = off)
+# MAX_SITE_STORAGE_MB=
+# Bounds for retention_days (unset = 1..3650)
+# MIN_RETENTION_DAYS=
+# MAX_RETENTION_DAYS=
+# SQL wall time a site may use per 10 minutes, ms (default 60000; 0 = off)
+# SQL_TIME_BUDGET_MS=60000
 # Optional: open | token | closed
 # SIGNUP_MODE=open
 # SIGNUP_TOKEN=

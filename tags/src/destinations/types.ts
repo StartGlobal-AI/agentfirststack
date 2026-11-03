@@ -120,6 +120,13 @@ export interface Connector<C extends Record<string, unknown> = Record<string, un
   skipIfFiredBy?: string;
   /** true: only events with send_to[type] are delivered. false: every server event. */
   needsMapping: boolean;
+  /**
+   * Deliver only events that matched a conversion in the config (unless the destination's
+   * settings.all_events is true). Used by webhooks, which point anywhere the account chooses.
+   */
+  matchedOnly?: boolean;
+  /** Delivery attempts before a failure is final (default MAX_ATTEMPTS in dispatch.ts). */
+  maxAttempts?: number;
   testMode: string;
   example: C;
   docs: string;

@@ -38,7 +38,7 @@ existing key instead of registering again.
 - **API keys** with scope `*` (full access) or `read` (GET routes and read-only MCP tools only).
 - **OAuth 2.1** for chat apps that can't hold a key (MCP authorization spec): a person signs in
   with Google, picks a project and grants full or read access. Access tokens are API keys that
-  expire after 8 hours.
+  expire after 8 hours; they can't create other keys or claim links.
 
 ## Credential use
 
@@ -101,7 +101,8 @@ owner (or a member, if it already has one). Your key keeps working.
 ## Managing credentials
 
 - `GET /v1/me` returns the account and the calling key.
-- `POST /v1/keys {"name": "ci", "scope": "read"}` creates another key (shown once).
+- `POST /v1/keys {"name": "ci", "scope": "read"}` creates another key (shown once). At most 50
+  active keys per account; OAuth access tokens can't create keys.
 - `DELETE /v1/keys/:id` revokes a key immediately.
 - People who claimed the project manage keys and connected apps at https://agentfirststack.com/dashboard.
 

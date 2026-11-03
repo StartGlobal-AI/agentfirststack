@@ -1,11 +1,15 @@
 import { ApiError, badRequest, conflict, newId, notFound } from "@afs/shared";
-import type { AppEnv } from "../env";
+import { type AppEnv, type Standing, cap, positiveIntVar, standingOf } from "../env";
 import { checkUsername, normalizeDomain, randomUsername } from "../lib/address";
 import { headerSafe } from "../lib/headers";
+import { assertActive, dailyLimitError, refundDaily, reserveDaily } from "./budgets";
 import { type InboxRow, inboxJson, utcDay } from "./format";
 
 export const MAX_TTL_DAYS = 3650;
 const DAY = 86_400_000;
+/** ADDRESS_TOMBSTONE_DAYS default: how long a deleted shared-domain address stays its old account's. */
+export const DEFAULT_TOMBSTONE_DAYS = 90;
+export const tombstoneDays = (env: AppEnv) => positiveIntVar(env.ADDRESS_TOMBSTONE_DAYS, DEFAULT_TOMBSTONE_DAYS);
 /** Wall time one cron run may spend on each purge before handing the rest to the next run. */
 export const PURGE_BUDGET_MS = 20_000;
 const PURGE_BATCH = 200;
@@ -61,10 +65,10 @@ export interface CreateInboxInput {
   ttl_days?: number | null;
 }
 
-/** MAX_INBOXES_PER_ACCOUNT (hosted fair use). Unset = no cap. */
-async function assertInboxQuota(env: AppEnv, accountId: string) {
-  const max = Number(env.MAX_INBOXES_PER_ACCOUNT || 0);
-  if (!(max > 0)) return;
+/** MAX_INBOXES_PER_ACCOUNT (hosted fair use; UNCLAIMED_ variant). Unset = no cap. */
+async function assertInboxQuota(env: AppEnv, standing: Standing, accountId: string) {
+  const max = cap(env, standing, "MAX_INBOXES_PER_ACCOUNT");
+  if (!Number.isFinite(max)) return;
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM inboxes WHERE account_id = ?").bind(accountId).first<{ n: number }>();
   if ((row?.n ?? 0) >= max) {
     throw new ApiError(
@@ -72,12 +76,16 @@ async function assertInboxQuota(env: AppEnv, accountId: string) {
       "quota_exceeded",
       `This account already has ${max} inboxes, the most allowed here.`,
       "Delete an inbox you no longer need (DELETE /v1/inboxes/:id), or reuse one: an inbox can receive mail from any number of services.",
+      { limit: max },
     );
   }
 }
 
 export async function createInbox(env: AppEnv, accountId: string, input: CreateInboxInput, now = Date.now()) {
+  const standing = await standingOf(env, accountId);
+  assertActive(standing);
   const dom = await resolveInboxDomain(env, accountId, input.domain);
+  const tombCutoff = now - tombstoneDays(env) * DAY;
   const expiresAt = input.ttl_days ? now + Math.round(input.ttl_days * DAY) : null;
   const display = cleanDisplayName(input.display_name);
 
@@ -85,10 +93,11 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   const insert = async (username: string): Promise<{ row: InboxRow; existing: boolean } | null> => {
     const address = `${username}@${dom.domain}`;
     // One query for both, so a live address and a tombstoned one cost the same and answer the same.
+    // Tombstones lapse after ADDRESS_TOMBSTONE_DAYS.
     const found = await env.DB.prepare(
-      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address",
+      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address AND t.deleted_at > ?",
     )
-      .bind(address)
+      .bind(address, tombCutoff)
       .first<InboxRow & { id: string | null; tomb_account: string | null }>();
     if (found?.id) {
       if (found.account_id !== accountId) return null;
@@ -96,7 +105,16 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
       return { row: row as InboxRow, existing: true };
     }
     if (found?.tomb_account && found.tomb_account !== accountId) return null;
-    await assertInboxQuota(env, accountId);
+    await assertInboxQuota(env, standing, accountId);
+    // MAX_INBOX_CREATES_PER_DAY: only real creations count (not "existing": true).
+    const limit = cap(env, standing, "MAX_INBOX_CREATES_PER_DAY");
+    const budget = await reserveDaily(env, accountId, "inbox_create", limit, now);
+    if (!budget.ok)
+      throw dailyLimitError(
+        `this account created ${limit} inboxes today`,
+        limit,
+        "Reuse an inbox you already have (one inbox can receive mail from any number of services, and wait/latest-code take from/subject filters), or create more tomorrow.",
+      );
     const row: InboxRow = {
       id: newId("inb"),
       account_id: accountId,
@@ -115,6 +133,7 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
         .bind(row.id, row.account_id, row.address, row.username, row.domain, row.display_name, row.expires_at, row.created_at)
         .run();
     } catch (e) {
+      await refundDaily(env, accountId, "inbox_create", budget.day);
       if (/UNIQUE/i.test(String(e))) {
         // Lost a race with a concurrent create of the same address.
         const again = await env.DB.prepare("SELECT * FROM inboxes WHERE address = ?").bind(address).first<InboxRow>();
@@ -226,22 +245,50 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
     ]);
     if ((msgs?.meta.changes ?? 0) < DELETE_CHUNK) break;
   }
+  // A shared-domain address that ever received mail may have been used to sign up somewhere, so it
+  // stays its old account's for ADDRESS_TOMBSTONE_DAYS (see migrations/0006 and 0009). One that
+  // never received mail is free again at once: create/delete loops reserve nothing.
+  const tombstone = row.domain === sharedDomain(env) && row.last_message_at !== null;
   await env.DB.batch([
     env.DB.prepare("UPDATE domains SET catch_all_inbox_id = NULL WHERE catch_all_inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM threads WHERE inbox_id = ?").bind(id),
     env.DB.prepare("UPDATE webhooks SET enabled = 0 WHERE inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM inboxes WHERE id = ?").bind(id),
-    // Shared-domain addresses are never handed to another account (see migrations/0006).
-    ...(row.domain === sharedDomain(env)
+    ...(tombstone
       ? [
           env.DB.prepare(
-            "INSERT INTO address_tombstones (address, account_id, deleted_at) VALUES (?, ?, ?) ON CONFLICT(address) DO NOTHING",
+            "INSERT INTO address_tombstones (address, account_id, deleted_at) VALUES (?, ?, ?) ON CONFLICT(address) DO UPDATE SET account_id = excluded.account_id, deleted_at = excluded.deleted_at",
           ).bind(row.address, row.account_id, now),
         ]
       : []),
   ]);
   const blobs = await deletePrefix(env.BLOBS, `inbox/${id}/`);
-  return { deleted: id, address: row.address, blobs_deleted: blobs };
+  return {
+    deleted: id,
+    address: row.address,
+    blobs_deleted: blobs,
+    address_reserved_until: tombstone ? now + tombstoneDays(env) * DAY : null,
+  };
+}
+
+/** DELETE /v1/inboxes/:id and the delete_inbox tool: deleteInbox under MAX_INBOX_DELETES_PER_DAY. */
+export async function deleteInboxForUser(env: AppEnv, accountId: string, id: string, now = Date.now()) {
+  await getInboxRow(env, accountId, id); // 404 before spending budget
+  const standing = await standingOf(env, accountId);
+  const limit = cap(env, standing, "MAX_INBOX_DELETES_PER_DAY");
+  const budget = await reserveDaily(env, accountId, "inbox_delete", limit, now);
+  if (!budget.ok)
+    throw dailyLimitError(
+      `this account deleted ${limit} inboxes today`,
+      limit,
+      'Let it expire instead: PATCH /v1/inboxes/:id {"ttl_days": 1} deletes it (and its mail) within a day.',
+    );
+  try {
+    return await deleteInbox(env, accountId, id, now);
+  } catch (e) {
+    await refundDaily(env, accountId, "inbox_delete", budget.day);
+    throw e;
+  }
 }
 
 /**
@@ -289,12 +336,22 @@ export async function purgeOldSharedMessages(env: AppEnv, now = Date.now(), budg
   }
 }
 
-/** Cron: daily inbound counters older than a week are no longer needed. */
+/**
+ * Cron: housekeeping rows that are no longer needed: daily counters older than a week (inbound,
+ * per sender, per-account budgets), wait slots past their expiry (a Worker that died), and address
+ * tombstones older than ADDRESS_TOMBSTONE_DAYS.
+ */
 export async function pruneCounters(env: AppEnv, now = Date.now()) {
-  const r = await env.DB.prepare("DELETE FROM inbound_counters WHERE day < ?")
-    .bind(utcDay(now - 7 * DAY))
-    .run();
-  return { counters_pruned: r.meta.changes ?? 0 };
+  const weekAgo = utcDay(now - 7 * DAY);
+  const r = await env.DB.batch([
+    env.DB.prepare("DELETE FROM inbound_counters WHERE day < ?").bind(weekAgo),
+    env.DB.prepare("DELETE FROM sender_counters WHERE day < ?").bind(weekAgo),
+    env.DB.prepare("DELETE FROM account_daily WHERE day < ?").bind(weekAgo),
+    env.DB.prepare("DELETE FROM active_waits WHERE expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM address_tombstones WHERE deleted_at < ?").bind(now - tombstoneDays(env) * DAY),
+  ]);
+  const n = (i: number) => r[i]?.meta.changes ?? 0;
+  return { counters_pruned: n(0) + n(1) + n(2), wait_slots_pruned: n(3), tombstones_pruned: n(4) };
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
  * Ingest derivation: one chunk of rrweb events -> the compact facts an agent reads. Pure and
- * bounded (at most LIMITS.EVENTS_PER_CHUNK events looked at, LIMITS.DERIVED_PER_CHUNK facts
+ * bounded (at most LIMITS.EVENTS_PER_CHUNK events looked at, MAX_DERIVED_PER_CHUNK facts
  * kept), so it runs in the Worker within its CPU budget and is unit-tested with fixtures.
  *
  * Everything in a chunk is untrusted (anyone can POST one): every field is type-checked, clipped
@@ -9,7 +9,7 @@
 
 import { errorFingerprint } from "./fingerprint";
 import { LIMITS } from "./limits";
-import { scrubText, stripQuery } from "./mask-rules";
+import { cleanText, scrubPath, scrubText, stripQuery } from "./mask-rules";
 import { type Envelope, type NavType, SESSION_ID_RE, TAGS } from "./protocol";
 
 export interface DerivedPage {
@@ -113,10 +113,12 @@ export interface DerivedChunk {
   /** quantised (50 ms) effect timestamps in this chunk's first DEAD_MS: resolve open clicks of earlier chunks */
   effect_head: number[];
   viewport: { w: number; h: number } | null;
-  /** page hostnames named by afs.page events */
+  /** page hostnames named by afs.page events and rrweb Meta events */
   hosts: string[];
-  /** events or facts dropped: malformed, over the caps */
+  /** events or facts dropped: malformed, out of range, over the caps */
   dropped: number;
+  /** of those, malformed or out of range (not just over a cap): a chunk that is mostly this is refused */
+  invalid: number;
   truncated: boolean;
 }
 
@@ -129,24 +131,33 @@ const EFFECT_SOURCES = new Set([
 ]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-const str = (v: unknown, max: number): string | null => (typeof v === "string" && v.length ? (v.length > max ? v.slice(0, max) : v) : null);
+/** A string field: control characters, separators and bidi overrides removed (cleanText), clipped. */
+const str = (v: unknown, max: number): string | null => {
+  if (typeof v !== "string" || !v.length) return null;
+  const s = cleanText(v.length > max * 2 ? v.slice(0, max * 2) : v).trim();
+  return s ? (s.length > max ? s.slice(0, max) : s) : null;
+};
 const int = (v: unknown, min: number, max: number): number | null =>
   typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : null;
 const NAV: readonly NavType[] = ["load", "reload", "back_forward", "push", "replace", "pop"];
 const HIDE_KINDS = new Set(["hidden", "pagehide", "max_duration", "stop", "excluded"]);
 
-/** A path the way we store it: starts with "/", no query or fragment, at most 500 characters. */
+/**
+ * A path the way we store it: starts with "/", no query or fragment, id-like segments (emails,
+ * numbers, uuids, tokens) as ":id", no control characters, at most 500 characters.
+ */
 export function cleanPath(v: unknown): string | null {
   const s = str(v, 2000);
   if (!s || s[0] !== "/") return null;
-  return stripQuery(s).slice(0, 500) || "/";
+  return scrubPath(stripQuery(s).replace(/\s/g, "")).slice(0, 500) || "/";
 }
 
 function cleanHref(v: unknown): string | null {
   const s = str(v, 2000);
   if (!s) return null;
-  if (s[0] === "/") return stripQuery(s).slice(0, 500);
-  if (/^https?:\/\/[^/\s]+/i.test(s)) return stripQuery(s).slice(0, 500);
+  if (s[0] === "/") return cleanPath(s);
+  const m = /^(https?:\/\/[a-z0-9.-]+(?::\d{1,5})?)(\/[^\s]*)?$/i.exec(stripQuery(s));
+  if (m) return `${m[1]!.toLowerCase()}${cleanPath(m[2] ?? "/") ?? "/"}`.slice(0, 500);
   return null;
 }
 
@@ -159,7 +170,7 @@ function cleanProps(v: unknown): Record<string, string | number | boolean | null
     const key = k.slice(0, 40);
     if (!/^[A-Za-z0-9_.-]+$/.test(key)) continue;
     if (val === null || typeof val === "boolean" || (typeof val === "number" && Number.isFinite(val))) out[key] = val;
-    else if (typeof val === "string") out[key] = val.slice(0, 200);
+    else if (typeof val === "string") out[key] = cleanText(val.slice(0, 200));
     else continue;
     n++;
   }
@@ -167,6 +178,9 @@ function cleanProps(v: unknown): Record<string, string | number | boolean | null
 }
 
 export type EnvelopeResult = { ok: true; env: Envelope } | { ok: false; error: string; hint: string };
+
+/** The fields an envelope may have; anything else is refused (chunks are stored as received). */
+const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd"]);
 
 /** Check a decoded body against the query string (?sid=&q=) it was sent with. */
 export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): EnvelopeResult {
@@ -176,6 +190,13 @@ export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): En
     return { ok: false, error: "session_mismatch", hint: "sid in the body must match ?sid=." };
   if (raw.seq !== q.seq) return { ok: false, error: "seq_mismatch", hint: "seq in the body must match ?q=." };
   if (!Array.isArray(raw.ev)) return { ok: false, error: "invalid_body", hint: "ev must be an array of rrweb events." };
+  const extra = Object.keys(raw).find((k) => !ENVELOPE_KEYS.has(k));
+  if (extra !== undefined)
+    return {
+      ok: false,
+      error: "invalid_body",
+      hint: `Unknown envelope field ${JSON.stringify(extra.slice(0, 40))}; send only the recorder's fields.`,
+    };
   const t = typeof raw.t === "number" && Number.isFinite(raw.t) ? raw.t : 0;
   const env: Envelope = { v: 1, sid: q.sid, seq: q.seq, t, ev: raw.ev };
   if (raw.end === 1) env.end = 1;
@@ -211,9 +232,12 @@ export function focusClick(tag: string): boolean {
 
 /**
  * Derive one chunk. `now` bounds timestamps: events claiming to be from the future (beyond
- * `now` + 5 min of the client's corrected clock) or older than a day are dropped.
+ * `now` + 5 min of the client's corrected clock) or older than a day are dropped. `maxDerived`
+ * caps the facts kept (MAX_DERIVED_PER_CHUNK); clicks beyond LIMITS.CLICKS_PER_SECOND in any 1 s
+ * window are dropped (no person clicks that fast).
  */
-export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number }): DerivedChunk {
+export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number; maxDerived?: number }): DerivedChunk {
+  const maxDerived = Math.max(0, Math.min(LIMITS.DERIVED_PER_CHUNK_MAX, opts.maxDerived ?? LIMITS.DERIVED_PER_CHUNK_MAX));
   const out: DerivedChunk = {
     first_ts: 0,
     last_ts: 0,
@@ -232,6 +256,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
     viewport: null,
     hosts: [],
     dropped: 0,
+    invalid: 0,
     truncated: false,
   };
   const events = env.ev;
@@ -241,8 +266,12 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
   const scrollPts: ScrollPoint[] = [];
   const hosts = new Set<string>();
   let derived = 0;
+  const bad = () => {
+    out.dropped++;
+    out.invalid++;
+  };
   const room = () => {
-    if (derived >= LIMITS.DERIVED_PER_CHUNK) {
+    if (derived >= maxDerived) {
       out.truncated = true;
       out.dropped++;
       return false;
@@ -257,12 +286,12 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
   for (let i = 0; i < n; i++) {
     const e = events[i];
     if (!isObj(e) || typeof e.type !== "number" || typeof e.timestamp !== "number" || !Number.isFinite(e.timestamp)) {
-      out.dropped++;
+      bad();
       continue;
     }
     const ts = Math.round(e.timestamp);
     if (ts < opts.minTs || ts > opts.maxTs) {
-      out.dropped++;
+      bad();
       continue;
     }
     out.rr_events++;
@@ -274,6 +303,8 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
       const w = int(data.width, 0, 20_000);
       const h = int(data.height, 0, 20_000);
       if (w !== null && h !== null) out.viewport = { w, h };
+      const mh = typeof data.href === "string" ? /^https?:\/\/([^/:?#\s]+)/i.exec(data.href) : null;
+      if (mh) hosts.add(mh[1]!.toLowerCase().slice(0, 253));
       navTimes.push(ts);
     } else if (e.type === 3) {
       if (typeof data.source === "number" && EFFECT_SOURCES.has(data.source)) {
@@ -286,17 +317,19 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
       if (typeof tag !== "string" || !tag.startsWith("afs.") || !isObj(p)) continue;
       const pv = int(p.pv, 0, 100_000);
       if (pv === null) {
-        out.dropped++;
+        bad();
         continue;
       }
       if (tag === TAGS.page) {
         const path = cleanPath(p.p);
         const host = str(p.h, 253)?.toLowerCase() ?? "";
-        if (!path || !/^[a-z0-9.-]*$/.test(host) || !room()) {
-          out.dropped++;
+        // A page names its hostname; without one the page can't be checked against the site's hosts.
+        if (!path || !/^[a-z0-9.-]+$/.test(host)) {
+          bad();
           continue;
         }
-        if (host) hosts.add(host);
+        if (!room()) continue;
+        hosts.add(host);
         const nav = NAV.includes(p.nav as NavType) ? (p.nav as NavType) : "load";
         out.pages.push({
           ts,
@@ -316,10 +349,11 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
         scrollPts.push({ ts, pv, y: 0, dh: int(p.dh, 0, 1_000_000) ?? 0, vh: int(p.vh, 0, 20_000) ?? 0, load: true });
       } else if (tag === TAGS.click) {
         const selector = str(p.s, 300);
-        if (!selector || !room()) {
-          out.dropped++;
+        if (!selector) {
+          bad();
           continue;
         }
+        if (!room()) continue;
         const doc_h = int(p.dh, 0, 1_000_000) ?? 0;
         out.clicks.push({
           ts,
@@ -341,10 +375,11 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
         });
       } else if (tag === TAGS.input) {
         const selector = str(p.s, 300);
-        if (!selector || !room()) {
-          out.dropped++;
+        if (!selector) {
+          bad();
           continue;
         }
+        if (!room()) continue;
         out.inputs.push({
           ts,
           pv,
@@ -362,8 +397,9 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
         const kind = p.k === "rejection" || p.k === "console" ? p.k : "error";
         const message = scrubText(str(p.m, 1000) ?? "Error", 500);
         if (!room()) continue;
-        const source = str(p.src, 300) ? stripQuery(String(p.src)).slice(0, 300) : null;
-        const stack = str(p.st, 3000) ? scrubText(String(p.st), 1500) : null;
+        const src = str(p.src, 600);
+        const source = src ? stripQuery(src).replace(/\s/g, "").slice(0, 300) || null : null;
+        const stack = typeof p.st === "string" && p.st ? scrubText(cleanText(p.st.slice(0, 3000), true), 1500) : null;
         const at = int(p.at, opts.minTs, ts);
         out.errors.push({
           ts: at !== null && at >= ts - 60_000 ? at : ts,
@@ -389,6 +425,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
     }
   }
   if (!Number.isFinite(first)) first = last = 0;
+  out.clicks = capClickRate(out.clicks, out);
   out.first_ts = first;
   out.last_ts = last;
   out.cover_end = Math.max(last, Math.min(opts.maxTs, env.t || 0));
@@ -409,6 +446,24 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number 
 
   out.scrolls = scrollSegments(scrollPts);
   return out;
+}
+
+/** Keep at most LIMITS.CLICKS_PER_SECOND clicks in any 1 s window (sorted by time); the rest are dropped. */
+function capClickRate(clicks: DerivedClick[], out: { dropped: number; truncated: boolean }): DerivedClick[] {
+  if (clicks.length <= LIMITS.CLICKS_PER_SECOND) return clicks;
+  const sorted = [...clicks].sort((a, b) => a.ts - b.ts);
+  const kept: DerivedClick[] = [];
+  let lo = 0;
+  for (const c of sorted) {
+    while (lo < kept.length && kept[lo]!.ts <= c.ts - 1000) lo++;
+    if (kept.length - lo >= LIMITS.CLICKS_PER_SECOND) {
+      out.dropped++;
+      out.truncated = true;
+      continue;
+    }
+    kept.push(c);
+  }
+  return kept;
 }
 
 const REVERSAL_MIN_PX = 40;

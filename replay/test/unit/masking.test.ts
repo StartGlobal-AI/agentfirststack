@@ -16,6 +16,8 @@ import {
   inputAlwaysMasked,
   maskAll,
   maskPartial,
+  pathExcluded,
+  pathHash,
   pathMatches,
   scrubText,
   stripQuery,
@@ -23,7 +25,7 @@ import {
 } from "../../src/lib/mask-rules";
 import { selectorListProblems, selectorProblem } from "../../src/lib/selectors";
 import type { SiteRow } from "../../src/service/context";
-import { loaderConfig } from "../../src/service/sites";
+import { excludeConfig, loaderConfig } from "../../src/service/sites";
 
 describe("masking rules", () => {
   it("strict masks everything not unmasked; balanced masks digits and emails; relaxed shows text", () => {
@@ -96,17 +98,20 @@ describe("selector config validation", () => {
       require_consent: 1,
       capture_console_errors: 0,
       enabled: 1,
+      verified_at: 1_800_000_000_000,
     } as unknown as SiteRow;
     const env = { MAX_SAMPLE_RATE: "0.1", MAX_SESSION_MINUTES: "20" } as never;
-    expect(loaderConfig(site, env, "https://replay.test", "/recorder.abc.js")).toEqual({
+    expect(loaderConfig(site, env, "https://replay.test", "/rec/abc.js")).toEqual({
       site: "rsite_0123456789abcdef",
-      rec: "/recorder.abc.js",
+      rec: "/rec/abc.js",
       sr: 0.1,
       mask: "balanced",
       unmask: "nav,button",
       maskSel: ".price",
       block: "#chat",
-      ex: ["/account/*"],
+      // "/account/*" travels as a salted hash, not in the clear
+      ex: [],
+      exh: [pathHash("rsite_0123456789abcdef", "^/account/")],
       maxMs: 20 * 60_000,
       idleMs: 300_000,
       consent: true,
@@ -115,6 +120,29 @@ describe("selector config validation", () => {
       base: "https://replay.test",
     });
     expect(loaderConfig(site, {} as never, "b", "r").sr).toBe(0.5);
+    // until the domain is verified, masking is strict whatever the settings
+    const unverified = loaderConfig({ ...site, verified_at: null }, env, "b", "r");
+    expect(unverified).toMatchObject({ mask: "strict", unmask: "", maskSel: ".price", block: "#chat" });
+  });
+
+  it("exclude_paths: exact and prefix globs as hashes, others in the clear, matched the same in the browser", () => {
+    const site = "rsite_0123456789abcdef";
+    const cfg = excludeConfig(site, ["/account/*", "/admin", "/a/*/edit"]);
+    expect(cfg.ex).toEqual(["/a/*/edit"]);
+    expect(cfg.exh).toHaveLength(2);
+    expect(JSON.stringify(cfg)).not.toContain("account");
+    for (const [p, out] of [
+      ["/account/settings", true],
+      ["/account/", true],
+      ["/accounts", false],
+      ["/admin", true],
+      ["/admin/x", false],
+      ["/a/42/edit", true],
+      ["/pricing", false],
+    ] as const)
+      expect(pathExcluded(p, site, cfg.ex, cfg.exh)).toBe(out);
+    // the salt is the site id: another site's hashes don't match
+    expect(pathExcluded("/admin", "rsite_other0000000000", cfg.ex, cfg.exh)).toBe(false);
   });
 });
 

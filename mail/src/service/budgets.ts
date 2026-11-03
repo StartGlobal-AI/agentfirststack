@@ -1,0 +1,66 @@
+import { ApiError, accountSuspended } from "@afs/shared";
+import type { AppEnv, Standing } from "../env";
+import { utcDay } from "./format";
+
+/** Kinds of per-account daily budget kept in `account_daily`. */
+export type DailyKind = "inbox_create" | "inbox_delete" | "webhook_test";
+
+/** Throws account_suspended (403) for a suspended account. */
+export function assertActive(standing: Standing): void {
+  if (standing.suspended) throw accountSuspended();
+}
+
+/**
+ * Atomically take `n` from today's (UTC) budget of `kind`; false when that would pass `limit`.
+ * Infinity = no budget (nothing is written).
+ */
+export async function reserveDaily(env: AppEnv, accountId: string, kind: DailyKind, limit: number, now = Date.now(), n = 1) {
+  if (!Number.isFinite(limit)) return { ok: true as const, day: null as string | null, used: 0, limit };
+  const day = utcDay(now);
+  if (n > limit) return { ok: false as const, day, used: limit, limit };
+  const row = await env.DB.prepare(
+    `INSERT INTO account_daily (account_id, kind, day, count) VALUES (?, ?, ?, ?)
+     ON CONFLICT(account_id, kind, day) DO UPDATE SET count = account_daily.count + excluded.count
+     WHERE account_daily.count + excluded.count <= ? RETURNING count`,
+  )
+    .bind(accountId, kind, day, n, limit)
+    .first<{ count: number }>();
+  return row ? { ok: true as const, day, used: row.count, limit } : { ok: false as const, day, used: limit, limit };
+}
+
+export async function refundDaily(env: AppEnv, accountId: string, kind: DailyKind, day: string | null, n = 1) {
+  if (!day) return;
+  await env.DB.prepare("UPDATE account_daily SET count = MAX(0, count - ?) WHERE account_id = ? AND kind = ? AND day = ?")
+    .bind(n, accountId, kind, day)
+    .run();
+}
+
+/** 429 daily_limit with a hint. */
+export function dailyLimitError(what: string, limit: number, hint: string, details: Record<string, unknown> = {}) {
+  return new ApiError(
+    429,
+    "daily_limit",
+    `Daily limit reached: ${what} (${limit} per UTC day).`,
+    `${hint} The budget resets at 00:00 UTC.`,
+    {
+      limit,
+      ...details,
+    },
+  );
+}
+
+/**
+ * A Workers rate-limit binding check keyed by account (approximate, per Cloudflare location).
+ * Deployments without the binding skip it. Throws 429 rate_limited with `hint`.
+ */
+export async function rateLimit(limiter: RateLimit | undefined, key: string, what: string, hint: string): Promise<void> {
+  if (!limiter) return;
+  let ok = true;
+  try {
+    ok = (await limiter.limit({ key })).success;
+  } catch (e) {
+    console.error("rate limiter failed", e);
+    return; // fail open: the D1 caps still apply
+  }
+  if (!ok) throw new ApiError(429, "rate_limited", `Too many ${what} requests from this account.`, hint);
+}

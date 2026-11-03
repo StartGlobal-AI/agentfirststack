@@ -165,6 +165,7 @@ describe("engine", () => {
     engine.configure(
       db,
       settings({
+        browser_revenue: true,
         goals: [
           { id: "g1", name: "Signup", type: "event", match: "signup", value: 5, created_at: 1 },
           { id: "g2", name: "Thanks", type: "pageview", match: "/thanks*", value: null, created_at: 2 },
@@ -300,10 +301,11 @@ describe("engine", () => {
     expect(engine.ingest(db, [ev({ dnt: true })], NOW).results[0]).toMatchObject({ ok: false, reason: "dnt" });
     const r = engine.ingest(db, [ev({ client_visitor_id: "persist-123" })], NOW);
     expect(r).toMatchObject({ persistent: true, results: [{ ok: true, visitor_id: "persist-123" }] });
-    expect(engine.summary(db, NOW).dropped_last_7d).toMatchObject({
-      hostname_not_allowed: { count: 1, sample: "evil.com" },
-      dnt: { count: 1 },
-    });
+    const sum = engine.summary(db, NOW);
+    expect(sum.dropped_last_7d).toMatchObject({ hostname_not_allowed: { count: 1 }, dnt: { count: 1 } });
+    // the visitor-sent hostname is only under `untrusted`
+    expect(JSON.stringify(sum.dropped_last_7d)).not.toContain("evil.com");
+    expect(sum.untrusted.drop_samples).toEqual({ hostname_not_allowed: "evil.com" });
   });
 
   it("read-only SQL: results, errors, guard, and rollback of any write", () => {
@@ -353,7 +355,7 @@ describe("engine", () => {
       NOW,
     );
     // 40 x 40 = 1600 rows, more than the cap, and LIMIT asks for even more
-    const r = engine.runSql(db, "SELECT a.id, b.id AS b FROM events a JOIN events b ON 1 = 1 LIMIT 100000");
+    const r = engine.runSql(db, "SELECT a.id, b.id AS b FROM events a JOIN events b ON b.id <> a.id LIMIT 100000");
     expect(r).toMatchObject({ row_count: engine.MAX_SQL_ROWS, truncated: true });
     let steps = 0;
     const counted: typeof db = {
@@ -363,7 +365,7 @@ describe("engine", () => {
         return { next: () => (steps++, c.next()), rowsRead: 0, rowsWritten: 0 };
       },
     };
-    engine.runSql(counted, "SELECT a.id FROM events a JOIN events b ON 1 = 1");
+    engine.runSql(counted, "SELECT a.id FROM events a JOIN events b ON b.id <> a.id");
     expect(steps).toBe(engine.MAX_SQL_ROWS + 1);
   });
 
@@ -399,7 +401,8 @@ describe("engine", () => {
     const r = engine.ingest(db, [ev({ proxy_warning: "proxy_key_missing", hostname: "example.com" }), ev({ visitor_hash: "v2" })], NOW);
     expect(r.results.map((x) => x.ok)).toEqual([true, true]);
     const sum = engine.summary(db, NOW);
-    expect(sum.warnings_last_7d).toMatchObject({ proxy_key_missing: { count: 1, sample: "example.com" } });
+    expect(sum.warnings_last_7d).toMatchObject({ proxy_key_missing: { count: 1 } });
+    expect(sum.untrusted.warning_samples).toEqual({ proxy_key_missing: "example.com" });
     expect(sum.dropped_last_7d).toEqual({});
   });
 

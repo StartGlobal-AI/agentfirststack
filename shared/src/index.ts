@@ -5,3 +5,4 @@ export * from "./http";
 export * from "./ids";
 export * from "./resource";
 export * from "./standing";
+export * from "./text";

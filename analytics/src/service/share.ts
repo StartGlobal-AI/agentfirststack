@@ -1,6 +1,7 @@
-import { notFound, parse, randomString } from "@afs/shared";
+import { accountStanding, accountSuspended, notFound, parse, randomString } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
+import { DEFAULT_MAX_SHARE_LINKS_PER_SITE, enforce, quotaExceeded, siteCap } from "../lib/limits";
 import { DEFAULT_METRICS } from "../lib/filters";
 import { PERIODS } from "../lib/time";
 import { type Ctx, type SiteRow, callSite, loadSite } from "./context";
@@ -23,6 +24,17 @@ export async function createShareLink(ctx: Ctx, siteId: string, raw: unknown) {
     if (existing)
       return { url: shareUrl(ctx.baseUrl, existing.token), token: existing.token, existing: true, created_at: existing.created_at };
   }
+  const max = siteCap(ctx.env, await accountStanding(ctx.env, ctx.accountId), "MAX_SHARE_LINKS_PER_SITE", DEFAULT_MAX_SHARE_LINKS_PER_SITE);
+  if (Number.isFinite(max)) {
+    const n = await ctx.env.DB.prepare("SELECT COUNT(*) AS n FROM share_links WHERE site_id = ? AND revoked_at IS NULL")
+      .bind(site.id)
+      .first<{ n: number }>();
+    if ((n?.n ?? 0) >= max)
+      throw quotaExceeded(
+        `This site already has ${max} active share links, the most allowed here.`,
+        `Reuse one (POST /v1/sites/${site.id}/share without "new" returns it), or revoke them all with DELETE /v1/sites/${site.id}/share.`,
+      );
+  }
   const token = `shr_${randomString(32)}`;
   const now = Date.now();
   await ctx.env.DB.prepare("INSERT INTO share_links (token, site_id, created_at) VALUES (?, ?, ?)").bind(token, site.id, now).run();
@@ -37,20 +49,22 @@ export async function createShareLink(ctx: Ctx, siteId: string, raw: unknown) {
 
 export async function revokeShareLinks(ctx: Ctx, siteId: string) {
   const site = await loadSite(ctx, siteId);
-  const res = await ctx.env.DB.prepare("UPDATE share_links SET revoked_at = ? WHERE site_id = ? AND revoked_at IS NULL")
-    .bind(Date.now(), site.id)
-    .run();
+  // A revoked token can never be used again, so its row goes (create + revoke can't grow the table).
+  const res = await ctx.env.DB.prepare("DELETE FROM share_links WHERE site_id = ?").bind(site.id).run();
   return { revoked: res.meta.changes ?? 0 };
 }
 
 async function siteForToken(env: Bindings, token: string): Promise<SiteRow> {
   if (!/^shr_[0-9a-z]{32}$/.test(token)) throw notFound("Share link");
+  await enforce([[env.SHARE_LIMITER, `share:${token}`]], "dashboard requests", "Wait a minute and reload.");
   const row = await env.DB.prepare(
     "SELECT s.* FROM share_links l JOIN sites s ON s.id = l.site_id WHERE l.token = ? AND l.revoked_at IS NULL",
   )
     .bind(token)
     .first<SiteRow>();
   if (!row) throw notFound("Share link", "The link was revoked or never existed.");
+  // A suspended account's public dashboards go dark with it.
+  if ((await accountStanding(env, row.account_id)).suspended) throw accountSuspended();
   return row;
 }
 

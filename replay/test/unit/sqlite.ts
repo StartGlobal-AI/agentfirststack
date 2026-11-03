@@ -3,7 +3,7 @@ import type { Db, Row, SqlValue } from "../../src/do/db";
 import { migrate } from "../../src/do/engine";
 
 /** The engine's Db interface over node:sqlite, so unit tests run the real SQL. */
-export function memoryDb(): Db & { raw: DatabaseSync } {
+export function memoryDb(migrated = true): Db & { raw: DatabaseSync } {
   const raw = new DatabaseSync(":memory:");
   const plain = (r: Record<string, unknown>) => ({ ...r }) as Row;
   let depth = 0;
@@ -34,6 +34,6 @@ export function memoryDb(): Db & { raw: DatabaseSync } {
       }
     },
   };
-  migrate(db);
+  if (migrated) migrate(db);
   return db;
 }

@@ -8,6 +8,14 @@ export type Bindings = Env & {
   ADMIN_TOKEN?: string;
   SIGNUP_TOKEN?: string;
   SIGNUP_HOURLY_LIMIT?: string;
+  SIGNUP_DAILY_LIMIT?: string;
+  SIGNUP_ASN_DAILY_LIMIT?: string;
+  SIGNUP_GLOBAL_HOURLY_LIMIT?: string;
+  /** Active API keys per account (default 50), and the cap for accounts no person has claimed. */
+  MAX_KEYS_PER_ACCOUNT?: string;
+  UNCLAIMED_MAX_KEYS_PER_ACCOUNT?: string;
+  /** New API keys per account per hour (off when unset). */
+  KEYS_HOURLY_LIMIT?: string;
   /** Google OAuth client for "Sign in with Google". Without both, sign-in says it's not configured. */
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;

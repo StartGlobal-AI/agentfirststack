@@ -99,12 +99,16 @@ echo "-- unknown address is rejected"
 DCODE=$(deliver github-launch-code noreply@github.com "nobody-$RUN@$DOMAIN")
 check "unknown recipient -> setReject" '[ "$DCODE" = 400 ] && grep -q "Address does not exist" "$TMP/deliver"' "$(cat "$TMP/deliver")"
 DCODE=$(deliver tiktok-verification register@account.tiktok.com "smoke-$RUN+tiktok@$DOMAIN")
-req GET "/v1/inboxes/$INBOX/latest-code?from=tiktok&after=0&timeout=3"
+req GET "/v1/inboxes/$INBOX/latest-code?from=tiktok.com&after=0&timeout=3"
 check "plus-address delivered to the base inbox" '[ "$DCODE" = 200 ] && [ "$(jq -r .code <<<"$BODY")" = 739205 ]' "$BODY"
+check "latest-code matched the sender domain (subdomain) with an authenticated sender" '[ "$(jq -r .auth_required <<<"$BODY")" = true ] && [ "$(jq -r .auth_verdict <<<"$BODY")" = pass ]' "$BODY"
+req GET "/v1/inboxes/$INBOX/latest-code?from=tiktok&after=0&timeout=0"
+check "latest-code refuses a bare word as sender (400 + hint)" '[ "$CODE" = 400 ] && jq -r .error.hint <<<"$BODY" | grep -q "from=github.com"' "$BODY"
 
 echo "-- reading"
 req GET "/v1/messages/$MSG"
 check "get message: text, links, auth" '[ "$CODE" = 200 ] && grep -q "entering the code below" <<<"$(jq -r .message.text <<<"$BODY")" && [ "$(jq -r .message.text_truncated <<<"$BODY")" = false ] && [ "$(jq -r .message.auth.verdict <<<"$BODY")" = pass ] && [ "$(jq ".message.links | length" <<<"$BODY")" -ge 2 ]' "$BODY"
+check "REST marks third-party content as untrusted" '[ "$(jq -r "keys_unsorted[0]" <<<"$BODY")" = untrusted ] && jq -r .untrusted.notice <<<"$BODY" | grep -q "^UNTRUSTED CONTENT" && jq -e ".untrusted.fields | index(\"message.text\")" <<<"$BODY" > /dev/null' "$BODY"
 MSGID_HEADER=$(jq -r .message.message_id_header <<<"$BODY")
 req GET "/v1/messages/$MSG/raw"
 check "raw MIME" '[ "$CODE" = 200 ] && grep -q "^Message-ID: <launch-code" <<<"$BODY"' "${BODY:0:300}"
@@ -191,7 +195,7 @@ wait "$MCP_PID"
 TOOL=$(jq -r ".result.content[0].text" "$TMP/mcpwait")
 check "tools/call wait_for_email -> Slack code 2RK-9QX" '[ "$(jq -r .message.code <<<"$TOOL")" = 2RK-9QX ]' "$(cat "$TMP/mcpwait")"
 check "MCP body is fenced as untrusted" 'jq -r .message.untrusted.notice <<<"$TOOL" | grep -q UNTRUSTED' "$TOOL"
-mcp "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_latest_code\",\"arguments\":{\"inbox_id\":\"$INBOX\",\"from\":\"github\",\"after\":0,\"timeout\":2}}}"
+mcp "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_latest_code\",\"arguments\":{\"inbox_id\":\"$INBOX\",\"from\":\"github.com\",\"after\":0,\"timeout\":2}}}"
 check "tools/call get_latest_code" '[ "$(jq -r ".result.content[0].text" <<<"$BODY" | jq -r .code)" = 61873352 ]' "$BODY"
 req POST /v1/keys '{"name":"ro","scope":"read"}'
 RO=$(jq -r .api_key <<<"$BODY")
@@ -207,13 +211,14 @@ check "/ui is one HTML page with a sandboxed iframe + CSP" '[ "$CODE" = 200 ] &&
 echo "-- cleanup"
 req DELETE "/v1/inboxes/$INBOX"
 check "delete inbox removes it and its blobs" '[ "$CODE" = 200 ] && [ "$(jq -r .blobs_deleted <<<"$BODY")" -ge 3 ]' "$BODY"
+check "an address that received mail stays reserved (address_reserved_until)" '[ "$(jq -r .address_reserved_until <<<"$BODY")" -gt "$(( $(date +%s) * 1000 ))" ]' "$BODY"
 req GET "/v1/messages/$MSG"
 check "its messages are gone" '[ "$CODE" = 404 ]' "$BODY"
 OWNER_KEY=$KEY
 KEY="" req POST /v1/signup '{"name":"smoke-2"}'
 KEY=$(jq -r .api_key <<<"$BODY")
 req POST /v1/inboxes "{\"username\":\"smoke-$RUN\"}"
-check "a deleted shared address is not handed to another account (409)" '[ "$CODE" = 409 ] && [ "$(jq -r .error.code <<<"$BODY")" = conflict ]' "$BODY"
+check "a deleted shared address that received mail is not handed to another account (409)" '[ "$CODE" = 409 ] && [ "$(jq -r .error.code <<<"$BODY")" = conflict ]' "$BODY"
 KEY=$OWNER_KEY
 req POST /v1/inboxes "{\"username\":\"smoke-$RUN\"}"
 check "its old owner can create it again (201)" '[ "$CODE" = 201 ]' "$BODY"

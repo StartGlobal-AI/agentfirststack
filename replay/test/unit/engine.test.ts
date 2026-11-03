@@ -91,12 +91,19 @@ describe("ingest: one session", () => {
 
   it("events that arrive before their page learn its path when it comes", () => {
     const db = memoryDb();
-    feed(db, sid(3), 1, [click(T0 + 500, 1, "#early"), scroll(T0 + 600, 1, 900)]);
+    feed(db, sid(3), 0, [meta(T0), snapshot(T0), page(T0 + 10, 1, "/")]);
+    feed(db, sid(3), 2, [click(T0 + 1500, 2, "#early"), scroll(T0 + 1600, 2, 900)]);
     expect(clicks(db, sid(3))[0]!.path).toBeNull();
-    feed(db, sid(3), 0, [meta(T0), snapshot(T0), page(T0 + 10, 1, "/landing")]);
+    feed(db, sid(3), 1, [page(T0 + 1010, 2, "/landing")]);
     expect(clicks(db, sid(3))[0]!.path).toBe("/landing");
-    const p = db.all("SELECT path, max_scroll FROM pages WHERE session_id = ?", [sid(3)]);
+    const p = db.all("SELECT path, max_scroll FROM pages WHERE session_id = ? AND pv = 2", [sid(3)]);
     expect(p).toEqual([{ path: "/landing", max_scroll: 60 }]);
+  });
+
+  it("a new session starts with the chunk that names its page; one that overtakes it is refused without stopping", () => {
+    const db = memoryDb();
+    expect(feed(db, sid(4), 1, [click(T0 + 500, 1, "#early")])).toEqual({ status: "rejected", reason: "page_host_required", stop: false });
+    expect(feed(db, sid(4), 0, [page(T0, 1, "/")]).status).toBe("accepted");
   });
 });
 
@@ -114,8 +121,9 @@ describe("ingest: signals across chunk boundaries", () => {
   it("... and when the later chunk arrives first", () => {
     const db = memoryDb();
     const s = sid(11);
-    feed(db, s, 1, [mutation(T0 + 5300), mousemove(T0 + 9000)]);
-    feed(db, s, 0, [page(T0, 1, "/"), click(T0 + 4800, 1, "#menu")], { t: T0 + 5000 });
+    feed(db, s, 0, [page(T0, 1, "/")], { t: T0 + 100 });
+    feed(db, s, 2, [mutation(T0 + 5300), mousemove(T0 + 9000)]);
+    feed(db, s, 1, [click(T0 + 4800, 1, "#menu")], { t: T0 + 5000 });
     expect(clicks(db, s)[0]).toMatchObject({ dead: 0, open: 0 });
   });
 
@@ -206,7 +214,10 @@ describe("ingest: limits", () => {
     feed(db, sid(21), 0, [page(T0, 1, "/")], lim);
     expect(feed(db, sid(22), 0, [page(T0, 1, "/")], lim)).toEqual({ status: "rejected", reason: "daily_session_limit", stop: true });
     expect(feed(db, sid(21), 1, [click(T0 + 10, 1, "#a")], lim).status).toBe("accepted");
-    expect(summary(db, NOW).dropped_last_7d.daily_session_limit!.count).toBe(1);
+    // the count never goes down: deleting the day's sessions frees nothing
+    deleteSessions(db, [sid(20), sid(21)]);
+    expect(feed(db, sid(23), 0, [page(T0, 1, "/")], lim)).toMatchObject({ reason: "daily_session_limit" });
+    expect(summary(db, NOW).usage_today).toMatchObject({ sessions: 2, chunks: 3 });
     // the next UTC day starts fresh
     expect(feed(db, sid(22), 0, [page(T0, 1, "/")], { ...lim, now: NOW + 86_400_000 }).status).toBe("accepted");
   });

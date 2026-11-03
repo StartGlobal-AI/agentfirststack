@@ -1,10 +1,11 @@
-import { ApiError, badRequest, newId, notFound, parse, randomString, sha256Hex } from "@afs/shared";
+import { accountStanding, ApiError, badRequest, newId, notFound, parse, randomString, sha256Hex, type Standing } from "@afs/shared";
 import { chunkKey } from "../do/engine";
-import { type Bindings, numVar } from "../env";
-import { DEFAULTS } from "../lib/limits";
+import { type Bindings, isDev } from "../env";
+import { cap, DEFAULTS } from "../lib/limits";
 import { SESSION_ID_RE } from "../lib/protocol";
 import { buildTimeline, entryLine, sessionJson } from "../lib/transcript";
-import { type Ctx, loadSite, type SiteRow, siteStub } from "./context";
+import { safePatterns } from "../lib/url";
+import { type Ctx, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
 import { createLinkInput } from "./schemas";
 
 /**
@@ -41,10 +42,18 @@ export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(createLinkInput, raw);
   const site = await loadSite(ctx, siteId);
   if (!SESSION_ID_RE.test(q.session_id)) throw badRequest("session_id must be an rs_... id.", "Take it from search_sessions.");
+  // A share link puts recorded content on this service's domain: only for sites whose domain is proven.
+  if (!isVerified(site))
+    throw new ApiError(
+      403,
+      "domain_not_verified",
+      `Share links need a verified domain; ${site.domain} isn't verified yet.`,
+      `Put the snippet on https://${site.domain}/ (or add DNS TXT _afs-verify.${site.domain} = "afs-replay-site=${site.id}"), then POST /v1/sites/${site.id}/verify.`,
+    );
   const s = await siteStub(ctx.env, site.id).session(q.session_id);
   if (!s) throw notFound("Session", `GET /v1/sites/${site.id}/sessions lists recorded sessions.`);
   const now = Date.now();
-  const max = numVar(ctx.env.MAX_LINKS_PER_SITE);
+  const max = cap(ctx.env, await accountStanding(ctx.env, ctx.accountId), "MAX_LINKS_PER_SITE", Number.POSITIVE_INFINITY);
   if (max !== null) {
     const n = await ctx.env.DB.prepare("SELECT COUNT(*) AS n FROM replay_links WHERE site_id = ? AND revoked_at IS NULL AND expires_at > ?")
       .bind(site.id, now)
@@ -109,8 +118,10 @@ export async function revokeLink(ctx: Ctx, siteId: string, linkId: string) {
 export interface ResolvedLink {
   link: LinkRow;
   site: SiteRow;
+  standing: Standing;
 }
 
+/** The link behind a token, if it is active, its site exists and its account isn't suspended. */
 export async function resolveToken(env: Bindings, token: string): Promise<ResolvedLink | null> {
   if (!/^rpt_[0-9a-z]{32}$/.test(token)) return null;
   const link = await env.DB.prepare("SELECT * FROM replay_links WHERE token_hash = ?")
@@ -120,30 +131,69 @@ export async function resolveToken(env: Bindings, token: string): Promise<Resolv
   const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ? AND account_id = ?")
     .bind(link.site_id, link.account_id)
     .first<SiteRow>();
-  return site ? { link, site } : null;
+  if (!site) return null;
+  const standing = await accountStanding(env, site.account_id);
+  return standing.suspended ? null : { link, site, standing };
 }
+
+/** CSP host sources for the player: the recorded site's domain, its subdomains and allowed_hostnames. */
+export function siteHostsForCsp(env: Bindings, site: SiteRow): string[] {
+  const allowed = safePatterns(site.allowed_hostnames ? jsonList(site.allowed_hostnames) : null, isDev(env)).filter((p) =>
+    /^(\*\.)?[a-z0-9.-]+$/.test(p),
+  );
+  return [`https://${site.domain}`, `https://*.${site.domain}`, ...allowed.map((p) => `https://${p}`)];
+}
+
+/** Recorded bytes one share link may serve per UTC day (MAX_LINK_BYTES_PER_DAY). */
+const linkBudget = (env: Bindings, r: ResolvedLink) => cap(env, r.standing, "MAX_LINK_BYTES_PER_DAY", DEFAULTS.LINK_BYTES_PER_DAY);
 
 export async function recordView(env: Bindings, linkId: string) {
   await env.DB.prepare("UPDATE replay_links SET views = views + 1, last_viewed_at = ? WHERE id = ?").bind(Date.now(), linkId).run();
 }
 
-/** What the player page loads: session facts, the event timeline as lines, the chunk list. */
+/** Most chunks a player loads (with MAX_SESSION_BYTES, a real session has far fewer). */
+const PLAYER_CHUNKS = 1000;
+
+/**
+ * What the player page loads: session facts, the event timeline as lines, the chunk list. A site
+ * whose domain isn't verified (any more) gets no domain headline and no chunks: the player shows
+ * an "unverified site" banner and the text timeline only.
+ */
 export async function playerData(env: Bindings, r: ResolvedLink) {
   const stub = siteStub(env, r.site.id);
   const d = await stub.transcript(r.link.session_id, { maxEvents: 3000 });
   if (!d) return null;
-  const chunks = await stub.chunks(r.link.session_id);
+  const verified = isVerified(r.site);
+  const chunks = verified ? await stub.playable(r.link.session_id, PLAYER_CHUNKS) : [];
   const tl = buildTimeline(d.session, d.pages, d.events);
   const s = sessionJson(d.session);
   return {
-    session: { ...s, site_domain: r.site.domain, pages: d.session.pageviews, signals: s.signals },
+    session: {
+      ...s,
+      site_domain: verified ? r.site.domain : null,
+      site_verified: verified,
+      pages: d.session.pageviews,
+      signals: s.signals,
+    },
     timeline: tl.map((e) => ({ t: e.t, kind: e.kind, text: entryLine(e).replace(/^\[[^\]]+\]\s*/, ""), signals: e.signals })),
     chunks,
     expires_at: r.link.expires_at,
   };
 }
 
-export async function playerChunk(env: Bindings, r: ResolvedLink, seq: number): Promise<ReadableStream | null> {
+/**
+ * One chunk for the player: only for a verified site, only chunks ingest accepted with rrweb events
+ * (a real recording, not arbitrary bytes), within the link's daily byte budget.
+ */
+export async function playerChunk(env: Bindings, r: ResolvedLink, seq: number): Promise<ReadableStream | "budget" | null> {
+  if (!isVerified(r.site)) return null;
+  const ok = await siteStub(env, r.site.id).serveChunk({
+    link_id: r.link.id,
+    session_id: r.link.session_id,
+    seq,
+    budget: linkBudget(env, r),
+  });
+  if (!ok.ok) return ok.reason === "budget" ? "budget" : null;
   const obj = await env.CHUNKS.get(`${r.site.id}/${chunkKey(r.link.session_id, seq)}`);
   return obj ? obj.body : null;
 }

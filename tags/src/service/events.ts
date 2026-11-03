@@ -1,18 +1,50 @@
-import { ApiError, newId } from "@afs/shared";
-import type { EventFilter, ServerIngestResult } from "../do/container-do";
+import { ApiError, accountSuspended, newId } from "@afs/shared";
+import type { EventFilter, IngestRefusal, ServerIngestResult } from "../do/container-do";
 import type { Bindings } from "../env";
 import { containerStub, getContainerRow, syncToDO } from "./containers";
+import { cleanServerEvent } from "./ingest";
 import type { ServerEvent } from "./ingest-schema";
+import { assertRate } from "./ratelimit";
+
+function refusal(r: IngestRefusal): ApiError {
+  switch (r.error) {
+    case "suspended":
+      return accountSuspended();
+    case "quota":
+      return new ApiError(
+        429,
+        "quota_exceeded",
+        `This container accepts ${r.limit} backend events per UTC day; ${Math.max(0, r.limit - r.used)} are left today.`,
+        "Send fewer (or smaller batches) and retry after 00:00 UTC. GET /v1/containers/:id shows stats.today.",
+      );
+    case "storage_full":
+      return new ApiError(
+        507,
+        "storage_full",
+        `This container's event store is over its limit (${r.limit} bytes).`,
+        "Old events (7 days) and visitors (180 days) are purged daily; GET /v1/containers/:id shows stats.storage.",
+      );
+    default:
+      return new ApiError(503, "not_ready", "The container's data store isn't ready.", "Retry in a few seconds.");
+  }
+}
 
 export async function ingestServerEvents(env: Bindings, accountId: string, containerId: string, events: ServerEvent[], test: boolean) {
   const row = await getContainerRow(env, accountId, containerId);
+  await assertRate(
+    env.SERVER_EVENTS_LIMITER,
+    accountId,
+    "server event requests",
+    "Batch up to 100 events per request and retry in a minute.",
+  );
+  const clean = events.map(cleanServerEvent);
   const stub = containerStub(env, containerId);
-  let r = await stub.ingestServer(events, { test, now: Date.now() });
-  if (!Array.isArray(r)) {
+  let r = await stub.ingestServer(clean, { test, now: Date.now() });
+  if (!Array.isArray(r) && r.error === "not_synced") {
     await syncToDO(env, row);
-    r = await stub.ingestServer(events, { test, now: Date.now() });
+    r = await stub.ingestServer(clean, { test, now: Date.now() });
   }
-  if (!Array.isArray(r)) throw new ApiError(503, "not_ready", "The container's data store isn't ready.", "Retry in a few seconds.");
+  if (!Array.isArray(r)) throw refusal(r as IngestRefusal);
   const results = r as ServerIngestResult[];
   return {
     accepted: results.filter((x) => x.status === "accepted").length,

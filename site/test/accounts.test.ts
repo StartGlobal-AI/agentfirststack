@@ -2,7 +2,7 @@ import { createApiKey } from "@afs/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { validateIdTokenClaims } from "../src/google";
 import { safeNext } from "../src/session";
-import { Browser, E, call, csrfOf, fixtures, paramsOf, serviceCalls, signup, testEnv, uniqueEmail } from "./helpers";
+import { Browser, E, SESSION, call, csrfOf, fixtures, paramsOf, serviceCalls, signup, testEnv, uniqueEmail } from "./helpers";
 
 const claimToken = (url: string) => new URL(url).pathname.split("/").pop()!;
 
@@ -320,6 +320,13 @@ describe("CSRF and redirects", () => {
       "javascript:alert(1)",
       "/%0d%0aSet-Cookie:x",
       "",
+      // Normalise to //evil.example: a browser reads that as another host.
+      "/.//evil.example",
+      "/..//evil.example",
+      "/%2e//evil.example",
+      "/%2E%2E//evil.example",
+      "/a/..//evil.example",
+      "/././/evil.example/x?y=1",
     ]) {
       const b = new Browser();
       const r = await b.get(`/auth/dev-login?email=${encodeURIComponent(uniqueEmail("next"))}&next=${encodeURIComponent(next)}`);
@@ -333,6 +340,12 @@ describe("CSRF and redirects", () => {
     expect(safeNext("//evil.example")).toBe("/dashboard");
     expect(safeNext("/\\evil.example")).toBe("/dashboard");
     expect(safeNext("/ok\u0000")).toBe("/dashboard");
+    for (const bad of ["/.//evil.example", "/..//evil.example", "/%2e//evil.example", "/a/..//evil.example", "/.//evil.example/x"]) {
+      expect(safeNext(bad), bad).toBe("/dashboard");
+    }
+    // Ordinary dot segments still normalise to a same-origin path.
+    expect(safeNext("/dashboard/./apps")).toBe("/dashboard/apps");
+    expect(safeNext("/dashboard/projects/../apps")).toBe("/dashboard/apps");
 
     // Signed in, /signin?next= goes straight to the (safe) next.
     const b = new Browser();
@@ -401,9 +414,11 @@ describe("Google sign-in", () => {
     expect(cb.location).toBe("/dashboard/apps");
     expect(sent!.get("code_verifier")).toMatch(/^[0-9a-z]{64}$/);
     expect(sent!.get("client_secret")).toBe(E.GOOGLE_CLIENT_SECRET);
-    expect(b.jar.has("afs_session")).toBe(true);
+    expect(b.jar.has(SESSION)).toBe(true);
     expect(b.jar.has("afs_google")).toBe(false);
-    const session = cb.cookies.find((c) => c.startsWith("afs_session="))!;
+    const session = cb.cookies.find((c) => c.startsWith(`${SESSION}=`))!;
+    // __Host-: Secure, Path=/ and no Domain, so no subdomain can plant or overwrite it.
+    expect(session).toContain("Path=/;");
     expect(session).toContain("HttpOnly");
     expect(session).toContain("Secure");
     expect(session).toContain("SameSite=Lax");
@@ -416,7 +431,7 @@ describe("Google sign-in", () => {
     const start = await b.get("/auth/google");
     const q = new URL(start.location!).searchParams;
     expect((await b.get("/auth/google/callback?code=x&state=wrong")).status).toBe(400);
-    expect(b.jar.has("afs_session")).toBe(false);
+    expect(b.jar.has(SESSION)).toBe(false);
 
     const nonce = "n".repeat(32);
     const ok = { clientId: E.GOOGLE_CLIENT_ID!, nonce };
@@ -436,7 +451,7 @@ describe("Google sign-in", () => {
     const s2 = new URL(start2.location!).searchParams.get("state");
     const cb = await b.get(`/auth/google/callback?code=x&state=${s2}`);
     expect(cb.status).toBe(400);
-    expect(b.jar.has("afs_session")).toBe(false);
+    expect(b.jar.has(SESSION)).toBe(false);
   });
 
   it("says when Google sign-in isn't configured", async () => {
@@ -479,7 +494,7 @@ describe("account", () => {
     const gone = await b.submit("/dashboard/account", "/dashboard/account/delete", { confirm: "delete" });
     expect(gone.status).toBe(200);
     expect(gone.text).toContain("Account deleted");
-    expect(b.jar.has("afs_session")).toBe(false);
+    expect(b.jar.has(SESSION)).toBe(false);
 
     const count = async (sql: string) => E.DB.prepare(sql).bind(user.id).first<number>("n");
     expect(await count("SELECT count(*) AS n FROM users WHERE id = ?")).toBe(0);
@@ -502,7 +517,7 @@ describe("account", () => {
     const out = await b.submit("/dashboard/account", "/auth/signout");
     expect(out.status).toBe(303);
     expect(out.location).toBe("/");
-    expect(b.jar.has("afs_session")).toBe(false);
+    expect(b.jar.has(SESSION)).toBe(false);
     expect(paramsOf(`https://afs.test${(await b.get("/dashboard")).location}`).get("next")).toBe("/dashboard");
   });
 });

@@ -13,6 +13,7 @@ import {
   ops,
   parseVersion,
   scanInput,
+  verifyInput,
 } from "../service/api";
 import { serverEventsBody } from "../service/ingest-schema";
 import { recipeInput } from "../service/recipe";
@@ -38,6 +39,7 @@ v1.patch("/containers/:id", async (c) => c.json(await ops.updateContainer(opCtx(
 v1.delete("/containers/:id", async (c) => c.json(await ops.deleteContainer(opCtx(c), c.req.param("id"))));
 v1.get("/containers/:id/install", async (c) => c.json(await ops.install(opCtx(c), c.req.param("id"))));
 v1.post("/containers/:id/scan", async (c) => c.json(await ops.scan(opCtx(c), c.req.param("id"), await readJson(c, scanInput))));
+v1.post("/containers/:id/verify", async (c) => c.json(await ops.verify(opCtx(c), c.req.param("id"), await readJson(c, verifyInput))));
 
 v1.get("/containers/:id/draft", async (c) => c.json(await ops.getDraft(opCtx(c), c.req.param("id"))));
 v1.put("/containers/:id/draft", async (c) =>

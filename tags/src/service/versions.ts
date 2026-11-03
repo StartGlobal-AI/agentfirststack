@@ -1,4 +1,4 @@
-import { ApiError, badRequest, notFound, randomString, sha256Hex } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, notFound, randomString, sha256Hex, type Standing } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import { parseConfig } from "../config/validate";
 import type { Bindings } from "../env";
@@ -6,6 +6,40 @@ import { mergePatch } from "../lib/merge-patch";
 import { assertConfigObject, type ContainerRow, draftConfig, draftValidation, getContainerRow, syncToDO } from "./containers";
 import { limits, shownCap } from "./limits";
 import { purgeScriptCache } from "./script";
+import { assertCustomCodeSize, customCodeProblem } from "./verify";
+
+const byteLength = (s: string) => new TextEncoder().encode(s).byteLength;
+
+/** Bytes of all drafts + kept versions of an account's containers (what MAX_TAGS_BYTES_PER_ACCOUNT caps). */
+export async function accountTagsBytes(env: Bindings, accountId: string): Promise<number> {
+  const r = await env.DB.prepare(
+    `SELECT (SELECT COALESCE(SUM(LENGTH(CAST(draft AS BLOB))), 0) FROM containers WHERE account_id = ?1)
+          + (SELECT COALESCE(SUM(LENGTH(CAST(v.config AS BLOB))), 0) FROM container_versions v
+               JOIN containers c ON c.id = v.container_id WHERE c.account_id = ?1) AS bytes`,
+  )
+    .bind(accountId)
+    .first<{ bytes: number }>();
+  return r?.bytes ?? 0;
+}
+
+function accountBytesExceeded(used: number, max: number) {
+  return new ApiError(
+    413,
+    "storage_quota_exceeded",
+    `This account's drafts and versions would use ${used} bytes; the most allowed here is ${max}.`,
+    "Shrink drafts (load large custom code from your own URL), or delete containers you no longer need (DELETE /v1/containers/:id); publish keeps only the newest versions.",
+  );
+}
+
+/** A draft write may not grow the account past MAX_TAGS_BYTES_PER_ACCOUNT (shrinking is always allowed). */
+async function assertAccountBytes(env: Bindings, row: ContainerRow, standing: Standing, newBytes: number) {
+  const max = limits(env, standing).maxAccountBytes;
+  if (!Number.isFinite(max)) return;
+  const oldBytes = byteLength(row.draft);
+  if (newBytes <= oldBytes) return;
+  const projected = (await accountTagsBytes(env, row.account_id)) - oldBytes + newBytes;
+  if (projected > max) throw accountBytesExceeded(projected, max);
+}
 
 function invalidDraft(errors: { path: string; message: string; hint: string }[]) {
   return new ApiError(
@@ -18,8 +52,8 @@ function invalidDraft(errors: { path: string; message: string; hint: string }[])
 }
 
 /** Every publish copies the draft into an immutable version, so its size is capped (MAX_DRAFT_BYTES). */
-export function assertDraftSize(env: Bindings, json: string) {
-  const max = limits(env).maxDraftBytes;
+export function assertDraftSize(env: Bindings, json: string, standing?: Standing) {
+  const max = limits(env, standing).maxDraftBytes;
   if (!Number.isFinite(max)) return;
   const bytes = new TextEncoder().encode(json).byteLength;
   if (bytes > max) {
@@ -42,7 +76,10 @@ async function writeDraft(env: Bindings, row: ContainerRow, config: ContainerCon
     );
   }
   const json = JSON.stringify(config);
-  assertDraftSize(env, json);
+  const standing = await accountStanding(env, row.account_id);
+  assertDraftSize(env, json, standing);
+  assertCustomCodeSize(env, config, standing);
+  await assertAccountBytes(env, row, standing, byteLength(json));
   const now = Date.now();
   const res = await env.DB.prepare(
     "UPDATE containers SET draft = ?, draft_revision = draft_revision + 1, draft_updated_at = ?, updated_at = ? WHERE id = ? AND draft_revision = ?",
@@ -96,14 +133,24 @@ export async function publish(env: Bindings, accountId: string, id: string, opts
       validation.errors,
     );
   }
+  const standing = await accountStanding(env, row.account_id);
   // A draft saved before MAX_DRAFT_BYTES existed (or was lowered) can't be copied into a version.
-  assertDraftSize(env, row.draft);
-  const now = Date.now();
-  const last = await env.DB.prepare("SELECT MAX(version) AS v FROM container_versions WHERE container_id = ?")
+  assertDraftSize(env, row.draft, standing);
+  const caps = limits(env, standing);
+  const keep = caps.maxVersions;
+  const { results: kept } = await env.DB.prepare(
+    "SELECT version, LENGTH(CAST(config AS BLOB)) AS bytes FROM container_versions WHERE container_id = ? ORDER BY version DESC",
+  )
     .bind(id)
-    .first<{ v: number | null }>();
-  const version = (last?.v ?? 0) + 1;
-  const keep = limits(env).maxVersions;
+    .all<{ version: number; bytes: number }>();
+  if (Number.isFinite(caps.maxAccountBytes)) {
+    // The new version adds the draft's bytes; versions past the newest `keep` are pruned below.
+    const pruned = Number.isFinite(keep) ? kept.slice(Math.max(keep - 1, 0)).reduce((n, v) => n + v.bytes, 0) : 0;
+    const projected = (await accountTagsBytes(env, row.account_id)) + byteLength(row.draft) - pruned;
+    if (projected > caps.maxAccountBytes) throw accountBytesExceeded(projected, caps.maxAccountBytes);
+  }
+  const now = Date.now();
+  const version = (kept[0]?.version ?? 0) + 1;
   await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO container_versions (container_id, version, config, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -134,7 +181,7 @@ export async function listVersions(env: Bindings, accountId: string, id: string)
     .all<{ version: number; config: string; note: string | null; created_by: string | null; created_at: number }>();
   return {
     live_version: row.live_version,
-    max_versions: shownCap(limits(env).maxVersions),
+    max_versions: shownCap(limits(env, await accountStanding(env, row.account_id)).maxVersions),
     versions: results.map((v) => {
       const c = JSON.parse(v.config) as ContainerConfig;
       return {
@@ -179,12 +226,17 @@ export async function getVersion(env: Bindings, accountId: string, id: string, v
 /** Point the live pointer at an earlier immutable version. The draft is left unchanged. */
 export async function rollback(env: Bindings, accountId: string, id: string, version: number, origins: string[]) {
   const row = await getContainerRow(env, accountId, id);
-  const v = await env.DB.prepare("SELECT version FROM container_versions WHERE container_id = ? AND version = ?").bind(id, version).first();
+  const v = await env.DB.prepare("SELECT version, config FROM container_versions WHERE container_id = ? AND version = ?")
+    .bind(id, version)
+    .first<{ version: number; config: string }>();
   if (!v)
     throw notFound(
       `Version ${version}`,
       `GET /v1/containers/${id}/versions lists published versions (only the newest max_versions are kept).`,
     );
+  // Rolling back republishes that version, so the same custom-code rules as publish apply.
+  const custom = customCodeProblem(env, row, JSON.parse(v.config) as ContainerConfig, await accountStanding(env, row.account_id));
+  if (custom) throw new ApiError(422, "validation_failed", `Version ${version} can't go live: ${custom.message}`, custom.hint, [custom]);
   const now = Date.now();
   await env.DB.prepare("UPDATE containers SET live_version = ?, published_at = ?, updated_at = ? WHERE id = ?")
     .bind(version, now, now, id)

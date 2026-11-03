@@ -121,14 +121,176 @@ export function normalizeDomain(input: string): string {
   return host;
 }
 
-/** Does `host` match a pattern list (exact host or "*.example.com")? */
+// ------------------------------------------------------------------ hostnames and public suffixes
+
+/**
+ * Hosting platforms and other private registries where every subdomain belongs to someone else
+ * (a compact slice of the Public Suffix List's private section; no dependency).
+ */
+const SHARED_SUFFIXES = new Set([
+  "github.io",
+  "gitlab.io",
+  "bitbucket.io",
+  "github.dev",
+  "gitpod.io",
+  "pages.dev",
+  "workers.dev",
+  "r2.dev",
+  "trycloudflare.com",
+  "vercel.app",
+  "now.sh",
+  "netlify.app",
+  "netlify.com",
+  "herokuapp.com",
+  "herokussl.com",
+  "onrender.com",
+  "fly.dev",
+  "deno.dev",
+  "railway.app",
+  "up.railway.app",
+  "koyeb.app",
+  "replit.app",
+  "replit.dev",
+  "repl.co",
+  "glitch.me",
+  "surge.sh",
+  "stackblitz.io",
+  "csb.app",
+  "codesandbox.io",
+  "lovable.app",
+  "web.app",
+  "firebaseapp.com",
+  "firebaseio.com",
+  "appspot.com",
+  "run.app",
+  "cloudfunctions.net",
+  "azurewebsites.net",
+  "azurestaticapps.net",
+  "cloudapp.net",
+  "trafficmanager.net",
+  "blob.core.windows.net",
+  "cloudfront.net",
+  "amazonaws.com",
+  "s3.amazonaws.com",
+  "elasticbeanstalk.com",
+  "ondigitalocean.app",
+  "digitaloceanspaces.com",
+  "supabase.co",
+  "blogspot.com",
+  "wordpress.com",
+  "wpengine.com",
+  "myshopify.com",
+  "wixsite.com",
+  "squarespace.com",
+  "webflow.io",
+  "framer.app",
+  "framer.website",
+  "carrd.co",
+  "notion.site",
+  "readthedocs.io",
+  "gitbook.io",
+  "neocities.org",
+  "tumblr.com",
+  "substack.com",
+  "ghost.io",
+  "hashnode.dev",
+  "pythonanywhere.com",
+  "ngrok.io",
+  "ngrok.app",
+  "ngrok-free.app",
+  "loca.lt",
+  "localhost.run",
+  "ts.net",
+  "duckdns.org",
+  "no-ip.org",
+  "ddns.net",
+  "dyndns.org",
+  "translate.goog",
+]);
+/** Second-level labels that country registries sell under (co.uk, com.au, ac.jp, ...). */
+const REGISTRY_SLDS = new Set([
+  "co",
+  "com",
+  "net",
+  "org",
+  "gov",
+  "edu",
+  "ac",
+  "or",
+  "ne",
+  "go",
+  "ltd",
+  "plc",
+  "me",
+  "nom",
+  "sch",
+  "mil",
+  "gob",
+  "gouv",
+  "nic",
+]);
+
+/**
+ * Is `host` a public suffix, i.e. something under which unrelated parties own the names? A
+ * single label (com, io, localhost), a country registry's second level (co.uk, com.br) or a
+ * shared hosting suffix (github.io, vercel.app). Compact and conservative, not the full PSL.
+ */
+export function isPublicSuffix(host: string): boolean {
+  const h = host.toLowerCase().replace(/\.$/, "");
+  if (!h.includes(".")) return true;
+  if (SHARED_SUFFIXES.has(h)) return true;
+  const labels = h.split(".");
+  return labels.length === 2 && labels[1]!.length === 2 && REGISTRY_SLDS.has(labels[0]!);
+}
+
+/** "*.com", "*.co.uk", "*.vercel.app": a wildcard that would match other people's hosts. */
+export const isPublicSuffixWildcard = (pattern: string) => pattern.startsWith("*.") && isPublicSuffix(pattern.slice(2));
+
+/** An IPv4 or IPv6 literal (with or without brackets). */
+export function isIpLiteral(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "");
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(":");
+}
+
+const DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+export const isDevHost = (host: string) => DEV_HOSTS.has(host.toLowerCase());
+
+/** The site's own hosts: its domain and every subdomain (www. included). */
+export function onSiteDomain(host: string | null, domain: string): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase();
+  return h === domain || h.endsWith(`.${domain}`);
+}
+
+/** One pattern: an exact host (its www. too) or "*.example.com" (the apex and every subdomain). */
+export function matchesHostPattern(host: string, pattern: string): boolean {
+  const h = host.toLowerCase();
+  const pat = pattern.toLowerCase();
+  if (pat.startsWith("*.")) return h === pat.slice(2) || h.endsWith(pat.slice(1));
+  return h === pat || h === `www.${pat}`;
+}
+
+/**
+ * Does `host` match a pattern list (exact host or "*.example.com")? Public-suffix wildcards
+ * ("*.com", "*.vercel.app") never match: they would let anyone's hostname in.
+ */
 export function hostAllowed(host: string | null, patterns: string[] | null | undefined): boolean {
   if (!patterns || patterns.length === 0) return true;
   if (!host) return false;
-  const h = host.toLowerCase();
-  return patterns.some((p) => {
-    const pat = p.toLowerCase();
-    if (pat.startsWith("*.")) return h === pat.slice(2) || h.endsWith(pat.slice(1));
-    return h === pat || h === `www.${pat}`;
-  });
+  return patterns.some((p) => !isPublicSuffixWildcard(p.toLowerCase()) && matchesHostPattern(host, p));
+}
+
+/**
+ * Browser events a site accepts: from allowed_hostnames when set; otherwise only from the site's
+ * domain and its subdomains (plus localhost in DEV_MODE), so a public site id can't be used to
+ * fill someone's site with events from anywhere.
+ */
+export function browserHostAllowed(
+  host: string | null,
+  settings: { domain: string; allowed_hostnames: string[] | null },
+  dev: boolean,
+): boolean {
+  if (dev && host && isDevHost(host)) return true;
+  if (settings.allowed_hostnames?.length) return hostAllowed(host, settings.allowed_hostnames);
+  return onSiteDomain(host, settings.domain);
 }

@@ -31,7 +31,12 @@ export const collectSchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9_.:-]{6,100}$/)
     .optional(),
-  name: z.string().max(64).optional(),
+  // The runtime only sends conversion names from the config (letters, digits, _), so anything else
+  // is forged; the charset also keeps free text out of the event log.
+  name: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/, "A conversion name from the config.")
+    .optional(),
   ts: z.number().optional(),
   version: z.union([z.number(), z.string()]).optional(),
   visitor_id: z
@@ -62,7 +67,10 @@ export const collectSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())).max(100).optional(),
   params: z.record(z.string().max(40), z.unknown()).optional(),
   consent: consentRecord.optional(),
-  fired: z.array(z.string().max(40)).max(20).optional(),
+  fired: z
+    .array(z.string().regex(/^[a-z0-9_]{1,40}$/))
+    .max(20)
+    .optional(),
   first_party: z.boolean().optional(),
   cookie_domain: z.string().max(253).optional(),
   preview: z.string().max(100).optional(),
@@ -131,7 +139,11 @@ export const serverEventSchema = z.strictObject({
   click_ids: z.record(z.string().max(20), z.string().max(500)).optional().describe("e.g. { gclid } if your backend stored it."),
   fbc: z.string().max(600).optional(),
   fbp: z.string().max(200).optional(),
-  consent: consentRecord.optional().describe("Default: the visitor's last known consent, else granted."),
+  consent: consentRecord
+    .optional()
+    .describe(
+      "Default: the visitor's last known consent when joined by visitor_id, else granted. Never inherited through a user_id/email/phone join: pass it.",
+    ),
   send_to: sendToSchema.optional().describe("Platform mapping when no conversion in the live config has this name."),
   action_source: z.enum(ACTION_SOURCES).optional().describe("Meta action_source; default website."),
   destinations: z.array(z.string()).max(20).optional().describe("Only deliver to these destination ids."),

@@ -19,6 +19,12 @@ export interface Project {
 /** Most projects one person may belong to (claims, imports and new projects all count). */
 export const MAX_PROJECTS_PER_USER = 100;
 
+/**
+ * Most live connected apps (OAuth grants) one person may hold: not revoked, and used (or created)
+ * in the last 30 days, the lifetime of a refresh token. Each grant can mint access tokens.
+ */
+export const MAX_GRANTS_PER_USER = 50;
+
 export async function upsertUser(
   db: D1Database,
   p: { sub: string; email: string; name?: string | null; picture?: string | null },
@@ -166,22 +172,51 @@ export async function revokeGrant(db: D1Database, grantId: string): Promise<void
   await db.batch(revokeGrantStatements(db, "id = ?", [grantId], Date.now()));
 }
 
-/** Remove someone from a project; the apps they connected to it lose access at once. */
+/**
+ * Remove someone from a project (or let them leave). Everything that gave them access goes at
+ * once: the apps they connected to it, the API keys they created in the dashboard (they saw each
+ * key once and may still hold it), and the invite links they made that nobody has used yet.
+ */
 export async function removeMember(db: D1Database, accountId: string, userId: string): Promise<void> {
+  const now = Date.now();
   await db.batch([
-    ...revokeGrantStatements(db, "account_id = ? AND user_id = ?", [accountId, userId], Date.now()),
+    ...revokeGrantStatements(db, "account_id = ? AND user_id = ?", [accountId, userId], now),
+    db
+      .prepare("UPDATE api_keys SET revoked_at = ? WHERE account_id = ? AND created_by_user_id = ? AND revoked_at IS NULL")
+      .bind(now, accountId, userId),
+    db.prepare("DELETE FROM claim_links WHERE account_id = ? AND created_by_user_id = ? AND used_at IS NULL").bind(accountId, userId),
     db.prepare("DELETE FROM memberships WHERE account_id = ? AND user_id = ?").bind(accountId, userId),
   ]);
 }
 
+/** Refuse a new OAuth grant when the person already holds MAX_GRANTS_PER_USER live ones. */
+export async function assertRoomForGrant(db: D1Database, userId: string, now = Date.now()): Promise<void> {
+  const n = await db
+    .prepare("SELECT count(*) AS n FROM oauth_grants WHERE user_id = ? AND revoked_at IS NULL AND COALESCE(last_used_at, created_at) > ?")
+    .bind(userId, now - 30 * 86_400_000)
+    .first<number>("n");
+  if ((n ?? 0) >= MAX_GRANTS_PER_USER) {
+    throw new ApiError(
+      409,
+      "too_many_apps",
+      `You already have ${MAX_GRANTS_PER_USER} connected apps.`,
+      "Disconnect apps you no longer use under Connected apps in the dashboard, then connect again.",
+    );
+  }
+}
+
 /**
  * Delete a person: their user row, memberships, sessions, OAuth grants with their refresh tokens
- * and codes, and every access token those grants issued. Projects and their agent keys stay (they
- * belong to the project); a project with no members left is simply unclaimed again.
+ * and codes, and every access token those grants issued. As when they leave a project, the API
+ * keys they created in the dashboard are revoked and their unused invite links deleted (otherwise
+ * deleting your account would be a way around being removed). Projects and their agent keys stay
+ * (they belong to the project); a project with no members left is simply unclaimed again.
  */
 export async function deleteUser(db: D1Database, userId: string): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM api_keys WHERE oauth_grant_id IN (SELECT id FROM oauth_grants WHERE user_id = ?)").bind(userId),
+    db.prepare("UPDATE api_keys SET revoked_at = ? WHERE created_by_user_id = ? AND revoked_at IS NULL").bind(Date.now(), userId),
+    db.prepare("DELETE FROM claim_links WHERE created_by_user_id = ? AND used_at IS NULL").bind(userId),
     db.prepare("UPDATE api_keys SET created_by_user_id = NULL WHERE created_by_user_id = ?").bind(userId),
     db.prepare("UPDATE claim_links SET created_by_user_id = NULL WHERE created_by_user_id = ?").bind(userId),
     db.prepare("UPDATE claim_links SET used_by_user_id = NULL WHERE used_by_user_id = ?").bind(userId),

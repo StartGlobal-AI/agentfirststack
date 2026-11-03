@@ -116,9 +116,15 @@ describe("verifyInstall: what it fetches", () => {
     first_event_at: null,
     last_event_at: null,
     last_event: null,
-    hostnames_last_7d: [],
     dropped_last_7d: {},
-    warnings_last_7d: {} as Record<string, { count: number; last_at: number | null; sample: string | null }>,
+    warnings_last_7d: {} as Record<string, { count: number; last_at: number | null }>,
+    untrusted: {
+      notice: "",
+      last_event: null,
+      hostnames_last_7d: [],
+      drop_samples: {} as Record<string, string>,
+      warning_samples: {} as Record<string, string>,
+    },
   };
   const ctx = (sum = summary): Ctx =>
     ({
@@ -141,7 +147,11 @@ describe("verifyInstall: what it fetches", () => {
   it.each([
     ["https://analytics.example.net/s.js", true],
     ["/_a/s.js", true],
-    ["https://cdn.partner.test/s.js", true],
+    // allowed_hostnames aren't proven to be the owner's: never fetched
+    ["https://cdn.partner.test/s.js", false],
+    ["https://www.shop.test/s.js", true],
+    ["http://www.shop.test/s.js", false],
+    ["https://www.shop.test:8443/s.js", false],
     ["https://evil.test/s.js", false],
     ["http://127.0.0.1:8080/s.js", false],
   ])("script src %s fetched: %s", async (src, fetched) => {
@@ -170,7 +180,7 @@ describe("verifyInstall: what it fetches", () => {
 
   it("reports proxied events that arrived without a valid proxy key", async () => {
     stubFetch(() => page("/_a/s.js"));
-    const sum = { ...summary, warnings_last_7d: { proxy_key_missing: { count: 3, last_at: 1, sample: "shop.test" } } };
+    const sum = { ...summary, warnings_last_7d: { proxy_key_missing: { count: 3, last_at: 1 } } };
     const r = await verifyInstall(ctx(sum), site.id, {});
     expect(r.checks.find((c) => c.id === "proxy_key")).toMatchObject({ ok: false, detail: expect.stringContaining("3 events") });
     expect(r.fixes.join(" ")).toContain("x-afs-proxy-key");

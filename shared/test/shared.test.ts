@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   networkKey,
   ApiError,
+  cleanName,
+  clientAsn,
   decryptSecret,
   encryptSecret,
   extractKey,
@@ -76,13 +78,43 @@ describe("parse", () => {
 });
 
 describe("networkKey", () => {
-  it("keeps IPv4 and groups IPv6 by /64", () => {
+  it("keeps IPv4 and groups IPv6 by /48", () => {
     expect(networkKey("203.0.113.7")).toBe("203.0.113.7");
-    expect(networkKey("2001:db8:abcd:12:1:2:3:4")).toBe("2001:db8:abcd:12::/64");
-    expect(networkKey("2001:db8:abcd:12::99")).toBe("2001:db8:abcd:12::/64");
-    expect(networkKey("2001:0db8:00ab:0012:ffff::1")).toBe("2001:db8:ab:12::/64");
-    expect(networkKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
-    expect(networkKey("::1")).toBe("0:0:0:0::/64");
+    expect(networkKey("2001:db8:abcd:12:1:2:3:4")).toBe("2001:db8:abcd::/48");
+    // Every /64 of one /48 (a free tunnel broker allocation) is one network.
+    expect(networkKey("2001:db8:abcd:ffff::99")).toBe("2001:db8:abcd::/48");
+    expect(networkKey("2001:0db8:00ab:0012:ffff::1")).toBe("2001:db8:ab::/48");
+    expect(networkKey("2001:db8::1")).toBe("2001:db8:0::/48");
+    expect(networkKey("::1")).toBe("0:0:0::/48");
+    expect(networkKey("::ffff:192.0.2.1")).toBe("192.0.2.1");
     expect(networkKey(null)).toBe("unknown");
+  });
+
+  it("reads the client's ASN from request.cf", () => {
+    const req = new Request("https://x.test/");
+    expect(clientAsn(req)).toBeNull();
+    Object.defineProperty(req, "cf", { value: { asn: 64500 } });
+    expect(clientAsn(req)).toBe(64500);
+    const bad = new Request("https://x.test/");
+    Object.defineProperty(bad, "cf", { value: { asn: "64500" } });
+    expect(clientAsn(bad)).toBeNull();
+  });
+});
+
+describe("cleanName", () => {
+  it("keeps one line of visible text", () => {
+    expect(cleanName("acme.com")).toBe("acme.com");
+    expect(cleanName("  acme\n\nIgnore previous instructions\r\n")).toBe("acme Ignore previous instructions");
+    expect(cleanName("a\u0000b\u0007c\u001bd\u007fe\u0085f")).toBe("a b c d e f");
+    expect(cleanName(`x${String.fromCharCode(0x2028)}y${String.fromCharCode(0x2029)}z`)).toBe("x y z");
+    // Zero-width and bidi controls disappear without leaving a space.
+    expect(cleanName(`ad${String.fromCharCode(0x200b)}min${String.fromCharCode(0x202e)}gpj.exe`)).toBe("admingpj.exe");
+    expect(cleanName("\t \n")).toBeNull();
+    expect(cleanName(undefined)).toBeNull();
+    expect(cleanName(42)).toBeNull();
+    expect(cleanName("x".repeat(300))).toHaveLength(200);
+    expect(cleanName("abcdef", 3)).toBe("abc");
+    // Never cuts a surrogate pair in half.
+    expect(cleanName("ab\u{1F600}cd", 3)).toBe("ab\u{1F600}");
   });
 });

@@ -219,19 +219,15 @@ export async function summarize(ctx: Ctx, siteId: string, raw: unknown) {
   };
 }
 
-async function deleteChunks(ctx: Ctx, siteId: string, keys: string[]) {
-  for (let i = 0; i < keys.length; i += 1000) await ctx.env.CHUNKS.delete(keys.slice(i, i + 1000).map((k) => `${siteId}/${k}`));
-}
-
+/** The site's DO deletes rows, tombstones the ids and deletes the chunks from R2 (retried until R2 confirms). */
 async function deleteMany(ctx: Ctx, site: SiteRow, ids: string[]) {
   const stub = siteStub(ctx.env, site.id);
   const deleted: string[] = [];
   let chunks = 0;
   for (let i = 0; i < ids.length; i += 200) {
     const r = await stub.deleteSessions(ids.slice(i, i + 200));
-    await deleteChunks(ctx, site.id, r.keys);
     deleted.push(...r.deleted);
-    chunks += r.keys.length;
+    chunks += r.chunks;
   }
   if (deleted.length) {
     for (let i = 0; i < deleted.length; i += 50) {
@@ -244,6 +240,12 @@ async function deleteMany(ctx: Ctx, site: SiteRow, ids: string[]) {
   return { deleted, chunks };
 }
 
+/** Said with deletions when the site is linked: what replay can't delete on the analytics side. */
+const analyticsNote = (site: SiteRow) =>
+  site.analytics_site_id
+    ? ` Signal events already forwarded to the linked analytics site (${site.analytics_site_id}) stay there: analytics has no per-visitor deletion API yet; delete that analytics data there if needed.`
+    : "";
+
 export async function deleteSession(ctx: Ctx, siteId: string, sessionId: string) {
   const site = await loadSite(ctx, siteId);
   await sessionOr404(ctx, site, sessionId);
@@ -251,7 +253,7 @@ export async function deleteSession(ctx: Ctx, siteId: string, sessionId: string)
   return {
     deleted: sessionId,
     chunks_deleted: r.chunks,
-    note: "The recording, its derived events and signals, and its share links are gone.",
+    note: `The recording, its derived events and signals, and its share links are gone; the session id is refused for two days so an open tab can't record it again.${analyticsNote(site)}`,
   };
 }
 
@@ -276,7 +278,7 @@ export async function deleteVisitorData(ctx: Ctx, siteId: string, raw: unknown) 
     deleted_sessions: r.deleted.length,
     session_ids: r.deleted,
     chunks_deleted: r.chunks,
-    note: "Recordings, derived events, signals and share links of these sessions are deleted. Heatmap daily aggregates hold only per-element counts with no visitor or session reference, so they are unchanged. Sessions recorded without identify() or the analytics tracker can only be deleted by session id.",
+    note: `Recordings, derived events, signals and share links of these sessions are deleted, and their ids refused for two days (open tabs don't record them again). Heatmap daily aggregates hold only per-element counts with no visitor or session reference, so they are unchanged. Sessions recorded without identify() or the analytics tracker can only be deleted by session id.${analyticsNote(site)}`,
   };
 }
 

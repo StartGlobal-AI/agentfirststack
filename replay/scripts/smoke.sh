@@ -3,11 +3,15 @@
 #   bash scripts/smoke.sh [BASE]        BASE defaults to $BASE, else http://localhost:8790
 # Needs: curl, jq, node, gzip. Sends recorder chunks the way the browser does (gzip and plain),
 # then reads everything back over REST and MCP, opens a share link, and deletes what it made.
+# Domain verification: a tiny local page (node, PAGE_PORT, default 8793) carries the site's loader;
+# with DEV_MODE=true verify counts a localhost page with the loader as proof.
 set -euo pipefail
 
 BASE="${1:-${BASE:-http://localhost:8790}}"
+PAGE_PORT="${PAGE_PORT:-8793}"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+PAGE_PID=""
+trap '[ -n "$PAGE_PID" ] && kill "$PAGE_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 PASS=0
@@ -54,13 +58,28 @@ check "create site 201 with snippet" '[ "$CODE" = 201 ] && [[ "$(jq -r .site.sni
 SITE=$(jq -r .site.id <<<"$BODY")
 req POST /v1/sites "{\"domain\":\"$DOMAIN\"}"
 check "same domain again returns existing (200)" '[ "$CODE" = 200 ] && [ "$(jq -r .existing <<<"$BODY")" = true ]' "$BODY"
+check "a new site is unverified, with how to verify" '[ "$(jq -r .site.verification.verified <<<"$BODY")" = false ] && [ "$(jq -r .site.verification.dns_record.name <<<"$BODY")" = "_afs-verify.$DOMAIN" ]' "$BODY"
+req POST /v1/sites '{"domain":"co.uk"}'
+check "a public suffix can't be a site (400)" '[ "$CODE" = 400 ]' "$BODY"
 req PATCH "/v1/sites/$SITE" '{"unmask_selectors":["a{"]}'
 check "bad selector refused with a hint (400)" '[ "$CODE" = 400 ] && [ "$(jq -r .error.hint <<<"$BODY")" != null ]' "$BODY"
 
-echo "-- browser scripts"
+echo "-- browser scripts, domain verification"
 req GET "/r/$SITE.js"
-check "loader served with the site config" '[ "$CODE" = 200 ] && [[ "$BODY" == "/*! afs-replay $SITE */"* ]] && [[ "$BODY" == *"\"unmask\":\"button,nav\""* ]]' "${BODY:0:300}"
-REC=$(grep -o '/recorder\.[0-9a-f]*\.js' <<<"$BODY" | head -1)
+check "unverified: the loader masks strictly whatever the settings" '[ "$CODE" = 200 ] && [[ "$BODY" == *"\"mask\":\"strict\""* ]] && [[ "$BODY" == *"\"unmask\":\"\""* ]]' "${BODY:0:300}"
+node -e '
+  const [port, src] = process.argv.slice(1);
+  require("http").createServer((q, s) => { s.setHeader("content-type", "text/html"); s.end(`<html><head><script defer src="${src}"></script></head></html>`); }).listen(+port, "127.0.0.1");
+' "$PAGE_PORT" "$BASE/r/$SITE.js" &
+PAGE_PID=$!
+sleep 0.5
+req POST "/v1/sites/$SITE/verify" "{\"url\":\"http://localhost:$PAGE_PORT/\"}"
+check "verify finds the loader and verifies the domain (dev: a localhost page)" '[ "$(jq -r .domain_verified <<<"$BODY")" = true ] && [ "$(jq -r .verification.method <<<"$BODY")" = dev_localhost ]' "$BODY"
+req POST "/v1/sites/$SITE/verify" '{"url":"https://1.2.3.4/"}'
+check "verify fetches only the site's own https hosts (400)" '[ "$CODE" = 400 ]' "$BODY"
+req GET "/r/$SITE.js"
+check "verified: loader served with the site config" '[ "$CODE" = 200 ] && [[ "$BODY" == "/*! afs-replay $SITE */"* ]] && [[ "$BODY" == *"\"unmask\":\"button,nav\""* ]]' "${BODY:0:300}"
+REC=$(grep -o '/rec/[0-9a-f]*\.js' <<<"$BODY" | head -1)
 req GET "$REC"
 check "recorder served, immutable" '[ "$CODE" = 200 ] && [[ "$BODY" == "/*! afs-replay recorder"* ]] && grep -qi "immutable" <<<"$HDRS"' "$REC"
 
@@ -77,6 +96,13 @@ chunk 1 0 "$EV1" ',"end":1'
 check "same seq again is a no-op" '[ "$(jq -r .duplicate <<<"$BODY")" = true ]' "$BODY"
 CODE=$(curl -s -o "$TMP/body" -w '%{http_code}' -X POST "$BASE/i?s=$SITE&sid=$SID&q=2&z=0" -H "user-agent: $UA" -H "origin: https://evil.example" --data-binary '{"v":1}')
 check "foreign origin refused (403)" '[ "$CODE" = 403 ] && [ "$(jq -r .error "$TMP/body")" = origin_not_allowed ]' "$(cat "$TMP/body")"
+CODE=$(curl -s -o "$TMP/body" -w '%{http_code}' -X POST "$BASE/i?s=$SITE&sid=$SID&q=2&z=0" -H "user-agent: $UA" --data-binary '{"v":1}')
+check "no Origin (a script, not a page) refused (403)" '[ "$CODE" = 403 ] && [ "$(jq -r .error "$TMP/body")" = origin_required ]' "$(cat "$TMP/body")"
+SAVED_SID="$SID"
+SID="rs_$(node -e 'const a="0123456789abcdefghjkmnpqrstvwxyz";let s="";for(let i=0;i<16;i++)s+=a[Math.floor(Math.random()*32)];console.log(s)')"
+chunk 0 0 "[$(click $((T + 100)))]"
+check "a new session without its page is refused (400)" '[ "$CODE" = 400 ] && [ "$(jq -r .error <<<"$BODY")" = page_host_required ]' "$BODY"
+SID="$SAVED_SID"
 
 echo "-- read: sessions, transcript, summary, heatmap, errors, funnel"
 req GET "/v1/sites/$SITE/sessions?signal=rage_click"
@@ -113,10 +139,14 @@ req GET "$PLAY"
 check "revoked link is gone (404)" '[ "$CODE" = 404 ]' "$CODE"
 
 echo "-- verify, privacy deletion, cleanup"
-req POST "/v1/sites/$SITE/verify" '{}'
+req POST "/v1/sites/$SITE/verify" "{\"url\":\"http://localhost:$PAGE_PORT/\"}"
 check "verify reports sessions received" '[ "$(jq -r .receiving_sessions <<<"$BODY")" = true ]' "$BODY"
+req GET "/v1/sites/$SITE"
+check "today's counters and refusal samples (untrusted)" '[ "$(jq -r .data.usage_today.sessions <<<"$BODY")" -ge 1 ] && [ "$(jq -r .untrusted.drop_samples.origin_not_allowed <<<"$BODY")" = evil.example ]' "$BODY"
 req POST "/v1/sites/$SITE/delete-visitor-data" '{"user_id":"smoke-user"}'
 check "delete_visitor_data removes the session" '[ "$(jq -r .deleted_sessions <<<"$BODY")" = 1 ]' "$BODY"
+chunk 2 0 "[{\"type\":3,\"timestamp\":$((T + 20000)),\"data\":{\"source\":1,\"positions\":[]}}]"
+check "an open tab can't record the deleted session again (403)" '[ "$CODE" = 403 ] && [ "$(jq -r .error <<<"$BODY")" = session_deleted ]' "$BODY"
 req DELETE "/v1/sites/$SITE"
 check "site deleted" '[ "$CODE" = 200 ]' "$BODY"
 

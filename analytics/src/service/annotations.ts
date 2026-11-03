@@ -1,4 +1,5 @@
-import { badRequest, parse } from "@afs/shared";
+import { accountStanding, badRequest, parse } from "@afs/shared";
+import { siteCap } from "../lib/limits";
 import { z } from "zod";
 import { PERIODS, parseYmd, zonedToUtc } from "../lib/time";
 import { type Ctx, type SiteRow, callSite, loadSite } from "./context";
@@ -62,7 +63,8 @@ export async function createAnnotation(ctx: Ctx, siteId: string, raw: unknown) {
   const input = parse(createAnnotationInput, raw);
   const site = await loadSite(ctx, siteId);
   const ts = tsOf(site, input) ?? Date.now();
-  const max = Number(ctx.env.MAX_ANNOTATIONS_PER_SITE || 0) || null;
+  const cap = siteCap(ctx.env, await accountStanding(ctx.env, ctx.accountId), "MAX_ANNOTATIONS_PER_SITE", Number.POSITIVE_INFINITY);
+  const max = Number.isFinite(cap) && cap > 0 ? cap : null;
   const res = (await callSite(ctx.env, site, (s) =>
     s.createAnnotation(
       { ts, end_ts: endOf(site, input.end_date, ts) ?? null, title: input.title, description: input.description ?? null },

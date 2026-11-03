@@ -13,7 +13,7 @@ export interface Bindings extends AuthBindings {
   SALT_SECRET?: string;
   /** "true" in local dev only: x-dev-geo-* headers, localhost verify, fallback salt. */
   DEV_MODE?: string;
-  /** Hosted fair use: max sites per account. Unset = no cap. */
+  /** Hosted fair use: max sites per account (UNCLAIMED_MAX_SITES_PER_ACCOUNT for unclaimed accounts). Unset = no cap. */
   MAX_SITES_PER_ACCOUNT?: string;
   /**
    * SQL endpoint: rows SQLite may read while streaming a query's results (after its first row)
@@ -29,6 +29,42 @@ export interface Bindings extends AuthBindings {
   MAX_ANNOTATIONS_PER_SITE?: string;
   /** Fair use: max saved funnels per site. Unset = no cap. */
   MAX_FUNNELS_PER_SITE?: string;
+
+  // Fair use (all optional; every account-level one also reads UNCLAIMED_<NAME> for accounts no
+  // person has claimed, via capFor). See src/lib/limits.ts and README "Config".
+  /** Accepted events (+ engagement beacons) per site per UTC day; 429 beyond. Unset = no cap. */
+  MAX_EVENTS_PER_SITE_PER_DAY?: string;
+  /** The same summed over the account's sites (D1 aggregate, reported once a minute). Unset = no cap. */
+  MAX_EVENTS_PER_ACCOUNT_PER_DAY?: string;
+  /** Events per UTC day for the whole deployment; 429 beyond (UNCLAIMED_ = the level at which unclaimed accounts are shed). */
+  DAILY_EVENT_BUDGET?: string;
+  /** Stop storing a site's events once its Durable Object database passes this many MB. Unset = no budget. */
+  MAX_SITE_STORAGE_MB?: string;
+  /** Bounds for retention_days (and what the daily purge applies). Unset = 1..3650. */
+  MIN_RETENTION_DAYS?: string;
+  MAX_RETENTION_DAYS?: string;
+  /** Goals per site (they ride in the DO's settings copy). Default 100. */
+  MAX_GOALS_PER_SITE?: string;
+  /** Active share links per site. Default 10. */
+  MAX_SHARE_LINKS_PER_SITE?: string;
+  /** SQL wall time a site may use per 10 minutes, in ms. Default 60000. */
+  SQL_TIME_BUDGET_MS?: string;
+
+  // Workers rate-limit bindings (wrangler.jsonc "ratelimits"); each is optional (absent = no limit).
+  /** POST /e per client network (networkKey: an IPv4 address or an IPv6 prefix; the forwarded visitor IP behind a keyed proxy). */
+  INGEST_IP_LIMITER?: RateLimit;
+  /** POST /e per site. */
+  INGEST_SITE_LIMITER?: RateLimit;
+  /** Server events and payments API calls per account. */
+  API_INGEST_LIMITER?: RateLimit;
+  /** SQL queries per account. */
+  SQL_LIMITER?: RateLimit;
+  /** verify per account and per verified domain. */
+  VERIFY_LIMITER?: RateLimit;
+  /** Stripe webhook deliveries per site id. */
+  WEBHOOK_LIMITER?: RateLimit;
+  /** Public share dashboard reads per share token. */
+  SHARE_LIMITER?: RateLimit;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: { auth: AuthContext } };

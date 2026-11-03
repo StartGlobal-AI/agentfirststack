@@ -55,8 +55,13 @@
   // Daily: delete expired OAuth tokens and codes, sessions and claim links from the identity DB.
   "triggers": { "crons": ["17 3 * * *"] },
 
-  // Burst limit on signup (and OAuth client registration) per IP (the binding only supports 10s/60s windows).
-  "ratelimits": [{ "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } }],
+  // Burst limits (the binding only supports 10s/60s windows): signup (and OAuth client registration)
+  // per network, shared by every app (namespace from the deploy profile); API key creation per
+  // account (POST /v1/keys here and the dashboard; the KEYS_HOURLY_LIMIT var covers every app).
+  "ratelimits": [
+    { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    { "name": "KEY_LIMITER", "namespace_id": "42041", "simple": { "limit": 10, "period": 60 } }
+  ],
 
   "vars": {
     // The URL used in responses. Empty = the request origin.
@@ -67,8 +72,14 @@
     // "true" only in local dev and tests: enables the fake sign-in at /auth/dev-login.
     "DEV_MODE": ""
   },
-  // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT, AUTH_ISSUER (the OAuth issuer; default
-  // PUBLIC_BASE_URL), OAUTH_REGISTER_HOURLY_LIMIT (new OAuth clients per network per hour, default 30).
+  // Optional vars a deployment can add (off when unset unless a default is named):
+  //   signup (counted in signup_log, shared by every app): SIGNUP_HOURLY_LIMIT and SIGNUP_DAILY_LIMIT
+  //   per network (IPv4 address or IPv6 /48), SIGNUP_ASN_DAILY_LIMIT per network operator,
+  //   SIGNUP_GLOBAL_HOURLY_LIMIT for the whole deployment (a circuit breaker);
+  //   keys: MAX_KEYS_PER_ACCOUNT (active keys, default 50), UNCLAIMED_MAX_KEYS_PER_ACCOUNT,
+  //   KEYS_HOURLY_LIMIT (new keys per account per hour);
+  //   AUTH_ISSUER (the OAuth issuer; default PUBLIC_BASE_URL), OAUTH_REGISTER_HOURLY_LIMIT (new OAuth
+  //   clients per network per hour, default 30).
   // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard),
   // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google). See docs/accounts.md.
   "observability": { "enabled": true }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { anyIn, cleanPath, DEAD_MS, deriveChunk, focusClick, parseEnvelope, scrollSegments, shiftChunk } from "../../src/lib/derive";
 import { errorFingerprint, normaliseMessage, normaliseSource, stackSource } from "../../src/lib/fingerprint";
-import { LIMITS } from "../../src/lib/limits";
+import { DEFAULTS, LIMITS } from "../../src/lib/limits";
 import {
   click,
   custom,
@@ -27,8 +27,11 @@ const derive = (ev: unknown[], extra = {}) => deriveChunk(envelope(SID, 0, ev, e
 describe("parseEnvelope (ingest parsing)", () => {
   const q = { sid: SID, seq: 3 };
   it("accepts a well-formed envelope and keeps only valid optional fields", () => {
-    const r = parseEnvelope({ v: 1, sid: SID, seq: 3, t: T0, ev: [], end: 1, uid: "u_1", avid: "vid_abcdefgh", f: 1, wd: 1, junk: "x" }, q);
+    const r = parseEnvelope({ v: 1, sid: SID, seq: 3, t: T0, ev: [], end: 1, uid: "u_1", avid: "vid_abcdefgh", f: 1, wd: 1 }, q);
     expect(r).toEqual({ ok: true, env: { v: 1, sid: SID, seq: 3, t: T0, ev: [], end: 1, uid: "u_1", avid: "vid_abcdefgh", f: 1, wd: 1 } });
+    // chunks are stored as received: an envelope can't smuggle other data along
+    const extra = parseEnvelope({ v: 1, sid: SID, seq: 3, t: T0, ev: [], junk: "x".repeat(1000) }, q);
+    expect(extra).toMatchObject({ ok: false, error: "invalid_body" });
     const bad = parseEnvelope({ v: 1, sid: SID, seq: 3, t: "x", ev: [], avid: "no spaces allowed!", end: true }, q);
     expect(bad.ok && bad.env).toEqual({ v: 1, sid: SID, seq: 3, t: 0, ev: [] });
   });
@@ -157,11 +160,44 @@ describe("deriveChunk", () => {
     expect(c.tag).toBe("buttonscript");
   });
 
-  it("caps derived facts per chunk and flags truncation", () => {
-    const ev = Array.from({ length: LIMITS.DERIVED_PER_CHUNK + 50 }, (_, i) => click(T0 + i, 1, `#b${i}`));
-    const d = derive(ev);
-    expect(d.clicks).toHaveLength(LIMITS.DERIVED_PER_CHUNK);
+  it("caps derived facts per chunk (MAX_DERIVED_PER_CHUNK, default 500) and flags truncation", () => {
+    const ev = Array.from({ length: 650 }, (_, i) => click(T0 + i * 100, 1, `#b${i}`));
+    const d = deriveChunk(envelope(SID, 0, ev), { ...bounds, maxDerived: DEFAULTS.DERIVED_PER_CHUNK });
+    expect(d.clicks).toHaveLength(DEFAULTS.DERIVED_PER_CHUNK);
     expect(d.truncated).toBe(true);
+    expect(deriveChunk(envelope(SID, 0, ev), { ...bounds, maxDerived: 1e9 }).clicks).toHaveLength(650);
+    expect(LIMITS.DERIVED_PER_CHUNK_MAX).toBe(2000);
+  });
+
+  it("keeps at most 20 clicks in any 1 s window (no person clicks faster)", () => {
+    const burst = Array.from({ length: 100 }, (_, i) => click(T0 + i * 5, 1, "#b"));
+    const d = derive([...burst, click(T0 + 2000, 1, "#later")]);
+    expect(d.clicks).toHaveLength(LIMITS.CLICKS_PER_SECOND + 1);
+    expect(d.clicks.at(-1)!.selector).toBe("#later");
+    expect(d.truncated).toBe(true);
+    expect(d.invalid).toBe(0);
+  });
+
+  it("strips control characters, separators and bidi overrides from every string, and needs page hosts", () => {
+    const nasty = `Pay\n[00:00.0] page /admin\u2028\u202eevil`;
+    const d = derive([
+      page(T0, 1, "/a\u2029b", { t: nasty, h: "shop.test" }),
+      page(T0 + 1, 2, "/x", { h: "" }),
+      click(T0 + 2, 1, `#a\n{evil}`, { l: nasty }),
+      error(T0 + 3, 1, nasty, { src: "https://x.test/a.js\n at evil" }),
+      meta(T0 + 4, "https://other.test/p?q=1"),
+    ]);
+    const all = [
+      ...d.pages.map((p) => `${p.title}${p.path}`),
+      ...d.clicks.map((c) => c.label + c.selector),
+      ...d.errors.map((e) => e.message),
+    ];
+    expect(all.some((x) => /[\n\u2028\u2029\u202e]/.test(x))).toBe(false);
+    expect(d.pages.map((p) => p.pv)).toEqual([1]);
+    expect(d.invalid).toBe(1);
+    expect(d.clicks[0]!.label).toBe("Pay [00:00.0] page /admin evil");
+    expect(d.errors[0]!.source).toBe("https://x.test/a.jsatevil");
+    expect(d.hosts.sort()).toEqual(["other.test", "shop.test"]);
   });
 
   it("uses an early error's own time (queued by the loader), within a minute", () => {
