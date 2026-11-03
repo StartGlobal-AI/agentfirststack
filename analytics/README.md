@@ -2,7 +2,9 @@
 
 Cookieless, privacy-friendly web analytics that an agent can set up in two requests, with
 server-side enrichment (every country, region and city from Cloudflare's edge, not from the
-browser), server-side event ingestion for backends, goals, revenue, funnels and an
+browser), server-side event ingestion for backends, goals, revenue attribution (Stripe webhook or
+any provider), visitors and journeys, derived insights, comparisons, annotations with automatic
+traffic-spike notes, saved funnels, ingest exclusions, scroll depth and Core Web Vitals, and an
 agent-queryable stats API.
 
 Sections marked (v2) are deliberately not built yet. `GET /llms.txt` is the complete manual.
@@ -23,21 +25,34 @@ curl "$BASE/v1/sites/$SITE/stats?period=7d&breakdown=country" -H "Authorization:
 ## Architecture
 
 ```
-browser ── /s.js (tracker, 2.2 KB min / 1.3 KB gzip) ──► POST /e ─┐
-backend ── POST /v1/sites/:id/events ─────────────────────────────┼─► Worker: enrich (geo, UA,
-tags app (server-side forward) ───────────────────────────────────┘    bot filter, channel, visitor hash)
+browser ── /s.js (tracker, 3.3 KB min / 1.8 KB gzip) ──► POST /e ─┐
+backend ── POST /v1/sites/:id/events ─────────────────────────────┤
+billing ── POST /v1/sites/:id/payments ───────────────────────────┼─► Worker: enrich (geo, UA,
+Stripe ─── POST /webhooks/stripe/:site_id (signed) ───────────────┤    bot filter, channel, visitor hash),
+tags app (server-side forward) ───────────────────────────────────┘    verify Stripe-Signature
                                                       │
                                                       ▼
                                        SiteDO (one Durable Object per site, SQLite)
-                                       events + sessions + goals copy, queries run here
-D1: accounts, api_keys, sites, goals, share_links (control plane, never on the ingest hot path)
+                                       events + sessions + goals copy, payments ledger,
+                                       annotations; exclusions applied; queries run here;
+                                       daily alarm: retention purge + traffic-spike notes
+D1: accounts, api_keys, sites (+ exclusions), goals, share_links, funnels, integrations
+    (control plane, never on the ingest hot path)
 ```
 
 - **Per-site Durable Object (`SiteDO`, SQLite, `idFromName(site_id)`)** stores that site's events
   and sessions and runs its queries. It holds a copy of the site's settings and goals (pushed on
   every create/update/goal change) so ingest never touches D1. If the copy is ever missing, the
   Worker re-pushes it from D1 and retries. A DO for an unknown site id writes no storage. A daily
-  DO alarm purges raw events and sessions older than `retention_days`.
+  DO alarm purges raw events and sessions older than `retention_days`, then writes
+  traffic-spike annotations for the days since its last run.
+- **DO schema migrations.** Each DO keeps `meta.schema_version`. Version 1 is the first release's
+  schema (`SCHEMA_V1` in `src/do/engine.ts`, never edited); later versions are `MIGRATIONS`, each
+  run in a transaction that also bumps the version, the first time the DO is instantiated after a
+  deploy (`ALTER TABLE ... ADD COLUMN` guarded by a column check, new tables and indexes). A new DO
+  runs the same steps. Version 2 adds `events.revenue_type, scroll_depth, lcp, inp, cls`,
+  `goals.threshold`, `sessions(user_id)` index, and the `payments`, `payment_links`,
+  `provider_events` and `annotations` tables.
 - **Visitor identity.** Default `cookieless`: `visitor_id = sha256(daily_salt | site_id | ip | ua)`
   truncated to 16 hex chars, where `daily_salt = HMAC(SALT_SECRET, YYYY-MM-DD)` (UTC date of the
   event). No cookies, no storage, no cross-day linking. Optional per-site `persistent` mode: the
@@ -96,6 +111,13 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
   before each SPA navigation; it feeds `visit_duration`
 - outbound link clicks (`outbound_click`) and file downloads (`file_download`), `{url}` prop
   without query string; opt-out via `data-auto="false"`
+- max scroll depth per page and, for the page load (not SPA navigations), Core Web Vitals: LCP,
+  INP (slowest interaction) and CLS (largest 5 s session window), on the engagement beacon
+- opt-in `data-404="true"`: a `404` event (`props.from` = linking page, no query) on pages served
+  with HTTP 404 (Navigation Timing) or carrying `<meta name="afsa-404">`; `afsa('404')` for
+  client-rendered 404s
+- opt-in `data-forms="true"`: `form_submit` with `props.form` = the form's id, name or action
+  path; field values are never read
 - `afsa.visitorId()` returns the id the server echoed for the last event (so after the first
   pageview response), for a backend to send as `visitor_id`
 - sends a GPC / DNT flag; the server drops those events when the site enables `respect_dnt`
@@ -117,36 +139,58 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
 | GET | `/sites/:id/install?framework=html\|nextjs\|astro\|react\|wordpress\|gtm\|tags` | file + code, tracker API, proxy snippets, server-side curl |
 | POST | `/sites/:id/verify` | `{url?}`: fetches the page, checks the snippet + site id, that the script URL serves the tracker (catches broken proxies), CSP, that events arrived, hostname rejections and proxied events without the proxy key; returns `checks`, `fixes`, `next_steps`. Full key only. Redirects: at most 3, each hop on the domain, a subdomain or `allowed_hostnames`; reads at most 1 MB of the page; fetches the script (at most 256 KB) only from this deployment's host or those site hosts |
 | POST | `/sites/:id/events` | server-side ingestion, batch up to 100 (see below) |
-| GET | `/sites/:id/stats` | aggregate metrics, optional `breakdown`, `compare=previous` |
-| GET | `/sites/:id/breakdown?breakdown=` | top values of one property (same as stats' breakdown) |
-| GET | `/sites/:id/timeseries` | metrics by `interval=hour\|day\|week\|month`; every bucket up to now |
+| GET | `/sites/:id/stats` | aggregate metrics, optional `breakdown`, `compare=previous\|year\|custom` |
+| GET | `/sites/:id/breakdown?breakdown=` | top values of one property; `sort`, comparison per row |
+| GET | `/sites/:id/timeseries` | metrics by `interval=hour\|day\|week\|month`; every bucket up to now; comparison per bucket; annotations |
+| GET | `/sites/:id/movers?breakdown=` | gainers and losers of a metric vs the comparison period |
+| GET | `/sites/:id/insights` | revenue share, top sources/countries, time-to-convert histograms, top converting events, heatmap |
 | GET | `/sites/:id/realtime` | visitors in last 5 / 30 min, top pages/countries/sources (30 min), last 50 events |
-| GET | `/sites/:id/funnel?steps=...` | ordered steps within a session |
+| GET | `/sites/:id/funnel?steps=...` | ordered steps within a session (or `funnel_id=`) |
 | GET | `/sites/:id/sql?q=SELECT...` | read-only SQL over the site's own SQLite (SELECT/WITH only; limits below) |
-| POST/GET/DELETE | `/sites/:id/goals[/:goal_id]` | `{ name, type: event\|pageview, match, value? }`, idempotent by name |
+| POST/GET/DELETE | `/sites/:id/goals[/:goal_id]` | `{ name, type: event\|pageview\|scroll, match, value?, threshold? }`, idempotent by name |
+| GET | `/sites/:id/visitors`, `/sites/:id/visitors/:visitor` | visitor list (generated names, user_id, location, device, source, spent, last seen) and one visitor's timeline |
+| GET | `/sites/:id/sessions/:session_id` | one session and its events |
+| GET | `/sites/:id/journeys` | visitors who completed a goal (or a first purchase): source, time, visits, touchpoints |
+| GET/POST/DELETE | `/sites/:id/integrations/stripe` | webhook URL + status / connect `{webhook_secret}` / disconnect |
+| POST | `/webhooks/stripe/:site_id` | Stripe webhook (public; `Stripe-Signature` verified) |
+| POST/GET/DELETE | `/sites/:id/payments[/:payment_id]` | payments from any provider, idempotent by (provider, id) |
+| GET | `/sites/:id/exclusions` | rules, drops, `your_ip`, dry run `?ip=&url=&country=` |
+| POST/GET/PATCH/DELETE | `/sites/:id/annotations[/:annotation_id]` | dated notes; automatic traffic spikes |
+| POST/GET/PATCH/DELETE | `/sites/:id/funnels[/:funnel_id]` | saved funnels; GET one = drop-off per step |
 | POST | `/sites/:id/share` | public read-only dashboard URL (returns the existing link unless `{"new": true}`) |
 | DELETE | `/sites/:id/share` | revoke the site's share links |
 
 Public: `GET /s.js`, `POST /e` (both under any prefix), `GET /share/:token`,
-`GET /share/:token/data`, `GET /llms.txt`, `POST /mcp`.
+`GET /share/:token/data`, `GET /llms.txt`, `POST /mcp`, `POST /webhooks/stripe/:site_id` (signed).
 
 Query params for stats/timeseries/breakdowns/funnel:
 - `period`: `today`, `yesterday`, `24h`, `7d`, `30d` (default), `90d`, `12mo`, `mtd`, `ytd`, `all`, or `from`/`to` (YYYY-MM-DD inclusive, site timezone). `7d`/`30d`/`90d` include today.
 - `metrics`: `visitors, visits, pageviews, views_per_visit, bounce_rate, visit_duration, events, conversions, conversion_rate, revenue`
+  (the default set, plus `revenue_per_visitor`), and opt-in `new_revenue, renewal_revenue, refunds,
+  purchases, customers, purchase_rate, new_visitors, returning_visitors, scroll_depth, time_on_page,
+  lcp_p75, inp_p75, cls_p75`
   (`events` includes pageviews; `bounce_rate` = % of sessions with <= 1 pageview and no custom
   event; `visit_duration` = mean seconds, the larger of first-to-last activity and visible time;
   `conversions` = goal-matching events; `conversion_rate` = % of visitors who converted;
-  `revenue` = event revenue, or the goal's `value` for a matching event without revenue; currencies
-  are summed as sent, no FX)
+  `revenue` = event revenue plus payments, refunds subtracted, or the goal's `value` for a matching
+  event without revenue; currencies are summed as sent, no FX; `purchase_rate` = visitors with a
+  new purchase / visitors; returning = an earlier session of the visitor or its user_id, so
+  same-day only for anonymous cookieless visitors; vitals are p75 by nearest rank over pageviews.
+  Payments never count as visitors, visits or events)
 - `breakdown`: `page, entry_page, exit_page, hostname, source, referrer, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, click_id_type, country, region, city, continent, browser, browser_version, os, device, event_name, goal, prop:<key>`
   (missing values show as `(none)`; region/city rows include `country`; `goal` lists every goal)
 - `filters`: `country==US;page~/blog;channel!=Direct` (`==`, `!=`, `~` contains case-insensitive,
   `!~`; `|` for OR; `(none)` for missing; `\;` escapes). `goal==X` keeps sessions that converted
   on X and counts only X as conversions; `entry_page`/`exit_page` filter sessions; the rest filter
   events.
-- `compare=previous` (stats): same-length previous range; for an in-progress period only the
-  elapsed part (today so far vs yesterday up to the same time). Applies to the totals, not to
-  breakdown rows.
+- `compare=previous|year|custom` (+ `compare_from`, `compare_to`, `match_weekday=true`) on stats,
+  breakdown and timeseries: same-length previous range, the same dates a year earlier, or a custom
+  range; for an in-progress period only the elapsed part (today so far vs yesterday up to the same
+  time). Totals, every breakdown row and every timeseries bucket get
+  `comparison: {metrics, change_percent}`.
+- `sort` (breakdowns): a countable metric (`revenue`, `purchase_rate`, `revenue_per_visitor`, ...),
+  applied before `limit`, or `change` / `change:<metric>` for the biggest absolute movers.
+- `page` rows count revenue and conversions of the sessions that viewed the page.
 - `limit` (default 20, max 1000)
 
 All user values are bound SQL parameters; the only text spliced into SQL comes from fixed tables
@@ -190,14 +234,66 @@ Server-side event body (`POST /v1/sites/:id/events`, also the MCP `track_events`
 - Response `202`: `{ accepted, rejected, results: [{ index, ok, visitor_id, session_id } | { index, ok: false, reason }] }`.
 - Events with a bot `user_agent` are rejected per event.
 
+## Revenue attribution
+
+Payments are stored in the site's DO twice: as events (origin `payment`, names `payment`,
+`renewal`, `refund` with negative revenue) carrying the linked session's attribution, geo and
+device, so revenue works in every breakdown, filter, timeseries and funnel; and in a `payments`
+ledger keyed by `provider:external_id` for idempotency, refunds, renewals and deletes.
+
+- **Linking:** `afsa.visitorId()` goes into the Stripe Checkout Session's `metadata.afs_visitor_id`
+  (subscriptions: also `subscription_data.metadata`) or `client_reference_id` (Payment Links:
+  `?client_reference_id=`). Order: session id, the visitor's latest session at or before the
+  payment, the user id's latest session, the customer's earlier payment (renewals keep the
+  original source), the refunded payment. Unlinked payments show as channel `Unattributed` and are
+  re-attributed when the customer's checkout arrives. Metadata is untrusted: only those keys are
+  read and validated, nothing else is stored, and customer ids are kept as a per-site salted hash.
+- **Stripe:** `GET /sites/:id/integrations/stripe` gives the webhook URL and events
+  (`checkout.session.completed`, `checkout.session.async_payment_succeeded`, `invoice.paid`,
+  `charge.refunded`; optional `payment_intent.succeeded`). `POST` stores the signing secret sealed
+  with `ENCRYPTION_KEY` (never returned). Each delivery: `Stripe-Signature` verified (any v1, 5 min
+  tolerance), event id deduped for 30 days, body capped at 1 MB, test-mode events acknowledged but
+  counted only with `record_test_events`. invoice `subscription_create` = new, `subscription_cycle`
+  / `subscription_update` / `subscription_threshold` = renewal; `charge.refunded` sets the
+  cumulative refunded amount. Status: `events_received`, `last_result`, `last_error`, unlinked
+  payments; verify reports `stripe_webhook` and `payment_linking`.
+- **Any provider:** `POST /sites/:id/payments` `{payments: [{id, provider?, amount, currency, type?,
+  timestamp?, visitor_id?, session_id?, user_id?, customer_id?, refunded_payment_id?, livemode?}]}`.
+
+## Visitors, journeys, insights, annotations, exclusions, funnels
+
+- **Visitors** are identities: `user:<user_id>` when identified (earlier anonymous sessions of the
+  same visitor id join it), else the visitor id; names are generated from the id (FNV-1a over 64
+  adjectives x 64 animals). Cookieless ids rotate daily, so anonymous history is same-day; every
+  response says so in `identity.note`.
+- **Journeys** to a goal or a first purchase: first touch, last touch, time to complete, visits,
+  touchpoints (up to 20 sessions), revenue; summary medians and first-visit rate.
+- **Insights:** one call with the DataFast bento set (see llms.txt).
+- **Annotations** live in the DO (`annotations` table), are returned with every timeseries, and
+  are idempotent by time + title. The daily alarm adds `traffic_spike` notes: a complete day with
+  >= 20 visitors and >= 2.5x the median of the previous 14 days (>= 7 days of history), naming the
+  source with the largest gain when it explains at least a third of the jump. Each day is checked
+  once (`meta.spikes_through`, up to 7 days of catch-up) under the key `spike:<day>`.
+- **Exclusions** (`sites.exclusions` in D1, copied to the DO): IPs and CIDR ranges (v4 and v6),
+  path globs, hostnames, countries, applied to browser and server events at ingest. The IP is passed
+  to the DO only to compare in memory; it is never stored or logged, and a drop's sample is the
+  rule that matched. Reasons: `excluded_ip`, `excluded_path`, `excluded_hostname`,
+  `excluded_country`.
+- **Saved funnels** live in D1 (`funnels`); reading one runs the same query as `funnel?steps=`.
+
 ## MCP tools (`/mcp`)
 
 `create_site`, `list_sites`, `get_site`, `update_site`, `delete_site`, `get_install_instructions`,
-`verify_install`, `get_stats`, `get_timeseries`, `get_breakdown`, `get_realtime`, `get_funnel`,
-`track_events`, `create_goal`, `list_goals`, `delete_goal`, `query_sql`, `create_share_link`,
-`revoke_share_links`. Write tools are hidden from read-only keys; `verify_install` is a write tool
+`verify_install`, `get_stats`, `get_timeseries`, `get_breakdown`, `get_top_movers`, `get_insights`,
+`get_realtime`, `get_funnel`, `track_events`, `create_goal`, `list_goals`, `delete_goal`,
+`query_sql`, `create_share_link`, `revoke_share_links`, `list_visitors`, `get_visitor`,
+`get_session`, `get_journeys`, `get_stripe_integration`, `connect_stripe`, `disconnect_stripe`,
+`record_payments`, `list_payments`, `delete_payment`, `list_annotations`, `create_annotation`,
+`update_annotation`, `delete_annotation`, `get_exclusions`, `list_funnels`, `create_funnel`,
+`update_funnel`, `delete_funnel`. Write tools are hidden from read-only keys; `verify_install` is a write tool
 (like `POST /sites/:id/verify`, it makes outbound fetches). `verify_install` returns values copied
-from the fetched page under `found_scripts_untrusted` and says so in its description.
+from the fetched page under `found_scripts_untrusted` and says so in its description. Tools that
+return visitor-sent values (`list_visitors`, `get_visitor`, `get_session`) say they are data.
 
 ## Dashboard
 
@@ -215,6 +311,9 @@ pages/sources/countries/devices tables, light and dark. It reads `GET /share/:to
 | `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SALT_SECRET` | secret, required; derives the daily visitor salt and each site's proxy key (`/e` returns 503 without it) |
 | `SQL_MAX_ROWS_READ` | optional var; rows a SQL query may read after its first result row before it is stopped. Default 1000000 |
+| `ENCRYPTION_KEY` | optional secret; 32 bytes base64 (`openssl rand -base64 32`). Seals the Stripe webhook signing secret. Unset: connecting Stripe returns 503 `not_configured` with a hint (the payments API still works). Changing it makes stored secrets unreadable: connect Stripe again |
+| `MAX_ANNOTATIONS_PER_SITE` | optional var; manual annotations per site (403 `quota_exceeded` beyond). Unset = no cap |
+| `MAX_FUNNELS_PER_SITE` | optional var; saved funnels per site (403 `quota_exceeded` beyond). Unset = no cap |
 | `DEV_MODE` | `"true"` only in local `.dev.vars`: honours `x-dev-geo-{country,region,region-code,city,continent,timezone,lat,lon}` headers, lets verify fetch localhost, falls back to an insecure salt. Empty in `wrangler.jsonc` |
 
 ## Develop and test
@@ -232,4 +331,6 @@ pnpm typecheck                    # Worker + tests, and the tracker with the DOM
 
 Long-term rollups beyond raw retention, cohort/retention reports, email reports via `mail/`,
 IP->geo for server events without explicit geo, multi-site roll-up views, rate limiting on the
-public `/e` endpoint, comparison per breakdown row, currency conversion for revenue.
+public `/e` endpoint, currency conversion for revenue. Next batch: alerts and scheduled reports, AI
+crawler ingestion, realtime map, paths, CSV export, ad spend import, segments and richer share
+links, imports, Search Console.

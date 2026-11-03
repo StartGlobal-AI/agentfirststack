@@ -40,7 +40,7 @@ deploy.
 |---|---|
 | `ADMIN_TOKEN` | Safe any time: edit the file and deploy |
 | `SALT_SECRET` (analytics) | Safe; visitor ids for the current day are split once, nothing else changes |
-| `ENCRYPTION_KEY` (tags, mail) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it. Keep it backed up |
+| `ENCRYPTION_KEY` (analytics, tags, mail) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it. Keep it backed up |
 | `SIGNUP_TOKEN` | Safe; callers need the new value |
 | `INTERNAL_TOKEN` (all apps) | Safe: edit the file and deploy all four apps (`pnpm afs deploy <profile>`). Between the first and last app, the dashboard may show resource lists as unavailable |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (site) | Safe; create a new secret in Google Cloud Console, deploy the site, then delete the old one. Existing sessions keep working |

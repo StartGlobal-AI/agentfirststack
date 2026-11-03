@@ -6,6 +6,7 @@ import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { ingestRoutes } from "./routes/ingest";
 import { shareRoutes } from "./routes/share";
+import { webhookRoutes } from "./routes/webhooks";
 import { siteRoutes } from "./routes/sites";
 
 export { SiteDO } from "./do/site-do";
@@ -32,13 +33,21 @@ app.get("/", (c) => {
 });
 app.get("/llms.txt", (c) => c.body(llmsTxt(publicBaseUrl(c)), 200, { "content-type": "text/markdown; charset=utf-8" }));
 app.route("/", shareRoutes);
+// Public, authenticated by the provider's signature (Stripe-Signature), not by an API key.
+app.route("/", webhookRoutes);
 
 app.all("/mcp", (c) =>
   handleMcp(c.req.raw, c.env, {
     name: "analytics",
     version: VERSION,
     instructions: MCP_INSTRUCTIONS,
-    register: (t, auth) => registerTools(t, { env: c.env, accountId: auth.accountId, baseUrl: publicBaseUrl(c) }),
+    register: (t, auth) =>
+      registerTools(t, {
+        env: c.env,
+        accountId: auth.accountId,
+        baseUrl: publicBaseUrl(c),
+        callerIp: c.req.header("cf-connecting-ip") ?? null,
+      }),
   }),
 );
 

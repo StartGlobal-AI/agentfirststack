@@ -1,4 +1,5 @@
 import { PROXY_KEY_HEADER } from "../lib/geo";
+import { STRIPE_EVENTS } from "../lib/stripe";
 
 /**
  * Install + first-party proxy instructions. Pure: (site, base URL, framework, proxy key) -> JSON an
@@ -244,13 +245,39 @@ export function installInstructions(site: SiteLike, baseUrl: string, framework: 
       identify: "afsa('identify', 'user_123')  // attaches user_id to this page's following events",
       visitor_id: "afsa.visitorId()  // id to send as visitor_id on server events, after the first pageview",
       auto_events: 'outbound_click and file_download events are sent automatically; disable with data-auto="false"',
-      engagement: "visible time is sent on pagehide (navigator.sendBeacon)",
+      engagement:
+        "visible time, max scroll depth and Core Web Vitals (LCP, INP, CLS of the loaded page) are sent on pagehide (navigator.sendBeacon); they feed time_on_page, scroll_depth, lcp_p75, inp_p75, cls_p75 and scroll goals",
+      not_found_pages:
+        'opt-in: data-404="true" on the script tag sends a "404" event (props.from = the linking page) on pages served with HTTP 404 or carrying <meta name="afsa-404">; in a client-rendered 404 call afsa(\'404\'). Broken links: GET /v1/sites/:id/breakdown?breakdown=page&filters=event_name==404',
+      form_submits:
+        'opt-in: data-forms="true" sends "form_submit" with props.form = the form\'s id, name or action path (never field values) on every submit',
+      checkout_link:
+        "revenue attribution: pass afsa.visitorId() to your server and put it in the Stripe Checkout Session's metadata.afs_visitor_id (subscriptions: also subscription_data.metadata.afs_visitor_id) or client_reference_id; Payment Links: append ?client_reference_id=<afsa.visitorId()>",
       visitor_id_mode:
         site.visitor_id_mode === "persistent"
           ? "persistent: a random id is kept in localStorage, so returning visitors are linked across days"
           : "cookieless: no cookies or storage; visitors are a daily-salted hash of IP + user agent",
     },
     first_party_proxy: proxyInstructions(baseUrl, site.id, proxyKey),
+    revenue: {
+      why: "Attribute payments to the visitor's source, page and country: revenue, revenue_per_visitor and purchase_rate per breakdown row, new vs renewal, refunds netted.",
+      stripe: {
+        webhook_url: `${baseUrl}/webhooks/stripe/${site.id}`,
+        events: [...STRIPE_EVENTS],
+        connect: `POST ${baseUrl}/v1/sites/${site.id}/integrations/stripe {"webhook_secret":"whsec_..."} (MCP: connect_stripe) after adding webhook_url as a Stripe webhook endpoint`,
+        status: `GET ${baseUrl}/v1/sites/${site.id}/integrations/stripe`,
+      },
+      link_to_visitor: {
+        browser: "const vid = afsa.visitorId();  // after the first pageview; send it to your server with the checkout request",
+        stripe_checkout_session: {
+          metadata: { afs_visitor_id: "<vid>" },
+          subscription_data: { metadata: { afs_visitor_id: "<vid>" } },
+          "or client_reference_id": "<vid>",
+        },
+        stripe_payment_link: "https://buy.stripe.com/...?client_reference_id=<vid>",
+      },
+      other_providers: `POST ${baseUrl}/v1/sites/${site.id}/payments {"id":"txn_1","provider":"paddle","amount":49,"currency":"USD","visitor_id":"<vid>"} (MCP: record_payments)`,
+    },
     server_side: {
       endpoint: `POST ${baseUrl}/v1/sites/${site.id}/events`,
       curl: `curl -X POST ${baseUrl}/v1/sites/${site.id}/events -H "Authorization: Bearer $KEY" -H "content-type: application/json" \\

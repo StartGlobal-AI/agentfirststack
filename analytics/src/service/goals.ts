@@ -9,24 +9,50 @@ export const createGoalInput = z.object({
     .min(1)
     .max(120)
     .describe('Display name, unique per site, e.g. "Signup". Used in goal==Signup filters and goal:Signup funnel steps.'),
-  type: z.enum(["event", "pageview"]).describe("event: matches a custom event name. pageview: matches a page path."),
+  type: z
+    .enum(["event", "pageview", "scroll"])
+    .describe(
+      "event: matches a custom event name. pageview: matches a page path. scroll: a pageview of the path that scrolled to `threshold` %.",
+    ),
   match: z
     .string()
     .min(1)
     .max(500)
-    .describe('event: the exact event name (e.g. "signup"). pageview: a path, * matches anything (e.g. "/thank-you" or "/order/*/done").'),
+    .describe(
+      'event: the exact event name (e.g. "signup"). pageview / scroll: a path, * matches anything (e.g. "/thank-you" or "/blog/*").',
+    ),
   value: z.number().min(0).nullable().optional().describe("Revenue counted per conversion when the event carries no revenue of its own."),
+  threshold: z.number().int().min(1).max(100).optional().describe("scroll goals: max scroll depth % the pageview must reach (default 75)."),
 });
 
-const goalJson = (g: Goal) => ({ id: g.id, name: g.name, type: g.type, match: g.match, value: g.value, created_at: g.created_at });
+const goalJson = (g: Goal) => ({
+  id: g.id,
+  name: g.name,
+  type: g.type,
+  match: g.match,
+  value: g.value,
+  threshold: g.threshold ?? null,
+  created_at: g.created_at,
+});
 
 export async function createGoal(ctx: Ctx, siteId: string, raw: unknown) {
   const input = parse(createGoalInput, raw);
-  if (input.type === "pageview" && !input.match.startsWith("/")) {
-    throw badRequest("Pageview goals match a path, so `match` must start with '/'.", 'Example: {"type":"pageview","match":"/thank-you"}.');
+  if ((input.type === "pageview" || input.type === "scroll") && !input.match.startsWith("/")) {
+    throw badRequest(
+      `${input.type === "scroll" ? "Scroll" : "Pageview"} goals match a path, so \`match\` must start with '/'.`,
+      'Example: {"type":"pageview","match":"/thank-you"}.',
+    );
+  }
+  if (input.threshold != null && input.type !== "scroll") {
+    throw badRequest(
+      "`threshold` is only for scroll goals.",
+      'Example: {"name":"Read pricing","type":"scroll","match":"/pricing","threshold":75}.',
+    );
   }
   const site = await loadSite(ctx, siteId);
-  const existing = await ctx.env.DB.prepare("SELECT id, name, type, match, value, created_at FROM goals WHERE site_id = ? AND name = ?")
+  const existing = await ctx.env.DB.prepare(
+    "SELECT id, name, type, match, value, threshold, created_at FROM goals WHERE site_id = ? AND name = ?",
+  )
     .bind(site.id, input.name)
     .first<Goal>();
   if (existing) {
@@ -34,7 +60,9 @@ export async function createGoal(ctx: Ctx, siteId: string, raw: unknown) {
       goal: goalJson(existing),
       existing: true,
       note:
-        existing.type === input.type && existing.match === input.match
+        existing.type === input.type &&
+        existing.match === input.match &&
+        (existing.threshold ?? null) === (input.type === "scroll" ? (input.threshold ?? 75) : null)
           ? undefined
           : "A goal with this name exists with a different definition; returned unchanged. Delete it first to redefine.",
     };
@@ -45,10 +73,13 @@ export async function createGoal(ctx: Ctx, siteId: string, raw: unknown) {
     type: input.type,
     match: input.match,
     value: input.value ?? null,
+    threshold: input.type === "scroll" ? (input.threshold ?? 75) : null,
     created_at: Date.now(),
   };
-  await ctx.env.DB.prepare("INSERT INTO goals (id, site_id, name, type, match, value, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(goal.id, site.id, goal.name, goal.type, goal.match, goal.value, goal.created_at)
+  await ctx.env.DB.prepare(
+    "INSERT INTO goals (id, site_id, name, type, match, value, threshold, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  )
+    .bind(goal.id, site.id, goal.name, goal.type, goal.match, goal.value, goal.threshold, goal.created_at)
     .run();
   await pushSettings(ctx.env, site);
   return {

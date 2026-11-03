@@ -15,6 +15,12 @@ declare module "node:sqlite" {
 declare module "node:fs" {
   export function readFileSync(path: string | URL, encoding: "utf8"): string;
 }
+declare module "node:zlib" {
+  export function gzipSync(data: string | Uint8Array): Uint8Array;
+}
+declare module "node:crypto" {
+  export function createHmac(alg: string, key: string): { update(s: string): { digest(enc: "hex"): string } };
+}
 declare module "node:vm" {
   export function runInNewContext(code: string, context: Record<string, unknown>): unknown;
 }

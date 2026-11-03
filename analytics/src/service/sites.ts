@@ -1,8 +1,16 @@
 import { ApiError, badRequest, newId, parse } from "@afs/shared";
 import { z } from "zod";
 import { normalizeDomain } from "../lib/url";
+import {
+  EXCLUSION_REASONS,
+  MAX_EXCLUSION_RULES,
+  compileExclusions,
+  excludedBy,
+  isEmptyExclusions,
+  normalizeExclusions,
+} from "../lib/exclusions";
 import { isValidTimezone } from "../lib/time";
-import { type Ctx, type SiteRow, loadSite, pushSettings, siteStub } from "./context";
+import { type Ctx, type SiteRow, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
 import { proxyKeyFor } from "./ingest";
 import { type Framework, installInstructions, scriptSnippet } from "./install";
 
@@ -26,6 +34,26 @@ const settingsShape = {
     .optional()
     .describe('Only accept browser events from these hostnames ("*.example.com" allowed). null = accept any.'),
   respect_dnt: z.boolean().optional().describe("Drop browser events when the visitor sends Global Privacy Control / Do Not Track."),
+  exclusions: z
+    .object({
+      ips: z
+        .array(z.string().max(64))
+        .max(MAX_EXCLUSION_RULES)
+        .optional()
+        .describe("IPv4/IPv6 addresses or CIDR ranges, e.g. 203.0.113.0/24, 2001:db8::/32."),
+      paths: z.array(z.string().max(500)).max(MAX_EXCLUSION_RULES).optional().describe("Path patterns, * = anything, e.g. /admin/*."),
+      hostnames: z
+        .array(z.string().max(253))
+        .max(MAX_EXCLUSION_RULES)
+        .optional()
+        .describe("Hostnames or *.example.com (e.g. staging.example.com)."),
+      countries: z.array(z.string().max(8)).max(250).optional().describe("ISO 3166-1 alpha-2 codes."),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      "Drop matching events at ingest (from now on; stored data is not changed). Replaces the whole set; null clears it. Drops are counted per reason (excluded_ip, excluded_path, excluded_hostname, excluded_country); IPs are compared in memory, never stored.",
+    ),
 };
 
 export const createSiteInput = z.object({
@@ -44,10 +72,19 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     retention_days: s.retention_days,
     allowed_hostnames: s.allowed_hostnames ? (JSON.parse(s.allowed_hostnames) as string[]) : null,
     respect_dnt: !!s.respect_dnt,
+    exclusions: parseExclusions(s.exclusions),
     created_at: s.created_at,
     updated_at: s.updated_at,
     snippet: scriptSnippet(baseUrl, s.id),
   };
+}
+
+/** Validated exclusions as stored in D1 (JSON, or null when empty). */
+function exclusionsColumn(input: z.infer<typeof updateSiteInput>["exclusions"]): string | null {
+  if (!input) return null;
+  const { value, problems } = normalizeExclusions(input);
+  if (problems.length) throw badRequest("Invalid exclusions.", problems.join(" "), problems);
+  return isEmptyExclusions(value) ? null : JSON.stringify(value);
 }
 
 function cleanDomain(input: string): string {
@@ -113,14 +150,15 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     retention_days: input.retention_days ?? 400,
     allowed_hostnames: input.allowed_hostnames?.length ? JSON.stringify(input.allowed_hostnames.map((h) => h.toLowerCase())) : null,
     respect_dnt: input.respect_dnt ? 1 : 0,
+    exclusions: exclusionsColumn(input.exclusions),
     created_at: now,
     updated_at: now,
   };
   try {
     await db
       .prepare(
-        `INSERT INTO sites (id, account_id, domain, name, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sites (id, account_id, domain, name, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         row.id,
@@ -132,6 +170,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
         row.retention_days,
         row.allowed_hostnames,
         row.respect_dnt,
+        row.exclusions ?? null,
         now,
         now,
       )
@@ -184,8 +223,9 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.allowed_hostnames !== undefined)
     next.allowed_hostnames = input.allowed_hostnames?.length ? JSON.stringify(input.allowed_hostnames.map((h) => h.toLowerCase())) : null;
   if (input.respect_dnt !== undefined) next.respect_dnt = input.respect_dnt ? 1 : 0;
+  if (input.exclusions !== undefined) next.exclusions = exclusionsColumn(input.exclusions);
   await ctx.env.DB.prepare(
-    `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, updated_at = ?
+    `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, exclusions = ?, updated_at = ?
      WHERE id = ? AND account_id = ?`,
   )
     .bind(
@@ -196,6 +236,7 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
       next.retention_days,
       next.allowed_hostnames,
       next.respect_dnt,
+      next.exclusions ?? null,
       next.updated_at,
       s.id,
       ctx.accountId,
@@ -210,13 +251,73 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
   await ctx.env.DB.batch([
     ctx.env.DB.prepare("DELETE FROM goals WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM share_links WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM funnels WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM integrations WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, ctx.accountId),
   ]);
   await siteStub(ctx.env, s.id).destroy();
-  return { deleted: s.id, note: "The site, its goals, share links and all stored events are gone." };
+  return {
+    deleted: s.id,
+    note: "The site, its goals, funnels, share links, Stripe connection, annotations, payments and all stored events are gone.",
+  };
 }
 
 export async function getInstall(ctx: Ctx, siteId: string, framework?: Framework) {
   const s = await loadSite(ctx, siteId);
   return installInstructions(s, ctx.baseUrl, framework ?? "html", await proxyKeyFor(ctx.env, s.id));
+}
+
+// ------------------------------------------------------------------ exclusions
+
+export const exclusionsQuery = z.object({
+  ip: z.string().max(64).optional().describe("Test: would an event from this IP be dropped?"),
+  url: z.string().max(2000).optional().describe("Test: a page URL (hostname + path rules)."),
+  country: z.string().max(8).optional().describe("Test: an ISO country code."),
+});
+
+/**
+ * The site's exclusion rules, what they dropped in the last 7 days, the caller's own IP (to add it
+ * to ips), and an optional dry run of the rules against an ip / url / country. Nothing is stored.
+ */
+export async function getExclusions(ctx: Ctx, siteId: string, raw: unknown, callerIp: string | null) {
+  const q = parse(exclusionsQuery, raw);
+  const site = await loadSite(ctx, siteId);
+  const ex = parseExclusions(site.exclusions) ?? { ips: [], paths: [], hostnames: [], countries: [] };
+  const summary = await siteStub(ctx.env, site.id).summary();
+  const drops = "error" in summary ? {} : summary.dropped_last_7d;
+  let test: Record<string, unknown> | undefined;
+  if (q.ip || q.url || q.country) {
+    let host: string | null = null;
+    let path: string | null = null;
+    if (q.url) {
+      try {
+        const u = new URL(q.url);
+        host = u.hostname.toLowerCase();
+        path = u.pathname;
+      } catch {
+        throw badRequest("`url` is not a valid URL.", `Example: url=https://${site.domain}/admin/login`);
+      }
+    }
+    const hit = excludedBy(compileExclusions(ex), { ip: q.ip ?? null, hostname: host, pathname: path, country: q.country ?? null });
+    test = {
+      ip: q.ip ?? null,
+      url: q.url ?? null,
+      country: q.country ?? null,
+      excluded: !!hit,
+      reason: hit?.reason ?? null,
+      rule: hit?.rule ?? null,
+    };
+  }
+  return {
+    site_id: site.id,
+    exclusions: ex,
+    dropped_last_7d: Object.fromEntries(EXCLUSION_REASONS.map((r) => [r, drops[r]?.count ?? 0])),
+    your_ip: callerIp,
+    ...(test ? { test } : {}),
+    notes: [
+      'Change the rules with PATCH /v1/sites/:id {"exclusions": {"ips": [...], "paths": [...], "hostnames": [...], "countries": [...]}} (the whole set is replaced).',
+      "your_ip is the address this API request came from (an agent's machine may differ from your browser). To exclude only your own browser, set localStorage.afsa_ignore = 1 on the site.",
+      "Exclusions apply from now on; stored events are not changed.",
+    ],
+  };
 }

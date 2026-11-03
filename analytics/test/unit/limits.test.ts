@@ -125,8 +125,14 @@ describe("verifyInstall: what it fetches", () => {
       accountId: "acc_1",
       baseUrl: "https://analytics.example.net",
       env: {
-        DB: { prepare: () => ({ bind: () => ({ first: async () => site }) }) },
-        SITE: { idFromName: () => "id", get: () => ({ summary: async () => sum }) },
+        DB: { prepare: (q: string) => ({ bind: () => ({ first: async () => (q.includes("FROM sites") ? site : null) }) }) },
+        SITE: {
+          idFromName: () => "id",
+          get: () => ({
+            summary: async () => sum,
+            paymentsSummary: async () => ({ payments_30d: 0, unlinked_30d: 0, test_mode_30d: 0, last_payment_at: null }),
+          }),
+        },
       },
     }) as unknown as Ctx;
   const page = (src: string) => html(`<html><head><script defer src="${src}" data-site="${site.id}"></script></head></html>`);

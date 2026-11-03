@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { QUEUE_STUB } from "../../src/service/install";
 
@@ -17,6 +18,11 @@ function browser(
     storage?: Record<string, string>;
     preload?: unknown[][];
     stubCalls?: string;
+    /** fake PerformanceObserver: entries per type, delivered on observe() */
+    perf?: Record<string, Record<string, unknown>[]>;
+    status?: number;
+    meta404?: boolean;
+    referrer?: string;
   } = {},
 ) {
   const sent: Sent[] = [];
@@ -41,15 +47,20 @@ function browser(
   const attrs: Record<string, string> = { "data-site": "site_0123456789abcdef", ...(opts.attrs ?? {}) };
   const script = { src: opts.src ?? "https://analytics.example.net/s.js", getAttribute: (k: string) => attrs[k] ?? null };
   const store: Record<string, string> = { ...(opts.storage ?? {}) };
+  const doc = { scrollHeight: 2000 };
   const ctx: Record<string, unknown> = {
     URL,
     JSON,
     Promise,
+    Math,
     Date: { now: () => clock },
+    scrollY: 0,
+    innerHeight: 500,
     document: {
       currentScript: script,
-      querySelector: () => script,
-      referrer: "https://www.google.com/",
+      documentElement: doc,
+      querySelector: (sel: string) => (sel.startsWith("meta") ? (opts.meta404 ? {} : null) : script),
+      referrer: opts.referrer ?? "https://www.google.com/",
       visibilityState: "visible",
       addEventListener: (t: string, f: (e: unknown) => void) => (docListeners[t] ||= []).push(f),
     },
@@ -83,6 +94,21 @@ function browser(
     addEventListener: (t: string, f: (e: unknown) => void) => (listeners[t] ||= []).push(f),
   };
   ctx.window = ctx;
+  if (opts.perf) {
+    const perf = opts.perf;
+    const PO = function (this: { cb: (l: unknown) => void }, cb: (l: unknown) => void) {
+      this.cb = cb;
+    } as unknown as { new (cb: (l: unknown) => void): unknown; supportedEntryTypes: string[] };
+    (PO as unknown as { prototype: Record<string, unknown> }).prototype.observe = function (
+      this: { cb: (l: unknown) => void },
+      o: { type: string },
+    ) {
+      this.cb({ getEntries: () => perf[o.type] ?? [] });
+    };
+    PO.supportedEntryTypes = Object.keys(perf);
+    ctx.PerformanceObserver = PO;
+    ctx.performance = { getEntriesByType: () => [{ responseStatus: opts.status ?? 200 }] };
+  }
   if (opts.preload) {
     // the queue stub from the install snippet
     const q: unknown[] = [];
@@ -105,6 +131,12 @@ function browser(
     tick: (ms: number) => (clock += ms),
     fire: (t: string, e: unknown = {}) => [...(listeners[t] ?? []), ...(docListeners[t] ?? [])].forEach((f) => f(e)),
     click: (href: string) => docListeners.click?.forEach((f) => f({ target: { closest: () => ({ href }) } })),
+    submit: (form: Record<string, string>) =>
+      docListeners.submit?.forEach((f) => f({ target: { id: form.id ?? "", getAttribute: (k: string) => form[k] ?? null } })),
+    scroll: (y: number) => {
+      ctx.scrollY = y;
+      listeners.scroll?.forEach((f) => f({}));
+    },
     history: ctx.history as {
       pushState: (s: unknown, t: string, u: string) => void;
       replaceState: (s: unknown, t: string, u: string) => void;
@@ -116,7 +148,9 @@ function browser(
 describe("tracker (/s.js)", () => {
   it("is small and carries the verify marker", () => {
     expect(TRACKER.startsWith("/*! afs-analytics */")).toBe(true);
-    expect(TRACKER.length).toBeLessThan(2600);
+    // Budget: 3.4 KB minified (scroll depth, Web Vitals, 404 and form tracking took it from 2.2 KB).
+    expect(TRACKER.length).toBeLessThan(3400);
+    expect(gzipSync(TRACKER).length).toBeLessThan(1900);
   });
 
   it("exposes window.afsa and nothing under the old sga name", () => {
@@ -221,5 +255,84 @@ describe("tracker (/s.js)", () => {
     b.afsa("event", "x");
     expect(b.sent[1]!.body).toMatchObject({ b: 1, d: 1 });
     expect(browser({ storage: { afsa_ignore: "1" } }).sent).toHaveLength(0);
+  });
+});
+
+describe("tracker: scroll depth, Web Vitals, 404 and forms", () => {
+  it("the engagement beacon carries max scroll depth and the page load's vitals", () => {
+    const b = browser({
+      perf: {
+        "largest-contentful-paint": [{ startTime: 900.4 }, { startTime: 1800.6 }],
+        event: [
+          { interactionId: 1, duration: 64 },
+          { interactionId: 0, duration: 500 }, // not an interaction
+          { interactionId: 2, duration: 232 },
+        ],
+        "layout-shift": [
+          { startTime: 2000, value: 0.05 },
+          { startTime: 2500, value: 0.02, hadRecentInput: true },
+          { startTime: 2600, value: 0.04 },
+          { startTime: 9000, value: 0.01 }, // new session window
+        ],
+      },
+    });
+    b.scroll(700); // (700 + 500) / 2000 = 60%
+    b.scroll(100); // max is kept
+    b.tick(3000);
+    b.fire("pagehide");
+    const eng = b.sent.find((s) => s.body.n === "engagement")!;
+    expect(eng.body).toMatchObject({ e: 3000, sd: 60, v: [1801, 232, 90] });
+  });
+
+  it("vitals describe the loaded page only: none after an SPA navigation", () => {
+    const b = browser({ perf: { "largest-contentful-paint": [{ startTime: 1000 }] } });
+    b.tick(2000);
+    b.history.pushState({}, "", "/next");
+    b.tick(2000);
+    b.fire("pagehide");
+    const [first, second] = b.sent.filter((s) => s.body.n === "engagement");
+    expect(first!.body.v).toEqual([1000]);
+    expect(second!.body.v).toBeUndefined();
+    expect(second!.body.sd).toBe(25); // 500 / 2000
+  });
+
+  it("without PerformanceObserver nothing breaks and no vitals are sent", () => {
+    const b = browser();
+    b.tick(1500);
+    b.fire("pagehide");
+    expect(b.sent.find((s) => s.body.n === "engagement")!.body.v).toEqual([]);
+  });
+
+  it('data-404="true" sends a 404 event (status 404 or the meta hint), with the referrer path only', () => {
+    expect(
+      browser({ attrs: { "data-404": "true" }, perf: {}, status: 404, referrer: "https://www.google.com/page?q=secret" }).sent.map((s) => [
+        s.body.n,
+        s.body.p,
+      ]),
+    ).toEqual([
+      ["pageview", undefined],
+      ["404", { from: "https://www.google.com/page" }],
+    ]);
+    expect(browser({ attrs: { "data-404": "true" }, meta404: true, perf: {} }).sent.map((s) => s.body.n)).toEqual(["pageview", "404"]);
+    expect(browser({ attrs: { "data-404": "true" }, perf: {}, status: 200 }).sent).toHaveLength(1);
+    expect(browser({ perf: {}, status: 404 }).sent).toHaveLength(1); // opt-in only
+    const b = browser();
+    b.afsa("404");
+    expect(b.sent[1]!.body.n).toBe("404");
+  });
+
+  it('data-forms="true" sends form_submit with the form id, name or action path, never values', () => {
+    const b = browser({ attrs: { "data-forms": "true" } });
+    b.submit({ id: "contact" });
+    b.submit({ name: "newsletter" });
+    b.submit({ action: "/subscribe?ref=x" });
+    expect(b.sent.slice(1).map((s) => [s.via, s.body.n, s.body.p])).toEqual([
+      ["beacon", "form_submit", { form: "contact" }],
+      ["beacon", "form_submit", { form: "newsletter" }],
+      ["beacon", "form_submit", { form: "/subscribe" }],
+    ]);
+    const off = browser();
+    off.submit({ id: "contact" });
+    expect(off.sent).toHaveLength(1);
   });
 });

@@ -51,6 +51,21 @@ curl -s "$A/v1/sites/$SITE/stats?period=7d&breakdown=country" -H "$H"
 
 Backends can send events too (signups, purchases): `POST $A/v1/sites/$SITE/events`.
 
+Beyond traffic, the same API answers the owner's revenue and behaviour questions:
+
+- **Revenue:** connect Stripe (`POST $A/v1/sites/$SITE/integrations/stripe` with the webhook
+  signing secret; the response says which events to subscribe) or record payments from any
+  provider (`POST $A/v1/sites/$SITE/payments`). Put `afsa.visitorId()` in the checkout's
+  `metadata.afs_visitor_id` so revenue lands on the right source, page and country.
+- **People:** `GET /visitors`, `/visitors/:id`, `/sessions/:id` and `/journeys?goal=Signup`.
+- **Answers in one call:** `GET /insights` (first-visit purchase rate, time and visits to
+  purchase, top converting sources, day x hour heatmap) and `GET /movers?breakdown=source`.
+- **Context:** annotations (`/annotations`; spikes are noted automatically), saved funnels
+  (`/funnels`), exclusions (IPs, paths, hostnames, countries) and scroll depth, 404s, forms and
+  Core Web Vitals from the snippet.
+
+Full reference: https://analytics.agentfirststack.com/llms.txt
+
 ### Track conversions for ads (Google Ads, Meta, TikTok, GA4)
 
 ```sh
@@ -151,7 +166,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 8. MCP
 
-One MCP server for every service (73 tools, prefixed `analytics_`, `tags_` and `mail_`, plus the
+One MCP server for every service (94 tools, prefixed `analytics_`, `tags_` and `mail_`, plus the
 gateway's own `afs_create_claim_link`):
 
 ```sh

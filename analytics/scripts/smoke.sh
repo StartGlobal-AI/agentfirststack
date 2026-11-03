@@ -207,6 +207,88 @@ TOOC=$(head -c 20000 /dev/zero | tr '\0' 'a' | curl -sS -o /dev/null -w '%{http_
 check "/e refuses a chunked body over 16 KB (no content-length)" '. == "413"' "\"$TOOC\""
 api DELETE "/v1/sites/$S2" >/dev/null
 
+echo "- batch 1: revenue, visitors, journeys, insights, comparisons, annotations, exclusions, funnels, vitals"
+S3_JSON=$(api POST /v1/sites "{\"domain\":\"b1-$RANDOM$RANDOM.example.com\"}")
+S3=$(printf '%s' "$S3_JSON" | jq -r .site.id)
+PK3=$(printf '%s' "$S3_JSON" | jq -r .install.first_party_proxy.proxy_key)
+U3="https://$(printf '%s' "$S3_JSON" | jq -r .site.domain)"
+check "install documents revenue linking, 404 and form tracking" '(.install.revenue.stripe.webhook_url | contains("/webhooks/stripe/")) and (.install.tracker.not_found_pages | contains("data-404")) and (.install.tracker.form_submits | contains("data-forms"))' "$S3_JSON"
+collect3() { # collect3 IP COUNTRY JSON
+  curl -sS -X POST "$BASE/_a/e" -A "$UA" -H "content-type: text/plain" -H "x-forwarded-for: $1" -H "x-afs-proxy-key: $PK3" -H "x-dev-geo-country: $2" -d "$3"
+}
+VID=$(collect3 10.7.0.1 DE "{\"s\":\"$S3\",\"u\":\"$U3/pricing\",\"r\":\"https://www.google.com/\"}" | jq -r .v)
+check "engagement beacon with scroll depth and vitals" '.ok == true' "$(collect3 10.7.0.1 DE "{\"s\":\"$S3\",\"n\":\"engagement\",\"u\":\"$U3/pricing\",\"e\":8000,\"sd\":85,\"v\":[1500,90,20]}")"
+check "scroll goal" '.goal.type == "scroll" and .goal.threshold == 75' "$(api POST "/v1/sites/$S3/goals" '{"name":"Read pricing","type":"scroll","match":"/pricing","threshold":75}')"
+api POST "/v1/sites/$S3/goals" '{"name":"Signup","type":"event","match":"signup"}' >/dev/null
+collect3 10.7.0.1 DE "{\"s\":\"$S3\",\"n\":\"signup\",\"u\":\"$U3/pricing\",\"i\":\"user_b1\"}" >/dev/null
+collect3 10.7.0.2 US "{\"s\":\"$S3\",\"u\":\"$U3/\",\"r\":\"https://l.facebook.com/\"}" >/dev/null
+VIT=$(api GET "/v1/sites/$S3/breakdown?period=24h&breakdown=page&metrics=pageviews,scroll_depth,time_on_page,lcp_p75,inp_p75,cls_p75,conversions")
+check "page metrics: scroll depth, time on page, vitals p75, scroll goal conversion" '[.results[] | select(.value == "/pricing")][0] | .scroll_depth == 85 and .time_on_page == 8 and .lcp_p75 == 1500 and .inp_p75 == 90 and .cls_p75 == 0.02 and .conversions >= 1' "$VIT"
+
+PAY=$(api POST "/v1/sites/$S3/payments" "{\"id\":\"smoke_1\",\"provider\":\"smoke\",\"amount\":49,\"currency\":\"USD\",\"visitor_id\":\"$VID\"}")
+check "payments API links the payment to the visitor" '.accepted == 1 and .results[0].linked_by == "visitor"' "$PAY"
+check "payments API is idempotent by (provider, id)" '.results[0].existing == true' "$(api POST "/v1/sites/$S3/payments" "{\"id\":\"smoke_1\",\"provider\":\"smoke\",\"amount\":49,\"currency\":\"USD\"}")"
+check "list payments" '.total == 1 and .payments[0].channel == "Organic Search"' "$(api GET "/v1/sites/$S3/payments?period=24h")"
+check "revenue, revenue per visitor, purchase rate" '.metrics.revenue == 49 and .metrics.revenue_per_visitor == 24.5 and .metrics.purchase_rate == 50' "$(api GET "/v1/sites/$S3/stats?period=24h&metrics=revenue,revenue_per_visitor,purchase_rate")"
+check "breakdown sorted by revenue" '.sort == "revenue" and .results[0].value == "Organic Search" and .results[0].revenue == 49' "$(api GET "/v1/sites/$S3/breakdown?period=24h&breakdown=channel&metrics=visitors,revenue&sort=revenue")"
+
+STR=$(api GET "/v1/sites/$S3/integrations/stripe")
+check "stripe status before connecting: webhook URL + events" ".integration.connected == false and (.integration.webhook_url | endswith(\"/webhooks/stripe/$S3\")) and (.integration.events | index(\"invoice.paid\") != null)" "$STR"
+WHSEC="whsec_smoke_secret_0123456789"
+CON=$(api POST "/v1/sites/$S3/integrations/stripe" "{\"webhook_secret\":\"$WHSEC\"}")
+if [ "$(printf '%s' "$CON" | jq -r '.error.code // empty')" = "not_configured" ]; then
+  check "no ENCRYPTION_KEY: connect explains the fix" '.error.hint | contains("ENCRYPTION_KEY")' "$CON"
+else
+  check "connect stripe (secret never returned)" ".integration.connected == true and (tostring | contains(\"$WHSEC\") | not)" "$CON"
+  T=$(date +%s)
+  EVT="{\"id\":\"evt_smoke_$RANDOM\",\"type\":\"checkout.session.completed\",\"created\":$T,\"livemode\":true,\"data\":{\"object\":{\"id\":\"cs_smoke\",\"mode\":\"payment\",\"payment_status\":\"paid\",\"amount_total\":2000,\"currency\":\"usd\",\"payment_intent\":\"pi_smoke\",\"metadata\":{\"afs_visitor_id\":\"$VID\"}}}}"
+  SIG=$(printf '%s' "$T.$EVT" | openssl dgst -sha256 -hmac "$WHSEC" | sed 's/^.* //')
+  hook() { curl -sS -X POST "$BASE/webhooks/stripe/$S3" -H "content-type: application/json" -H "stripe-signature: $1" -d "$EVT"; }
+  check "signed Stripe webhook records a linked payment" '.received == true and .result.linked_by == "visitor"' "$(hook "t=$T,v1=$SIG")"
+  check "the same Stripe event again is deduped" '.result.duplicate_event == true' "$(hook "t=$T,v1=$SIG")"
+  check "a bad signature is refused" '.error.code == "signature_mismatch"' "$(hook "t=$T,v1=$(printf '0%.0s' {1..64})")"
+  check "stripe status shows deliveries" '.integration.events_received >= 2' "$(api GET "/v1/sites/$S3/integrations/stripe")"
+  check "disconnect stripe" '.disconnected == true' "$(api DELETE "/v1/sites/$S3/integrations/stripe")"
+fi
+
+VS=$(api GET "/v1/sites/$S3/visitors?period=24h&sort=revenue")
+check "visitors: identified, named, with spend and source" '.total == 2 and .visitors[0].id == "user:user_b1" and .visitors[0].revenue >= 49 and .visitors[0].source == "Google" and (.visitors[0].name | test("^[A-Z][a-z]+ [A-Z][a-z]+$")) and (.identity.note | contains("rotate daily"))' "$VS"
+VONE=$(api GET "/v1/sites/$S3/visitors/user:user_b1")
+check "one visitor's timeline" '[.timeline[].name] | index("signup") != null and index("payment") != null' "$VONE"
+SID=$(printf '%s' "$VONE" | jq -r '.sessions[0].id')
+check "one session's events" ".session.id == \"$SID\" and (.events | length) >= 3" "$(api GET "/v1/sites/$S3/sessions/$SID")"
+check "journeys to a goal" '.summary.converters == 1 and .journeys[0].source == "Google" and (.journeys[0].touchpoints | length) == 1' "$(api GET "/v1/sites/$S3/journeys?period=24h&goal=Signup")"
+check "insights" '.kpis.revenue >= 49 and (.heatmap.values | length) == 7 and .time_to_convert.converters == 1 and (.revenue_share.device | length) >= 1' "$(api GET "/v1/sites/$S3/insights?period=24h")"
+check "top movers vs the previous period" '[.gainers[].value] | index("Google") != null' "$(api GET "/v1/sites/$S3/movers?period=24h&breakdown=source")"
+check "compare=year with match_weekday" '.comparison.period.mode == "year" and .comparison.period.match_weekday == true' "$(api GET "/v1/sites/$S3/stats?period=7d&metrics=visitors&compare=year&match_weekday=true")"
+check "breakdown rows carry comparison; sort=change" '.sort == "change:visitors" and (.results[0].comparison.change_percent | has("visitors"))' "$(api GET "/v1/sites/$S3/breakdown?period=24h&breakdown=source&metrics=visitors&sort=change")"
+check "timeseries buckets carry comparison" '.results[0].comparison.metrics | has("visitors")' "$(api GET "/v1/sites/$S3/timeseries?period=7d&metrics=visitors&compare=previous")"
+
+TODAY=$(date -u +%Y-%m-%d)
+AN=$(api POST "/v1/sites/$S3/annotations" "{\"date\":\"$TODAY\",\"title\":\"Smoke launch\"}")
+AID=$(printf '%s' "$AN" | jq -r .annotation.id)
+check "create annotation" ".existing == false and .annotation.date == \"$TODAY\"" "$AN"
+check "create annotation is idempotent by time + title" '.existing == true' "$(api POST "/v1/sites/$S3/annotations" "{\"date\":\"$TODAY\",\"title\":\"Smoke launch\"}")"
+check "timeseries returns annotations" '[.annotations[].title] | index("Smoke launch") != null' "$(api GET "/v1/sites/$S3/timeseries?period=7d")"
+check "update annotation" '.annotation.title == "Smoke launch v2"' "$(api PATCH "/v1/sites/$S3/annotations/$AID" '{"title":"Smoke launch v2"}')"
+check "delete annotation" ".deleted == \"$AID\"" "$(api DELETE "/v1/sites/$S3/annotations/$AID")"
+
+check "set exclusions (CIDR v4 + v6, path)" '.site.exclusions.ips == ["10.7.9.0/24","2001:db8::/32"]' "$(api PATCH "/v1/sites/$S3" '{"exclusions":{"ips":["10.7.9.0/24","2001:db8::/32"],"paths":["/admin/*"]}}')"
+check "an excluded IP is dropped at ingest" '.ok == false and .dropped == "excluded_ip"' "$(collect3 10.7.9.1 DE "{\"s\":\"$S3\",\"u\":\"$U3/\"}")"
+check "exclusions: counted drops + dry run" '.dropped_last_7d.excluded_ip == 1 and .test.excluded == true and .test.rule == "10.7.9.0/24"' "$(api GET "/v1/sites/$S3/exclusions?ip=10.7.9.200")"
+check "invalid exclusions are refused with details" '.error.code == "bad_request" and (.error.details | length) == 1' "$(api PATCH "/v1/sites/$S3" '{"exclusions":{"ips":["300.1.1.1"]}}')"
+
+FN=$(api POST "/v1/sites/$S3/funnels" '{"name":"Pricing to signup","steps":["/pricing","goal:Signup"]}')
+FID=$(printf '%s' "$FN" | jq -r .funnel.id)
+check "save a funnel" '.existing == false and .funnel.steps == ["/pricing","goal:Signup"]' "$FN"
+check "saved funnel with drop-off" '.funnel.name == "Pricing to signup" and .steps[0].visitors == 1 and .steps[1].visitors == 1' "$(api GET "/v1/sites/$S3/funnels/$FID?period=24h")"
+check "list and delete funnels" '.deleted != null' "$(api DELETE "/v1/sites/$S3/funnels/$FID")"
+
+TL3=$(mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+check "tools/list has the batch 1 tools" '[.result.tools[].name] as $n | ["get_top_movers","get_insights","list_visitors","get_visitor","get_session","get_journeys","connect_stripe","get_stripe_integration","disconnect_stripe","record_payments","list_payments","delete_payment","create_annotation","list_annotations","update_annotation","delete_annotation","get_exclusions","create_funnel","list_funnels","update_funnel","delete_funnel"] | all(. as $t | $n | index($t) != null)' "$TL3"
+check "MCP get_insights" '(.result.content[0].text | fromjson) | .kpis.visitors == 2' "$(mcp "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_insights\",\"arguments\":{\"site_id\":\"$S3\",\"period\":\"24h\"}}}")"
+api DELETE "/v1/sites/$S3" >/dev/null
+
 echo "- cleanup"
 DEL=$(api DELETE "/v1/sites/$SITE")
 check "delete site" ".deleted == \"$SITE\"" "$DEL"

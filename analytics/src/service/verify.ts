@@ -3,7 +3,9 @@ import { z } from "zod";
 import { isDev } from "../env";
 import { readTextCapped } from "../lib/body";
 import { hostAllowed } from "../lib/url";
-import { type Ctx, type SiteRow, type SiteSummary, loadSite, siteStub } from "./context";
+import { EXCLUSION_REASONS } from "../lib/exclusions";
+import { type Ctx, type PaymentsSummary, type SiteRow, type SiteSummary, loadSite, siteStub } from "./context";
+import { linkingInstructions } from "./payments";
 import { PROXY_PATH, scriptSnippet } from "./install";
 
 export const verifyInput = z.object({
@@ -285,6 +287,54 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
         detail: `Events also arrive from ${foreign.map((h) => h.hostname).join(", ")}. If those aren't yours, set allowed_hostnames.`,
       });
     }
+  }
+  const excluded = EXCLUSION_REASONS.map((r) => [r, drops[r]] as const).filter(([, v]) => !!v);
+  if (excluded.length) {
+    const n = excluded.reduce((a, [, v]) => a + v!.count, 0);
+    const ev = checks.find((c) => c.id === "events_received");
+    const detail = `${n} events in the last 7 days were dropped by this site's exclusions (${excluded.map(([r, v]) => `${r}: ${v!.count}, latest rule ${v!.sample}`).join("; ")}).`;
+    checks.push({ id: "exclusions", ok: true, detail });
+    if (ev && !ev.ok)
+      ev.fix = `${ev.fix} Your own visits may be excluded: ${detail} Check with GET /v1/sites/${site.id}/exclusions?ip=<your ip>.`;
+  }
+  const stripe = await ctx.env.DB.prepare(
+    "SELECT events_received, last_event_at, last_result, last_error FROM integrations WHERE site_id = ? AND provider = 'stripe'",
+  )
+    .bind(site.id)
+    .first<{ events_received: number; last_event_at: number | null; last_result: string | null; last_error: string | null }>();
+  if (stripe) {
+    if (stripe.last_error) {
+      checks.push({
+        id: "stripe_webhook",
+        ok: false,
+        detail: `The last Stripe delivery failed: ${stripe.last_error}.`,
+        fix: `Re-connect with the endpoint's current signing secret: POST /v1/sites/${site.id}/integrations/stripe {"webhook_secret":"whsec_..."}.`,
+      });
+    } else if (!stripe.events_received) {
+      checks.push({
+        id: "stripe_webhook",
+        ok: false,
+        detail: "Stripe is connected but no webhook delivery has arrived yet.",
+        fix: `Make sure the Stripe endpoint URL is ${ctx.baseUrl}/webhooks/stripe/${site.id} and send a test event (stripe trigger checkout.session.completed), then GET /v1/sites/${site.id}/integrations/stripe.`,
+      });
+    } else {
+      checks.push({
+        id: "stripe_webhook",
+        ok: true,
+        detail: `${stripe.events_received} Stripe deliveries; last at ${new Date(Number(stripe.last_event_at)).toISOString()} (${stripe.last_result}).`,
+      });
+    }
+  }
+  const pay = (await siteStub(ctx.env, site.id)
+    .paymentsSummary()
+    .catch(() => ({ error: "unavailable" }))) as PaymentsSummary | { error: unknown };
+  if (!("error" in pay) && pay.unlinked_30d > 0) {
+    checks.push({
+      id: "payment_linking",
+      ok: false,
+      detail: `${pay.unlinked_30d} of ${pay.payments_30d} payments in the last 30 days found no visitor, so their revenue shows as channel "Unattributed".`,
+      fix: linkingInstructions().stripe_checkout,
+    });
   }
   const failed = checks.filter((c) => !c.ok);
   const eventsOk = checks.find((c) => c.id === "events_received")?.ok ?? false;

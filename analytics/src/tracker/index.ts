@@ -7,9 +7,15 @@
  * (/_a/s.js -> /_a/e), so a first-party proxy needs no extra config. data-api overrides it.
  * Global: window.afsa (afsa('event', ...), afsa.visitorId()). No cookies. localStorage holds
  * afsa_vid only when the server says the site is in persistent mode; afsa_ignore opts out.
+ *
+ * The engagement beacon also carries the page's max scroll depth (sd) and, for the page that was
+ * loaded (not SPA navigations), Core Web Vitals v = [LCP ms, INP ms, CLS x 1000]. Opt-in:
+ * data-404="true" sends a "404" event on pages served with status 404 (or with
+ * <meta name="afsa-404">), and data-forms="true" sends "form_submit" {form} on every form submit.
  */
 
 type Fn = ((cmd: string, ...args: unknown[]) => void) & { q?: IArguments[]; visitorId?: () => string | null };
+type Entry = PerformanceEntry & { value: number; duration: number; interactionId?: number; hadRecentInput?: boolean };
 type Payload = Record<string, unknown>;
 
 (() => {
@@ -21,6 +27,8 @@ type Payload = Record<string, unknown>;
   const site = script && script.getAttribute("data-site");
   if (!script || !site || (w.afsa && w.afsa.visitorId)) return;
   const attr = (k: string) => script.getAttribute("data-" + k);
+  const on = (k: string) => attr(k) === "true";
+  const bare = (u: string) => u.split(/[?#]/)[0];
   const api = attr("api") || script.src.replace(/s\.js([?#].*)?$/, "e");
   const KEY = "afsa_vid";
   const store = (() => {
@@ -39,6 +47,10 @@ type Payload = Record<string, unknown>;
   let lastHref = "";
   let engaged = 0;
   let since = 0;
+  let depth = 0; // max scroll depth (%) of the current page
+  // Web Vitals of the loaded page; emptied for good once an SPA navigation happens (they describe the first page only)
+  let vt: number[] = [];
+  let hard = 1;
 
   const send = (n: string, extra?: Payload, beacon?: boolean) => {
     const body: Payload = { s: site, n, u: loc.href, r: d.referrer || undefined, ...extra };
@@ -71,21 +83,33 @@ type Payload = Record<string, unknown>;
   };
   const flush = () => {
     tick();
-    if (lastHref && engaged >= 1000) send("engagement", { e: engaged, u: lastHref }, true);
+    if (lastHref && engaged >= 1000)
+      send("engagement", { e: engaged, u: lastHref, sd: depth, v: hard ? vt.map(Math.round) : undefined }, true);
     engaged = 0;
+  };
+
+  const measure = () => {
+    const el = d.documentElement;
+    depth = Math.max(depth, Math.min(100, Math.round(((scrollY + innerHeight) / Math.max(el.scrollHeight, 1)) * 100)));
   };
 
   const pageview = () => {
     const key = loc.pathname + loc.search;
     if (key === lastKey) return; // replaceState to the same URL, duplicate popstate
     flush();
+    if (lastKey !== null) hard = 0;
     lastKey = key;
     lastHref = loc.href;
+    depth = 0;
+    measure();
     send("pageview");
   };
 
+  const notFound = () => send("404", { p: { from: bare(d.referrer) || undefined } });
+
   const afsa: Fn = (cmd, ...a) => {
     if (cmd === "event") send(String(a[0]), a[1] ? { p: a[1] } : undefined);
+    else if (cmd === "404") notFound();
     else if (cmd === "revenue") send(String(a[0]), { $: [a[1], a[2]], p: a[3] });
     else if (cmd === "identify") uid = a[0] == null ? null : String(a[0]);
     else if (cmd === "pageview") {
@@ -110,6 +134,48 @@ type Payload = Record<string, unknown>;
   addEventListener("popstate", pageview);
   d.addEventListener("visibilitychange", () => (visible() ? (since = Date.now()) : flush()));
   addEventListener("pagehide", flush);
+  addEventListener("scroll", measure, { passive: true });
+
+  // Core Web Vitals: LCP (last candidate), INP (slowest interaction), CLS (largest 5 s session window).
+  let nf: unknown = 0; // this page is a 404 (opt-in)
+  try {
+    const PO = PerformanceObserver;
+    const po = (type: string, cb: (e: Entry) => void, o?: object) =>
+      new PO((l) => l.getEntries().forEach((e) => hard && cb(e as Entry))).observe({ type, buffered: true, ...o });
+    po("largest-contentful-paint", (e) => (vt[0] = e.startTime));
+    po("event", (e) => e.interactionId && (vt[1] = Math.max(vt[1] || 0, e.duration)), { durationThreshold: 40 });
+    if (PO.supportedEntryTypes.includes("layout-shift")) {
+      let sum = 0;
+      let first = 0;
+      let last = 0;
+      vt[2] = 0;
+      po("layout-shift", (e) => {
+        const t = e.startTime;
+        if (e.hadRecentInput) return;
+        if (t - last > 1000 || t - first > 5000) sum = first = 0;
+        if (!first) first = t;
+        last = t;
+        vt[2] = Math.max(vt[2]!, (sum += e.value * 1000));
+      });
+    }
+    nf =
+      on("404") &&
+      ((performance.getEntriesByType("navigation")[0] as { responseStatus?: number }).responseStatus === 404 ||
+        d.querySelector('meta[name="afsa-404"]'));
+  } catch {
+    /* no PerformanceObserver: no vitals */
+  }
+
+  // Opt-in: form submits (the form's id, name or action path; never field values)
+  if (on("forms"))
+    d.addEventListener(
+      "submit",
+      (ev) => {
+        const f = ev.target as HTMLFormElement;
+        send("form_submit", { p: { form: f.id || f.getAttribute("name") || bare(f.getAttribute("action") || loc.pathname) } }, true);
+      },
+      true,
+    );
 
   // Outbound links and file downloads
   if (attr("auto") !== "false") {
@@ -135,5 +201,7 @@ type Payload = Record<string, unknown>;
   since = visible() ? Date.now() : 0;
   for (const q of queued) if (q[0] === "identify") afsa(...q);
   pageview();
+  // Opt-in 404 pages: status from Navigation Timing, or a <meta name="afsa-404"> hint
+  if (nf) notFound();
   for (const q of queued) if (q[0] !== "identify") afsa(...q);
 })();

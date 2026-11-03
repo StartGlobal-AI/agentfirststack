@@ -112,6 +112,21 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   DO, so ingest never touches D1.
 - **Backends** send events with `POST /v1/sites/:id/events` using a key. The tags service uses this
   path to forward conversions.
+- **Revenue.** Stripe posts to `/webhooks/stripe/:site_id` (no key; `Stripe-Signature` verified
+  against the signing secret, which D1 `integrations` keeps sealed with `ENCRYPTION_KEY`); any
+  other provider uses `POST /v1/sites/:id/payments`. The DO stores each payment as an event
+  (origin `payment`, linked to the visitor's session, so revenue flows through every breakdown)
+  and in a `payments` ledger keyed by `provider:external_id`; Stripe event ids are deduped in
+  `provider_events`, and `payment_links` maps a hashed customer to its first session so renewals
+  keep the original source.
+- **Exclusions** (IPs and CIDR ranges, paths, hostnames, countries) live on the D1 site row and in
+  the DO's settings copy. The Worker hands the visitor IP to the DO only to compare it in memory;
+  it is never stored.
+- **The DO's daily alarm** purges data past retention and writes traffic-spike annotations
+  (DO `annotations` table, next to manual notes) for the days since its last run.
+- **DO schema migrations.** `meta.schema_version` per DO: version 1 is the first release's schema
+  (frozen); later versions run once, in a transaction, when a DO is next instantiated (columns added
+  only if missing, new tables and indexes). D1 changes stay forward-only migrations.
 
 ## Tags
 
@@ -140,7 +155,7 @@ The apex serves what agents and crawlers look for, from `site/public/`:
 | Need | Choice | Why |
 |---|---|---|
 | Accounts, config, small relational data | D1 | SQL, migrations, cheap, global reads |
-| A site's events, a container's identities | Durable Object with SQLite | Strong consistency per entity, queries run next to the data, no shared hot spot |
+| A site's events, payments and annotations, a container's identities | Durable Object with SQLite | Strong consistency per entity, queries run next to the data, no shared hot spot |
 | Raw mail, attachments, large bodies | R2 | Blobs, no egress fees |
 | Delivery to third parties | Queues + dead-letter queue | Retries with backoff without blocking the request |
 | Waking a waiting agent | Durable Object | Parks requests and resolves them when mail arrives |

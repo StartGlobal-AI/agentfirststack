@@ -66,6 +66,7 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_WEBHOOKS_PER_ACCOUNT` | mail | default 10 |
 | `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | defaults 10 / 50 / 512 KB |
 | `SQL_MAX_ROWS_READ` | analytics | default 1,000,000 rows read per SQL query |
+| `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
 
 ## Deployments (`pnpm afs`, profiles in `deploy/`)
 

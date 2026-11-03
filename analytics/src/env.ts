@@ -20,6 +20,15 @@ export interface Bindings extends AuthBindings {
    * before the query is stopped. Unset = engine.DEFAULT_SQL_MAX_ROWS_READ (1,000,000).
    */
   SQL_MAX_ROWS_READ?: string;
+  /**
+   * Seals third-party secrets at rest (the Stripe webhook signing secret): 32 bytes, base64
+   * (openssl rand -base64 32). Optional; without it connecting Stripe is refused with a hint.
+   */
+  ENCRYPTION_KEY?: string;
+  /** Fair use: max manual annotations per site. Unset = no cap. */
+  MAX_ANNOTATIONS_PER_SITE?: string;
+  /** Fair use: max saved funnels per site. Unset = no cap. */
+  MAX_FUNNELS_PER_SITE?: string;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: { auth: AuthContext } };

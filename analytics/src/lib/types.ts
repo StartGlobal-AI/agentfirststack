@@ -1,12 +1,13 @@
 import type { Breakdown, Filter, Metric } from "./filters";
 import type { FunnelStep } from "./query";
-import type { Interval, Period } from "./time";
+import type { CompareSpec, Interval, Period } from "./time";
 import type { Geo } from "./geo";
 import type { DeviceInfo } from "./ua";
 import type { Channel, ClickIdType } from "./channel";
+import type { Exclusions } from "./exclusions";
 
 export type VisitorIdMode = "cookieless" | "persistent";
-export type GoalType = "event" | "pageview";
+export type GoalType = "event" | "pageview" | "scroll";
 
 export interface Goal {
   id: string;
@@ -14,6 +15,8 @@ export interface Goal {
   type: GoalType;
   match: string;
   value: number | null;
+  /** scroll goals: minimum max-scroll % of the page (1-100); null for other types */
+  threshold?: number | null;
   created_at: number;
 }
 
@@ -27,6 +30,8 @@ export interface SiteSettings {
   retention_days: number;
   allowed_hostnames: string[] | null;
   respect_dnt: boolean;
+  /** ingest exclusions (null = none). Older settings copies have no field: treat as null. */
+  exclusions?: Exclusions | null;
   created_at: number;
   goals: Goal[];
 }
@@ -69,6 +74,17 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   dnt: boolean;
   /** browser: came through a first-party proxy without a valid x-afs-proxy-key (counted as a warning) */
   proxy_warning?: "proxy_key_missing" | "proxy_key_invalid" | null;
+  /**
+   * Visitor IP, only so the DO can test it against exclusions.ips in memory. Never stored, never
+   * logged, never used as a drop sample.
+   */
+  ip?: string | null;
+  /** engagement beacon: max scroll depth of the page, 0-100 */
+  scroll_depth?: number | null;
+  /** engagement beacon: Core Web Vitals of the page load (ms, ms, unitless) */
+  lcp?: number | null;
+  inp?: number | null;
+  cls?: number | null;
 }
 
 export interface IngestOutcome {
@@ -96,19 +112,65 @@ export interface StatsRequest extends PeriodParams {
   filters: Filter[];
   breakdown?: Breakdown;
   breakdown_metrics?: Metric[];
-  compare?: boolean;
+  compare?: CompareSpec;
+  /** breakdown order: a metric (desc), or change[:metric] (largest absolute change; needs compare) */
+  sort?: SortSpec;
   limit?: number;
 }
+
+/** Breakdown order. `change` ranks by the absolute change of `metric` against the comparison. */
+export type SortSpec = { by: "metric"; metric: Metric } | { by: "change"; metric: Metric };
 
 export interface TimeseriesRequest extends PeriodParams {
   metrics: Metric[];
   filters: Filter[];
   interval?: Interval;
+  compare?: CompareSpec;
 }
 
 export interface FunnelRequest extends PeriodParams {
   filters: Filter[];
   steps: FunnelStep[];
+}
+
+// ------------------------------------------------------------------ payments
+
+export type PaymentType = "new" | "renewal" | "refund";
+
+/**
+ * A normalised payment, from the Stripe webhook or POST /v1/sites/:id/payments, as handed to
+ * SiteDO.ingestPayments(). `link` attaches a provider customer to a visitor without money (a
+ * subscription checkout: its invoices carry the revenue).
+ */
+export interface PaymentInput {
+  provider: string;
+  /** provider's id of the payment; (provider, external_id) is the natural key */
+  external_id: string;
+  /** provider event id (Stripe evt_...), deduped for 30 days; null for the payments API */
+  event_id: string | null;
+  type: PaymentType | "link";
+  /** major units, >= 0 (refunds: amount refunded so far; stored negative) */
+  amount: number;
+  currency: string | null;
+  ts: number;
+  visitor_id: string | null;
+  session_id: string | null;
+  user_id: string | null;
+  /** provider customer id; the Worker replaces it with a salted hash before the DO sees it */
+  customer: string | null;
+  /** refunds: external ids of the payment that was refunded (tried in order) */
+  original_refs: string[];
+  livemode: boolean;
+}
+
+export interface PaymentOutcome {
+  ok: boolean;
+  id?: string;
+  existing?: boolean;
+  duplicate_event?: boolean;
+  /** how the payment found its visitor: session | visitor | user | customer | original_payment, or null */
+  linked_by?: string | null;
+  reason?: string;
 }
 
 /** Errors the DO returns as values (thrown errors lose their shape across RPC). */

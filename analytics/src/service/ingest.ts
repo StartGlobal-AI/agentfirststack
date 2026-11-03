@@ -97,7 +97,25 @@ function revenueOf(v: unknown): { revenue: number | null; currency: string | nul
  *   s site id · n event name (default "pageview"; "engagement" = visible-time beacon) · u page URL
  *   r referrer · p props · $ [amount, currency] · i user id · id persistent visitor id
  *   e engagement ms · b 1 when navigator.webdriver · d 1 when GPC/DNT
+ *   engagement only: sd max scroll depth % · v [LCP ms, INP ms, CLS x 1000] of the page load
  */
+
+const finiteIn = (x: unknown, max: number): number | null => (typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= max ? x : null);
+
+/** Scroll depth and Web Vitals from an engagement beacon, clamped; anything odd is dropped. */
+export function engagementMetrics(p: Record<string, unknown>) {
+  const sd = finiteIn(p.sd, 100);
+  const v = Array.isArray(p.v) ? (p.v as unknown[]) : [];
+  const lcp = finiteIn(v[0], 120_000);
+  const inp = finiteIn(v[1], 60_000);
+  const cls = finiteIn(v[2], 100_000);
+  return {
+    scroll_depth: sd == null ? null : Math.round(sd),
+    lcp: lcp == null || lcp === 0 ? null : Math.round(lcp),
+    inp: inp == null || inp === 0 ? null : Math.round(inp),
+    cls: cls == null ? null : Math.round(cls) / 1000,
+  };
+}
 export interface BrowserResult {
   status: 202 | 400 | 404 | 413 | 503;
   body: Record<string, unknown>;
@@ -174,6 +192,9 @@ export async function ingestBrowser(
     explicit_visitor_id: null,
     dnt: p.d === 1 || p.d === true || req.headers.get("sec-gpc") === "1" || req.headers.get("dnt") === "1",
     proxy_warning: viaProxy && !trusted ? (presented ? "proxy_key_invalid" : "proxy_key_missing") : null,
+    // Only for exclusions.ips, compared in the DO's memory; never stored.
+    ip,
+    ...(name === "engagement" ? engagementMetrics(p) : {}),
     ...attribution(page.hostname, page, clip(p.r, 2000)),
     ...geo,
     ...parseUserAgent(ua),
@@ -272,6 +293,8 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
     client_visitor_id: null,
     explicit_visitor_id: e.visitor_id ?? null,
     dnt: false,
+    // Only for exclusions.ips, compared in the DO's memory; never stored.
+    ip: e.ip ?? null,
     ...attribution(page.hostname, page, e.referrer),
     ...geo,
     ...parseUserAgent(e.user_agent),

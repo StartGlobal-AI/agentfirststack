@@ -30,7 +30,7 @@ async function trackerEtag(): Promise<string> {
  */
 export const ingestRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  if (path.startsWith("/v1/") || path.startsWith("/mcp") || path.startsWith("/share/")) return next();
+  if (path.startsWith("/v1/") || path.startsWith("/mcp") || path.startsWith("/share/") || path.startsWith("/webhooks/")) return next();
   const method = c.req.method;
 
   if ((path === "/s.js" || path.endsWith("/s.js")) && (method === "GET" || method === "HEAD")) {

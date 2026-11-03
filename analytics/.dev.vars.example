@@ -5,6 +5,12 @@ SALT_SECRET=change-me-to-a-long-random-string
 DEV_MODE=true
 # Optional: rows a /sql query may read after its first result row before it is stopped (default 1000000)
 # SQL_MAX_ROWS_READ=1000000
+# Optional: seals the Stripe webhook signing secret (32 bytes, base64): openssl rand -base64 32.
+# Without it POST /v1/sites/:id/integrations/stripe returns 503 not_configured.
+# ENCRYPTION_KEY=
+# Optional fair-use caps (unset = no cap)
+# MAX_ANNOTATIONS_PER_SITE=
+# MAX_FUNNELS_PER_SITE=
 # Optional: open | token | closed
 # SIGNUP_MODE=open
 # SIGNUP_TOKEN=

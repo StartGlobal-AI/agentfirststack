@@ -4,7 +4,7 @@ import { migrate } from "../../src/do/engine";
 import type { SqlValue } from "../../src/lib/query";
 
 /** The engine's Db interface over node:sqlite, so unit tests run the real SQL. */
-export function memoryDb(): Db & { raw: DatabaseSync } {
+export function memoryDb(opts: { migrate?: boolean } = {}): Db & { raw: DatabaseSync } {
   const raw = new DatabaseSync(":memory:");
   const plain = (r: Record<string, unknown>) => ({ ...r }) as Row;
   const changes = () => Number(raw.prepare("SELECT total_changes() AS n").all()[0]!.n);
@@ -45,6 +45,6 @@ export function memoryDb(): Db & { raw: DatabaseSync } {
       }
     },
   };
-  migrate(db);
+  if (opts.migrate !== false) migrate(db);
   return db;
 }

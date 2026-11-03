@@ -60,6 +60,7 @@ These are what agentfirststack.com uses (see `deploy/hosted.json`). All are off 
 |---|---|---|
 | `SIGNUP_HOURLY_LIMIT` | all | New accounts per network (IPv4 address or IPv6 /64) per hour |
 | `MAX_SITES_PER_ACCOUNT` | analytics | Sites per account |
+| `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | Chart annotations and saved funnels per site |
 | `MAX_CONTAINERS_PER_ACCOUNT` | tags | Tag containers per account |
 | `MAX_INBOXES_PER_ACCOUNT` | mail | Inboxes per account |
 | `SHARED_SEND_POLICY=reply_only` | mail | Inboxes on the shared domain may only write to people who wrote to them |
@@ -111,7 +112,9 @@ repository.
   claim links, the dashboard and OAuth connectors. Put them under `"site"` (or at the top level;
   they only go to the site). See [Sign-in for people](#sign-in-for-people-optional).
 - `SALT_SECRET` (analytics): derives the daily salt for cookieless visitor ids.
-- `ENCRYPTION_KEY` (tags, mail): seals stored third-party credentials and webhook secrets.
+- `ENCRYPTION_KEY` (analytics, tags, mail): seals stored third-party credentials and webhook
+  secrets (analytics: the Stripe webhook signing secret; without it, connecting Stripe answers 503
+  and the payments API still works). `pnpm afs init` adds a missing one to an older secrets file.
   **If you lose it, those stored values can't be decrypted**; users have to re-enter them.
 
 `pnpm afs deploy` sets them on every deploy. To change one, edit the file and deploy again.

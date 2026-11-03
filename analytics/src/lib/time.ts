@@ -217,37 +217,116 @@ export function resolvePeriod(input: PeriodInput, tz: string, now: number, first
  */
 export function previousRange(r: Range, now: number): (Range & { partial: boolean }) | null {
   if (r.period === "all") return null;
+  return truncateElapsed(r, previousFull(r), now);
+}
+
+/** The whole range before `r` (no truncation for in-progress periods). */
+function previousFull(r: Range): Range {
   const tz = r.timezone;
-  let prev: Range;
-  if (r.period === "24h") {
-    prev = {
-      ...r,
-      start: r.start - 24 * HOUR,
-      end: r.start,
-      from: ymdString(localDay(r.start - 24 * HOUR, tz)),
-      to: ymdString(localDay(r.start - 1, tz)),
-    };
+  if (r.period === "24h") return hourRange(r, r.start - 24 * HOUR);
+  const from = parseYmd(r.from)!;
+  const to = parseYmd(r.to)!;
+  let pf: Ymd;
+  let pt: Ymd;
+  if (r.period === "mtd") {
+    pf = addMonths(from, -1);
+    pt = addMonths(to, -1);
+  } else if (r.period === "ytd" || r.period === "12mo") {
+    pf = addMonths(from, -12);
+    pt = r.period === "12mo" ? addDays(from, -1) : addMonths(to, -12);
   } else {
-    const from = parseYmd(r.from)!;
-    const to = parseYmd(r.to)!;
-    let pf: Ymd;
-    let pt: Ymd;
-    if (r.period === "mtd") {
-      pf = addMonths(from, -1);
-      pt = addMonths(to, -1);
-    } else if (r.period === "ytd" || r.period === "12mo") {
-      pf = addMonths(from, -12);
-      pt = r.period === "12mo" ? addDays(from, -1) : addMonths(to, -12);
-    } else {
-      const n = dayDiff(from, to) + 1;
-      pf = addDays(from, -n);
-      pt = addDays(from, -1);
-    }
-    prev = dayRange(r.period, pf, pt, tz, r.interval);
+    const n = dayDiff(from, to) + 1;
+    pf = addDays(from, -n);
+    pt = addDays(from, -1);
   }
+  return dayRange(r.period, pf, pt, tz, r.interval);
+}
+
+/** A 24-hour range like `r` starting at `start`. */
+function hourRange(r: Range, start: number): Range {
+  const len = r.end - r.start;
+  return {
+    ...r,
+    start,
+    end: start + len,
+    from: ymdString(localDay(start, r.timezone)),
+    to: ymdString(localDay(start + len - 1, r.timezone)),
+  };
+}
+
+/** For an in-progress range, compare only the elapsed part (today so far vs yesterday until the same time). */
+function truncateElapsed(r: Range, cmp: Range, now: number): Range & { partial: boolean } {
   const partial = r.end > now && now > r.start;
-  if (partial) prev = { ...prev, end: Math.min(prev.end, prev.start + (now - r.start)) };
-  return { ...prev, partial };
+  return partial ? { ...cmp, end: Math.min(cmp.end, cmp.start + (now - r.start)), partial } : { ...cmp, partial };
+}
+
+const weekday = (v: Ymd) => new Date(Date.UTC(v.y, v.m - 1, v.d)).getUTCDay();
+
+/** Move a range by whole days (local calendar days for day ranges). */
+function shiftDays(r: Range, days: number): Range {
+  if (!days) return r;
+  if (r.period === "24h") return hourRange(r, r.start + days * DAY);
+  return dayRange(r.period, addDays(parseYmd(r.from)!, days), addDays(parseYmd(r.to)!, days), r.timezone, r.interval);
+}
+
+export const COMPARE_MODES = ["previous", "year", "custom"] as const;
+export type CompareMode = (typeof COMPARE_MODES)[number];
+
+export interface CompareSpec {
+  mode: CompareMode;
+  /** compare=custom: YYYY-MM-DD, inclusive, site timezone */
+  from?: string;
+  to?: string;
+  /** shift the comparison so it starts on the same weekday (earlier for previous, nearest for year) */
+  match_weekday?: boolean;
+}
+
+export type ComparisonRange = Range & { partial: boolean; mode: CompareMode; match_weekday: boolean };
+
+/**
+ * The range to compare `r` with:
+ *   previous  the same-length range just before (calendar aware for mtd/ytd/12mo)
+ *   year      the same dates one year earlier
+ *   custom    compare_from..compare_to
+ * For an in-progress `r` (previous and year), only the elapsed part is compared. match_weekday
+ * shifts previous earlier (so it never overlaps `r`) and year to the nearest same weekday, so
+ * Mondays are compared with Mondays. Returns null for period=all (nothing before it).
+ */
+export function comparisonRange(r: Range, spec: CompareSpec, now: number): ComparisonRange | null {
+  const tz = r.timezone;
+  const mw = !!spec.match_weekday;
+  if (spec.mode === "custom") {
+    const f = spec.from ? parseYmd(spec.from) : null;
+    const t = spec.to ? parseYmd(spec.to) : null;
+    if (!f || !t) throw new PeriodError("compare=custom needs compare_from and compare_to as YYYY-MM-DD.");
+    if (dayDiff(f, t) < 0) throw new PeriodError("compare_from must be on or before compare_to.");
+    if (dayDiff(f, t) > 3660) throw new PeriodError("Comparison ranges are limited to 10 years.");
+    return { ...dayRange("custom", f, t, tz, r.interval), partial: false, mode: "custom", match_weekday: false };
+  }
+  if (r.period === "all") return null;
+  const curStart = r.period === "24h" ? localDay(r.start, tz) : parseYmd(r.from)!;
+  let cmp: Range;
+  if (spec.mode === "previous") {
+    cmp = previousFull(r);
+    if (mw) {
+      const cs = r.period === "24h" ? localDay(cmp.start, tz) : parseYmd(cmp.from)!;
+      cmp = shiftDays(cmp, -((weekday(cs) - weekday(curStart) + 7) % 7));
+    }
+  } else {
+    if (r.period === "24h") {
+      const p = localParts(r.start, tz);
+      cmp = hourRange(r, zonedToUtc(p.y - 1, p.m, Math.min(p.d, daysInMonth(p.y - 1, p.m)), p.h, tz));
+    } else {
+      cmp = dayRange(r.period, addMonths(parseYmd(r.from)!, -12), addMonths(parseYmd(r.to)!, -12), tz, r.interval);
+    }
+    if (mw) {
+      const cs = r.period === "24h" ? localDay(cmp.start, tz) : parseYmd(cmp.from)!;
+      let k = (weekday(curStart) - weekday(cs) + 7) % 7;
+      if (k > 3) k -= 7;
+      cmp = shiftDays(cmp, k);
+    }
+  }
+  return { ...truncateElapsed(r, cmp, now), mode: spec.mode, match_weekday: mw };
 }
 
 function mondayOf(v: Ymd): Ymd {

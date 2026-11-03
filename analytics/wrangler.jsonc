@@ -50,8 +50,10 @@
     "DEV_MODE": ""
   },
   // Optional vars a deployment can add: SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT, SIGNUP_TOKEN,
-  // SQL_MAX_ROWS_READ (rows a /sql query may read after its first row; default 1000000).
-  // Secrets (wrangler secret put): SALT_SECRET (required), SIGNUP_TOKEN, ADMIN_TOKEN.
+  // SQL_MAX_ROWS_READ (rows a /sql query may read after its first row; default 1000000),
+  // MAX_ANNOTATIONS_PER_SITE, MAX_FUNNELS_PER_SITE (unset = no cap).
+  // Secrets (wrangler secret put): SALT_SECRET (required), SIGNUP_TOKEN, ADMIN_TOKEN,
+  // ENCRYPTION_KEY (optional: seals the Stripe webhook signing secret; openssl rand -base64 32).
 
   "observability": { "enabled": true }
 }

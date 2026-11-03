@@ -19,16 +19,31 @@ All notable changes to this project. The format follows
 - API keys can expire (`expires_at`); `GET /v1/keys` shows it. A daily cron on the site deletes expired keys, codes, sessions and claim links.
 - `pnpm afs`: `init` generates `INTERNAL_TOKEN`, `deploy` sets it on every app and `GOOGLE_*` on the site, `config` sets `AUTH_ISSUER`, and `check` covers the OAuth metadata and claim links.
 - Site integration tests.
+- **Analytics, batch 1** (everything as REST and MCP, documented in `/llms.txt`):
+  - Revenue attribution. A signed Stripe webhook per site (`POST /webhooks/stripe/:site_id`; `Stripe-Signature` verified with a 5 minute tolerance, event ids deduped, refunds subtracted, renewals marked) connected with `POST /v1/sites/:id/integrations/stripe` (signing secret sealed with `ENCRYPTION_KEY`), and `POST /v1/sites/:id/payments` for any other provider. Payments link to the visitor through `afsa.visitorId()` in checkout metadata or `client_reference_id`, a user id, or the customer's earlier payment. New metrics: `revenue_per_visitor`, `new_revenue`, `renewal_revenue`, `refunds`, `purchases`, `customers`, `purchase_rate`; `sort=revenue` (or any countable metric) on breakdowns. MCP: `connect_stripe`, `get_stripe_integration`, `disconnect_stripe`, `record_payments`, `list_payments`, `delete_payment`.
+  - Visitors, sessions and journeys: `GET /v1/sites/:id/visitors`, `/visitors/:visitor`, `/sessions/:session_id`, `/journeys` (MCP `list_visitors`, `get_visitor`, `get_session`, `get_journeys`), with generated visitor names and an explicit note on cookieless identity limits.
+  - Insights: `GET /v1/sites/:id/insights` (MCP `get_insights`): revenue share by device/OS/browser, daily averages, top revenue and converting sources and countries, days- and visits-to-convert histograms, first-visit conversion rate, median time to convert, top converting events, weekday x hour heatmap.
+  - Comparisons: `compare=previous|year|custom` with `compare_from`/`compare_to` and `match_weekday` on stats, breakdown rows and timeseries buckets; `sort=change`; `GET /v1/sites/:id/movers` (MCP `get_top_movers`).
+  - Annotations: CRUD (`/v1/sites/:id/annotations`, MCP `create_annotation`, `list_annotations`, `update_annotation`, `delete_annotation`), returned with every timeseries, plus automatic "Traffic spike from <source>" notes written by the daily alarm.
+  - Ingest exclusions: IPs and CIDR ranges (v4 and v6, compared in memory, never stored), path globs, hostnames and countries (`exclusions` on the site), counted as `excluded_*` drops; `GET /v1/sites/:id/exclusions` (MCP `get_exclusions`) shows them and dry-runs an IP, URL or country.
+  - Saved funnels: `/v1/sites/:id/funnels` CRUD (MCP `create_funnel`, `list_funnels`, `update_funnel`, `delete_funnel`; `get_funnel` takes `funnel_id`).
+  - Tracker: max scroll depth and Core Web Vitals (LCP, INP, CLS) on the engagement beacon, opt-in `data-404="true"` and `data-forms="true"` events. Metrics `scroll_depth`, `time_on_page`, `lcp_p75`, `inp_p75`, `cls_p75`; scroll goals (`type: "scroll"`, `threshold`).
+  - New vs returning visitors (`new_visitors`, `returning_visitors`) where identity allows.
+  - verify reports exclusion drops, Stripe webhook delivery and unlinked payments.
+  - Optional config: `ENCRYPTION_KEY` (secret), `MAX_ANNOTATIONS_PER_SITE`, `MAX_FUNNELS_PER_SITE`.
 
 ### Changed
 
 - The setup prompt, `llms.txt`, `auth.md` and the setup skill now end with giving the owner a claim link.
+- Analytics: stats and breakdowns return `revenue_per_visitor` by default; the new metrics are opt-in. `page` breakdown rows count revenue and conversions of the sessions that viewed the page. The tracker grew from 2.2 KB to 3.3 KB minified (1.8 KB gzip).
 - In each service's `wrangler.jsonc`, `AUTH_DB` has its own placeholder database id, so local dev and tests keep the app DB and the identity DB apart, as deployments do. Run `pnpm db:migrate:local` again after pulling.
 
 ### Migrations
 
 - Identity DB (`site/migrations`): `0003_api_key_metadata.sql` (`api_keys.expires_at`, `oauth_grant_id`, `created_by_user_id`), `0004_users_oauth.sql` (users, memberships, sessions, claim links, OAuth clients, grants, codes, refresh tokens).
 - App DBs: `analytics/0004`, `tags/0004`, `mail/0007` `_api_key_expiry.sql` (`api_keys.expires_at`, for standalone mode).
+- Analytics D1: `0005_revenue_funnels_exclusions.sql` (`sites.exclusions`, `goals.threshold`, `funnels`, `integrations`).
+- Analytics Durable Objects: schema version 2, applied by each site's DO on its next start (`events.revenue_type, scroll_depth, lcp, inp, cls`, `goals.threshold`, `payments`, `payment_links`, `provider_events`, `annotations`).
 
 ## [0.1.0] - 2026-11-03
 

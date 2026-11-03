@@ -1,9 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import * as engine from "./engine";
-import type { Db, Row, SqlCursor } from "./engine";
+import type { Db, MoversRequest, Row, SqlCursor } from "./engine";
+import * as annotations from "./annotations";
+import type { AnnotationInput, AnnotationPatch } from "./annotations";
+import * as payments from "./payments";
+import * as people from "./people";
+import { insights, type InsightsRequest } from "./insights";
+import { err, guard, rangeFor } from "./common";
 import type { SqlValue } from "../lib/query";
 import type { Breakdown } from "../lib/filters";
-import type { EnrichedEvent, FunnelRequest, SiteSettings, StatsRequest, TimeseriesRequest } from "../lib/types";
+import type { EnrichedEvent, FunnelRequest, PaymentInput, PeriodParams, SiteSettings, StatsRequest, TimeseriesRequest } from "../lib/types";
 import type { Bindings } from "../env";
 
 const DAY = 86_400_000;
@@ -85,6 +91,89 @@ export class SiteDO extends DurableObject<Bindings> {
     return this.withSettings((s) => engine.funnel(this.db, s, q));
   }
 
+  movers(q: MoversRequest) {
+    return this.withSettings((s) => engine.movers(this.db, s, q));
+  }
+
+  insights(q: InsightsRequest) {
+    return this.withSettings((s) => insights(this.db, s, q));
+  }
+
+  // ---------------------------------------------------------------- visitors, sessions, journeys
+
+  visitors(q: people.VisitorsRequest) {
+    return this.withSettings((s) => people.listVisitors(this.db, s, q));
+  }
+
+  visitor(key: string, limit?: number) {
+    return this.withSettings((s) => people.getVisitor(this.db, s, key, limit));
+  }
+
+  session(id: string) {
+    return this.withSettings((s) => people.getSession(this.db, s, id));
+  }
+
+  journeys(q: people.JourneysRequest) {
+    return this.withSettings((s) => people.journeys(this.db, s, q));
+  }
+
+  // ---------------------------------------------------------------- payments
+
+  ingestPayments(records: PaymentInput[]) {
+    return this.withSettings(() => ({ results: payments.ingestPayments(this.db, records) }));
+  }
+
+  listPayments(q: PeriodParams & { type?: string; limit: number; offset: number }) {
+    return this.withSettings((s) =>
+      guard(() => {
+        const r = rangeFor(this.db, s, q, Date.now());
+        return {
+          period: { from: r.from, to: r.to, start: r.start, end: r.end },
+          ...payments.listPayments(this.db, s, { ...q, start: r.start, end: r.end }),
+        };
+      }),
+    );
+  }
+
+  deletePayment(id: string) {
+    return this.withSettings(
+      () =>
+        payments.deletePayment(this.db, id) ??
+        err("not_found", "Payment not found.", "GET /v1/sites/:id/payments lists payments with their ids (pay_...)."),
+    );
+  }
+
+  paymentsSummary() {
+    return this.withSettings(() => payments.paymentsSummary(this.db));
+  }
+
+  // ---------------------------------------------------------------- annotations
+
+  createAnnotation(a: AnnotationInput, max: number | null) {
+    return this.withSettings((s) => annotations.createAnnotation(this.db, s, a, max));
+  }
+
+  listAnnotations(q: PeriodParams & { kind?: string }) {
+    return this.withSettings((s) =>
+      guard(() => {
+        const bounded = q.period || q.from || q.to;
+        const r = bounded ? rangeFor(this.db, s, q, Date.now()) : null;
+        return {
+          ...(r ? { period: { from: r.from, to: r.to, start: r.start, end: r.end, timezone: r.timezone } } : {}),
+          annotations: annotations.annotationsIn(this.db, s, r?.start ?? 0, r?.end ?? Number.MAX_SAFE_INTEGER, q.kind),
+        };
+      }),
+    );
+  }
+
+  updateAnnotation(id: string, p: AnnotationPatch) {
+    return this.withSettings((s) => annotations.updateAnnotation(this.db, s, id, p));
+  }
+
+  deleteAnnotation(id: string) {
+    return this.withSettings(() => annotations.deleteAnnotation(this.db, id));
+  }
+
   sql(query: string) {
     const maxRowsRead = Number(this.env.SQL_MAX_ROWS_READ) || undefined;
     return this.withSettings(() => engine.runSql(this.db, query, { maxRowsRead }));
@@ -92,6 +181,11 @@ export class SiteDO extends DurableObject<Bindings> {
 
   summary() {
     return this.withSettings(() => engine.summary(this.db));
+  }
+
+  /** The DO's schema version (meta.schema_version), for operators and tests. */
+  schemaVersion(): number {
+    return this.ready ? engine.schemaVersion(this.db) : 0;
   }
 
   /** Delete everything this site stored. */
@@ -102,11 +196,19 @@ export class SiteDO extends DurableObject<Bindings> {
     return { ok: true };
   }
 
+  /** Daily: purge raw data past retention, then annotate traffic spikes of the days since the last run. */
   override async alarm(): Promise<void> {
     const s = this.settingsOrNull();
     if (!s) return; // deleted site: let the object go idle
     const res = engine.purge(this.db, s.retention_days);
     if (res.events || res.sessions) console.log(JSON.stringify({ msg: "retention purge", site: s.id, ...res }));
+    try {
+      const spikes = this.db.transaction(() => annotations.evaluateSpikes(this.db, s));
+      if (spikes.length) console.log(JSON.stringify({ msg: "traffic spikes annotated", site: s.id, days: spikes }));
+    } catch (e) {
+      // Never let spike detection stop the retention schedule.
+      console.error("spike evaluation failed", e);
+    }
     await this.ctx.storage.setAlarm(Date.now() + DAY);
   }
 }

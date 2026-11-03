@@ -237,23 +237,35 @@ async function cmdInit(name, opts) {
   log(`\nWrote deploy/${name}.json`);
 
   const existingSecrets = loadSecrets(name);
+  const b64 = () => randomBytes(32).toString("base64");
+  // Every generated secret. Running init again on an existing profile adds the ones a newer
+  // release introduced (INTERNAL_TOKEN for the dashboard, analytics' ENCRYPTION_KEY for Stripe)
+  // and never changes one that is already set.
+  const generated = {
+    ADMIN_TOKEN: () => randomBytes(32).toString("hex"),
+    // Shared by all Workers: the site's dashboard reads resources from the services with it.
+    INTERNAL_TOKEN: () => randomBytes(32).toString("hex"),
+    "analytics.SALT_SECRET": b64,
+    "analytics.ENCRYPTION_KEY": b64,
+    "tags.ENCRYPTION_KEY": b64,
+    "mail.ENCRYPTION_KEY": b64,
+  };
+  const secrets = existingSecrets ?? {};
+  const added = [];
+  for (const [path, make] of Object.entries(generated)) {
+    const [scope, key] = path.includes(".") ? path.split(".") : [null, path];
+    const target = scope ? (secrets[scope] ??= {}) : secrets;
+    if (!target[key]) {
+      target[key] = make();
+      added.push(path);
+    }
+  }
   if (!existingSecrets) {
-    const b64 = () => randomBytes(32).toString("base64");
-    const secrets = {
-      ADMIN_TOKEN: randomBytes(32).toString("hex"),
-      // Shared by all four Workers: the site's dashboard reads resources from the services with it.
-      INTERNAL_TOKEN: randomBytes(32).toString("hex"),
-      analytics: { SALT_SECRET: b64() },
-      tags: { ENCRYPTION_KEY: b64() },
-      mail: { ENCRYPTION_KEY: b64() },
-    };
     writeFileSync(secretsPath(name), `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
     log(`Wrote deploy/${name}.secrets.json (git-ignored; keep it safe: losing ENCRYPTION_KEY makes stored credentials unreadable)`);
-  } else if (!existingSecrets.INTERNAL_TOKEN) {
-    // Profiles created before the dashboard existed: add the one new top-level secret, keep the rest.
-    existingSecrets.INTERNAL_TOKEN = randomBytes(32).toString("hex");
-    writeFileSync(secretsPath(name), `${JSON.stringify(existingSecrets, null, 2)}\n`, { mode: 0o600 });
-    log(`Added INTERNAL_TOKEN to deploy/${name}.secrets.json`);
+  } else if (added.length) {
+    writeFileSync(secretsPath(name), `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
+    log(`Added ${added.join(", ")} to deploy/${name}.secrets.json`);
   }
   log(
     'Optional: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET under "site" in the secrets file turn on Sign in with Google (docs/accounts.md).',
@@ -285,7 +297,14 @@ function cmdDeploy(name, apps, opts) {
     const cfg = JSON.parse(readFileSync(join(ROOT, app, DEPLOY_FILE), "utf8"));
     for (const db of cfg.d1_databases ?? []) {
       if (!db.migrations_dir) continue;
-      const m = wrangler(app, ["d1", "migrations", "apply", db.binding, "--remote", "-c", DEPLOY_FILE], { input: "y\ny\ny\n" });
+      const apply = () => wrangler(app, ["d1", "migrations", "apply", db.binding, "--remote", "-c", DEPLOY_FILE], { input: "y\ny\ny\n" });
+      let m = apply();
+      // The first D1 call of a run sometimes fails with 7403 ("account is not valid or is not
+      // authorized") while wrangler's OAuth token refreshes; the same call succeeds right after.
+      if (!m.ok) {
+        log(`! Migrations for ${app} ${db.binding} failed; retrying once.`);
+        m = apply();
+      }
       if (!m.ok) die(`Migrations for ${app} ${db.binding} failed.`);
     }
     if (!wrangler(app, ["deploy", "-c", DEPLOY_FILE]).ok) die(`wrangler deploy failed for ${app}.`);

@@ -52,3 +52,6 @@ export async function userVisitorId(siteId: string, userId: string): Promise<str
 
 /** Client-supplied persistent ids (localStorage in persistent mode) and server visitor_ids. */
 export const VISITOR_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** Session ids the DO mints: "s" + 15 base32 characters. */
+export const SESSION_ID_RE = /^s[0-9a-z]{15}$/;

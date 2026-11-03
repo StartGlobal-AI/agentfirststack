@@ -7,18 +7,23 @@ import type {
   FunnelRequest,
   Goal,
   IngestResponse,
+  PaymentInput,
+  PaymentOutcome,
   SiteSettings,
   StatsRequest,
   TimeseriesRequest,
   VisitorIdMode,
 } from "../lib/types";
 import { isDoError } from "../lib/types";
+import type { Exclusions } from "../lib/exclusions";
 
 /** What every service call needs: bindings, the caller's account, and the public base URL. */
 export interface Ctx {
   env: Bindings;
   accountId: string;
   baseUrl: string;
+  /** cf-connecting-ip of the API request (get_exclusions shows it as your_ip); never stored */
+  callerIp?: string | null;
 }
 
 /** D1 row of `sites`. */
@@ -32,6 +37,8 @@ export interface SiteRow {
   retention_days: number;
   allowed_hostnames: string | null;
   respect_dnt: number;
+  /** JSON Exclusions; NULL = none (column added in migration 0005) */
+  exclusions?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -51,6 +58,28 @@ export interface SiteStub {
   sql(q: string): Promise<Obj | DoError>;
   summary(): Promise<SiteSummary | DoError>;
   destroy(): Promise<{ ok: true }>;
+  movers(q: Obj): Promise<Obj | DoError>;
+  insights(q: Obj): Promise<Obj | DoError>;
+  visitors(q: Obj): Promise<Obj | DoError>;
+  visitor(key: string, limit?: number): Promise<Obj | DoError>;
+  session(id: string): Promise<Obj | DoError>;
+  journeys(q: Obj): Promise<Obj | DoError>;
+  ingestPayments(records: PaymentInput[]): Promise<{ results: PaymentOutcome[] } | DoError>;
+  listPayments(q: Obj): Promise<Obj | DoError>;
+  deletePayment(id: string): Promise<Obj | DoError>;
+  paymentsSummary(): Promise<PaymentsSummary | DoError>;
+  createAnnotation(a: Obj, max: number | null): Promise<Obj | DoError>;
+  listAnnotations(q: Obj): Promise<Obj | DoError>;
+  updateAnnotation(id: string, p: Obj): Promise<Obj | DoError>;
+  deleteAnnotation(id: string): Promise<Obj | DoError>;
+  schemaVersion(): Promise<number>;
+}
+
+export interface PaymentsSummary {
+  payments_30d: number;
+  unlinked_30d: number;
+  test_mode_30d: number;
+  last_payment_at: number | null;
 }
 
 export interface SiteSummary {
@@ -58,6 +87,7 @@ export interface SiteSummary {
   events_last_24h: number;
   browser_events: number;
   server_events: number;
+  payment_events?: number;
   first_event_at: number | null;
   last_event_at: number | null;
   last_event: Obj | null;
@@ -81,7 +111,7 @@ export async function loadSite(ctx: Ctx, siteId: string): Promise<SiteRow> {
 
 export async function loadGoals(env: Bindings, siteId: string): Promise<Goal[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, name, type, match, value, created_at FROM goals WHERE site_id = ? ORDER BY created_at",
+    "SELECT id, name, type, match, value, threshold, created_at FROM goals WHERE site_id = ? ORDER BY created_at",
   )
     .bind(siteId)
     .all<Goal>();
@@ -98,9 +128,20 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     retention_days: site.retention_days,
     allowed_hostnames: site.allowed_hostnames ? (JSON.parse(site.allowed_hostnames) as string[]) : null,
     respect_dnt: !!site.respect_dnt,
+    exclusions: parseExclusions(site.exclusions),
     created_at: site.created_at,
     goals,
   };
+}
+
+export function parseExclusions(v: string | null | undefined): Exclusions | null {
+  if (!v) return null;
+  try {
+    const x = JSON.parse(v) as Partial<Exclusions>;
+    return { ips: x.ips ?? [], paths: x.paths ?? [], hostnames: x.hostnames ?? [], countries: x.countries ?? [] };
+  } catch {
+    return null;
+  }
 }
 
 /** Push the D1 truth (settings + goals) into the site's Durable Object. */
@@ -119,6 +160,8 @@ export async function callSite<T extends Obj>(env: Bindings, site: SiteRow, fn: 
     await pushSettings(env, site);
     r = await fn(stub);
   }
-  if (isDoError(r)) throw new ApiError(400, r.error.code, r.error.message, r.error.hint);
+  if (isDoError(r)) throw new ApiError(DO_ERROR_STATUS[r.error.code] ?? 400, r.error.code, r.error.message, r.error.hint);
   return r;
 }
+
+const DO_ERROR_STATUS: Record<string, 403 | 404 | 409> = { not_found: 404, quota_exceeded: 403, conflict: 409 };

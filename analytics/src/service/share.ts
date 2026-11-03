@@ -1,7 +1,7 @@
 import { notFound, parse, randomString } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
-import { METRICS } from "../lib/filters";
+import { DEFAULT_METRICS } from "../lib/filters";
 import { PERIODS } from "../lib/time";
 import { type Ctx, type SiteRow, callSite, loadSite } from "./context";
 
@@ -60,13 +60,13 @@ export const shareDataInput = z.object({ period: z.enum(PERIODS).exclude(["custo
 export async function shareData(env: Bindings, token: string, raw: unknown) {
   const { period = "30d" } = parse(shareDataInput, raw);
   const site = await siteForToken(env, token);
-  const base = { period, filters: [], metrics: [...METRICS] };
+  const base = { period, filters: [], metrics: [...DEFAULT_METRICS] };
   const top = (breakdown: "page" | "source" | "country" | "device") =>
     callSite(env, site, (s) => s.breakdown({ ...base, metrics: ["visitors", "pageviews"], breakdown, limit: 10 })).then(
       (r) => (r as { results: unknown[] }).results,
     );
   const [stats, series, pages, sources, countries, devices] = await Promise.all([
-    callSite(env, site, (s) => s.stats({ ...base, compare: true })),
+    callSite(env, site, (s) => s.stats({ ...base, compare: { mode: "previous" } })),
     callSite(env, site, (s) => s.timeseries({ period, filters: [], metrics: ["visitors", "pageviews"] })),
     top("page"),
     top("source"),

@@ -16,8 +16,60 @@ export const METRICS = [
   "conversions",
   "conversion_rate",
   "revenue",
+  "revenue_per_visitor",
+  "new_revenue",
+  "renewal_revenue",
+  "refunds",
+  "purchases",
+  "customers",
+  "purchase_rate",
+  "new_visitors",
+  "returning_visitors",
+  "scroll_depth",
+  "time_on_page",
+  "lcp_p75",
+  "inp_p75",
+  "cls_p75",
 ] as const;
 export type Metric = (typeof METRICS)[number];
+
+/** What stats and breakdowns return when `metrics` is not given (the rest are opt-in). */
+export const DEFAULT_METRICS: readonly Metric[] = [
+  "visitors",
+  "visits",
+  "pageviews",
+  "views_per_visit",
+  "bounce_rate",
+  "visit_duration",
+  "events",
+  "conversions",
+  "conversion_rate",
+  "revenue",
+  "revenue_per_visitor",
+];
+
+/** Metrics that need the sessions table (bounce, duration), visitor history, or Web Vitals percentiles. */
+export const SESSION_METRICS: readonly Metric[] = ["bounce_rate", "visit_duration"];
+export const VISITOR_TYPE_METRICS: readonly Metric[] = ["new_visitors", "returning_visitors"];
+export const VITALS_METRICS: readonly Metric[] = ["lcp_p75", "inp_p75", "cls_p75"];
+
+/** Metrics a breakdown can be ordered by in SQL (before LIMIT). */
+export const SORTABLE_METRICS: readonly Metric[] = [
+  "visitors",
+  "visits",
+  "pageviews",
+  "events",
+  "conversions",
+  "conversion_rate",
+  "revenue",
+  "revenue_per_visitor",
+  "new_revenue",
+  "renewal_revenue",
+  "refunds",
+  "purchases",
+  "customers",
+  "purchase_rate",
+];
 
 export const BREAKDOWNS = [
   "page",
