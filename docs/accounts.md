@@ -34,7 +34,9 @@ next to `accounts` and `api_keys`, served by the site Worker at the apex. Code: 
 
 Standard OpenID Connect authorization code flow with PKCE (S256), `state` and `nonce`.
 
-- `/signin?next=` shows "Continue with Google". Without `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
+- `/signin?next=` shows "Sign in with Google" (Google's light rectangular button: official "G",
+  self-hosted Google Sans Medium). A signed-out claim page shows the same button, starting
+  `/auth/google?next=/claim/<token>`. Without `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
   it says sign-in isn't configured on this deployment.
 - `/auth/google` keeps `state`, `nonce`, the PKCE verifier and `next` in a 10-minute cookie
   (`afs_google`, HttpOnly, Path=/auth/google) and redirects to Google with
@@ -77,13 +79,15 @@ Sign out is `POST /auth/signout` (with CSRF): the session row is deleted and the
 
 ### 3. Dashboard (`/dashboard`)
 
-Server-rendered pages in the site Worker, styled like the landing page (`styles.css` plus
-`dashboard.css`), with no JavaScript:
+Server-rendered pages in the site Worker, in the landing page's visual language (one stylesheet,
+`dashboard.css`: square tiles on a 12-column grid, CSS-only motion that honours
+`prefers-reduced-motion`), with no JavaScript. Example prompts for your agent are click-to-select
+(the CSP allows no scripts, so there is no clipboard button):
 
 | Page | What it does |
 |---|---|
-| `/dashboard` | Projects with resource counts; add a project by key; create an empty project |
-| `/dashboard/projects/:id` | Sites, tag containers and inboxes; "Open analytics dashboard" per site (creates or reuses the site's share link through analytics' API, then redirects to it); rename |
+| `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts and visitors in the last 7 days (summed over a project's sites, at most 12 stats calls per page, omitted when analytics doesn't answer); add a project by key; create an empty project |
+| `/dashboard/projects/:id` | Sites (with 7-day visitors), tag containers and inboxes; key and member counts; "Open analytics dashboard" per site (creates or reuses the site's share link through analytics' API, then redirects to it); rename |
 | `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created, last used); create (shown once) and revoke. OAuth access tokens are listed under connected apps instead |
 | `/dashboard/projects/:id/members` | Members and roles; invite with a claim link (shown once); the owner removes members, anyone can leave. Removing someone revokes the apps they connected to that project |
 | `/dashboard/apps` | Connected apps (OAuth grants): app name, redirect host, project, access, last used; disconnect |

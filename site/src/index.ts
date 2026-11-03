@@ -5,6 +5,7 @@ import { purgeExpired } from "./cleanup";
 import { dashboard } from "./dashboard";
 import type { Bindings, SiteEnv } from "./env";
 import { authRoutes, siteBase } from "./google";
+import { a2aEndpoint } from "./a2a";
 import { mcpGateway } from "./mcp-gateway";
 import { oauthApi, oauthPages } from "./oauth";
 import { redirect } from "./session";
@@ -77,6 +78,7 @@ app.on(["GET", "HEAD"], "/", async (c) => {
 });
 
 app.all("/mcp", (c) => mcpGateway(c.req.raw, c.env));
+app.all("/a2a", (c) => a2aEndpoint(c.req.raw, c.env));
 
 // RFC 9728 protected resource metadata, for the apex and (path-suffixed) for the MCP gateway. Agents
 // still get keys from one POST /v1/signup; the authorization server is for chat connectors.

@@ -95,6 +95,16 @@ export function authorizationServerMetadata(issuer: string) {
     service_documentation: `${issuer}/auth.md`,
     op_policy_uri: `${issuer}/privacy`,
     op_tos_uri: `${issuer}/terms`,
+    // auth.md agent registration: agents register anonymously with one request and get an API key;
+    // a person claims the project later through a claim link (see /auth.md).
+    agent_auth: {
+      skill: `${issuer}/auth.md`,
+      register_uri: `${issuer}/v1/signup`,
+      identity_types_supported: ["anonymous"],
+      anonymous: { credential_types_supported: ["api_key"] },
+      claim_uri: `${issuer}/v1/claim-link`,
+      revocation_uri: `${issuer}/v1/keys/{key_id}`,
+    },
   };
 }
 
@@ -474,7 +484,7 @@ function consentPage(c: Context<SiteEnv>, s: Session, r: AuthorizeRequest, proje
   const readOnly = r.scope === "read";
   const hidden = (name: string, value: string | null) => html`<input type="hidden" name="${name}" value="${value ?? ""}">`;
   const warning: SafeHtml | string = lookalike
-    ? html`<p class="notice notice-error"><b>Careful:</b> this app calls itself “${r.client.name}”, but it would send you to <b>${target.host}</b>, which isn't where that app lives. Deny unless you're sure.</p>`
+    ? html`<p class="notice notice-error notice-strong" role="alert"><b>Careful:</b> this app calls itself “${r.client.name}”, but it would send you to <b>${target.host}</b>, which isn't where that app lives. Deny unless you're sure.</p>`
     : local
       ? html`<p class="notice">This app runs on your own computer (it sends you back to <b>${target.host}</b>).</p>`
       : "";
@@ -482,41 +492,43 @@ function consentPage(c: Context<SiteEnv>, s: Session, r: AuthorizeRequest, proje
     title: `Connect ${r.client.name}`,
     session: s,
     allowExternalFormRedirect: true,
-    body: html`<section class="narrow consent">
-  <p class="eyebrow">Connection request</p>
-  <h1><span class="client-name">${r.client.name}</span> wants to use AgentFirstStack</h1>
-  <dl class="facts">
-    <div><dt>You'll be sent back to</dt><dd><b class="host">${target.host}</b><br><code class="small">${r.redirectUri}</code></dd></div>
-    <div><dt>Signed in as</dt><dd>${s.user.email}</dd></div>
-  </dl>
-  <p class="muted small">The name “${r.client.name}” was chosen by the app that registered it. Only continue if you started this from <b>${target.host}</b>.</p>
-  ${warning}
-  <form method="post" action="/oauth/authorize" class="card stack">
-    ${csrfField(s)}
-    ${hidden("client_id", r.client.id)}${hidden("redirect_uri", r.redirectUri)}${hidden("state", r.state)}
-    ${hidden("code_challenge", r.codeChallenge)}${hidden("code_challenge_method", "S256")}${hidden("response_type", "code")}
-    ${hidden("scope", r.scope)}${hidden("resource", r.resource)}
-    <label class="field"><span>Project</span>
-      <select name="project">
-        ${projects.map((p) => html`<option value="${p.id}">${p.name || "Untitled project"} (${p.id})</option>`)}
-        <option value="new"${projects.length ? "" : html` selected`}>Create a new project</option>
-      </select>
-    </label>
-    <label class="field"><span>New project name (if creating one)</span><input type="text" name="project_name" maxlength="200" placeholder="acme.com"></label>
-    <fieldset class="field"><legend>Access</legend>
-      ${
-        readOnly
-          ? html`<label class="choice"><input type="radio" name="access" value="read" checked> Read only: see sites, stats, containers and mail</label>`
-          : html`<label class="choice"><input type="radio" name="access" value="*" checked> Full access: create, change and delete sites, tag containers and inboxes, and send mail</label>
-      <label class="choice"><input type="radio" name="access" value="read"> Read only: see sites, stats, containers and mail</label>`
-      }
-    </fieldset>
-    <div class="actions">
-      <button class="btn btn-primary" type="submit" name="decision" value="allow">Allow</button>
-      <button class="btn btn-quiet" type="submit" name="decision" value="deny">Deny</button>
-    </div>
-    <p class="muted small">You can disconnect it any time under <a href="/dashboard/apps">Connected apps</a>. Access tokens last 8 hours and are renewed while the app is in use.</p>
-  </form>
+    body: html`<section class="consent">
+  <div class="tile consent-card">
+    <p class="consent-kind">Connection request</p>
+    <h1><span class="client-name">${r.client.name}</span> wants to use AgentFirstStack</h1>
+    <dl class="facts consent-facts">
+      <div><dt>You'll be sent back to</dt><dd><b class="host">${target.host}</b><code class="redirect">${r.redirectUri}</code></dd></div>
+      <div><dt>Signed in as</dt><dd>${s.user.email}</dd></div>
+    </dl>
+    <p class="muted small">The name “${r.client.name}” was chosen by the app that registered it. Only continue if you started this from <b>${target.host}</b>.</p>
+    ${warning}
+    <form method="post" action="/oauth/authorize" class="stack consent-form">
+      ${csrfField(s)}
+      ${hidden("client_id", r.client.id)}${hidden("redirect_uri", r.redirectUri)}${hidden("state", r.state)}
+      ${hidden("code_challenge", r.codeChallenge)}${hidden("code_challenge_method", "S256")}${hidden("response_type", "code")}
+      ${hidden("scope", r.scope)}${hidden("resource", r.resource)}
+      <label class="field"><span>Project</span>
+        <select name="project">
+          ${projects.map((p) => html`<option value="${p.id}">${p.name || "Untitled project"} (${p.id})</option>`)}
+          <option value="new"${projects.length ? "" : html` selected`}>Create a new project</option>
+        </select>
+      </label>
+      <label class="field"><span>New project name (if creating one)</span><input type="text" name="project_name" maxlength="200" placeholder="acme.com"></label>
+      <fieldset class="field"><legend>Access</legend>
+        ${
+          readOnly
+            ? html`<label class="choice"><input type="radio" name="access" value="read" checked><span><b>Read only</b> See sites, stats, containers and mail</span></label>`
+            : html`<label class="choice"><input type="radio" name="access" value="*" checked><span><b>Full access</b> Create, change and delete sites, tag containers and inboxes, and send mail</span></label>
+        <label class="choice"><input type="radio" name="access" value="read"><span><b>Read only</b> See sites, stats, containers and mail</span></label>`
+        }
+      </fieldset>
+      <div class="row consent-actions">
+        <button class="btn btn-primary" type="submit" name="decision" value="allow">Allow</button>
+        <button class="btn btn-quiet" type="submit" name="decision" value="deny">Deny</button>
+      </div>
+      <p class="fine">You can disconnect it any time under <a href="/dashboard/apps">Connected apps</a>. Access tokens last 8 hours and are renewed while the app is in use.</p>
+    </form>
+  </div>
 </section>`,
   });
 }

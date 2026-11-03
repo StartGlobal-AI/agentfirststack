@@ -39,6 +39,7 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(anon.status).toBe(200);
     expect(anon.text).toContain("Sign in to claim");
     expect(anon.text).toContain(`/signin?next=${encodeURIComponent(path)}`);
+    expect(anon.text).toContain(`/auth/google?next=${encodeURIComponent(path)}`);
     expect(anon.text).not.toContain("acme.test");
 
     const signin = await owner.signIn(uniqueEmail("owner"), path);
@@ -65,7 +66,8 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(dash.status).toBe(200);
     expect(dash.text).toContain("acme");
     expect(dash.text).toContain(agent.accountId);
-    expect(dash.text).toContain("1 site · 1 container · 1 inbox");
+    // One count per service, each in its own cell of the project tile.
+    expect(dash.text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("1 site 1 container 1 inbox");
     expect(serviceCalls.map((s) => [s.service, s.path, s.account, s.internal])).toEqual(
       expect.arrayContaining([
         ["analytics", "/v1/sites", agent.accountId, E.INTERNAL_TOKEN],

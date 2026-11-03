@@ -1,0 +1,114 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "AgentFirstStack",
+  "description": "Web analytics, tag management with server-side conversion tracking, and email inboxes for AI agents. Each skill runs AgentFirstStack tools: send a data part {\"tool\": \"<name>\", \"arguments\": {...}}; send plain text to get the tool list.",
+  "url": "https://agentfirststack.com/a2a",
+  "preferredTransport": "JSONRPC",
+  "supportedInterfaces": [
+    {
+      "url": "https://agentfirststack.com/a2a",
+      "protocolBinding": "JSONRPC",
+      "protocol": "JSONRPC",
+      "transport": "JSONRPC"
+    }
+  ],
+  "additionalInterfaces": [
+    {
+      "url": "https://agentfirststack.com/a2a",
+      "transport": "JSONRPC"
+    }
+  ],
+  "provider": {
+    "organization": "StartGlobal",
+    "url": "https://agentfirststack.com"
+  },
+  "version": "0.1.0",
+  "documentationUrl": "https://agentfirststack.com/llms.txt",
+  "iconUrl": "https://agentfirststack.com/favicon.svg",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "securitySchemes": {
+    "bearer": {
+      "type": "http",
+      "scheme": "bearer",
+      "description": "An afs_ API key from POST https://agentfirststack.com/v1/signup (one request, no email), or an OAuth access token."
+    },
+    "oauth": {
+      "type": "oauth2",
+      "description": "OAuth 2.1 with PKCE; see /.well-known/oauth-authorization-server.",
+      "flows": {
+        "authorizationCode": {
+          "authorizationUrl": "https://agentfirststack.com/oauth/authorize",
+          "tokenUrl": "https://agentfirststack.com/oauth/token",
+          "refreshUrl": "https://agentfirststack.com/oauth/token",
+          "scopes": {
+            "*": "Full access to one project",
+            "read": "Read-only access to one project"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    },
+    {
+      "oauth": ["*"]
+    }
+  ],
+  "defaultInputModes": ["application/json", "text/plain"],
+  "defaultOutputModes": ["application/json", "text/plain"],
+  "skills": [
+    {
+      "id": "analytics",
+      "name": "Web analytics",
+      "description": "Run analytics_* tools: create a site and get its snippet, verify the install, stats by country, page, source and device, goals, funnels, realtime, server events, read-only SQL.",
+      "tags": ["analytics", "countries", "goals", "funnels"],
+      "examples": [
+        "{\"tool\":\"analytics_get_stats\",\"arguments\":{\"site_id\":\"site_...\",\"period\":\"7d\",\"breakdown\":\"country\"}}"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "tags",
+      "name": "Tags and conversion tracking",
+      "description": "Run tags_* tools: containers, site scan, conversion setup for GA4, Google Ads, Meta and TikTok, test events, publish, event log.",
+      "tags": ["tag manager", "conversions", "meta capi", "google ads"],
+      "examples": ["{\"tool\":\"tags_scan_site\",\"arguments\":{\"container_id\":\"ctr_...\"}}"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "mail",
+      "name": "Email inboxes",
+      "description": "Run mail_* tools: create an inbox, wait for a verification email with the code and link extracted, read, reply, send, custom domains, webhooks.",
+      "tags": ["email", "inbox", "verification code"],
+      "examples": ["{\"tool\":\"mail_create_inbox\",\"arguments\":{\"username\":\"acme-signups\"}}"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "account",
+      "name": "Account and handover",
+      "description": "Run afs_* tools, such as afs_create_claim_link, which gives the owner a link to claim the project with Google sign-in.",
+      "tags": ["account", "claim"],
+      "examples": ["{\"tool\":\"afs_create_claim_link\",\"arguments\":{}}"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "help",
+      "name": "List tools",
+      "description": "Send any plain-text message to get every tool available to your key and how to call it.",
+      "tags": ["help"],
+      "examples": ["What can you do?"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["application/json", "text/plain"]
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import { fromBase64, onNotFound, randomString, timingSafeEqual, toBase64 } from 
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { type SiteEnv, isDev } from "./env";
-import { html, htmlErrorHandler, messagePage, page } from "./html";
+import { MARK, googleButton, html, htmlErrorHandler, messagePage, page } from "./html";
 import { upsertUser } from "./identity";
 import {
   clearSessionCookie,
@@ -84,25 +84,37 @@ authRoutes.get("/signin", async (c) => {
   const google = googleConfigured(c.env);
   return page({
     title: "Sign in",
-    body: html`<section class="narrow">
-  <h1>Sign in</h1>
-  <p class="lead">See the projects your agents set up, manage keys and teammates, and connect chat apps like Claude and ChatGPT. Agents never need to sign in.</p>
-  ${
-    google
-      ? html`<p class="actions"><a class="btn btn-primary" href="/auth/google?next=${encodeURIComponent(next)}">Continue with Google</a></p>`
-      : html`<p class="notice">Google sign-in isn't configured on this deployment. The operator sets <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>.</p>`
-  }
+    body: html`<section class="auth">
+  <div class="tile auth-card">
+    <span class="solo-mark">${MARK}</span>
+    <h1>Sign in</h1>
+    <p class="lead">For people: claim the projects your agents set up, then manage their keys, teammates and connected chat apps.</p>
+    ${
+      google
+        ? html`<p class="row">${googleButton(`/auth/google?next=${encodeURIComponent(next)}`)}</p>`
+        : html`<p class="notice">Google sign-in isn't configured on this deployment. The operator sets <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>.</p>`
+    }
+    <p class="fine">We only ask Google for your name, email address and profile picture. See the <a href="/privacy">privacy policy</a> and <a href="/terms">terms</a>.</p>
+  </div>
+  <aside class="tile auth-aside" aria-labelledby="agents-title">
+    <h2 id="agents-title">Agents never sign in</h2>
+    <p>An agent gets a working API key with one request, and keeps it after you claim the project.</p>
+    <pre class="snippet"><code>curl -X POST ${siteBase(c)}/v1/signup</code></pre>
+    <p><a href="/llms.txt">Read the manual for agents</a></p>
+  </aside>
   ${
     isDev(c.env)
-      ? html`<form class="card stack" method="get" action="/auth/dev-login">
-    <p class="muted">DEV_MODE: sign in as anyone, no Google needed.</p>
+      ? html`<form class="tile stack auth-dev" method="get" action="/auth/dev-login">
+    <h2>Dev sign-in</h2>
+    <p class="muted small">DEV_MODE is on: sign in as anyone, no Google needed.</p>
     <input type="hidden" name="next" value="${next}">
-    <label class="field"><span>Email</span><input type="email" name="email" required value="dev@example.com"></label>
-    <button class="btn btn-quiet" type="submit">Dev sign-in</button>
+    <div class="inline-fields">
+      <label class="field"><span>Email</span><input type="email" name="email" required value="dev@example.com"></label>
+      <button class="btn btn-quiet" type="submit">Dev sign-in</button>
+    </div>
   </form>`
       : ""
   }
-  <p class="muted small">We only ask Google for your name, email address and profile picture. See the <a href="/privacy">privacy policy</a> and <a href="/terms">terms</a>.</p>
 </section>`,
   });
 });

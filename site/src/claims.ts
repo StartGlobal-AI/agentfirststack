@@ -1,8 +1,8 @@
 import { type AuthContext, ApiError, assertWrite, randomString, requireAuth, sha256Hex } from "@afs/shared";
 import { Hono } from "hono";
-import { DAY, type SiteEnv } from "./env";
-import { siteBase } from "./google";
-import { csrfField, fmtDate, html, htmlErrorHandler, messagePage, page } from "./html";
+import { DAY, type SiteEnv, isDev } from "./env";
+import { googleConfigured, siteBase } from "./google";
+import { MARK, csrfField, fmtDate, fmtDay, googleButton, html, htmlErrorHandler, messagePage, page } from "./html";
 import { addMember, getProject } from "./identity";
 import { projectResources } from "./services";
 import { optionalSession, readForm, redirect, signinUrl } from "./session";
@@ -115,13 +115,25 @@ claimRoutes.get("/claim/:token", optionalSession, async (c) => {
   const claim = await findClaim(c.env.DB, token);
   if (!claim || claim.used_at || claim.expires_at <= Date.now()) return invalidLink(session);
   if (!session) {
+    const back = `/claim/${token}`;
     return page({
       title: "Claim a project",
-      body: html`<section class="narrow">
-  <h1>Claim a project</h1>
-  <p class="lead">An agent set up a project on AgentFirstStack and sent you this link so you can see and manage it. Sign in to continue.</p>
-  <p class="actions"><a class="btn btn-primary" href="${signinUrl(`/claim/${token}`)}">Sign in to claim</a></p>
-  <p class="muted small">The link works once and expires ${fmtDate(claim.expires_at)}.</p>
+      body: html`<section class="auth">
+  <div class="tile auth-card">
+    <span class="solo-mark">${MARK}</span>
+    <h1>Sign in to claim this project</h1>
+    <p class="lead">An agent set up a project on AgentFirstStack and sent you this link so you can see and manage it.</p>
+    <p class="row">${
+      googleConfigured(c.env)
+        ? googleButton(`/auth/google?next=${encodeURIComponent(back)}`)
+        : html`<a class="btn btn-primary" href="${signinUrl(back)}">Sign in to claim</a>`
+    }${isDev(c.env) ? html`<a class="btn btn-quiet" href="${signinUrl(back)}">Dev sign-in</a>` : ""}</p>
+    <p class="fine">The link works once and expires ${fmtDate(claim.expires_at)}.</p>
+  </div>
+  <aside class="tile auth-aside" aria-labelledby="agents-title">
+    <h2 id="agents-title">Nothing changes for the agent</h2>
+    <p>Its keys keep working after you claim the project. Claiming only lets you see what it built, manage keys and invite teammates.</p>
+  </aside>
 </section>`,
     });
   }
@@ -131,10 +143,12 @@ claimRoutes.get("/claim/:token", optionalSession, async (c) => {
     .first();
   const resources = await projectResources(c.env, claim.account_id);
   const name = claim.name || "Untitled project";
+  const done = !!mine && (mine.role === "owner" || !!owner);
   return page({
     title: "Claim a project",
     session,
-    body: html`<section class="narrow">
+    body: html`<div class="page-head">
+  <p class="crumbs">Claim link</p>
   <h1>Claim “${name}”</h1>
   <p class="lead">${
     mine
@@ -145,18 +159,17 @@ claimRoutes.get("/claim/:token", optionalSession, async (c) => {
         ? "This project already has an owner. Claiming adds you as a member."
         : "Claiming makes you the owner of this project. Agent keys keep working."
   }</p>
-  <dl class="facts">
-    <div><dt>Project</dt><dd><code>${claim.account_id}</code></dd></div>
-    <div><dt>Created</dt><dd>${fmtDate(claim.account_created_at)}</dd></div>
-    <div><dt>Signed in as</dt><dd>${session.user.email}</dd></div>
-  </dl>
-  ${resourcesView(resources)}
+  <p class="meta"><code>${claim.account_id}</code><span>Created ${fmtDay(claim.account_created_at)}</span><span>Signed in as ${session.user.email}</span></p>
+</div>
+<div class="claim-bar tile">
+  <p><b>${done ? "Already yours." : "Ready when you are."}</b> <span class="muted">${done ? "Open it in your dashboard." : "This link works once."}</span></p>
   ${
-    mine && (mine.role === "owner" || owner)
-      ? html`<p class="actions"><a class="btn btn-primary" href="/dashboard/projects/${claim.account_id}">Open the project</a></p>`
-      : html`<form method="post" action="/claim/${token}" class="actions">${csrfField(session)}<button class="btn btn-primary" type="submit">Claim project</button><a class="btn btn-quiet" href="/dashboard">Not now</a></form>`
+    done
+      ? html`<p class="row"><a class="btn btn-primary" href="/dashboard/projects/${claim.account_id}">Open the project</a></p>`
+      : html`<form method="post" action="/claim/${token}" class="row">${csrfField(session)}<button class="btn btn-primary" type="submit">Claim project</button><a class="btn btn-quiet" href="/dashboard">Not now</a></form>`
   }
-</section>`,
+</div>
+${resourcesView(resources)}`,
   });
 });
 

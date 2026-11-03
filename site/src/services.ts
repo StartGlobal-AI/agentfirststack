@@ -90,6 +90,27 @@ export async function projectResources(env: Bindings, accountId: string): Promis
   };
 }
 
+/**
+ * Unique visitors over the last 7 days for each site, from analytics' stats API (one call per
+ * site). Best effort: a site that doesn't answer is simply missing from the map.
+ */
+export async function visitorsLast7Days(env: Bindings, accountId: string, siteIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  await Promise.all(
+    siteIds.map(async (id) => {
+      const r = await callService<{ metrics?: { visitors?: unknown } }>(
+        env,
+        "analytics",
+        accountId,
+        `/v1/sites/${encodeURIComponent(id)}/stats?period=7d&metrics=visitors`,
+      );
+      const v = r.ok ? r.json?.metrics?.visitors : undefined;
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) out.set(id, v);
+    }),
+  );
+  return out;
+}
+
 /** A share link for a site's public, aggregate-only dashboard (analytics returns the existing one). */
 export async function analyticsShareLink(env: Bindings, accountId: string, siteId: string): Promise<string | null> {
   const r = await callService<{ url?: string }>(env, "analytics", accountId, `/v1/sites/${encodeURIComponent(siteId)}/share`, {
