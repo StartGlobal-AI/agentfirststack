@@ -2,7 +2,7 @@
    the static privacy and terms pages (which load styles.css first).
    Same product as the landing page: Host Grotesk + Geist Mono, ink #0F1626, the three marks.
    Squarish: one 4px radius, a 12-column bento grid, hairline borders, no shadows.
-   CSP: no scripts and no inline styles, so all motion is CSS and honours prefers-reduced-motion. */
+   CSP: no inline scripts or styles (only /dashboard.js, for copy buttons), so all motion is CSS and honours prefers-reduced-motion. */
 
 @font-face {
   font-family: "Host Grotesk";
@@ -929,6 +929,89 @@ pre {
 .ask:hover .ask-q::after {
   opacity: 1;
   transform: none;
+}
+/* With dashboard.js a real Copy button replaces the "Select" chip. */
+.js .ask .ask-q::after {
+  content: none;
+}
+
+/* Copy buttons (added by dashboard.js). */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--ease),
+    color 160ms var(--ease),
+    background-color 160ms var(--ease);
+}
+.copy-btn:hover {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+.copy-btn[data-state="copied"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.copy-on-ink {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: transparent;
+  color: var(--on-ink-2);
+}
+.copy-on-ink:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: var(--on-ink);
+}
+.copy-on-ink[data-state="copied"] {
+  border-color: var(--yellow);
+  background: var(--yellow);
+  color: var(--ink);
+}
+.copy-corner {
+  position: absolute;
+  right: 12px;
+  bottom: 11px;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity 180ms var(--ease),
+    transform 180ms var(--ease),
+    border-color 160ms var(--ease),
+    color 160ms var(--ease),
+    background-color 160ms var(--ease);
+}
+.ask:hover .copy-corner,
+.ask:focus-within .copy-corner,
+.copy-corner[data-state] {
+  opacity: 1;
+  transform: none;
+}
+@media (hover: none) {
+  .copy-corner {
+    opacity: 1;
+    transform: none;
+  }
+}
+.copy-wide {
+  justify-self: start;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.url-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .ask-tag {
   display: flex;

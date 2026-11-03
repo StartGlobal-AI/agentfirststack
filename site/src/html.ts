@@ -113,6 +113,8 @@ export function pageHeaders(allowExternalFormRedirect = false): Record<string, s
     "content-type": "text/html; charset=utf-8",
     "content-security-policy": [
       "default-src 'none'",
+      // Only our own dashboard.js (copy buttons); no inline scripts, no third parties.
+      "script-src 'self'",
       "style-src 'self'",
       "font-src 'self'",
       "img-src 'self' data:",
@@ -142,6 +144,7 @@ export function page(opts: PageOptions): Response {
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css">
+<script src="/dashboard.js" defer></script>
 </head>
 <body class="app">
 <a class="skip" href="#main">Skip to content</a>

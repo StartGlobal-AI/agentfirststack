@@ -49,6 +49,10 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(page.text).toContain("acme.test");
     expect(page.text).toContain("acme-signups@afs.test");
     expect(page.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    // Scripts: our own copy-button file only, never inline.
+    expect(page.headers.get("content-security-policy")).toContain("script-src 'self'");
+    expect(page.headers.get("content-security-policy")).not.toContain("unsafe-inline");
+    expect(page.text).toContain('<script src="/dashboard.js" defer></script>');
     expect(page.headers.get("x-frame-options")).toBe("DENY");
 
     const claimed = await owner.post(path, { csrf: csrfOf(page.text) });

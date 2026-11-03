@@ -147,7 +147,7 @@ async function projectsPage(c: Context<SiteEnv>, error?: string, status = 200) {
       (a) =>
         html`<li class="ask ask-${a.svc}">${askText(a.text)}<span class="ask-tag"><span class="swatch" aria-hidden="true"></span>${a.label}</span></li>`,
     )}</ul>
-    <p class="hero-hint">Click a question to select it, then copy it into your agent.</p>
+    <p class="hero-hint" data-js-text="Copy a question, then paste it into your agent.">Click a question to select it, then copy it into your agent.</p>
   </section>
   <section class="tile add" aria-labelledby="add-title">
     <h2 id="add-title">Add a project</h2>

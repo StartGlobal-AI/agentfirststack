@@ -5,8 +5,8 @@ import type { Resources } from "./services";
 /** Pieces of HTML shared by the claim page and the dashboard. */
 
 /**
- * Something to say to your agent instead of clicking around. Pages ship no JavaScript (CSP), so
- * there's no clipboard button: one click selects the whole prompt (user-select: all), ready to copy.
+ * Something to say to your agent instead of clicking around. public/dashboard.js adds a Copy
+ * button; without scripts, one click still selects the whole prompt (user-select: all).
  */
 export const askText = (text: string) => html`<q class="ask-q">${text}</q>`;
 

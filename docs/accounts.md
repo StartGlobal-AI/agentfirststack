@@ -81,8 +81,9 @@ Sign out is `POST /auth/signout` (with CSRF): the session row is deleted and the
 
 Server-rendered pages in the site Worker, in the landing page's visual language (one stylesheet,
 `dashboard.css`: square tiles on a 12-column grid, CSS-only motion that honours
-`prefers-reduced-motion`), with no JavaScript. Example prompts for your agent are click-to-select
-(the CSP allows no scripts, so there is no clipboard button):
+`prefers-reduced-motion`). The only script is `public/dashboard.js` (CSP `script-src 'self'`), which
+adds Copy buttons to prompts, new keys, invite links and the MCP URL; without it they stay
+click-to-select:
 
 | Page | What it does |
 |---|---|
