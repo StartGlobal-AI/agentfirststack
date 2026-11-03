@@ -1,4 +1,4 @@
-import { type SafeHtml, fmtDay, html } from "./html";
+import { type SafeHtml, html } from "./html";
 import type { Resources } from "./services";
 
 /** Pieces of HTML shared by the claim page and the dashboard. */
@@ -30,43 +30,28 @@ const SERVICES = {
  * With `asks`, empty tiles suggest what to ask the agent.
  */
 export function resourcesView(r: Resources, opts: { asks?: boolean } = {}): SafeHtml {
-  const tile = (svc: keyof typeof SERVICES, list: unknown[] | null, body: SafeHtml, empty: SafeHtml) => {
+  const tile = <T>(svc: keyof typeof SERVICES, list: T[] | null, line: (x: T) => { main: string; id: string }, empty: SafeHtml) => {
     const s = SERVICES[svc];
     return html`<section class="tile resource ${s.cls}">
-  <div class="tile-head">
-    <h2><span class="swatch" aria-hidden="true"></span>${s.title}</h2>
-    ${list === null ? "" : html`<p class="tile-count"><b>${list.length}</b> ${list.length === 1 ? s.one : s.many}</p>`}
-  </div>
-  ${list === null ? unavailable : list.length ? body : empty}
+  <h2><span class="swatch" aria-hidden="true"></span>${s.title}</h2>
+  ${
+    list === null
+      ? unavailable
+      : list.length
+        ? html`<ul class="items">${list.map((x) => {
+            const l = line(x);
+            return html`<li><b>${l.main}</b><code>${l.id}</code></li>`;
+          })}</ul>`
+        : empty
+  }
 </section>`;
   };
-  const item = (main: string, id: string, created: number) => html`<li>
-      <div class="item-main"><b>${main}</b></div>
-      <span class="item-meta"><code>${id}</code><span>Added ${fmtDay(created)}</span></span>
-    </li>`;
-
-  const sites = tile(
-    "analytics",
-    r.sites,
-    html`<p class="tile-sub">Installed on</p><ul class="items">${(r.sites ?? []).map((s) => item(s.domain, s.id, s.created_at))}</ul>`,
-    html`<p class="muted small">No sites yet.</p>${opts.asks ? askLine("Add analytics to my website.", "Ask your agent") : ""}`,
-  );
-  const containers = tile(
-    "tags",
-    r.containers,
-    html`<p class="tile-sub">Containers for</p><ul class="items">${(r.containers ?? []).map((t) => item(t.domain, t.id, t.created_at))}</ul>`,
-    html`<p class="muted small">No tag containers yet.</p>${opts.asks ? askLine("Track sign-ups as Meta and Google Ads conversions.") : ""}`,
-  );
-  const inboxes = tile(
-    "mail",
-    r.inboxes,
-    html`<p class="tile-sub">Addresses in use</p><ul class="items">${(r.inboxes ?? []).map((i) => item(i.address, i.id, i.created_at))}</ul>`,
-    html`<p class="muted small">No inboxes yet.</p>${opts.asks ? askLine("Create an inbox for our sign-up emails.") : ""}`,
-  );
+  const none = (what: string, ask: string) =>
+    html`<p class="muted small">No ${what} yet.</p>${opts.asks ? askLine(ask, "Ask your agent") : ""}`;
   return html`<div class="bento resources">
-  ${sites}
-  ${containers}
-  ${inboxes}
+  ${tile("analytics", r.sites, (s) => ({ main: s.domain, id: s.id }), none("sites", "Add analytics to my website."))}
+  ${tile("tags", r.containers, (t) => ({ main: t.domain, id: t.id }), none("tag containers", "Track sign-ups as Meta and Google Ads conversions."))}
+  ${tile("mail", r.inboxes, (i) => ({ main: i.address, id: i.id }), none("inboxes", "Create an inbox for our sign-up emails."))}
 </div>`;
 }
 

@@ -5,7 +5,7 @@ import type { SiteEnv } from "./env";
 import { siteBase } from "./google";
 import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
 import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
-import { dashboardPrompt } from "./dashboard-prompt";
+import { type BuildKind, buildPrompt } from "./dashboard-prompt";
 import { projectResources } from "./services";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
 import { askLine, askText, plural, resourceCounts, resourcesView } from "./views";
@@ -60,6 +60,17 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  */
 const SETUP_PROMPT =
   "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: get this project its own API key, set up analytics, conversion tracking and an inbox as the project needs, and verify each step. When you're done, send me a claim link for the project.";
+
+/** The screens an agent can build for a project, one prompt each (see dashboard-prompt.ts). */
+const BUILDS: { kind: BuildKind; title: string; what: string }[] = [
+  { kind: "analytics", title: "Analytics dashboard", what: "Traffic, sources, revenue and funnels, with period comparisons." },
+  {
+    kind: "tags",
+    title: "Conversion tracking",
+    what: "Delivery health per ad platform, what's live, and safe edits with preview, publish and rollback.",
+  },
+  { kind: "mail", title: "Inboxes", what: "A small mail client: read, search, reply, with codes and links pulled out." },
+];
 
 /** Things people ask their agent instead of opening this dashboard, and the service that answers. */
 const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; label: string }[] = [
@@ -147,7 +158,7 @@ dashboard.get("/projects/:id", async (c) => {
       .first<number>("n"),
     c.env.DB.prepare("SELECT count(*) AS n FROM memberships WHERE account_id = ?").bind(p.id).first<number>("n"),
   ]);
-  const prompt = dashboardPrompt({ id: p.id, name: projectName(p) }, resources, siteBase(c));
+  const project = { id: p.id, name: projectName(p) };
   return page({
     title: projectName(p),
     session: s,
@@ -157,10 +168,16 @@ ${resourcesView(resources, { asks: true })}
 <div class="bento">
 <section class="tile build-own" aria-labelledby="build-title">
   <div class="build-copy">
-    <h2 id="build-title">Want charts? Have your agent build them.</h2>
-    <p>This page only lists what's set up. For numbers, ask your agent. For a dashboard, paste this prompt into Claude, Cursor or any coding agent: it builds a Stripe-style dashboard for this project from the API, inside your own app.</p>
+    <h2 id="build-title">Want a dashboard? Have your agent build it.</h2>
+    <p>This page only lists what's set up. For a screen of your own, paste one of these into Claude, Cursor or any coding agent. It builds it inside your app, from the API, already pointed at this project.</p>
   </div>
-  <pre class="prompt-block select">${prompt}</pre>
+  <ul class="builds">${BUILDS.map(
+    (b) => html`<li class="build svc-${b.kind}">
+    <h3><span class="swatch" aria-hidden="true"></span>${b.title}</h3>
+    <p>${b.what}</p>
+    <details><summary>See the prompt</summary><pre class="prompt-block select">${buildPrompt(b.kind, project, resources, siteBase(c))}</pre></details>
+  </li>`,
+  )}</ul>
 </section>
 </div>
 <div class="bento project-more">

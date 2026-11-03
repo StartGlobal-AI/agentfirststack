@@ -102,10 +102,14 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(project.text).not.toContain("version 2 live");
     expect(project.text).not.toContain("Open analytics dashboard");
     expect(serviceCalls.some((s) => s.path.includes("/stats"))).toBe(false);
-    // Instead, a prompt that has the agent build a dashboard from the API, naming this project's resources.
-    expect(project.text).toContain("Want charts? Have your agent build them.");
-    expect(project.text).toContain(`Build me a dashboard for my AgentFirstStack project`);
-    expect(project.text).toContain(`acme.test (site_acme0000000000)`);
+    // Instead, prompts that have the agent build each screen from the API, naming this project's resources.
+    expect(project.text).toContain("Want a dashboard? Have your agent build it.");
+    expect(project.text).toContain("Build me an analytics dashboard for my AgentFirstStack project");
+    expect(project.text).toContain("Build me a conversion tracking panel for my AgentFirstStack project");
+    expect(project.text).toContain("Build me a small email client for my AgentFirstStack project");
+    expect(project.text).toContain("acme.test (site_acme0000000000)");
+    expect(project.text).toContain("acme.test (ctr_acme000000000)");
+    expect(project.text).toContain("acme-signups@afs.test (inb_acme000000000)");
     expect(project.text).toContain(`{&quot;name&quot;:&quot;dashboard&quot;,&quot;scope&quot;:&quot;read&quot;}`);
 
     // The agent's key keeps working after the claim.

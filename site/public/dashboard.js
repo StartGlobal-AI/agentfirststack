@@ -67,9 +67,11 @@
   for (const s of document.querySelectorAll(".secret")) {
     addButton(s, (b) => s.after(b), "Copy", "copy-on-ink copy-wide");
   }
-  // The "build your own dashboard" prompt.
-  for (const s of document.querySelectorAll(".prompt-block")) {
-    addButton(s, (b) => s.after(b), "Copy prompt", "copy-on-ink copy-wide");
+  // "Have your agent build it": one Copy button per card, outside the collapsed prompt.
+  for (const card of document.querySelectorAll(".build")) {
+    const s = card.querySelector(".prompt-block");
+    const details = card.querySelector("details");
+    if (s && details) addButton(s, (b) => card.insertBefore(b, details), "Copy prompt", "copy-on-ink");
   }
   // URLs such as the MCP endpoint.
   for (const s of document.querySelectorAll(".url-chip .select")) {

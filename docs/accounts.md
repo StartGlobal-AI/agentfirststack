@@ -91,7 +91,7 @@ invite links and the MCP URL; without it they stay click-to-select:
 | Page | What it does |
 |---|---|
 | `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts; "Set up a new project" (a setup prompt for the agent, plus the claim-link prompt for projects an agent already made) |
-| `/dashboard/projects/:id` | An inventory, no numbers: where analytics is installed, which tag containers exist, which inboxes the project uses; key and member counts; rename. "Want charts?" gives a prompt (`src/dashboard-prompt.ts`) that names the project's resources and has the owner's agent build a Stripe-style dashboard from the API, inside their own app, with a read-only key kept server-side |
+| `/dashboard/projects/:id` | An inventory, no numbers: where analytics is installed, which tag containers exist, which inboxes the project uses; key and member counts; rename. "Want a dashboard?" gives three prompts (`src/dashboard-prompt.ts`: analytics dashboard, conversion tracking panel, inbox client) that name the project's resources and have the owner's agent build the screen from the API inside their own app, with the key kept server-side (read-only unless the screen edits tags or sends mail) |
 | `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created, last used); create (shown once) and revoke. OAuth access tokens are listed under connected apps instead |
 | `/dashboard/projects/:id/members` | Members and roles; invite with a claim link (shown once); the owner removes members, anyone can leave. Removing someone revokes the apps they connected to that project |
 | `/dashboard/apps` | Connected apps (OAuth grants): app name, redirect host, project, access, last used; disconnect |
