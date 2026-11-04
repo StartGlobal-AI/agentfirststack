@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixpanel MCP compared with AgentFirstStack</title>
+<meta name="description" content="Mixpanel's MCP server queries and edits a Mixpanel org you already have. Compare it with AgentFirstStack, where the agent creates and verifies analytics.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/mixpanel-mcp">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Mixpanel MCP compared with AgentFirstStack">
+<meta property="og:description" content="Mixpanel's MCP server queries and edits a Mixpanel org you already have. Compare it with AgentFirstStack, where the agent creates and verifies analytics.">
+<meta property="og:url" content="https://agentfirststack.com/mixpanel-mcp">
+<meta property="og:image" content="https://agentfirststack.com/og/mixpanel-mcp.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Mixpanel MCP compared with AgentFirstStack">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Mixpanel MCP compared with AgentFirstStack">
+<meta name="twitter:description" content="Mixpanel's MCP server queries and edits a Mixpanel org you already have. Compare it with AgentFirstStack, where the agent creates and verifies analytics.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/mixpanel-mcp.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/mixpanel-mcp#article",
+      "headline": "Mixpanel MCP compared with AgentFirstStack",
+      "description": "Mixpanel's MCP server queries and edits a Mixpanel org you already have. Compare it with AgentFirstStack, where the agent creates and verifies analytics.",
+      "url": "https://agentfirststack.com/mixpanel-mcp",
+      "image": "https://agentfirststack.com/og/mixpanel-mcp.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/mixpanel-mcp"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Mixpanel MCP", "item": "https://agentfirststack.com/mixpanel-mcp" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/mixpanel-mcp#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does Mixpanel have an official MCP server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Mixpanel hosts one in US, EU and India regions. You connect with OAuth, or with a service account while that option is in beta."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can the Mixpanel MCP server create a project or add tracking?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No tool in its list does either; Get-Projects lists existing projects. Mixpanel's docs mention a tracking-implementation skill in its Claude Code plugin that helps write instrumentation."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack follow a user across days?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For users you identify, yes: send a user_id with server events. Anonymous visitors are counted without cookies, with an id that rotates daily, so their history is same-day unless the site uses persistent mode."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does AgentFirstStack cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed if you want to run it yourself."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Mixpanel MCP</span></nav>
+      <h1>Mixpanel MCP compared with AgentFirstStack</h1>
+      <p class="lede">Mixpanel's MCP server is a hosted endpoint that lets an assistant query and edit a Mixpanel organization you already have: reports, dashboards, events, cohorts and, in beta, experiments and feature flags. It lists projects but has no tool to create one. AgentFirstStack lets the agent create the analytics from nothing, verify the install, then read it over MCP.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It instruments the key actions, builds the funnel and verifies the install itself.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up AgentFirstStack analytics for this project. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
+
+3. Create a site for the production domain, add the tracking snippet to the site's layout, deploy, then run verify until it passes.
+
+4. Find the product's key actions in the code (sign-up, first project, purchase). Send each as an event, create a goal for it, and save a funnel from the landing page through them. Send what only the server knows (paid orders) as server events with the user's id.
+
+5. If you support MCP, add https://agentfirststack.com/mcp with the header "Authorization: Bearer &lt;key&gt;".
+
+6. Write the site id and the env var that holds the key (never the key itself) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="mixpanel-mcp">What Mixpanel's MCP server does</h2>
+<p>Mixpanel hosts it in three regions: <code>https://mcp.mixpanel.com/mcp</code> for the US, plus <code>mcp-eu.mixpanel.com</code> and <code>mcp-in.mixpanel.com</code>. From <a href="https://docs.mixpanel.com/docs/mcp">Mixpanel's MCP docs</a>:</p>
+<ul>
+<li>You sign in through a browser with your Mixpanel credentials, and your project permissions apply. Service accounts, in beta, use a static header with no browser.</li>
+<li>An organization admin enables MCP in Settings &gt; Org &gt; AI Settings before anyone can connect. New free and growth accounts created after 1 August 2026 have it on by default.</li>
+<li>It reads and writes: queries and saved reports, dashboards, events and properties, cohorts, session replays, and in beta experiments and feature flags. Tools include <code>Create-Dashboard</code>, <code>Edit-Event</code>, <code>Create-Cohort</code> and <code>Create-Feature-Flag</code>.</li>
+<li>The one project tool, <code>Get-Projects</code>, lists projects and workspaces. None creates a project or adds tracking.</li>
+</ul>
+<p>So the project, the SDK and the events come first. For code that needs the whole product surface, Mixpanel also offers <a href="https://docs.mixpanel.com/docs/mixpanel-headless">Mixpanel Headless</a>, an open-source Python SDK for agents, notebooks and scripts.</p>
+
+<h2 id="agentfirststack">How AgentFirstStack does it</h2>
+<p>The agent starts with no account. One POST returns a key; then it creates the site, installs the snippet, verifies it and defines goals and funnels, all by API:</p>
+<pre><code>curl -s -X POST https://agentfirststack.com/v1/signup      # api_key, no email
+
+A=https://analytics.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+J="content-type: application/json"
+curl -s -X POST $A/v1/sites -H "$H" -H "$J" -d '{"domain":"example.com"}'
+curl -s -X POST $A/v1/sites/$SITE/verify -H "$H"
+curl -s -X POST $A/v1/sites/$SITE/goals -H "$H" -H "$J" \
+  -d '{"name":"Signup","type":"event","match":"signup"}'
+curl -s "$A/v1/sites/$SITE/funnel?period=30d&amp;steps=/,/pricing,goal:Signup" -H "$H"
+curl -s "$A/v1/sites/$SITE/journeys?period=30d&amp;goal=Signup" -H "$H"</code></pre>
+<p>In the browser, <code>afsa('event', 'signup', { plan: 'pro' })</code> sends a custom event. Funnels are 2 to 8 ordered steps within a session. Journeys show each converter's touchpoints, and <code>/insights</code> returns time to convert, top converting sources and a weekday-by-hour heatmap in one call. Over MCP these are <code>analytics_create_goal</code>, <code>analytics_get_funnel</code>, <code>analytics_get_journeys</code> and <code>analytics_get_insights</code> on the <a href="/mcp">gateway</a>. The <a href="https://analytics.agentfirststack.com/llms.txt">analytics manual</a> has every field.</p>
+<p>One limit to know: visitors are cookieless by default, with an id that rotates daily, so an anonymous visitor's history is same-day. Users you identify from your backend, or sites in persistent mode, link across days.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Mixpanel MCP</th><th>AgentFirstStack</th></tr></thead>
+<tbody>
+<tr><th scope="row">Endpoint</th><td><code>mcp.mixpanel.com/mcp</code>, plus EU and India</td><td><code>agentfirststack.com/mcp</code></td></tr>
+<tr><th scope="row">Before the first call</th><td>A Mixpanel organization and project, and MCP enabled by an admin (on by default for new free and growth accounts)</td><td>One <code>POST /v1/signup</code></td></tr>
+<tr><th scope="row">Agent auth</th><td>OAuth sign-in; service accounts in beta</td><td>An API key; OAuth 2.1 for chat apps</td></tr>
+<tr><th scope="row">Create a project over MCP</th><td>No; <code>Get-Projects</code> lists them</td><td>Yes, <code>analytics_create_site</code></td></tr>
+<tr><th scope="row">Analysis</th><td>Queries, saved reports, dashboards, cohorts, lookup tables, metrics</td><td>Stats, breakdowns, timeseries, funnels, journeys, insights, read-only SQL</td></tr>
+<tr><th scope="row">Experiments and feature flags</th><td>Yes, in beta</td><td>No</td></tr>
+<tr><th scope="row">Session replay</th><td>Yes</td><td>Yes, read as text transcripts</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use Mixpanel's MCP server if</h3>
+<ul>
+<li>Your product team already works in Mixpanel and wants an assistant to query it.</li>
+<li>You want the assistant to edit event metadata, dashboards and cohorts.</li>
+<li>You want experiments and feature flags next to your reports.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>It's a new project, and the agent should set up tracking and check it without a person signing in.</li>
+<li>You care about where visitors come from: channels including AI assistants, UTM tags, click ids and revenue from Stripe or any provider.</li>
+<li>You also want conversions sent to ad platforms (<a href="/guides/server-side-conversion-tracking">server-side, counted once</a>), session replay or inboxes on the same key.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Does Mixpanel have an official MCP server?</h3>
+<p>Yes. Mixpanel hosts one in US, EU and India regions. You connect with OAuth, or with a service account while that option is in beta.</p>
+<h3>Can the Mixpanel MCP server create a project or add tracking?</h3>
+<p>No tool in its list does either; <code>Get-Projects</code> lists existing projects. Mixpanel's docs mention a tracking-implementation skill in its Claude Code plugin that helps write instrumentation.</p>
+<h3>Does AgentFirstStack follow a user across days?</h3>
+<p>For users you identify, yes: send a <code>user_id</code> with server events. Anonymous visitors are counted without cookies, with an id that rotates daily, so their history is same-day unless the site uses persistent mode.</p>
+<h3>What does AgentFirstStack cost?</h3>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed if you want to run it yourself.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Mixpanel.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt: a key, a site, the snippet, a verify check.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/gmail-mcp"><span class="svc svc-mail">Mail</span><b>Gmail MCP</b><span>Inboxes an agent creates for itself.</span></a></li>
+        <li><a class="card" href="/agentmail-alternative"><span class="svc svc-mail">Mail</span><b>AgentMail alternative</b><span>Free inboxes for agents, with wait-for-email.</span></a></li>
+        <li><a class="card" href="/guides/email-inbox-for-ai-agents"><span class="svc svc-mail">Mail</span><b>Email inboxes for AI agents</b><span>Sign up for services and read the codes.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>Session replay an agent reads as text.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#mixpanel-mcp">What Mixpanel's MCP server does</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

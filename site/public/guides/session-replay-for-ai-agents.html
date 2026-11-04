@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session replay for AI agents: open source, API-first</title>
+<meta name="description" content="Open-source session replay that an AI agent sets up and reads over an API: masked recordings, rage and dead clicks, JS errors and sessions as text.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/session-replay-for-ai-agents">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Session replay for AI agents: open source, API-first">
+<meta property="og:description" content="Open-source session replay that an AI agent sets up and reads over an API: masked recordings, rage and dead clicks, JS errors and sessions as text.">
+<meta property="og:url" content="https://agentfirststack.com/guides/session-replay-for-ai-agents">
+<meta property="og:image" content="https://agentfirststack.com/og/guides-session-replay-for-ai-agents.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Session replay for AI agents: open source, API-first">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Session replay for AI agents: open source, API-first">
+<meta name="twitter:description" content="Open-source session replay that an AI agent sets up and reads over an API: masked recordings, rage and dead clicks, JS errors and sessions as text.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides-session-replay-for-ai-agents.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/session-replay-for-ai-agents#article",
+      "headline": "Session replay for AI agents: sessions as text, over an API",
+      "description": "Open-source session replay that an AI agent sets up and reads over an API: masked recordings, rage and dead clicks, JS errors and sessions as text.",
+      "url": "https://agentfirststack.com/guides/session-replay-for-ai-agents",
+      "image": "https://agentfirststack.com/og/guides-session-replay-for-ai-agents.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/session-replay-for-ai-agents"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Session replay for AI agents", "item": "https://agentfirststack.com/guides/session-replay-for-ai-agents" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/session-replay-for-ai-agents#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is AgentFirstStack Replay open source?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The whole service is MIT licensed and runs on Cloudflare Workers, and the recorder is built on rrweb. The hosted version at replay.agentfirststack.com is free with fair-use limits."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is a session replay API?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "An API that returns recorded sessions as data instead of only as video. Here, one call lists sessions by signal or frustration score, and another returns a session as a text transcript of pages, clicks, inputs, scrolling and errors."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it record passwords or what visitors type?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Typed values are masked in every mode, and password, payment-card and one-time-code fields can never be unmasked. All other text is masked too unless you unmask specific UI elements."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can a person watch a recording?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. create_replay_link returns a player URL for one session that expires after 7 days by default. Share links need a verified domain."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Session replay for AI agents</span></nav>
+      <h1>Session replay for AI agents: sessions as text, over an API</h1>
+      <p class="lede">Session replay records what visitors do on a website so you can see where they get stuck. AgentFirstStack Replay is open-source session replay built for AI agents: the agent sets it up through an API, text and inputs are masked in the browser by default, and each session comes back as a readable transcript instead of a video.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="prompt">Prompt for your agent</h2>
+<p>Paste this into Claude Code, Cursor or Codex. The agent asks you first, then sets up replay and reports what it finds.</p>
+<div class="prompt">
+  <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+  <p class="prompt-text" id="prompt-1">Ask me first whether to record sessions on this site; it's a privacy decision. If I agree, set up session replay with AgentFirstStack Replay and tell me what's slowing visitors down.
+
+1. Read the manual: https://replay.agentfirststack.com/llms.txt
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY.
+
+3. Create a replay site for the production domain. If the site runs AgentFirstStack analytics, pass its analytics_site_id (nothing to paste). Otherwise add the returned script tag to &lt;head&gt;.
+
+4. Keep mask_mode strict. Unmask only non-personal UI text with unmask_selectors: nav, buttons, links, headings and labels.
+
+5. Deploy, open https://&lt;domain&gt;/?afsr=1, click through the main pages, then run verify until it passes.
+
+6. Once real sessions arrive, use search_sessions, get_session_transcript and summarize_sessions, and report the top problems with example session ids.
+
+7. Write the replay site id in AGENTFIRSTSTACK.md (never the key), and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="what">What gets recorded</h2>
+<p>The recorder captures changes to the page (with <a href="https://github.com/rrweb-io/rrweb">rrweb</a>), not video. A 2 KB loader decides whether a tab is recorded and loads the recorder, about 29 KB gzipped, after the page's load event. From the events, the server derives signals for each session:</p>
+<ul>
+<li><b>Rage click</b>: three or more clicks within a second on one element.</li>
+<li><b>Dead click</b>: nothing changes within a second of a click.</li>
+<li><b>Error click</b>: a JavaScript error within a second of a click.</li>
+<li><b>Quick back</b>: back to the previous page within 7 seconds.</li>
+<li><b>Excessive scroll</b>: scrolling up and down well past the page's height.</li>
+<li><b>JS error</b>: uncaught errors, grouped by fingerprint.</li>
+</ul>
+<p>A frustration score from 0 to 100 weights those signals, so the worst sessions sort first.</p>
+
+<h2 id="setup">Install and verify</h2>
+<pre><code>R=https://replay.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+
+# With AgentFirstStack analytics on the site: link it, nothing to paste
+curl -s -X POST $R/v1/sites -H "$H" -H 'content-type: application/json' \
+  -d '{"domain":"example.com","analytics_site_id":"site_..."}'
+# -&gt; { "site": { "id": "rsite_...", "loads_with_analytics": true, ... }, ... }
+
+# Without it: create the site and add the returned tag to &lt;head&gt;
+#   &lt;script defer src="https://replay.agentfirststack.com/r/rsite_....js"&gt;&lt;/script&gt;
+
+# Let transcripts name what was clicked; everything else stays masked
+curl -s -X PATCH $R/v1/sites/$RSITE -H "$H" -H 'content-type: application/json' \
+  -d '{"unmask_selectors":["nav","button","a","h1","h2","label"]}'
+
+# Deploy, open https://example.com/?afsr=1 and click around, then:
+curl -s -X POST $R/v1/sites/$RSITE/verify -H "$H"
+# -&gt; { "ok": true, "installed": true, "receiving_sessions": true, "domain_verified": true, "checks": [ ... ] }</code></pre>
+<p><code>?afsr=1</code> forces a recording of that tab, even in a headless browser, so the agent can test the install itself. Until the domain is verified, a site records a small trial (20 sessions a day, 10 until a person claims the project) with strict masking, no share links and no unmasking. <code>verify</code> proves the domain from the script tag on the homepage, or from a DNS TXT record at <code>_afs-verify.&lt;domain&gt;</code>.</p>
+
+<h2 id="read">Read sessions as text</h2>
+<pre><code>curl -s "$R/v1/sites/$RSITE/sessions?sort=frustration&amp;page=/checkout*&amp;period=7d" -H "$H"
+curl -s "$R/v1/sites/$RSITE/sessions/$SESSION/transcript" -H "$H"
+curl -s "$R/v1/sites/$RSITE/summary?page=/checkout*&amp;period=7d" -H "$H"</code></pre>
+<p>A transcript turns one session into lines an agent can read and quote. Each click carries the element's label as recorded and a stable CSS selector:</p>
+<pre><code>[00:00.0] page "/pricing" · load · from "google.com" · stayed 15s · saw 64% of the page
+[00:03.2] scrolled to 50% of "/pricing"
+[00:05.1] click button "Start trial" {"#plans &gt; div:nth-of-type(2) &gt; button.cta"}
+[00:09.3] click x4 in 0.8s button "Pay" {"#checkout button.pay"}  [RAGE DEAD ERROR-CLICK]
+[00:09.5] JS error "TypeError: Cannot read properties of undefined (reading 'id')" after click on {"#checkout button.pay"}  [ERROR-CLICK]
+[00:15.0] page "/signup" · push · from "/pricing" · stayed 2s · saw 30% of the page  [QUICK-BACK]</code></pre>
+<p>The summary groups patterns across up to 1,000 sessions, such as top rage-click targets, JS errors, elements clicked that aren't clickable and exit pages, each with example session ids. No model is involved.</p>
+<p>Over MCP the tools are <code>search_sessions</code>, <code>get_session_transcript</code>, <code>summarize_sessions</code>, <code>get_heatmap</code>, <code>list_errors</code> and <code>get_funnel_dropoffs</code>. When a person wants to watch one, <code>create_replay_link</code> returns an expiring player URL.</p>
+
+<h2 id="privacy">Privacy defaults</h2>
+<ul>
+<li>All text is masked in the visitor's browser before anything is sent. Each character becomes <code>*</code>, so the layout survives and the content doesn't.</li>
+<li>Typed values are masked in every mode. Password, payment-card and one-time-code fields can never be unmasked.</li>
+<li>Query strings and fragments are removed from every URL, and id-like path segments (emails, long numbers, tokens) become <code>:id</code>.</li>
+<li>Browsers that send Global Privacy Control or Do Not Track aren't recorded. With <code>require_consent</code>, nothing is recorded until your consent banner calls <code>afsr('consent', true)</code>.</li>
+<li>No cookies: a per-tab session lives in sessionStorage.</li>
+<li><code>block_selectors</code> leave elements out entirely, and <code>delete_visitor_data</code> removes one person's sessions.</li>
+</ul>
+
+<h2 id="comparison">Compared with Microsoft Clarity</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th scope="col"></th><th scope="col">Microsoft Clarity</th><th scope="col">AgentFirstStack Replay</th></tr></thead>
+<tbody>
+<tr><th scope="row">Setup</th><td>A person creates a project and adds the tracking code</td><td>The agent, through the API, with <code>verify</code> to check it</td></tr>
+<tr><th scope="row">Reading sessions</th><td>In the Clarity app; the MCP server lists recordings, and the <a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api">Data Export API</a> allows 10 requests a day</td><td>Transcripts, summaries, heatmaps, errors and funnels over REST and MCP</td></tr>
+<tr><th scope="row">Default masking</th><td>Balanced: numbers and email addresses (<a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-masking">masking</a>)</td><td>Strict: all text and inputs</td></tr>
+<tr><th scope="row">Retention</th><td>30 days; favorites and a sample up to 9 months (<a href="https://learn.microsoft.com/en-us/clarity/faq">FAQ</a>)</td><td>Up to 14 days hosted, longer when you self-host</td></tr>
+<tr><th scope="row">Volume</th><td>No traffic limits, no sampling</td><td>200 sessions per site a day hosted</td></tr>
+</tbody>
+</table>
+</div>
+<p>For the Clarity MCP server's limits, and where Hotjar stands now, see <a href="/microsoft-clarity-mcp">Microsoft Clarity MCP</a>.</p>
+<p class="meta">Microsoft Clarity and Hotjar belong to their owners. AgentFirstStack isn't affiliated with Microsoft or Hotjar. Clarity details come from Microsoft's docs, checked on 4 November 2026.</p>
+
+<h2 id="limits">Limits on the hosted service</h2>
+<ul>
+<li>5 replay sites per account (2 until a person claims the project), with one unverified site at a time.</li>
+<li>200 recorded sessions per site a day (100 until claimed), each up to 30 minutes and 2 MB.</li>
+<li>Recordings kept up to 14 days; daily heatmap aggregates longer.</li>
+<li>5 active share links per site.</li>
+</ul>
+<p>Need different limits? Self-host it: every service is an MIT-licensed Cloudflare Worker.</p>
+
+<h2 id="faq">Questions</h2>
+<h3>Is AgentFirstStack Replay open source?</h3>
+<p>Yes. The whole service is MIT licensed and runs on Cloudflare Workers, and the recorder is built on rrweb. The hosted version at replay.agentfirststack.com is free with fair-use limits.</p>
+<h3>What is a session replay API?</h3>
+<p>An API that returns recorded sessions as data instead of only as video. Here, one call lists sessions by signal or frustration score, and another returns a session as a text transcript of pages, clicks, inputs, scrolling and errors.</p>
+<h3>Does it record passwords or what visitors type?</h3>
+<p>No. Typed values are masked in every mode, and password, payment-card and one-time-code fields can never be unmasked. All other text is masked too unless you unmask specific UI elements.</p>
+<h3>Can a person watch a recording?</h3>
+<p>Yes. <code>create_replay_link</code> returns a player URL for one session that expires after 7 days by default. Share links need a verified domain.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>Clarity's limits, Hotjar's status, and replay read as text.</span></a></li>
+        <li><a class="card" href="https://replay.agentfirststack.com/llms.txt"><span class="svc svc-replay">Replay</span><b>The replay manual</b><span>Every endpoint, MCP tool, signal and limit.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt sets up cookieless analytics and verifies it.</span></a></li>
+        <li><a class="card" href="/mixpanel-mcp"><span class="svc svc-analytics">Analytics</span><b>Mixpanel MCP</b><span>Mixpanel's MCP server compared with agent-first analytics.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>AgentFirstStack MCP servers</b><span>Every tool, claude mcp add lines and OAuth for chat apps.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Prompt for your agent</a></li><li><a href="#what">What gets recorded</a></li><li><a href="#setup">Install and verify</a></li><li><a href="#read">Read sessions as text</a></li><li><a href="#privacy">Privacy defaults</a></li><li><a href="#comparison">Compared with Clarity</a></li><li><a href="#limits">Limits</a></li><li><a href="#faq">Questions</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

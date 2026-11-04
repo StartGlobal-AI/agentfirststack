@@ -1177,7 +1177,9 @@ pre {
 }
 @media (max-width: 600px) {
   .nav-links a[href="#how"],
-  .nav-links a[href="#services"] {
+  .nav-links a[href="#services"],
+  .nav-links a[href="/#services"],
+  .nav-links a[href^="https://github.com"] {
     display: none;
   }
   .actions .btn {
@@ -1196,4 +1198,58 @@ pre {
   .tool-res {
     grid-column: 2;
   }
+}
+
+@media (max-width: 420px) {
+  .nav-links a[href="/llms.txt"] {
+    display: none;
+  }
+}
+
+/* Links from the home page to the guides */
+.product-guide {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration-color: var(--line-2);
+}
+.product-guide:hover {
+  text-decoration-color: var(--ink);
+}
+.guides-strip {
+  padding: clamp(40px, 6vw, 72px) 0;
+  border-top: 1px solid var(--line);
+}
+.guides-strip h2 {
+  font-size: clamp(24px, 3vw, 32px);
+  letter-spacing: -0.02em;
+}
+.guides-lede {
+  margin-top: 8px;
+  color: var(--ink-2);
+}
+.guides-links {
+  list-style: none;
+  padding: 0;
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.guides-links a {
+  display: inline-block;
+  padding: 8px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: 14.5px;
+  text-decoration: none;
+}
+.guides-links a:hover {
+  border-color: var(--ink-3);
+}
+.guides-all {
+  margin-top: 16px;
+  font-size: 14.5px;
 }

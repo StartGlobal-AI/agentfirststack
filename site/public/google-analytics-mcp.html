@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Analytics MCP: GA4 MCP compared with AgentFirstStack</title>
+<meta name="description" content="Google's Google Analytics MCP server reads GA4 properties you already set up. Compare it with AgentFirstStack, where the agent creates the analytics too.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/google-analytics-mcp">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Google Analytics MCP compared with AgentFirstStack">
+<meta property="og:description" content="Google's Google Analytics MCP server reads GA4 properties you already set up. Compare it with AgentFirstStack, where the agent creates the analytics too.">
+<meta property="og:url" content="https://agentfirststack.com/google-analytics-mcp">
+<meta property="og:image" content="https://agentfirststack.com/og/google-analytics-mcp.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Google Analytics MCP compared with AgentFirstStack">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Google Analytics MCP compared with AgentFirstStack">
+<meta name="twitter:description" content="Google's Google Analytics MCP server reads GA4 properties you already set up. Compare it with AgentFirstStack, where the agent creates the analytics too.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/google-analytics-mcp.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/google-analytics-mcp#article",
+      "headline": "Google Analytics MCP compared with AgentFirstStack",
+      "description": "Google's Google Analytics MCP server reads GA4 properties you already set up. Compare it with AgentFirstStack, where the agent creates the analytics too.",
+      "url": "https://agentfirststack.com/google-analytics-mcp",
+      "image": "https://agentfirststack.com/og/google-analytics-mcp.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/google-analytics-mcp"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Google Analytics MCP", "item": "https://agentfirststack.com/google-analytics-mcp" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/google-analytics-mcp#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is there an official Google Analytics MCP server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Google documents analytics-mcp on its developer site and publishes the source in the googleanalytics GitHub organization. It runs locally and reads GA4 data through the Admin and Data APIs."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can the Google Analytics MCP server create a GA4 property?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Google's page says it can't create, modify or delete your Analytics configuration. Create the property and data stream in Google Analytics first, or call the Admin API directly with the analytics.edit scope."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can AgentFirstStack import my GA4 history?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It counts from the moment its snippet is live. If you need the history, keep GA4 running; both scripts can be on the same page."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does AgentFirstStack cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed, so you can also run it yourself on Cloudflare Workers."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Google Analytics MCP</span></nav>
+      <h1>Google Analytics MCP compared with AgentFirstStack</h1>
+      <p class="lede">The Google Analytics MCP server, published by Google, lets an AI agent read reports from GA4 properties you already have. It runs locally and needs a Google Cloud project, two enabled APIs and read-only credentials. AgentFirstStack's MCP lets the agent create the analytics itself: one request for a key, then a site, the snippet, a verify check and the numbers.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It reads the manual, gets a key, creates the site, installs the snippet and checks its own work.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up AgentFirstStack analytics for this project. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
+
+3. Create a site for the production domain, add the tracking snippet to the site's layout, deploy, then run verify until it passes. If the site already has Google Analytics, leave it in place.
+
+4. Create goals for sign-ups and purchases. Send the ones only the server knows about (paid orders) as server events.
+
+5. If you support MCP, add https://agentfirststack.com/mcp with the header "Authorization: Bearer &lt;key&gt;" so you can call the analytics tools directly.
+
+6. Write the site id and the env var that holds the key (never the key itself) in AGENTFIRSTSTACK.md at the repo root.
+
+7. Create a claim link for me with POST https://agentfirststack.com/v1/claim-link, so I can see the numbers in a dashboard.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="google-analytics-mcp">What the Google Analytics MCP server does</h2>
+<p>Google publishes it as the Python package <code>analytics-mcp</code>, with the source at <a href="https://github.com/googleanalytics/google-analytics-mcp">googleanalytics/google-analytics-mcp</a>. From <a href="https://developers.google.com/analytics/devguides/MCP">Google's setup page</a>:</p>
+<ul>
+<li>It runs on your machine through <code>pipx</code> or <code>uvx</code> and needs Python 3.10 or later.</li>
+<li>You enable the Google Analytics Admin API and Data API in a Google Cloud project.</li>
+<li>It signs in with Application Default Credentials and the <code>analytics.readonly</code> scope, as a user or service account with at least the Viewer role on the property.</li>
+<li>Its tools list accounts, properties, Google Ads links, annotations and custom dimensions, and run standard, realtime and funnel reports (<code>run_report</code>, <code>run_realtime_report</code>, <code>run_funnel_report</code>).</li>
+</ul>
+<p>Google's page says the server can't create, modify or delete your Analytics configuration. So a person creates the account, the property and the web data stream, adds the Google tag (<a href="https://support.google.com/analytics/answer/9304153">Google's setup steps</a>) and sets up credentials before the agent asks its first question. The Admin API can create properties (<a href="https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties/create">properties.create</a>, with the <code>analytics.edit</code> scope), but the MCP server doesn't expose that.</p>
+<p>That fits its job: read access to an analytics setup that already exists.</p>
+
+<h2 id="agentfirststack">How AgentFirstStack does it</h2>
+<p>AgentFirstStack is hosted analytics (plus tag management, inboxes and session replay) that an agent sets up from nothing. There's no account to create first. One request returns a key, and the same key works over REST and one MCP server:</p>
+<pre><code>curl -s -X POST https://agentfirststack.com/v1/signup
+# -&gt; { "api_key": "afs_...", "account_id": "acct_...", "next_steps": [ ... ] }
+
+A=https://analytics.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+J="content-type: application/json"
+curl -s -X POST $A/v1/sites -H "$H" -H "$J" -d '{"domain":"example.com"}'
+# -&gt; site.id and the snippet to put in &lt;head&gt;. Deploy, load the site once, then:
+curl -s -X POST $A/v1/sites/$SITE/verify -H "$H"
+curl -s "$A/v1/sites/$SITE/stats?period=7d&amp;breakdown=channel" -H "$H"</code></pre>
+<p>To use it over MCP, add the gateway once:</p>
+<pre><code>claude mcp add --transport http afs https://agentfirststack.com/mcp \
+  --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"</code></pre>
+<p>The same steps are then tools. <code>analytics_create_site</code> returns the snippet and install code for HTML, Next.js, Astro, React and WordPress. <code>analytics_verify_install</code> fetches the page and lists what to fix. <code>analytics_get_stats</code>, <code>analytics_get_breakdown</code>, <code>analytics_get_funnel</code> and <code>analytics_query_sql</code> answer questions. Creating a site for a domain that already has one returns the existing site, so retries are safe. At the end the agent calls <code>afs_create_claim_link</code>, and you sign in with Google to see the dashboard. Every endpoint and tool is in the <a href="https://analytics.agentfirststack.com/llms.txt">analytics manual</a>.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Google Analytics MCP server</th><th>AgentFirstStack</th></tr></thead>
+<tbody>
+<tr><th scope="row">Who creates the property or site</th><td>A person, in Google Analytics</td><td>The agent, with <code>analytics_create_site</code></td></tr>
+<tr><th scope="row">Before the first tool call</th><td>A Google Cloud project, two APIs enabled, credentials, a Viewer role</td><td>One <code>POST /v1/signup</code></td></tr>
+<tr><th scope="row">Where it runs</th><td>On your machine (Python)</td><td>Hosted at <code>agentfirststack.com/mcp</code></td></tr>
+<tr><th scope="row">Auth</th><td>Google credentials, <code>analytics.readonly</code></td><td>An API key; OAuth 2.1 for chat apps</td></tr>
+<tr><th scope="row">Writes</th><td>None, per Google's page</td><td>Sites, goals, funnels, annotations, server events, payments</td></tr>
+<tr><th scope="row">Install check</th><td>The Realtime report, or <code>run_realtime_report</code></td><td><code>analytics_verify_install</code>, with fixes</td></tr>
+<tr><th scope="row">Data</th><td>GA4's reports, history and Google Ads links</td><td>Cookieless counts, channels including AI assistants, UTM tags, goals, funnels, revenue from Stripe or any provider</td></tr>
+<tr><th scope="row">License</th><td>Apache-2.0 (the MCP server)</td><td>MIT (the whole service)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="plausible-mcp">What about a Plausible MCP?</h2>
+<p><a href="https://plausible.io/docs/data-access">Plausible's docs</a> point to an MCP server <a href="https://github.com/getsentry/plausible-mcp">built by the Sentry team</a> and describe it as community-built, not an official Plausible integration. It connects with a Plausible Stats API key, and its query tools are read-only. Creating sites by API goes through Plausible's <a href="https://plausible.io/docs/sites-api">Sites API</a>, which Plausible lists as an Enterprise plan feature.</p>
+<p>If you already use Plausible, that server is the direct way to let an agent read it. AgentFirstStack covers similar ground (cookieless counting, sources, pages, countries, goals), and the agent can create the site as well.</p>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use the Google Analytics MCP server if</h3>
+<ul>
+<li>You already run GA4 and want an agent to read its history.</li>
+<li>Your team reports from GA4, or your Google Ads account is linked to it.</li>
+<li>Read access is all you need, and a local server with Google credentials is fine.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>It's a new site or app, and you want the agent to do the whole setup and check it.</li>
+<li>You want goals, server events and revenue attribution that the agent defines in code.</li>
+<li>You'd rather not create a Google Cloud project to give an agent access.</li>
+<li>You also want ad conversion tracking, inboxes or session replay on the same key.</li>
+</ul>
+<p>You can run both. The <a href="/guides/server-side-conversion-tracking">tags service</a> sends conversions to GA4 too (the browser tag plus the Measurement Protocol), so GA4 keeps working while the agent runs the rest. The <a href="/">home page</a> has the full setup prompt for all four services.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is there an official Google Analytics MCP server?</h3>
+<p>Yes. Google documents <code>analytics-mcp</code> on its developer site and publishes the source in the googleanalytics GitHub organization. It runs locally and reads GA4 data through the Admin and Data APIs.</p>
+<h3>Can the Google Analytics MCP server create a GA4 property?</h3>
+<p>No. Google's page says it can't create, modify or delete your Analytics configuration. Create the property and data stream in Google Analytics first, or call the Admin API directly with the <code>analytics.edit</code> scope.</p>
+<h3>Can AgentFirstStack import my GA4 history?</h3>
+<p>No. It counts from the moment its snippet is live. If you need the history, keep GA4 running; both scripts can be on the same page.</p>
+<h3>What does AgentFirstStack cost?</h3>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed, so you can also run it yourself on Cloudflare Workers.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, Plausible or Sentry.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/mixpanel-mcp"><span class="svc svc-analytics">Analytics</span><b>Mixpanel MCP compared</b><span>Query a Mixpanel org, or start from nothing.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt: a key, a site, the snippet, a verify check.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/gmail-mcp"><span class="svc svc-mail">Mail</span><b>Gmail MCP</b><span>Inboxes an agent creates for itself.</span></a></li>
+        <li><a class="card" href="/agentmail-alternative"><span class="svc svc-mail">Mail</span><b>AgentMail alternative</b><span>Free inboxes for agents, with wait-for-email.</span></a></li>
+        <li><a class="card" href="/guides/email-inbox-for-ai-agents"><span class="svc svc-mail">Mail</span><b>Email inboxes for AI agents</b><span>Sign up for services and read the codes.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>Session replay an agent reads as text.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#google-analytics-mcp">What the Google Analytics MCP server does</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#plausible-mcp">What about a Plausible MCP?</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

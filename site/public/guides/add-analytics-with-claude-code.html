@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics with Claude Code in one prompt</title>
+<meta name="description" content="Paste one prompt and Claude Code gets an API key, creates the site, adds the tracking snippet, verifies it and answers traffic questions over MCP.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-claude-code">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics with Claude Code">
+<meta property="og:description" content="Paste one prompt and Claude Code gets an API key, creates the site, adds the tracking snippet, verifies it and answers traffic questions over MCP.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-claude-code">
+<meta property="og:image" content="https://agentfirststack.com/og/guides-add-analytics-with-claude-code.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Add analytics with Claude Code">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics with Claude Code">
+<meta name="twitter:description" content="Paste one prompt and Claude Code gets an API key, creates the site, adds the tracking snippet, verifies it and answers traffic questions over MCP.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides-add-analytics-with-claude-code.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-claude-code#article",
+      "headline": "Add analytics with Claude Code",
+      "description": "Paste one prompt and Claude Code gets an API key, creates the site, adds the tracking snippet, verifies it and answers traffic questions over MCP.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-claude-code",
+      "image": "https://agentfirststack.com/og/guides-add-analytics-with-claude-code.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-claude-code"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Add analytics with Claude Code", "item": "https://agentfirststack.com/guides/add-analytics-with-claude-code" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-claude-code#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent, and the salt changes every day. Nothing is stored in the browser unless you switch the site to persistent mode, which keeps a random id in localStorage."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does this work with Cursor or Codex?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The prompt only needs an agent that can make HTTP requests. Agents with MCP support can add https://agentfirststack.com/mcp with the same key."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I see the numbers in a dashboard?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Open the claim link the agent gives you and sign in with Google to see the site in the dashboard. For a public page, the agent can create a share link once the domain is verified."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it count visitors from AI assistants?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Visits referred by chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com and similar sites get their own channel, AI Assistants."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed, so you can run it yourself on Cloudflare Workers."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics with Claude Code</span></nav>
+      <h1>Add analytics with Claude Code</h1>
+      <p class="lede">To add analytics with Claude Code, paste one prompt. Claude Code gets an AgentFirstStack key with a single POST, creates a site, adds the tracking snippet to your layout, deploys and runs verify to confirm events arrive. Then it answers traffic questions from the terminal over MCP. No signup form, cookies or dashboard to click through.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="prompt">The prompt</h2>
+<p>Open Claude Code in your project and paste this. It works the same in Cursor, Codex or any agent that can make HTTP requests.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add analytics to this project with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
+
+3. Create a site for the production domain. Get the install code for this project's framework and add the snippet to the root layout.
+
+4. Deploy (or tell me to), open the site once, then run verify and fix what it reports until it passes.
+
+5. Create goals for sign-ups and purchases. Send the ones only the server knows about (paid orders) as server events.
+
+6. Add the MCP server so you can answer my questions directly:
+   claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+
+7. Write the site id and the env var that holds the key (never the key itself) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="steps">What Claude Code does</h2>
+<ol>
+<li><b>Reads the manual.</b> <a href="https://analytics.agentfirststack.com/llms.txt">analytics.agentfirststack.com/llms.txt</a> lists every endpoint, tool and field in plain text.</li>
+<li><b>Gets a key.</b> <code>POST https://agentfirststack.com/v1/signup</code> returns <code>api_key</code>, which it saves in <code>.env</code>. If a key is already there, it reuses it.</li>
+<li><b>Creates a site.</b> <code>POST /v1/sites</code> with your domain returns the site id and the snippet. The same domain again returns the same site, so a rerun doesn't duplicate anything.</li>
+<li><b>Installs the snippet.</b> <code>GET /v1/sites/:id/install?framework=nextjs</code> (or <code>astro</code>, <code>react</code>, <code>html</code>, <code>wordpress</code>) returns code for your framework, plus proxy configs if you want the script served from your own domain.</li>
+<li><b>Verifies.</b> After a deploy, <code>POST /v1/sites/:id/verify</code> fetches your page and checks the snippet, the script, your Content-Security-Policy and whether events arrived, then lists fixes.</li>
+<li><b>Adds goals.</b> A sign-up goal, a purchase goal, and server events from your backend for what the browser can't see.</li>
+<li><b>Hands over.</b> It writes <code>AGENTFIRSTSTACK.md</code> so the next run updates instead of starting over, and gives you a claim link.</li>
+</ol>
+<p>The snippet it adds looks like this. Custom events are one call:</p>
+<pre><code>&lt;script defer src="https://analytics.agentfirststack.com/s.js"
+        data-site="site_..."&gt;&lt;/script&gt;
+
+afsa('event', 'signup', { plan: 'pro' })</code></pre>
+
+<h2 id="mcp">Ask questions from the terminal</h2>
+<p>With the MCP server added (<a href="https://code.claude.com/docs/en/mcp">Claude Code's MCP docs</a> cover <code>--scope</code> if you want it in every project), you ask in plain words and Claude Code picks the tool:</p>
+<pre><code>claude mcp add --transport http afs https://agentfirststack.com/mcp \
+  --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"</code></pre>
+<ul>
+<li>"Where did visitors come from this week?" calls <code>analytics_get_stats</code> with <code>breakdown=channel</code>.</li>
+<li>"Which sources bring sign-ups?" calls <code>analytics_get_breakdown</code> with <code>breakdown=source</code> and <code>filters=goal==Signup</code>.</li>
+<li>"How many people came from ChatGPT or Perplexity?" filters on the AI Assistants channel.</li>
+<li>"Where do people drop off between pricing and sign-up?" calls <code>analytics_get_funnel</code>.</li>
+<li>"What changed since last week?" calls <code>analytics_get_top_movers</code>.</li>
+</ul>
+<p>For anything the tools don't cover, <code>analytics_query_sql</code> runs a read-only SQL query over the site's events.</p>
+
+<h2 id="revenue">Add revenue</h2>
+<p>To see which sources make money, connect Stripe with its webhook signing secret (<code>POST /v1/sites/:id/integrations/stripe</code>), or record payments from any provider with <code>POST /v1/sites/:id/payments</code>. Put <code>afsa.visitorId()</code> in the checkout's <code>metadata.afs_visitor_id</code> so each payment lands on the right source, page and country.</p>
+
+<h2 id="compare">A Google Analytics alternative an agent can set up</h2>
+<p>Here's what each setup step takes. The Google Analytics column follows <a href="https://support.google.com/analytics/answer/9304153">Google's setup guide</a>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Step</th><th>Google Analytics 4</th><th>AgentFirstStack</th></tr></thead>
+<tbody>
+<tr><th scope="row">Account</th><td>Create an Analytics account</td><td><code>POST /v1/signup</code> returns a key</td></tr>
+<tr><th scope="row">Property or site</th><td>Create a property; choose time zone and currency</td><td><code>POST /v1/sites</code> with the domain</td></tr>
+<tr><th scope="row">Tracking code</th><td>Add a web data stream, copy the <code>G-</code> measurement ID, add the Google tag</td><td>The site response includes the snippet and framework code</td></tr>
+<tr><th scope="row">Check</th><td>The Realtime report; data can take up to 30 minutes</td><td><code>verify</code> returns checks and fixes</td></tr>
+<tr><th scope="row">Agent access</th><td>The <a href="/google-analytics-mcp">Google Analytics MCP server</a>: a Google Cloud project, credentials, read-only</td><td>The same key over REST and MCP, read and write</td></tr>
+</tbody>
+</table>
+</div>
+<p>If you already have GA4 and want to keep it, both can run on the same site. For product analytics with feature flags or experiments, compare <a href="/posthog-mcp">PostHog</a> and <a href="/mixpanel-mcp">Mixpanel</a>.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent, and the salt changes every day. Nothing is stored in the browser unless you switch the site to persistent mode, which keeps a random id in localStorage.</p>
+<h3>Does this work with Cursor or Codex?</h3>
+<p>Yes. The prompt only needs an agent that can make HTTP requests. Agents with MCP support can add <code>https://agentfirststack.com/mcp</code> with the same key.</p>
+<h3>Can I see the numbers in a dashboard?</h3>
+<p>Yes. Open the claim link the agent gives you and sign in with Google to see the site in the dashboard. For a public page, the agent can create a share link once the domain is verified.</p>
+<h3>Does it count visitors from AI assistants?</h3>
+<p>Yes. Visits referred by chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com and similar sites get their own channel, AI Assistants.</p>
+<h3>What does it cost?</h3>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed, so you can run it yourself on Cloudflare Workers.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Anthropic or Google.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/mixpanel-mcp"><span class="svc svc-analytics">Analytics</span><b>Mixpanel MCP compared</b><span>Query a Mixpanel org, or start from nothing.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/gmail-mcp"><span class="svc svc-mail">Mail</span><b>Gmail MCP</b><span>Inboxes an agent creates for itself.</span></a></li>
+        <li><a class="card" href="/agentmail-alternative"><span class="svc svc-mail">Mail</span><b>AgentMail alternative</b><span>Free inboxes for agents, with wait-for-email.</span></a></li>
+        <li><a class="card" href="/guides/email-inbox-for-ai-agents"><span class="svc svc-mail">Mail</span><b>Email inboxes for AI agents</b><span>Sign up for services and read the codes.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>Session replay an agent reads as text.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#steps">What Claude Code does</a></li><li><a href="#mcp">Ask questions from the terminal</a></li><li><a href="#revenue">Add revenue</a></li><li><a href="#compare">A Google Analytics alternative an agent can set up</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

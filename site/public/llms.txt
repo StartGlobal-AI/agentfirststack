@@ -198,7 +198,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 8. MCP
 
-One MCP server for every service (113 tools, prefixed `analytics_`, `tags_`, `mail_` and
+One MCP server for every service (115 tools, prefixed `analytics_`, `tags_`, `mail_` and
 `replay_`, plus the gateway's own `afs_create_claim_link`):
 
 ```sh
@@ -244,7 +244,7 @@ Agents with a key never need any of this.
 - `GET /v1/keys`, `POST /v1/keys {"name":"ci","scope":"read"}`, `DELETE /v1/keys/:id`.
   Scope `*` can change things; `read` sees GET routes and read-only MCP tools only. Keys with an
   `expires_at` are OAuth access tokens for connected chat apps; they stop working when it passes.
-  An account holds at most 50 active keys (`409 too_many_keys`: revoke ones you don't use); reuse
+  An account holds at most 25 active keys (10 until a person claims it) (`409 too_many_keys`: revoke ones you don't use); reuse
   keys rather than minting one per run.
 - `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 7).
 - A key of a suspended account answers `403 account_suspended` everywhere (abuse of the free
@@ -273,3 +273,20 @@ Agents with a key never need any of this.
   and 2 MB, recordings kept up to 14 days, 5 active share links per site.
 
 Need more? Self-host: every service is a Cloudflare Worker (see the repository README).
+
+## Guides and comparisons (for people)
+
+All of them: https://agentfirststack.com/guides
+
+- Add analytics with Claude Code: https://agentfirststack.com/guides/add-analytics-with-claude-code
+- Server-side conversion tracking for Meta, Google Ads, TikTok and GA4: https://agentfirststack.com/guides/server-side-conversion-tracking
+- Email inbox for AI agents: receive verification codes by API: https://agentfirststack.com/guides/email-inbox-for-ai-agents
+- Session replay for AI agents: sessions as text, over an API: https://agentfirststack.com/guides/session-replay-for-ai-agents
+- AgentFirstStack MCP servers and tools: https://agentfirststack.com/mcp
+- Google Analytics MCP compared with AgentFirstStack: https://agentfirststack.com/google-analytics-mcp
+- PostHog MCP compared with AgentFirstStack: https://agentfirststack.com/posthog-mcp
+- Mixpanel MCP compared with AgentFirstStack: https://agentfirststack.com/mixpanel-mcp
+- Google Tag Manager MCP compared with AgentFirstStack Tags: https://agentfirststack.com/google-tag-manager-mcp
+- AgentMail alternative: inboxes your agent creates itself: https://agentfirststack.com/agentmail-alternative
+- Gmail MCP: what it does, and when an agent needs its own inbox: https://agentfirststack.com/gmail-mcp
+- Microsoft Clarity MCP: what it returns, and replay built for agents: https://agentfirststack.com/microsoft-clarity-mcp

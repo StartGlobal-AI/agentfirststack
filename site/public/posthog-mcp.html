@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PostHog MCP compared with AgentFirstStack</title>
+<meta name="description" content="PostHog's MCP server works inside a PostHog account you log in to. Compare it with AgentFirstStack: web analytics an agent sets up with no email or login.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/posthog-mcp">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="PostHog MCP compared with AgentFirstStack">
+<meta property="og:description" content="PostHog's MCP server works inside a PostHog account you log in to. Compare it with AgentFirstStack: web analytics an agent sets up with no email or login.">
+<meta property="og:url" content="https://agentfirststack.com/posthog-mcp">
+<meta property="og:image" content="https://agentfirststack.com/og/posthog-mcp.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="PostHog MCP compared with AgentFirstStack">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PostHog MCP compared with AgentFirstStack">
+<meta name="twitter:description" content="PostHog's MCP server works inside a PostHog account you log in to. Compare it with AgentFirstStack: web analytics an agent sets up with no email or login.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/posthog-mcp.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/posthog-mcp#article",
+      "headline": "PostHog MCP compared with AgentFirstStack",
+      "description": "PostHog's MCP server works inside a PostHog account you log in to. Compare it with AgentFirstStack: web analytics an agent sets up with no email or login.",
+      "url": "https://agentfirststack.com/posthog-mcp",
+      "image": "https://agentfirststack.com/og/posthog-mcp.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/posthog-mcp"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "PostHog MCP", "item": "https://agentfirststack.com/posthog-mcp" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/posthog-mcp#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is the PostHog MCP server official?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. PostHog hosts it at mcp.posthog.com/mcp and documents setup for Claude Code, Cursor, VS Code, Codex and other clients."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can an agent create a PostHog account by itself?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The wizard's --signup flag creates an account tied to an email address you give it, plus a project. You set the password from the welcome email. AgentFirstStack needs no email: the key is the account, and you claim it later with Google sign-in."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can PostHog and AgentFirstStack run on the same site?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. They're separate scripts with separate data, so you can try one without removing the other."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack have feature flags or experiments?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It covers web analytics, tag management with server-side conversion tracking, email inboxes and session replay. Use PostHog for flags and experiments."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>PostHog MCP</span></nav>
+      <h1>PostHog MCP compared with AgentFirstStack</h1>
+      <p class="lede">PostHog's MCP server is a hosted endpoint that lets an agent work inside a PostHog account you log in to: SQL queries, feature flags, experiments, dashboards, surveys and error tracking. AgentFirstStack is narrower. An agent sets up web analytics, ad conversion tracking, inboxes and session replay from nothing, with one POST for a key and no email.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It does the setup, checks each step and hands you a claim link at the end.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up AgentFirstStack for this project: analytics now, session replay only if I say yes. It's free, open-source infrastructure built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt, then the analytics manual it links to.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
+
+3. Create an analytics site for the production domain, add the snippet to the site's layout, deploy, then run verify until it passes.
+
+4. Create goals for the actions that matter here (sign-up, purchase) and a funnel from the landing page to the first of them. Send events only the server knows about as server events.
+
+5. Ask me before turning on session replay. If I agree, link it to the analytics site so there's nothing else to paste.
+
+6. If you support MCP, add https://agentfirststack.com/mcp with the header "Authorization: Bearer &lt;key&gt;".
+
+7. Write the ids and the env var that holds the key (never the key itself) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="posthog-mcp">What PostHog's MCP server does</h2>
+<p>PostHog runs it at <code>https://mcp.posthog.com/mcp</code> (<a href="https://posthog.com/docs/model-context-protocol">PostHog's MCP docs</a>). It works inside an account you log in to:</p>
+<ul>
+<li>You connect with <code>npx @posthog/wizard mcp add</code>, or in Claude Code with <code>claude mcp add --transport http posthog https://mcp.posthog.com/mcp -s user</code>, and log in through the browser on first use (<a href="https://posthog.com/docs/model-context-protocol/claude-code">Claude Code setup</a>).</li>
+<li>OAuth is the recommended path. Clients without it use a personal API key made with the "MCP Server" preset, which is scoped to one project (<a href="https://posthog.com/docs/model-context-protocol/faq">FAQ</a>).</li>
+<li>The <a href="https://posthog.com/docs/model-context-protocol/tools">tools</a> span about 60 categories, including <code>project-create</code>, <code>create-feature-flag</code>, <code>experiment-create</code>, <code>dashboard-create</code>, <code>survey-create</code> and <code>execute-sql</code>.</li>
+<li>A read-only header hides every tool that writes. Connecting is free; normal PostHog usage billing applies to what your queries use.</li>
+</ul>
+<p>PostHog also has an agent path for installing it. The <a href="https://posthog.com/docs/ai-engineering/ai-wizard">PostHog wizard</a> installs the SDK, writes credentials to <code>.env</code>, adds events and builds dashboards. With <code>--signup --email you@example.com</code> it <a href="https://posthog.com/docs/ai-engineering/wizard-signup">creates the account and a project as well</a>. That account is tied to the email, and you set its password from a welcome email.</p>
+
+<h2 id="agentfirststack">How AgentFirstStack differs</h2>
+<p>Two ways. The account is the key: <code>POST /v1/signup</code> returns it with no email and no login, so an agent can start without a person. And the scope is smaller and web-focused: analytics, ad conversion tracking, inboxes and session replay, each with a plain-text manual linked from <a href="/llms.txt">/llms.txt</a>.</p>
+<pre><code>curl -s -X POST https://agentfirststack.com/v1/signup     # api_key, no email
+claude mcp add --transport http afs https://agentfirststack.com/mcp \
+  --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"</code></pre>
+<p>Then the agent calls tools such as:</p>
+<ul>
+<li><code>analytics_create_site</code> and <code>analytics_verify_install</code> to install tracking and confirm events arrive.</li>
+<li><code>analytics_create_goal</code>, <code>analytics_create_funnel</code>, <code>analytics_get_journeys</code> and <code>analytics_get_insights</code> for conversions and how people got there.</li>
+<li><code>replay_search_sessions</code> and <code>replay_get_session_transcript</code> to read recorded sessions as text.</li>
+<li><code>tags_setup_conversion_tracking</code> to send conversions to Meta, Google Ads, TikTok and GA4.</li>
+</ul>
+<p>When it's done, <code>afs_create_claim_link</code> gives you a link to sign in with Google and see everything in a dashboard. AgentFirstStack has no feature flags, experiments or surveys.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>PostHog MCP</th><th>AgentFirstStack</th></tr></thead>
+<tbody>
+<tr><th scope="row">Endpoint</th><td><code>mcp.posthog.com/mcp</code></td><td><code>agentfirststack.com/mcp</code></td></tr>
+<tr><th scope="row">Agent auth</th><td>OAuth login in a browser; a personal API key as fallback</td><td>An API key from <code>POST /v1/signup</code>; OAuth 2.1 for chat apps</td></tr>
+<tr><th scope="row">New account</th><td>Sign up, or the wizard's <code>--signup</code> with an email; password set from a welcome email</td><td>One POST, no email; you claim it later with Google sign-in</td></tr>
+<tr><th scope="row">Create a project over MCP</th><td>Yes, <code>project-create</code></td><td>Yes: sites, tag containers, inboxes, replay sites</td></tr>
+<tr><th scope="row">Feature flags, experiments, surveys</th><td>Yes</td><td>No</td></tr>
+<tr><th scope="row">SQL</th><td><code>execute-sql</code></td><td><code>analytics_query_sql</code>, read-only, per site</td></tr>
+<tr><th scope="row">Session replay</th><td>Yes</td><td>Yes, read as text transcripts</td></tr>
+<tr><th scope="row">Read-only access</th><td>A read-only header</td><td>A key with <code>read</code> scope</td></tr>
+<tr><th scope="row">Cost</th><td>MCP free to connect; usage billed as usual</td><td>Free hosted service with fair-use limits; MIT to self-host</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use PostHog if</h3>
+<ul>
+<li>You need feature flags, experiments, surveys or error tracking.</li>
+<li>You ship mobile or back-end apps; the wizard lists Android, Swift, Flutter, Django, Rails and more.</li>
+<li>Your team already works in PostHog.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>The agent should set everything up with no person's email or login.</li>
+<li>You mostly need website traffic: sources, channels (including AI assistants), UTM tags, goals, funnels and revenue from Stripe or any provider.</li>
+<li>You also want ad conversions sent server-side with one event id per conversion (<a href="/guides/server-side-conversion-tracking">how that works</a>), or <a href="/guides/email-inbox-for-ai-agents">inboxes</a> for signing up to services.</li>
+<li>You want to self-host the whole thing on Cloudflare Workers.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is the PostHog MCP server official?</h3>
+<p>Yes. PostHog hosts it at <code>mcp.posthog.com/mcp</code> and documents setup for Claude Code, Cursor, VS Code, Codex and other clients.</p>
+<h3>Can an agent create a PostHog account by itself?</h3>
+<p>The wizard's <code>--signup</code> flag creates an account tied to an email address you give it, plus a project. You set the password from the welcome email. AgentFirstStack needs no email: the key is the account, and you claim it later with Google sign-in.</p>
+<h3>Can PostHog and AgentFirstStack run on the same site?</h3>
+<p>Yes. They're separate scripts with separate data, so you can try one without removing the other.</p>
+<h3>Does AgentFirstStack have feature flags or experiments?</h3>
+<p>No. It covers web analytics, tag management with server-side conversion tracking, email inboxes and session replay. Use PostHog for flags and experiments.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with PostHog.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/mixpanel-mcp"><span class="svc svc-analytics">Analytics</span><b>Mixpanel MCP compared</b><span>Query a Mixpanel org, or start from nothing.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt: a key, a site, the snippet, a verify check.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>Session replay an agent reads as text.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/gmail-mcp"><span class="svc svc-mail">Mail</span><b>Gmail MCP</b><span>Inboxes an agent creates for itself.</span></a></li>
+        <li><a class="card" href="/agentmail-alternative"><span class="svc svc-mail">Mail</span><b>AgentMail alternative</b><span>Free inboxes for agents, with wait-for-email.</span></a></li>
+        <li><a class="card" href="/guides/email-inbox-for-ai-agents"><span class="svc svc-mail">Mail</span><b>Email inboxes for AI agents</b><span>Sign up for services and read the codes.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#posthog-mcp">What PostHog's MCP server does</a></li><li><a href="#agentfirststack">How AgentFirstStack differs</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

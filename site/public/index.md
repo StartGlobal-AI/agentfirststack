@@ -54,3 +54,20 @@ set up and what still needs me.
 
 - Hosted: free, with fair-use limits listed in the manual.
 - Self-host: `pnpm afs init <name> --domain example.com --account <id>` then `pnpm afs deploy <name>`.
+
+## Guides and comparisons (for people)
+
+All of them: https://agentfirststack.com/guides
+
+- Add analytics with Claude Code: https://agentfirststack.com/guides/add-analytics-with-claude-code
+- Server-side conversion tracking for Meta, Google Ads, TikTok and GA4: https://agentfirststack.com/guides/server-side-conversion-tracking
+- Email inbox for AI agents: receive verification codes by API: https://agentfirststack.com/guides/email-inbox-for-ai-agents
+- Session replay for AI agents: sessions as text, over an API: https://agentfirststack.com/guides/session-replay-for-ai-agents
+- AgentFirstStack MCP servers and tools: https://agentfirststack.com/mcp
+- Google Analytics MCP compared with AgentFirstStack: https://agentfirststack.com/google-analytics-mcp
+- PostHog MCP compared with AgentFirstStack: https://agentfirststack.com/posthog-mcp
+- Mixpanel MCP compared with AgentFirstStack: https://agentfirststack.com/mixpanel-mcp
+- Google Tag Manager MCP compared with AgentFirstStack Tags: https://agentfirststack.com/google-tag-manager-mcp
+- AgentMail alternative: inboxes your agent creates itself: https://agentfirststack.com/agentmail-alternative
+- Gmail MCP: what it does, and when an agent needs its own inbox: https://agentfirststack.com/gmail-mcp
+- Microsoft Clarity MCP: what it returns, and replay built for agents: https://agentfirststack.com/microsoft-clarity-mcp

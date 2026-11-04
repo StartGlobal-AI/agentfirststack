@@ -147,3 +147,17 @@ describe("unchanged for agents", () => {
     expect((await call("GET", "/v1/nope")).json.error.code).toBe("no_route");
   });
 });
+
+describe("GET /mcp", () => {
+  it("is a page for browsers and the MCP endpoint for clients", async () => {
+    const page = await call("GET", "/mcp", { headers: { accept: "text/html,application/xhtml+xml" } });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(page.text).toContain("<h1>");
+    expect(page.headers.get("vary")).toContain("Accept");
+    const stream = await call("GET", "/mcp", { headers: { accept: "text/event-stream" } });
+    expect(stream.headers.get("content-type") ?? "").not.toContain("text/html");
+    const plain = await call("GET", "/mcp");
+    expect(plain.headers.get("content-type") ?? "").not.toContain("text/html");
+  });
+});

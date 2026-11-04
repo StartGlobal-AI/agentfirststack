@@ -1,0 +1,86 @@
+[
+  {
+    "slug": "home",
+    "title": "Infrastructure your agent sets up by itself",
+    "kicker": "Analytics, tag management, email inboxes and session replay. No signup form. Free and open source.",
+    "service": "all"
+  },
+  {
+    "slug": "guides",
+    "title": "Guides and comparisons",
+    "kicker": "Set up analytics, tags, email and replay with an agent, and how it compares with other MCP servers.",
+    "service": "all"
+  },
+  {
+    "slug": "google-analytics-mcp",
+    "title": "Google Analytics MCP compared",
+    "kicker": "Read a GA4 property, or let your agent create the analytics itself.",
+    "service": "analytics"
+  },
+  {
+    "slug": "posthog-mcp",
+    "title": "PostHog MCP compared",
+    "kicker": "A product platform you log in to, or web analytics your agent sets up alone.",
+    "service": "analytics"
+  },
+  {
+    "slug": "mixpanel-mcp",
+    "title": "Mixpanel MCP compared",
+    "kicker": "Query a Mixpanel org you already have, or let your agent start from nothing.",
+    "service": "analytics"
+  },
+  {
+    "slug": "google-tag-manager-mcp",
+    "title": "Google Tag Manager MCP compared",
+    "kicker": "Edit a GTM account, or let your agent run the tag manager and the conversion APIs.",
+    "service": "tags"
+  },
+  {
+    "slug": "guides-add-analytics-with-claude-code",
+    "title": "Add analytics with Claude Code",
+    "kicker": "One prompt: a key, a site, the snippet and a verify check.",
+    "service": "analytics"
+  },
+  {
+    "slug": "guides-server-side-conversion-tracking",
+    "title": "Server-side conversion tracking",
+    "kicker": "Meta, Google Ads, TikTok and GA4, each conversion counted once.",
+    "service": "tags"
+  },
+  {
+    "slug": "agentmail-alternative",
+    "title": "AgentMail alternative",
+    "kicker": "Free, open-source inboxes an agent creates itself, with wait-for-email and code extraction.",
+    "service": "mail"
+  },
+  {
+    "slug": "gmail-mcp",
+    "title": "Gmail MCP or an agent's own inbox",
+    "kicker": "Gmail MCP works in a person's mailbox. An agent inbox signs up for things and reads the code.",
+    "service": "mail"
+  },
+  {
+    "slug": "microsoft-clarity-mcp",
+    "title": "Microsoft Clarity MCP and replay for agents",
+    "kicker": "Clarity's limits, where Hotjar stands, and sessions as text.",
+    "service": "replay"
+  },
+  {
+    "slug": "mcp",
+    "title": "MCP for analytics, tags, mail and replay",
+    "kicker": "One server for four services. An API key from one POST, or OAuth for chat apps.",
+    "service": "all"
+  },
+  {
+    "slug": "guides-email-inbox-for-ai-agents",
+    "title": "An inbox your agent creates itself",
+    "kicker": "Create an inbox in one call, wait for the verification email, get the code back.",
+    "service": "mail"
+  },
+  {
+    "slug": "guides-session-replay-for-ai-agents",
+    "title": "Session replay your agent can read",
+    "kicker": "Masked by default, set up over an API, and read as text transcripts.",
+    "service": "replay"
+  }
+]

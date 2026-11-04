@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server-side tracking: Meta Conversions API and Google Ads</title>
+<meta name="description" content="Send conversions server-side to Meta's Conversions API, Google Ads, TikTok and GA4 with the pixel's event id, so each platform counts them once.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/server-side-conversion-tracking">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Server-side conversion tracking for Meta, Google Ads, TikTok and GA4">
+<meta property="og:description" content="Send conversions server-side to Meta's Conversions API, Google Ads, TikTok and GA4 with the pixel's event id, so each platform counts them once.">
+<meta property="og:url" content="https://agentfirststack.com/guides/server-side-conversion-tracking">
+<meta property="og:image" content="https://agentfirststack.com/og/guides-server-side-conversion-tracking.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Server-side conversion tracking for Meta, Google Ads, TikTok and GA4">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Server-side conversion tracking for Meta, Google Ads, TikTok and GA4">
+<meta name="twitter:description" content="Send conversions server-side to Meta's Conversions API, Google Ads, TikTok and GA4 with the pixel's event id, so each platform counts them once.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides-server-side-conversion-tracking.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/server-side-conversion-tracking#article",
+      "headline": "Server-side conversion tracking for Meta, Google Ads, TikTok and GA4",
+      "description": "Send conversions server-side to Meta's Conversions API, Google Ads, TikTok and GA4 with the pixel's event id, so each platform counts them once.",
+      "url": "https://agentfirststack.com/guides/server-side-conversion-tracking",
+      "image": "https://agentfirststack.com/og/guides-server-side-conversion-tracking.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/server-side-conversion-tracking"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Server-side conversion tracking", "item": "https://agentfirststack.com/guides/server-side-conversion-tracking" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/server-side-conversion-tracking#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Do I still need the browser pixel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Meta recommends running the Conversions API alongside the pixel, with deduplication. The pixel sees on-page activity; the server copy survives ad blockers and adds what only your backend knows. AgentFirstStack sends both with one event id."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need server-side GTM to use the Meta Conversions API?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The Conversions API is an HTTP API your own server can call. Server-side GTM is one way to call it, your backend is another, and AgentFirstStack Tags is a third."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it handle consent?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. setup defaults to eea_opt_in: visitors in the EEA, the UK and Switzerland start with consent denied until your banner grants it. Google Consent Mode v2 states are passed to gtag, and blocked tags fire once consent is granted."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I know a platform received a conversion?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Run the destination test, which sends a test event in the platform's test mode and returns its answer. After real traffic, the event log shows each conversion's status and response per platform."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Server-side conversion tracking</span></nav>
+      <h1>Server-side conversion tracking for Meta, Google Ads, TikTok and GA4</h1>
+      <p class="lede">Server-side conversion tracking sends each conversion from a server to the platform's API: Meta's Conversions API, Google Ads through the Data Manager API, TikTok's Events API and GA4's Measurement Protocol. The browser pixel sends the same event with the same id, so a blocked pixel no longer loses the conversion and each platform counts it once.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="prompt">The prompt</h2>
+<p>Paste this into your coding agent. It does everything except the part only you can: the ad platform IDs and tokens.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up server-side conversion tracking for this project with AgentFirstStack Tags. It's free, open-source and built for agents: you can do the setup yourself, with no signup form, email or verification.
+
+1. Read https://agentfirststack.com/llms.txt and https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
+
+3. Create a tags container for the production domain, add its snippet to &lt;head&gt;, deploy, and run scan to see which tags the site loads today.
+
+4. Run setup with the conversions that matter here (sign-ups, purchases, leads) and the platforms this business uses (Google Ads, Meta, GA4, TikTok). If you have tools for those platforms, use them to find the pixel, measurement and conversion IDs. Otherwise ask me for exactly the IDs and tokens setup reports as missing, and tell me where to find each one. Never invent them.
+
+5. Validate the draft, test every destination and show me each platform's answer, then publish.
+
+6. If the backend also reports a conversion the browser tracks, pass the browser's event id (afst('get','event_id')) with it, so each platform counts it once.
+
+7. After the first real conversion, read the event log and tell me what each platform received.
+
+8. Write the container id and the env var that holds the key (never the key itself) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+When you're done, tell me what you set up, what each test returned, what's still waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="how">How it works</h2>
+<ol>
+<li>One snippet loads the container. When a conversion fires (a thank-you page, a form submit, a dataLayer event), the browser tags send it to each pixel with one <code>event_id</code>, and the same event goes to AgentFirstStack.</li>
+<li>Ad click ids from the landing URL (<code>gclid</code>, <code>fbclid</code>, <code>ttclid</code> and others) are stored with the visitor, so a purchase days later still credits the click. Emails and phones are hashed before anything is sent.</li>
+<li>The service calls each platform's conversion API with the owner's credentials and the same <code>event_id</code>. Failed calls are retried.</li>
+<li>Your backend reports what the browser can't see (paid orders, qualified leads) with <code>POST /v1/containers/:id/events</code>, joined to the visitor by <code>visitor_id</code>.</li>
+<li><code>GET /v1/containers/:id/events</code> shows what each platform answered.</li>
+</ol>
+
+<h2 id="platforms">What each platform needs</h2>
+<p>The IDs and tokens belong to the ad account owner. They're sealed at rest and never returned in responses.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Platform</th><th>Browser tag</th><th>Server-side</th></tr></thead>
+<tbody>
+<tr><th scope="row">GA4 (<a href="https://developers.google.com/analytics/devguides/collection/protocol/ga4">Measurement Protocol</a>)</th><td><code>measurement_id</code> (G-...)</td><td><code>api_secret</code></td></tr>
+<tr><th scope="row">Meta (<a href="https://developers.facebook.com/docs/marketing-api/conversions-api">Conversions API</a>)</th><td><code>pixel_id</code></td><td><code>access_token</code>, optional <code>test_event_code</code></td></tr>
+<tr><th scope="row">Google Ads (<a href="https://developers.google.com/data-manager/api/devguides/events/google-ads/offline">Data Manager API</a>)</th><td>Conversion ID and label (AW-.../...)</td><td><code>customer_id</code>, <code>conversion_action_id</code>, OAuth <code>client_id</code>, <code>client_secret</code>, <code>refresh_token</code></td></tr>
+<tr><th scope="row">TikTok (Events API)</th><td>Pixel code</td><td><code>access_token</code>, optional <code>test_event_code</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Start with the browser tags, which need IDs only, and add server-side destinations as the owner provides tokens. <code>setup</code> lists what's missing and where the owner finds each value; <code>GET https://tags.agentfirststack.com/v1/schema</code> lists every field with its format.</p>
+
+<h2 id="setup">Set it up by API</h2>
+<pre><code>T=https://tags.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+J="content-type: application/json"
+curl -s -X POST $T/v1/containers -H "$H" -H "$J" -d '{"domain":"example.com"}'
+# install the returned &lt;script&gt; in &lt;head&gt;, deploy, then:
+curl -s -X POST $T/v1/containers/$C/scan -H "$H"
+curl -s -X POST $T/v1/containers/$C/setup -H "$H" -H "$J" -d '{
+  "platforms": {
+    "meta": { "pixel_id": "1234567890123456", "access_token": "EAAB..." },
+    "ga4": { "measurement_id": "G-ABC123XYZ", "api_secret": "..." }
+  },
+  "conversions": [{
+    "name": "purchase", "when": { "data_layer_event": "purchase" },
+    "value": { "data_layer": "ecommerce.value" }, "currency": "USD",
+    "transaction_id": { "data_layer": "ecommerce.transaction_id" }
+  }]
+}'
+# -&gt; draft, validation, destinations, missing[]: what's still needed and where
+curl -s -X POST $T/v1/containers/$C/destinations/$D/test -H "$H"   # test mode
+curl -s -X POST $T/v1/containers/$C/publish -H "$H" -H "$J" -d '{"note":"purchase"}'
+curl -s "$T/v1/containers/$C/events?since=1h" -H "$H"</code></pre>
+<p>The test call returns the platform's own answer. Over MCP the same calls are <code>tags_setup_conversion_tracking</code>, <code>tags_test_destination</code>, <code>tags_publish</code> and <code>tags_get_event_log</code> on the <a href="/mcp">gateway</a>. The <a href="https://tags.agentfirststack.com/llms.txt">tags manual</a> has the full config format, consent settings and limits.</p>
+
+<h2 id="dedup">How each platform counts it once</h2>
+<ul>
+<li><b>Meta</b> matches the pixel's <code>eventID</code> to the Conversions API's <code>event_id</code>, and the pixel's event to <code>event_name</code>, within 48 hours. Meta recommends running the Conversions API alongside the pixel (<a href="https://developers.facebook.com/docs/marketing-api/conversions-api/deduplicate-pixel-and-server-events">Meta's dedup guide</a>).</li>
+<li><b>TikTok</b> deduplicates pixel and Events API events with the same event and <code>event_id</code>, within 48 hours, and records the first one it receives (<a href="https://ads.tiktok.com/help/article/event-deduplication?lang=en">TikTok's help article</a>).</li>
+<li><b>Google Ads</b> counts a second conversion with the same transaction ID for the same action as a duplicate (<a href="https://support.google.com/google-ads/answer/6386790">Google Ads help</a>). The service sends your order id as the transaction ID, or the <code>event_id</code> when there is none.</li>
+<li><b>GA4</b> doesn't deduplicate by event id, so the service skips a browser conversion's server copy when the browser tag already sent it. The server copy covers browsers that blocked the tag.</li>
+</ul>
+<p>Backend events need one step from you. Read <code>afst('get','event_id')</code> on the page, pass it with the checkout or signup request, and send it as <code>event_id</code>:</p>
+<pre><code>curl -s -X POST $T/v1/containers/$C/events -H "$H" -H "$J" -d '{"events":[{
+  "name": "purchase", "event_id": "'$EVENT_ID'", "visitor_id": "'$VISITOR_ID'",
+  "order_id": "T123", "value": 49, "currency": "USD", "email": "jane@example.com"
+}]}'</code></pre>
+<p>Without it, platforms that also got the pixel event count the conversion twice.</p>
+
+<h2 id="google-ads">Google Ads and the Data Manager API</h2>
+<p>Google's <a href="https://developers.google.com/google-ads/api/docs/conversions/overview">Google Ads API docs</a> say that since 15 June 2026, UploadClickConversions requests fail for projects with no upload activity for that feature between 17 December 2025 and 15 June 2026, and point new offline click conversion integrations to the Data Manager API. That API doesn't need a developer token (<a href="https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/upgrade">upgrade guide</a>). The <code>google_ads</code> destination uses the Data Manager API by default, and its test call runs with <code>validateOnly</code>, so nothing is recorded.</p>
+
+<h2 id="sgtm">Server-side GTM or a hosted router</h2>
+<p>Server-side Google Tag Manager runs on a server you control, in your own Google Cloud project or another environment (<a href="https://developers.google.com/tag-platform/tag-manager/server-side/intro">Google's intro</a>). Hosts such as <a href="https://stape.io/">Stape</a> run it for you.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Server-side GTM</th><th>AgentFirstStack Tags</th></tr></thead>
+<tbody>
+<tr><th scope="row">Server</th><td>A tagging server you host or rent</td><td>Hosted, or self-hosted on Cloudflare Workers</td></tr>
+<tr><th scope="row">Account</th><td>A Google account with a GTM account</td><td>One <code>POST /v1/signup</code></td></tr>
+<tr><th scope="row">Configured with</th><td>GTM's interface or the Tag Manager API (<a href="/google-tag-manager-mcp">GTM MCP compared</a>)</td><td>REST and MCP; <code>setup</code> builds the config from plain inputs</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="faq">FAQ</h2>
+<h3>Do I still need the browser pixel?</h3>
+<p>Meta recommends running the Conversions API alongside the pixel, with deduplication. The pixel sees on-page activity; the server copy survives ad blockers and adds what only your backend knows. AgentFirstStack sends both with one event id.</p>
+<h3>Do I need server-side GTM to use the Meta Conversions API?</h3>
+<p>No. The Conversions API is an HTTP API your own server can call. Server-side GTM is one way to call it, your backend is another, and AgentFirstStack Tags is a third.</p>
+<h3>Does it handle consent?</h3>
+<p>Yes. <code>setup</code> defaults to <code>eea_opt_in</code>: visitors in the EEA, the UK and Switzerland start with consent denied until your banner grants it. Google Consent Mode v2 states are passed to gtag, and blocked tags fire once consent is granted.</p>
+<h3>How do I know a platform received a conversion?</h3>
+<p>Run the destination test, which sends a test event in the platform's test mode and returns its answer. After real traffic, the event log shows each conversion's status and response per platform.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Meta, Google, TikTok or Stape.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt: a key, a site, the snippet, a verify check.</span></a></li>
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/mixpanel-mcp"><span class="svc svc-analytics">Analytics</span><b>Mixpanel MCP compared</b><span>Query a Mixpanel org, or start from nothing.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/gmail-mcp"><span class="svc svc-mail">Mail</span><b>Gmail MCP</b><span>Inboxes an agent creates for itself.</span></a></li>
+        <li><a class="card" href="/agentmail-alternative"><span class="svc svc-mail">Mail</span><b>AgentMail alternative</b><span>Free inboxes for agents, with wait-for-email.</span></a></li>
+        <li><a class="card" href="/guides/email-inbox-for-ai-agents"><span class="svc svc-mail">Mail</span><b>Email inboxes for AI agents</b><span>Sign up for services and read the codes.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>Session replay an agent reads as text.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#how">How it works</a></li><li><a href="#platforms">What each platform needs</a></li><li><a href="#setup">Set it up by API</a></li><li><a href="#dedup">How each platform counts it once</a></li><li><a href="#google-ads">Google Ads and the Data Manager API</a></li><li><a href="#sgtm">Server-side GTM or a hosted router</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

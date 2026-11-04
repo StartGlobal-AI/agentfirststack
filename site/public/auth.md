@@ -29,7 +29,7 @@ The body is optional. The response is `201 Created`:
 { "account_id": "acct_...", "api_key": "afs_...", "key_id": "key_...", "mcp": { ... }, "next_steps": [ ... ] }
 ```
 
-Signup is limited per network (10 accounts per hour on the hosted service). Reuse a project's
+Signup is limited per network (3 accounts an hour and 10 a day on the hosted service). Reuse a project's
 existing key instead of registering again.
 
 ## Supported methods

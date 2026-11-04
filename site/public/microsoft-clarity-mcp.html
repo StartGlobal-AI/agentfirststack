@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Microsoft Clarity MCP: limits, Hotjar and replay for agents</title>
+<meta name="description" content="What Microsoft's Clarity MCP server and Data Export API return, their limits, where Hotjar stands, and session replay an agent sets up and reads as text.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/microsoft-clarity-mcp">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Microsoft Clarity MCP: limits, Hotjar and replay for agents">
+<meta property="og:description" content="What Microsoft's Clarity MCP server and Data Export API return, their limits, where Hotjar stands, and session replay an agent sets up and reads as text.">
+<meta property="og:url" content="https://agentfirststack.com/microsoft-clarity-mcp">
+<meta property="og:image" content="https://agentfirststack.com/og/microsoft-clarity-mcp.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Microsoft Clarity MCP: limits, Hotjar and replay for agents">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Microsoft Clarity MCP: limits, Hotjar and replay for agents">
+<meta name="twitter:description" content="What Microsoft's Clarity MCP server and Data Export API return, their limits, where Hotjar stands, and session replay an agent sets up and reads as text.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/microsoft-clarity-mcp.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/microsoft-clarity-mcp#article",
+      "headline": "Microsoft Clarity MCP: what it returns, and replay built for agents",
+      "description": "What Microsoft's Clarity MCP server and Data Export API return, their limits, where Hotjar stands, and session replay an agent sets up and reads as text.",
+      "url": "https://agentfirststack.com/microsoft-clarity-mcp",
+      "image": "https://agentfirststack.com/og/microsoft-clarity-mcp.png",
+      "datePublished": "2026-11-04",
+      "dateModified": "2026-11-04",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/microsoft-clarity-mcp"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Microsoft Clarity MCP", "item": "https://agentfirststack.com/microsoft-clarity-mcp" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/microsoft-clarity-mcp#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can the Clarity MCP server read session recordings?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It can list them. Microsoft's README describes list-session-recordings, which returns up to 250 sessions per call with metadata and links to each recording, filtered by date and other fields. You watch the recordings in Clarity."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What are the Clarity Data Export API limits?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Per Microsoft's documentation: 10 requests per project per day, data from the last 1 to 3 days, up to three dimensions per request, and 1,000 rows per response with no pagination."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is there a Hotjar MCP server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Hotjar is now part of Contentsquare, which offers an MCP connector for Claude on all its plans, including Free. Third-party Hotjar MCP servers also exist; check what they can read and where your credentials go before you connect one."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Microsoft Clarity MCP</span></nav>
+      <h1>Microsoft Clarity MCP: what it returns, and replay built for agents</h1>
+      <p class="lede">Microsoft's Clarity MCP server lets an AI client query dashboard metrics and list session recordings from a Clarity project that a person created, using that project's API token. AgentFirstStack Replay is set up by the agent itself, masks all text in the browser by default, and returns each session as a transcript the agent can search.</p>
+      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+
+
+      <h2 id="clarity-mcp">What the Clarity MCP server does</h2>
+<p>Microsoft publishes the server as the npm package <code>@microsoft/clarity-mcp-server</code> (<a href="https://github.com/microsoft/clarity-mcp-server">GitHub</a>). It runs locally, started by your MCP client with npx, and authenticates with a Clarity Data Export API token. A project admin creates that token under Settings, Data Export.</p>
+<p>It has three tools:</p>
+<ul>
+<li><code>query-analytics-dashboard</code>: dashboard metrics from a plain-language query, such as sessions from one country in the last three days.</li>
+<li><code>list-session-recordings</code>: recordings filtered by URL, device, browser, OS, country, signals and more. A date range is required, and one call returns 1 to 250 sessions with metadata and links to the recordings.</li>
+<li><code>query-documentation-resources</code>: snippets from Clarity's documentation.</li>
+</ul>
+<p>The Data Export API behind the token has firm limits (<a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api">Microsoft Learn</a>):</p>
+<ul>
+<li>10 requests per project per day.</li>
+<li>Data from the last 1 to 3 days only.</li>
+<li>Up to three dimensions per request.</li>
+<li>At most 1,000 rows per response, with no pagination.</li>
+</ul>
+<p>Microsoft's <a href="https://clarity.microsoft.com/blog/introducing-the-microsoft-clarity-mcp-server-a-smarter-way-to-fetch-analytics-with-ai/">post announcing the MCP server</a> gives the same 10 requests per project per day. Clarity itself is free, with no traffic limits and no sampling, and keeps recordings for 30 days (<a href="https://learn.microsoft.com/en-us/clarity/faq">Clarity FAQ</a>).</p>
+
+<h2 id="hotjar">Hotjar and MCP</h2>
+<p>Hotjar is now part of Contentsquare, and new Hotjar accounts can no longer be created; new users are pointed to Contentsquare's free plan (<a href="https://contentsquare.com/hotjar/">Contentsquare</a>). Contentsquare has its own MCP connector for Claude. Its <a href="https://contentsquare.com/blog/mcp-connector-anthropic-claude/">announcement</a> says it works on any Contentsquare plan, including Free, and answers questions about frustration and rage-click metrics, funnels and experiments.</p>
+
+<h2 id="prompt">Prompt for your agent</h2>
+<p>To have the agent set up replay and read the sessions itself, paste this into Claude Code, Cursor or Codex.</p>
+<div class="prompt">
+  <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+  <p class="prompt-text" id="prompt-1">Turn on session replay for this project with AgentFirstStack Replay. Ask me before you start: recording sessions is a privacy decision.
+
+1. Read the manual: https://replay.agentfirststack.com/llms.txt
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it. Otherwise get a key with:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY.
+
+3. Create a replay site for the production domain. If the site runs AgentFirstStack analytics, pass its analytics_site_id; otherwise add the returned script tag to &lt;head&gt;.
+
+4. Keep the default strict masking. Unmask only non-personal UI text: nav, buttons, links, headings and labels.
+
+5. Deploy, open the homepage with ?afsr=1, click around, then run verify until it passes.
+
+6. Use search_sessions, get_session_transcript and summarize_sessions to tell me where visitors get stuck.
+
+7. Write the replay site id in AGENTFIRSTSTACK.md (never the key), and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="how-it-works">How AgentFirstStack Replay works</h2>
+<pre><code>R=https://replay.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+
+# A replay site; linked to analytics, the analytics snippet loads the recorder
+curl -s -X POST $R/v1/sites -H "$H" -H 'content-type: application/json' \
+  -d '{"domain":"example.com","analytics_site_id":"site_..."}'
+
+# Show non-personal UI text in transcripts; everything else stays masked
+curl -s -X PATCH $R/v1/sites/$RSITE -H "$H" -H 'content-type: application/json' \
+  -d '{"unmask_selectors":["nav","button","a","h1","h2","label"]}'
+
+# After one visit to https://example.com/?afsr=1: check the install and verify the domain
+curl -s -X POST $R/v1/sites/$RSITE/verify -H "$H"
+
+# The most frustrated sessions with a rage click, then one of them as text
+curl -s "$R/v1/sites/$RSITE/sessions?sort=frustration&amp;signal=rage_click" -H "$H"
+curl -s "$R/v1/sites/$RSITE/sessions/$SESSION/transcript" -H "$H"</code></pre>
+<p>A transcript reads like a log. Each line is one step, with a stable CSS selector the agent can try on the live page. Masked text shows as asterisks unless you unmasked it:</p>
+<pre><code>[00:00.0] page "/pricing" · load · from "google.com" · stayed 15s · saw 64% of the page
+[00:05.1] click button "Start trial" {"#plans &gt; div:nth-of-type(2) &gt; button.cta"}
+[00:09.3] click x4 in 0.8s button "Pay" {"#checkout button.pay"}  [RAGE DEAD ERROR-CLICK]
+[00:09.5] JS error "TypeError: Cannot read properties of undefined (reading 'id')" after click on {"#checkout button.pay"}  [ERROR-CLICK]</code></pre>
+<p><code>summarize_sessions</code> groups patterns across many sessions (top rage-click targets, dead clicks, JS errors, exit pages) with example session ids. <code>get_heatmap</code>, <code>list_errors</code> and <code>get_funnel_dropoffs</code> return the rest as JSON. The <a href="https://replay.agentfirststack.com/llms.txt">replay manual</a> has every route and tool.</p>
+
+<h2 id="comparison">Clarity MCP and AgentFirstStack Replay compared</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th scope="col"></th><th scope="col">Microsoft Clarity MCP server</th><th scope="col">AgentFirstStack Replay</th></tr></thead>
+<tbody>
+<tr><th scope="row">Who sets it up</th><td>A person creates a Clarity project and adds its tracking code; a project admin creates the API token</td><td>The agent: one POST for a key, one call to create the site, then <code>verify</code></td></tr>
+<tr><th scope="row">How it runs</th><td>A local process your MCP client starts with npx</td><td>A remote MCP server (Streamable HTTP) and a REST API</td></tr>
+<tr><th scope="row">Sessions</th><td><code>list-session-recordings</code>: 1 to 250 per call, with links to the recordings</td><td><code>search_sessions</code> by page, signal, error, device, country or frustration; transcripts as text or JSON</td></tr>
+<tr><th scope="row">Aggregates</th><td>Dashboard metrics from a plain-language query. The <a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api">Data Export API</a>: 10 requests a day, last 1 to 3 days</td><td>Summaries, click and scroll heatmaps, grouped JS errors and funnel drop-offs</td></tr>
+<tr><th scope="row">Signals</th><td>Dead, rage and error clicks, quick backs, excessive scrolling, script errors</td><td>Rage, dead and error clicks, quick backs, excessive scrolling, JS errors, and a 0 to 100 frustration score</td></tr>
+<tr><th scope="row">Default masking</th><td>Balanced: numbers and email addresses masked (<a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-masking">masking</a>)</td><td>Strict: all text and inputs masked in the browser</td></tr>
+<tr><th scope="row">Volume</th><td>No traffic limits and no sampling</td><td>Hosted: 200 sessions per site a day, up to 30 minutes and 2 MB each</td></tr>
+<tr><th scope="row">Retention</th><td>30 days; favorites and a random sample up to 9 months (<a href="https://learn.microsoft.com/en-us/clarity/faq">FAQ</a>)</td><td>Up to 14 days on the hosted service</td></tr>
+<tr><th scope="row">Deleting one visitor's data</th><td>Delete the whole project, per Clarity's FAQ</td><td><code>delete_visitor_data</code> by user id, visitor id or session ids</td></tr>
+<tr><th scope="row">Price and source</th><td>Free; the tracking code is open source</td><td>Free hosted; the whole service is MIT licensed</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="which">When to choose which</h2>
+<p>Clarity fits when:</p>
+<ul>
+<li>A person already uses Clarity and wants an AI client to answer questions about it.</li>
+<li>You need every session at full traffic, with no sampling and no daily session cap.</li>
+<li>You want a human dashboard with recordings, heatmaps and longer retention.</li>
+</ul>
+<p>AgentFirstStack Replay fits when:</p>
+<ul>
+<li>The agent has to set replay up itself, without a person creating an account or a token.</li>
+<li>The agent needs to read many sessions as text, without a 10-request daily quota.</li>
+<li>You want strict masking by default and deletion per visitor. See <a href="/guides/session-replay-for-ai-agents">session replay for AI agents</a> for the full setup.</li>
+</ul>
+<p class="meta">Microsoft Clarity, Hotjar and Contentsquare belong to their owners. AgentFirstStack isn't affiliated with Microsoft, Hotjar or Contentsquare. Details come from their public docs and pages, checked on 4 November 2026.</p>
+
+<h2 id="faq">Questions</h2>
+<h3>Can the Clarity MCP server read session recordings?</h3>
+<p>It can list them. Microsoft's README describes <code>list-session-recordings</code>, which returns up to 250 sessions per call with metadata and links to each recording, filtered by date and other fields. You watch the recordings in Clarity.</p>
+<h3>What are the Clarity Data Export API limits?</h3>
+<p>Per Microsoft's documentation: 10 requests per project per day, data from the last 1 to 3 days, up to three dimensions per request, and 1,000 rows per response with no pagination.</p>
+<h3>Is there a Hotjar MCP server?</h3>
+<p>Hotjar is now part of Contentsquare, which offers an MCP connector for Claude on all its plans, including Free. Third-party Hotjar MCP servers also exist; check what they can read and where your credentials go before you connect one.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Set up masked recordings and read sessions as text.</span></a></li>
+        <li><a class="card" href="https://replay.agentfirststack.com/llms.txt"><span class="svc svc-replay">Replay</span><b>The replay manual</b><span>Every endpoint, MCP tool, signal and limit.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>AgentFirstStack MCP servers</b><span>Every tool, claude mcp add lines and OAuth for chat apps.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP</b><span>What the GA4 MCP server reads, and analytics an agent sets up itself.</span></a></li>
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP</b><span>PostHog's MCP server compared with agent-first analytics.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#clarity-mcp">What Clarity MCP does</a></li><li><a href="#hotjar">Hotjar and MCP</a></li><li><a href="#prompt">Prompt for your agent</a></li><li><a href="#how-it-works">How AgentFirstStack Replay works</a></li><li><a href="#comparison">Compared</a></li><li><a href="#which">When to choose which</a></li><li><a href="#faq">Questions</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

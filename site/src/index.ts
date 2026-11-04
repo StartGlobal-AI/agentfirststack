@@ -79,6 +79,16 @@ app.on(["GET", "HEAD"], "/", async (c) => {
   return new Response(c.req.method === "HEAD" ? null : asset.body, { status: asset.status, headers });
 });
 
+// /mcp is the MCP endpoint, and also a page for people: a browser (Accept: text/html, no event
+// stream) gets site/public/mcp.html; MCP clients (POST, or GET for an event stream) get the gateway.
+app.on(["GET", "HEAD"], "/mcp", async (c, next) => {
+  const accept = c.req.header("accept") ?? "";
+  if (!accept.includes("text/html") || accept.includes("text/event-stream")) return next();
+  const asset = await c.env.ASSETS.fetch(new URL("/mcp", c.req.url));
+  const headers = new Headers(asset.headers);
+  headers.append("vary", "Accept");
+  return new Response(c.req.method === "HEAD" ? null : asset.body, { status: asset.status, headers });
+});
 app.all("/mcp", (c) => mcpGateway(c.req.raw, c.env));
 app.all("/a2a", (c) => a2aEndpoint(c.req.raw, c.env));
 

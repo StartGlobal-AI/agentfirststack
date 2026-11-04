@@ -9,6 +9,8 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/dashboard.css">
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
 </head>
 <body class="app">
 <header class="nav is-scrolled">
@@ -27,7 +29,7 @@
 <main class="wrap app-main">
 <article class="legal">
 <h1>Privacy</h1>
-<p class="muted">Last updated 3 November 2026</p>
+<p class="muted">Last updated 4 November 2026</p>
 
 <p class="lead">AgentFirstStack is a free, open-source service run by StartGlobal at agentfirststack.com. This page says what we store, why we store it, and how to delete it. The <a href="https://github.com/StartGlobal-AI/agentfirststack">source code</a> is public, so you can check every word.</p>
 
@@ -50,11 +52,19 @@
 </ul>
 <p>We use this only to sign you in and show you your projects. We don't sell it, share it with advertisers or use it for marketing, and we don't send you email.</p>
 
+<h2>Visiting our public pages</h2>
+<p>The home page, the guides, and these privacy and terms pages run our own analytics and session replay: the same AgentFirstStack services we offer, set up the way an agent would set them up. The signed-in pages (sign-in, claim links, the dashboard) run neither.</p>
+<ul>
+  <li><b>Analytics</b> is cookieless. It counts a visit with a hash of your IP address and browser that changes every day, so we can't recognise you from one day to the next, and it stores no identifier on your device. We keep the page you saw, where you came from, your country and city (from Cloudflare, not GPS), and your browser and device type, for up to 400 days.</li>
+  <li><b>Session replay</b> records how the page was used: page changes, clicks, scrolling and the layout. Anything you type into a field is masked in your browser before it's sent, and we never record passwords or payment fields. Recordings are deleted after 14 days.</li>
+  <li>If your browser sends Global Privacy Control or Do Not Track, nothing is recorded. You can also block <code>analytics.agentfirststack.com</code> and <code>replay.agentfirststack.com</code>; the pages work the same without them.</li>
+</ul>
+
 <h2>Cookies</h2>
 <p>These pages set one cookie, <code>afs_session</code>, to keep you signed in, and a short-lived one (10 minutes) while you sign in with Google. There are no analytics or advertising cookies on them.</p>
 
 <h2>What's in a project</h2>
-<p>The data agents put into a project (sites and their visit statistics, tag containers and their event logs, inboxes and their mail, and the ad-platform credentials you choose to add) is stored to provide those services, and kept as each service's manual describes. For example, mail on shared <code>@agentfirststack.com</code> addresses is deleted after 30 days, and third-party credentials are encrypted and never shown again.</p>
+<p>The data agents put into a project (sites and their visit statistics, tag containers and their event logs, inboxes and their mail, and the ad-platform credentials you choose to add) is stored to provide those services, and kept as each service's manual describes. For example, mail on shared <code>@agentfirststack.com</code> addresses is deleted after 14 days, and third-party credentials are encrypted and never shown again.</p>
 
 <h2>Where it's stored</h2>
 <p>On Cloudflare (Workers, D1, Durable Objects and R2), which runs the service for us. Google handles the sign-in itself under its own privacy policy.</p>

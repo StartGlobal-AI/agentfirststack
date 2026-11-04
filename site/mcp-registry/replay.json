@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "version": "0.1.0",
+  "websiteUrl": "https://agentfirststack.com/mcp",
+  "repository": {
+    "url": "https://github.com/StartGlobal-AI/agentfirststack",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://agentfirststack.com/brand/logo-512.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    }
+  ],
+  "name": "com.agentfirststack/replay",
+  "title": "AgentFirstStack Replay",
+  "description": "Session replay as readable transcripts: rage and dead clicks, JS errors and heatmaps. Free, MIT.",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://replay.agentfirststack.com/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <API key> from one POST https://agentfirststack.com/v1/signup (no signup form). OAuth also works.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
