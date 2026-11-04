@@ -142,6 +142,18 @@ export class Runtime implements VendorHost {
   start() {
     const w = this.w;
     const id = this.boot.id;
+    // settings.respect_dnt (default on): Global Privacy Control or Do Not Track = do nothing at
+    // all (no tags, no /collect, no cookies, no storage); afst() stays callable as a no-op.
+    const nav = w.navigator as { globalPrivacyControl?: boolean; doNotTrack?: string } | undefined;
+    if (
+      this.cfg.settings?.respect_dnt !== false &&
+      (nav?.globalPrivacyControl === true || nav?.doNotTrack === "1" || w.doNotTrack === "1")
+    ) {
+      if (typeof w.afst !== "function") w.afst = () => undefined;
+      this.debug = !!this.boot.preview || !!this.cfg.settings?.debug;
+      this.log("info", "GPC/DNT on: nothing runs (settings.respect_dnt)");
+      return;
+    }
     this.base = this.resolveBase();
     if (!this.boot.preview && this.previewHandoff()) return;
     const loaded = ((w.__afst_loaded as Record<string, boolean>) = (w.__afst_loaded as Record<string, boolean>) || {});

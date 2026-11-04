@@ -1,6 +1,9 @@
 import html from "./fixtures/site-html";
+import { ApiError } from "@afs/shared";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { validateConfig } from "../src/config/validate";
+import { readScanInput, scanInput } from "../src/service/api";
 import {
   analyze,
   detectCtas,
@@ -10,6 +13,8 @@ import {
   fetchPage,
   interestingLinks,
   MAX_HTML,
+  MAX_SCAN_PAGES,
+  MAX_SCAN_PATHS,
   scanSite,
   scanTarget,
 } from "../src/service/scan";
@@ -155,5 +160,127 @@ describe("scan fetches stay on the container's domain", () => {
     const r = await scanSite("acme.example", "ctr_abcdefgh12345678", {}, f);
     expect(calls.every((c) => c.redirect === "manual" && new URL(c.url).hostname.endsWith("acme.example"))).toBe(true);
     expect(r.pages.filter((p) => p.error).every((p) => /not followed/.test(p.error!))).toBe(true);
+  });
+});
+
+/** The shape of agentfirststack.com's homepage: nav links, a copy button, example code, a prompt template. */
+const landing = `<!doctype html><html><head><title>AgentFirstStack</title>
+<script type="application/ld+json">{"@type":"SoftwareApplication","description":"Replaces PostHog, Hotjar and GA4 (G-ABCDEF1234)"}</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script>if(!navigator.globalPrivacyControl)document.head.appendChild(Object.assign(document.createElement("script"),{async:true,src:"https://tags.agentfirststack.com/c/ctr_6znmv02cawfa9pb9.js"}))</script>
+<!-- <script async src="https://www.googletagmanager.com/gtag/js?id=G-COMMENTED1"></script> -->
+</head><body>
+<header class="nav"><a class="brand" href="/" aria-label="AgentFirstStack home"><span>AgentFirstStack</span></a>
+<nav class="nav-links" aria-label="Main">
+<a href="#how">How it works</a>
+<a href="/guides/getting-started">Get started</a>
+<a href="/llms.txt">Manual</a>
+<a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+<a href="/signin">Sign in</a>
+</nav></header>
+<main>
+<button class="btn btn-primary" type="button" data-copy data-cta="hero">Copy prompt for your agent</button>
+<a class="btn btn-quiet" href="/llms.txt">Read the manual</a>
+<button class="replay" type="button" data-replay hidden>Replay</button>
+<p>Our analytics id is G-VISIBLE123 and we track sign-ups. Try fbq('init', '2222222222222222') yourself.</p>
+<div class="tool"><code>create_site yourshop.com</code><span class="tool-res">site_9x2f</span></div>
+<pre class="diff"><span>+ &lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_9x2f" /&gt;</span></pre>
+<pre class="code"><script>posthog.init('phc_example')</script></pre>
+<code><a href="/thank-you-example">example</a></code>
+<a class="product-guide" href="/guides/sign-up-tracking">Sign up tracking, step by step</a>
+<a class="btn" href="/docs/register-a-site">Register a site</a>
+<a class="btn" href="/signup">Get started</a>
+<a class="btn" href="/careers">Join the team</a>
+<a class="btn" href="/pricing">Start free trial</a>
+<ul class="mcp"><li><a href="/posthog-mcp">PostHog MCP</a></li><li><a href="/microsoft-clarity-mcp">Microsoft Clarity MCP</a></li></ul>
+</main>
+<footer><a href="https://startglobal.co">StartGlobal</a><a href="/privacy">Privacy</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></footer>
+<template id="prompt-text">Paste &lt;script src="https://www.googletagmanager.com/gtm.js?id=GTM-TMPL123"&gt; <script>fbq('init','1111111111111111')</script> and POST /v1/signup</template>
+<script src="/app.js" defer></script>
+</body></html>`;
+
+describe("scan reads only real tags and the page's real calls to action", () => {
+  it("detects tags from script src, inline code and noscript fallbacks, never from links, text, example code or comments", () => {
+    const d = detectTags(landing);
+    expect(d.other).toEqual([]); // the /posthog-mcp and /microsoft-clarity-mcp links aren't tags
+    expect(d.ga4).toEqual([]); // G- ids in JSON-LD, visible text and a comment
+    expect(d.meta_pixel).toEqual([]); // fbq in text and inside <template>
+    expect(d.gtm).toEqual([]);
+    expect(d.our_analytics_sites).toEqual(["site_6hmh1a6dbbn8mdfp"]); // not the escaped site_9x2f in <pre>
+    expect(d.our_containers).toEqual(["ctr_6znmv02cawfa9pb9"]); // injected by an inline loader
+    expect(detectThankYouUrls(landing, "https://agentfirststack.com/")).toEqual([]); // the link inside <code>
+    // A real PostHog or Clarity install is still found.
+    const real = detectTags(
+      `<script src="https://us-assets.i.posthog.com/static/array.js"></script><script>posthog.init('phc_x',{api_host:'https://us.i.posthog.com'})</script><script async src="https://www.clarity.ms/tag/abc"></script>`,
+    );
+    expect(real.other).toEqual(["Microsoft Clarity", "PostHog"]);
+    expect(detectTags(`<script>!function(t,e){window.posthog=e}()</script>`).other).toEqual(["PostHog"]);
+  });
+
+  it("reports the main buttons and links: copy buttons, nav, header and outbound links, login; signup only when it means signup", () => {
+    const ctas = detectCtas(landing, "/", "agentfirststack.com");
+    const by = (sel: string) => ctas.find((c) => c.selector === sel);
+    expect(by("button[data-copy]")).toMatchObject({
+      text: "Copy prompt for your agent",
+      kind: "copy",
+      element: "button",
+      area: "main",
+      data_attributes: ["data-copy", "data-cta"],
+    });
+    expect(by('a[href="https://github.com/StartGlobal-AI/agentfirststack"]')).toMatchObject({
+      kind: "outbound",
+      outbound: true,
+      area: "nav",
+    });
+    expect(by('a[href="/llms.txt"]')).toMatchObject({ kind: "other", area: "nav" });
+    expect(by('a[href="/signin"]')).toMatchObject({ kind: "login", area: "nav" });
+    expect(by('a[href="https://startglobal.co"]')).toMatchObject({ kind: "outbound", area: "footer" });
+    expect(by("a[href^='mailto:']")).toMatchObject({ kind: "email" });
+    // Signup: the label is a signup verb or the link goes to a signup page. Guides, docs and careers aren't.
+    expect(by('a[href="/signup"]')?.kind).toBe("signup");
+    expect(by('a[href="/pricing"]')?.kind).toBe("signup");
+    expect(by('a[href="/guides/getting-started"]')?.kind).toBe("other");
+    expect(by('a[href="/docs/register-a-site"]')?.kind).toBe("other");
+    expect(by('a[href="/careers"]')?.kind).toBe("other");
+    expect(ctas.filter((c) => c.kind === "signup").map((c) => c.href)).toEqual(["/signup", "/pricing"]);
+    // Plain in-content links, hidden buttons and example code aren't calls to action.
+    expect(by('a[href="/guides/sign-up-tracking"]')).toBeUndefined();
+    expect(by('a[href="/posthog-mcp"]')).toBeUndefined();
+    expect(ctas.some((c) => /Replay/.test(c.text))).toBe(false);
+    expect(ctas.some((c) => c.href === "/thank-you-example")).toBe(false);
+    // A footer link the nav already has is listed once; each selector + kind once.
+    expect(ctas.filter((c) => c.href === "https://github.com/StartGlobal-AI/agentfirststack")).toHaveLength(1);
+    const r = analyze([{ url: "https://agentfirststack.com/", html: landing }], "ctr_6znmv02cawfa9pb9");
+    expect(r.container_installed).toBe(true);
+    expect(r.suggested_config.tags!.find((t) => t.type === "analytics")?.params).toEqual({ site_id: "site_6hmh1a6dbbn8mdfp" });
+  });
+
+  it("forms inside <template> or example code aren't the page's forms", () => {
+    const html = `<template><form id="tpl"><input type="email" name="email"></form></template><pre>&lt;form id="ex"&gt;</pre><form id="real" action="/subscribe"><input type="email" name="email"></form>`;
+    expect(detectForms(html, "/").map((f) => f.selector)).toEqual(["form#real"]);
+  });
+
+  it("paths: the homepage plus up to 5; the 400 says so", () => {
+    expect(MAX_SCAN_PATHS).toBe(5);
+    expect(MAX_SCAN_PAGES).toBe(6);
+    expect(readScanInput({ paths: ["/a", "/b", "/c", "/d", "/e"] }).paths).toHaveLength(5);
+    let err: unknown;
+    try {
+      readScanInput({ paths: ["/a", "/b", "/c", "/d", "/e", "/f"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ApiError);
+    const body = (err as ApiError).toJSON().error;
+    expect(body.code).toBe("bad_request");
+    expect(body.message).toMatch(/at most 5/);
+    expect(body.hint).toMatch(/homepage \(or url\) plus up to 5 paths: 6 pages at most/);
+    // MCP clients see the same limit in the tool's input schema and validation message.
+    const schema = z.toJSONSchema(scanInput) as unknown as { properties: { paths: { maxItems: number; description: string } } };
+    expect(schema.properties.paths.maxItems).toBe(5);
+    expect(schema.properties.paths.description).toMatch(/at most 5/);
+    const issue = scanInput.safeParse({ paths: Array(6).fill("/x") }).error!.issues[0]!;
+    expect(issue.message).toMatch(/homepage \(or url\) plus up to 5 paths/);
   });
 });

@@ -25,7 +25,7 @@ import { compact, type Connector, type DispatchEvent, execute, type HttpRequestS
  * action source.
  *
  * Test mode: data.test_id, the id shown in Events Manager > Event Testing (events appear there).
- * Without credentials.test_id there is no test mode and a test sends one real event.
+ * Without credentials.test_id there is no test mode: test traffic is skipped (see testModeMissing).
  *
  * Docs: https://ads-api.reddit.com/docs/v3/api/post-conversion-events
  *       https://ads-api.reddit.com/docs/v3/guides/programs/capi/direct-integration
@@ -138,11 +138,15 @@ export const reddit: Connector<RedditCredentials> = {
   api: `POST ${REDDIT_API}/pixels/{pixel_id}/conversion_events`,
   credentials: redditCredentials,
   publicFields: ["pixel_id", "test_id"],
+  testModeMissing: (c) =>
+    c.test_id
+      ? null
+      : 'Reddit records test traffic only with a test id: PATCH the destination { "credentials": { "test_id": "..." } } (Events Manager > Event Testing).',
   naturalKey: (c) => c.pixel_id,
   requiredConsent: ["ad_user_data"],
   needsMapping: true,
   testMode:
-    "Adds data.test_id, so the event shows in Events Manager > Event Testing. Requires credentials.test_id; without it the test sends one real event.",
+    "Adds data.test_id, so the event shows in Events Manager > Event Testing. Requires credentials.test_id (or test_event_code in the test request body); without it test traffic (preview hits, test: true server events) is skipped, never sent as a real event.",
   example: { pixel_id: "a2_abc123def456", access_token: "eyJhbGciOiJSUzI1NiIsImtpZCI6xxxxxxxx", test_id: "t2_testid123" },
   docs: "https://ads-api.reddit.com/docs/v3/guides/programs/capi/direct-integration",
   skipReason: (e) =>

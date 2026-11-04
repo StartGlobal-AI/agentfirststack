@@ -328,6 +328,11 @@ const eventParams = z
   .record(z.string().max(40), scalar)
   .optional()
   .describe("Extra event parameters; strings may use {{variable}} templates.");
+/** Platform-specific params of a conversion: the same values go to the pixel and the server, so no templates. */
+const fixedParams = z
+  .record(z.string().max(40), scalar)
+  .optional()
+  .describe("Extra parameters for this platform only, sent as written (no {{templates}}: put page values in the conversion's params).");
 
 const tagBase = {
   id: ident,
@@ -553,7 +558,7 @@ export const TAG_TYPES = [
 const varRef = ident.describe("A variable name (or built-in).");
 
 export const sendToSchema = z.strictObject({
-  ga4: z.strictObject({ event_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/), params: eventParams }).optional(),
+  ga4: z.strictObject({ event_name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/), params: fixedParams }).optional(),
   google_ads: z
     .strictObject({
       send_to: z
@@ -576,7 +581,7 @@ export const sendToSchema = z.strictObject({
         .describe("google_business_vertical for remarketing items (default retail)."),
     })
     .optional(),
-  meta: z.strictObject({ event_name: z.string().min(1).max(50), custom_data: eventParams }).optional(),
+  meta: z.strictObject({ event_name: z.string().min(1).max(50), custom_data: fixedParams }).optional(),
   tiktok: z.strictObject({ event_name: z.string().min(1).max(50) }).optional(),
   linkedin: z.strictObject({ conversion_id: z.string().regex(/^\d{3,15}$/) }).optional(),
   microsoft_uet: z.strictObject({ event_action: z.string().min(1).max(100) }).optional(),
@@ -705,6 +710,12 @@ export const settingsSchema = z.strictObject({
     .boolean()
     .optional()
     .describe("Send one telemetry hit per page with which tags fired, were blocked or failed (GET /tag-stats, /coverage)."),
+  respect_dnt: z
+    .boolean()
+    .optional()
+    .describe(
+      'Default true: in a browser that sends Global Privacy Control (navigator.globalPrivacyControl) or Do Not Track (doNotTrack "1"), the runtime does nothing: no tags, no /collect hits, no cookies (preview too). false: run anyway; consent rules still apply.',
+    ),
 });
 
 export const containerConfigSchema = z.strictObject({

@@ -53,6 +53,14 @@ export type Bindings = Env & {
   SIGNUP_TOKEN?: string;
   DEV_MODE?: string;
   ANALYTICS_BASE_URL?: string;
+  /**
+   * Optional service binding to this deployment's analytics Worker. With INTERNAL_TOKEN set (the
+   * same value on both), analytics destinations without an api_key deliver over it with internal
+   * auth as the container's account (analytics refuses a site of another account).
+   */
+  ANALYTICS?: Fetcher;
+  /** Shared by the Workers of one deployment (x-afs-internal); see @afs/shared internalAuth. */
+  INTERNAL_TOKEN?: string;
   /** Workers rate-limit bindings (wrangler.jsonc `ratelimits`); each is skipped when not bound. */
   COLLECT_IP_LIMITER?: RateLimit;
   COLLECT_CONTAINER_LIMITER?: RateLimit;

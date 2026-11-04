@@ -232,13 +232,13 @@ describe("finding 2: the analytics destination is not a proxy", () => {
     expect(analyticsBaseUrlProblem("https://analytics.example.com/?", env)).toMatch(/query/);
     expect(analyticsBaseUrlProblem("https://tags.example.com/collect", { ...env, ANALYTICS_BASE_URL: "" })).toMatch(/this tags deployment/);
     expect(analyticsBaseUrlProblem("https://evil.test/", env)).toMatch(/must be on analytics\.example\.com/);
-    expect(() => analytics.check!({ site_id: "site_abc", api_key: "ana_xxxxxxxx", base_url: "https://evil.test" }, env)).toThrow();
+    expect(() => analytics.check!({ site_id: "site_abc", api_key: "afs_xxxxxxxx", base_url: "https://evil.test" }, env)).toThrow();
   });
   it("is re-checked at send time (destinations saved by older code)", async () => {
     let fetched = false;
     const r = await analytics.send(
       event({ name: "purchase" }),
-      { site_id: "site_abc", api_key: "ana_xxxxxxxx", base_url: "https://evil.test" },
+      { site_id: "site_abc", api_key: "afs_xxxxxxxx", base_url: "https://evil.test" },
       {
         test: false,
         env,

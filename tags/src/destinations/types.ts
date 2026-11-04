@@ -106,11 +106,23 @@ export interface DeliveryResult {
 
 export interface SendContext {
   test: boolean;
+  /** The event is a destination test's sample (POST .../destinations/:did/test), not real or preview traffic. */
+  sample?: boolean;
   fetch: typeof fetch;
-  env: { DEV_MODE?: string; ANALYTICS_BASE_URL?: string; PUBLIC_BASE_URL?: string; AUTH_ISSUER?: string };
+  env: {
+    DEV_MODE?: string;
+    ANALYTICS_BASE_URL?: string;
+    PUBLIC_BASE_URL?: string;
+    AUTH_ISSUER?: string;
+    /** The analytics Worker over a service binding (analytics destinations without an api_key). */
+    ANALYTICS?: Fetcher;
+    INTERNAL_TOKEN?: string;
+  };
   /** Destination id + container id, for webhooks and token caching. */
   destinationId: string;
   containerId: string;
+  /** The container's account (from D1, never from the request): internal calls to sibling apps act as it. */
+  accountId?: string;
   /** The destination's settings (the webhook body template). */
   settings?: { template?: { method?: "POST" | "PUT" | "PATCH"; headers?: Record<string, string>; body?: unknown } };
 }
@@ -152,6 +164,18 @@ export interface Connector<C extends Record<string, unknown> = Record<string, un
    * this deployment is reached on (PUBLIC_BASE_URL is added from env).
    */
   check?(c: C, env: SendContext["env"], origins?: string[]): void;
+  /**
+   * Test traffic (preview hits, server events with test: true, destination tests) is never sent
+   * as a real conversion. A connector whose platform has a test mechanism uses it (GA4's
+   * validation server, Google Ads validateOnly, Pinterest ?test=true, Snap /validate, a test
+   * code); this returns how to set one up when these credentials have none (Meta and TikTok
+   * test_event_code, Reddit test_id), and the delivery is skipped instead. Unset = always has one.
+   */
+  testModeMissing?(c: C): string | null;
+  /** The platform has no test mode at all (LinkedIn, X): test traffic is always skipped. */
+  noTestMode?: true;
+  /** Checks that need the platform, before the destination is saved (throws an ApiError). */
+  verify?(c: C, env: SendContext["env"], accountId: string): Promise<void>;
   send(e: DispatchEvent, c: C, ctx: SendContext): Promise<DeliveryResult>;
 }
 

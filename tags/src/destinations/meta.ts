@@ -104,11 +104,15 @@ export const meta: Connector<MetaCredentials> = {
   api: `POST https://graph.facebook.com/${META_GRAPH_VERSION}/{pixel_id}/events`,
   credentials: metaCredentials,
   publicFields: ["pixel_id", "test_event_code"],
+  testModeMissing: (c) =>
+    c.test_event_code
+      ? null
+      : 'Meta records test traffic only with a test_event_code: PATCH the destination { "credentials": { "test_event_code": "TEST..." } } (Events Manager > (pixel) > Test events).',
   naturalKey: (c) => c.pixel_id,
   requiredConsent: ["ad_user_data"],
   needsMapping: true,
   testMode:
-    "Adds test_event_code, so the event shows in Events Manager > Test events. Requires credentials.test_event_code (or test_event_code in the test request body).",
+    "Adds test_event_code, so the event shows in Events Manager > Test events. Requires credentials.test_event_code (or test_event_code in the test request body); without it test traffic (preview hits, test: true server events) is skipped, never sent as a real event.",
   example: { pixel_id: "1234567890123456", access_token: "EAABsbCS1iHgBAxxxxxxxxxxxxxxxx", test_event_code: "TEST12345" },
   docs: "https://developers.facebook.com/docs/marketing-api/conversions-api",
   skipReason: (e) =>

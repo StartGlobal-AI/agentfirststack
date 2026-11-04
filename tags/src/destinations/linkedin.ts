@@ -24,7 +24,7 @@ import { type Connector, type DeliveryResult, type DispatchEvent, execute, type 
  * each Insight Tag conversion id to its Conversions API rule (conversion_rules); unmapped ids are
  * sent as they are (CAPI-only setups use the CAPI rule id in send_to.linkedin.conversion_id).
  *
- * No test mode exists: a test sends one real conversion event.
+ * No test mode exists, so test traffic is never sent (noTestMode: skipped in dispatch, 400 in tests).
  *
  * Tokens: member access tokens live 60 days. Apps approved for LinkedIn's Marketing Developer
  * Platform also get a programmatic refresh token (365 days, fixed); with refresh_token + client_id +
@@ -202,7 +202,10 @@ export const linkedin: Connector<LinkedinCredentials> = {
   requiredConsent: ["ad_user_data"],
   needsMapping: true,
   testMode:
-    "LinkedIn has no test mode: the test sends one real conversion event to the (mapped) conversion rule, so it counts in Campaign Manager.",
+    "LinkedIn has no test mode, so test traffic (preview hits, test: true server events, destination tests) is never sent to it: deliveries are skipped and the destination test answers 400 no_test_mode. Live conversions are delivered as usual; GET /events shows LinkedIn's answer to the first ones.",
+  noTestMode: true,
+  testModeMissing: () =>
+    "LinkedIn's Conversions API has no test mode, so test and preview events are never sent to it (live conversions are). Check the first live deliveries in GET /v1/containers/:id/events.",
   example: {
     ad_account_id: "512345678",
     access_token: "AQXNnd2kXITHELmWblJigbHEuoFdfRhOwGA0QNnumBI8XOVSs0HtOHEU",

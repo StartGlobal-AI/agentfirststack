@@ -575,3 +575,88 @@ describe("extension bundle", () => {
     expect(calls).toEqual(["start:0", "progress:25", "progress:50", "complete:60"]);
   });
 });
+
+describe("settings.respect_dnt: Global Privacy Control and Do Not Track", () => {
+  const cfg: ContainerConfig = {
+    triggers: [allPages, { id: "p", type: "custom_event", event: "purchase" }],
+    tags: [
+      { id: "ga4", type: "ga4", params: { measurement_id: "G-ABC123XYZ" }, triggers: ["all_pages"] },
+      { id: "meta", type: "meta_pixel", params: { pixel_id: "1234567890123456" }, triggers: ["all_pages"] },
+    ],
+    conversions: [{ name: "purchase", trigger: "p", send_to: { meta: { event_name: "Purchase" } }, server: true }],
+  };
+  const run = (opts: Parameters<typeof browser>[1], config: ContainerConfig = cfg) => {
+    const b = browser("https://shop.test/landing?gclid=TEST-GCLID-1", opts);
+    b.run(serve(config));
+    (b.win.dataLayer as unknown[] | undefined)?.push({ event: "purchase" });
+    return b;
+  };
+  const nothingRan = (b: ReturnType<typeof browser>) => {
+    expect(b.fetches).toEqual([]); // no /collect
+    expect(Object.keys(b.jar)).toEqual([]); // no cookies (visitor id, click ids, consent)
+    expect(b.scripts().filter((s) => !String(s).includes("/c/"))).toEqual([]); // no vendor scripts
+    expect(b.win.fbq).toBeUndefined();
+    expect(gtagCalls(b.win)).toEqual([]);
+    expect(b.session).toEqual({});
+    // The page's own afst() calls (a consent banner) still work: a no-op.
+    expect(typeof b.win.afst).toBe("function");
+    expect((b.win.afst as (...a: unknown[]) => unknown)("consent", "update", { ad_storage: "granted" })).toBeUndefined();
+  };
+
+  it("navigator.globalPrivacyControl: nothing runs", () => {
+    const b = run({ navigator: { globalPrivacyControl: true } });
+    nothingRan(b);
+    expect(log(b.win).some((l) => /respect_dnt/.test(l.msg))).toBe(true);
+  });
+  it('doNotTrack "1" (navigator or the legacy window property): nothing runs', () => {
+    nothingRan(run({ navigator: { doNotTrack: "1" } }));
+    nothingRan(run({ window: { doNotTrack: "1" } }));
+  });
+  it('without a signal, or with doNotTrack "0", tags and /collect run as usual', () => {
+    for (const nav of [{}, { doNotTrack: "0", globalPrivacyControl: false }]) {
+      const b = run({ navigator: nav });
+      expect(b.fetches.some((f) => f.body.type === "conversion")).toBe(true);
+      expect(Object.keys(b.jar)).toContain("_afst_vid");
+      expect(fbq(b.win).length).toBeGreaterThan(0);
+    }
+  });
+  it("respect_dnt: false runs anyway", () => {
+    const b = run({ navigator: { globalPrivacyControl: true } }, { ...cfg, settings: { respect_dnt: false } });
+    expect(b.fetches.some((f) => f.body.type === "conversion")).toBe(true);
+    expect(fbq(b.win).length).toBeGreaterThan(0);
+  });
+});
+
+describe("the analytics tag marks preview traffic as analytics test traffic", () => {
+  const cfg: ContainerConfig = {
+    triggers: [allPages, { id: "p", type: "custom_event", event: "sign_up" }],
+    tags: [
+      {
+        id: "an",
+        type: "analytics",
+        params: { site_id: "site_abc123", base_url: "https://analytics.example.net" },
+        triggers: ["all_pages"],
+      },
+    ],
+    conversions: [{ name: "sign_up", trigger: "p", send_to: { analytics: { event_name: "sign_up" } } }],
+  };
+  const analyticsScript = (b: ReturnType<typeof browser>) =>
+    b.doc.querySelectorAll("script").find((x) => String(x.src ?? x.attrs.src).includes("/s.js"));
+  it("preview: afsa('debug') before anything else, and data-debug on the tracker", () => {
+    const b = browser("https://shop.test/");
+    b.run(serve(cfg, { preview: "prv_aaaaaaaaaaaaaaaaaaaaaaaa" }));
+    (b.win.dataLayer as unknown[]).push({ event: "sign_up" });
+    const q = ((b.win.afsa as { q?: ArrayLike<unknown>[] }).q ?? []).map((a) => Array.from(a));
+    expect(q[0]).toEqual(["debug"]);
+    expect(q.some((c) => c[0] === "event" && c[1] === "sign_up")).toBe(true);
+    expect(analyticsScript(b)?.attrs["data-debug"]).toBe("true");
+  });
+  it("live: no debug flag", () => {
+    const b = browser("https://shop.test/");
+    b.run(serve(cfg));
+    (b.win.dataLayer as unknown[]).push({ event: "sign_up" });
+    const q = ((b.win.afsa as { q?: ArrayLike<unknown>[] }).q ?? []).map((a) => Array.from(a));
+    expect(q.some((c) => c[0] === "debug")).toBe(false);
+    expect(analyticsScript(b)?.attrs["data-debug"]).toBeUndefined();
+  });
+});

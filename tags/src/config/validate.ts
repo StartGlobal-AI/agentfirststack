@@ -99,7 +99,12 @@ const CMP_TAGS = new Set(["custom_html", "custom_js", "image_pixel"]);
 
 const toMs = (v: number | string | undefined) => (v === undefined ? undefined : typeof v === "number" ? v : Date.parse(v));
 
-/** Variables a variable reads (lookup/regex_table input, url source, param_set templates). */
+/**
+ * Variables a variable reads (lookup/regex_table input, url source, param_set templates). The
+ * other places a config names a variable, all counted for unused_variable: trigger conditions,
+ * tags[].params templates and event_params_from / config_params_from, conversion value, currency,
+ * transaction_id, items and user_data, and conversions[].params templates.
+ */
 function variableRefs(v: NonNullable<ContainerConfig["variables"]>[number]): string[] {
   const out = new Set<string>();
   if (v.type === "lookup" || v.type === "regex_table") out.add(v.input);
@@ -498,6 +503,36 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
           "undefined_variable",
           `Conversion "${c.name}" ${k} refers to undefined variable "${v}".`,
           `Define it in variables[], e.g. { "name": "${v}", "type": "data_layer", "key": "ecommerce.${k === "value" ? "value" : k}" }.`,
+        );
+    }
+    // conversions[].params: strings may use {{variable}} templates (resolved in the browser when it fires).
+    const paramRefs = new Set<string>();
+    templateRefs(c.params, paramRefs);
+    for (const r of paramRefs) {
+      usedVars.add(r);
+      if (!isVar(r))
+        warn(
+          `${at}.params`,
+          "undefined_variable",
+          `Conversion "${c.name}" params use {{${r}}}, which isn't a defined variable.`,
+          "Define it in variables[]; undefined templates render as empty strings.",
+        );
+    }
+    // send_to.ga4.params and send_to.meta.custom_data are sent as written (by the pixel and by the
+    // server): a template there stays literal text. It still names the variable, so it's not "unused".
+    for (const [where, fixed] of [
+      ["send_to.ga4.params", c.send_to.ga4?.params],
+      ["send_to.meta.custom_data", c.send_to.meta?.custom_data],
+    ] as const) {
+      const fixedRefs = new Set<string>();
+      templateRefs(fixed, fixedRefs);
+      for (const r of fixedRefs) usedVars.add(r);
+      if (fixedRefs.size)
+        warn(
+          `${at}.${where}`,
+          "template_not_rendered",
+          `Conversion "${c.name}" ${where} has {{${[...fixedRefs].join("}}, {{")}}}, but templates aren't rendered there: the text is sent as written.`,
+          `Move page values to conversions[].params (templates are rendered there and sent to every platform), or use fixed values in ${where}.`,
         );
     }
     const sendTo = Object.keys(c.send_to) as SendToPlatform[];

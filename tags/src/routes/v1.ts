@@ -12,7 +12,7 @@ import {
   type OpCtx,
   ops,
   parseVersion,
-  scanInput,
+  readScanInput,
   testInput,
   verifyInput,
 } from "../service/api";
@@ -31,6 +31,8 @@ export function opCtx(c: Context<AppEnv>): OpCtx {
 }
 
 const revisionQuery = z.object({ revision: z.coerce.number().int().positive().optional() });
+const installQuery = z.object({ proxy: z.enum(["1", "0", "true", "false"]).optional() });
+const truthyFlag = (v: string | undefined) => v === "1" || v === "true";
 const rawJson = async (c: Context<AppEnv>) => readJson(c, z.unknown());
 
 v1.post("/containers", async (c) => {
@@ -41,8 +43,10 @@ v1.get("/containers", async (c) => c.json(await ops.listContainers(opCtx(c))));
 v1.get("/containers/:id", async (c) => c.json(await ops.getContainer(opCtx(c), c.req.param("id"))));
 v1.patch("/containers/:id", async (c) => c.json(await ops.updateContainer(opCtx(c), c.req.param("id"), await readJson(c, containerPatch))));
 v1.delete("/containers/:id", async (c) => c.json(await ops.deleteContainer(opCtx(c), c.req.param("id"))));
-v1.get("/containers/:id/install", async (c) => c.json(await ops.install(opCtx(c), c.req.param("id"))));
-v1.post("/containers/:id/scan", async (c) => c.json(await ops.scan(opCtx(c), c.req.param("id"), await readJson(c, scanInput))));
+v1.get("/containers/:id/install", async (c) =>
+  c.json(await ops.install(opCtx(c), c.req.param("id"), { proxy: truthyFlag(readQuery(c, installQuery).proxy) })),
+);
+v1.post("/containers/:id/scan", async (c) => c.json(await ops.scan(opCtx(c), c.req.param("id"), readScanInput(await rawJson(c)))));
 v1.post("/containers/:id/verify", async (c) => c.json(await ops.verify(opCtx(c), c.req.param("id"), await readJson(c, verifyInput))));
 
 v1.get("/containers/:id/draft", async (c) => c.json(await ops.getDraft(opCtx(c), c.req.param("id"))));

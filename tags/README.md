@@ -64,8 +64,14 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
   destination list, pushed by the control plane on create/publish/rollback/destination
   changes, so `/collect` never reads D1), `visitors` (click IDs with timestamps, fbp/fbc,
   `_ttp`, GA client/session id, first- and last-touch UTM, landing page, user_id, SHA-256
-  email/phone/name hashes, last IP/UA/geo, consent), `events` (the event log, last 7 days:
-  each event's per-destination status, attempts, HTTP status and response snippet). Rows are
+  email/phone/name hashes, last IP/UA/geo, consent; only for visitors whose consent allows a
+  visitor id, so a backend conversion joined later is delivered with them), `events` (the event
+  log, last 7 days: each event's per-destination status, attempts, HTTP status and response
+  snippet). The log keeps no raw IP, user agent, city or postal code (`src/service/privacy.ts`):
+  conversions store `ip_network` (IPv4 /24, IPv6 /48), country/region and coarse device fields,
+  and the logged destination requests and answers have those values replaced. The raw IP and
+  user agent ride only in each pending delivery's queue message (gone once delivered or given
+  up). Rows are
   keyed by `(source, event_id)`: browser hits dedupe against browser rows, backend events
   against backend rows, so the dedupe window is the 7-day log retention; a daily alarm purges
   events after 7 days and visitors 180 days after they were last seen. Each row is written
@@ -175,7 +181,8 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
     "tcf": false                    // follow an IAB TCF v2 CMP (__tcfapi); see llms.txt for the purpose mapping
   },
   "settings": { "phone_country_code": "1", "cookie_domain": "example.com", "listen_to_gtag_events": false, "send_page_views": true, "debug": false,
-                "cross_domain": ["checkout.example.net"], "cross_domain_forms": false, "report_tag_fires": false }
+                "cross_domain": ["checkout.example.net"], "cross_domain_forms": false, "report_tag_fires": false,
+                "respect_dnt": true }         // default: nothing runs under Global Privacy Control / Do Not Track
 }
 ```
 
@@ -185,7 +192,10 @@ that don't match the schema (400 with per-field details); semantic problems are 
 `warnings`, each `{ path, code, message, hint }`: undefined triggers/variables, duplicate ids,
 invalid regexes, placeholder pixel ids, purchases without value/currency (Meta Purchase without
 them is an error), phones without a country code setting, conversions that no tag or
-destination will deliver, `server: true` with no destination of that type, destinations that
+destination will deliver, `server: true` with no destination of that type, unused variables
+(every place a config names a variable counts: conditions, tag params and `conversions[].params`
+templates, param sets, conversion fields), templates in `send_to.ga4.params` /
+`send_to.meta.custom_data` (sent as written: `template_not_rendered`), destinations that
 receive nothing, Google Ads tag + upload double counting, and consent gaps (ad pixels with no
 consent config, opt-in without a banner call, EEA without GB, ad tags with `consent: []`).
 Drafts are capped at `MAX_DRAFT_BYTES` (default 512 KB of JSON; `413 draft_too_large`), and
@@ -244,15 +254,15 @@ line in `src/destinations/index.ts`.
 | type | API | credentials | test mode |
 |---|---|---|---|
 | `ga4` | Measurement Protocol | measurement_id, api_secret, region? (`eu`) | `/debug/mp/collect` validation |
-| `meta` | Conversions API (Graph v26.0) | pixel_id, access_token, test_event_code? | `test_event_code` (required for `test`) |
+| `meta` | Conversions API (Graph v26.0) | pixel_id, access_token, test_event_code? | `test_event_code` (without it: test traffic skipped, test 400) |
 | `google_ads` | offline click conversions: Data Manager API `events:ingest` (default) or Google Ads API v26 `uploadClickConversions` (`api: "google_ads_api"`); gclid/gbraid/wbraid + hashed email/phone | customer_id, conversion_action_id (an "Import from clicks" action), oauth client_id/client_secret/refresh_token, login_customer_id?, developer_token? (google_ads_api only), api? | `validateOnly: true` |
-| `tiktok` | Events API 2.0 | pixel_code, access_token, test_event_code? | `test_event_code` (required for `test`) |
-| `linkedin` | Conversions API (REST, LinkedIn-Version 202610) | ad_account_id, access_token? and/or refresh_token? + client_id? + client_secret?, conversion_rules? (Insight Tag id -> CAPI rule id) | none: sends one real event (pass `send_to.linkedin.conversion_id`) |
+| `tiktok` | Events API 2.0 | pixel_code, access_token, test_event_code? | `test_event_code` (without it: test traffic skipped, test 400) |
+| `linkedin` | Conversions API (REST, LinkedIn-Version 202610) | ad_account_id, access_token? and/or refresh_token? + client_id? + client_secret?, conversion_rules? (Insight Tag id -> CAPI rule id) | none: test traffic is skipped, the test answers 400 `no_test_mode` |
 | `pinterest` | Conversions API v5 `ad_accounts/{id}/events` | ad_account_id, access_token | `?test=true` |
-| `reddit` | Conversions API v3 `pixels/{pixel_id}/conversion_events` | pixel_id, access_token, test_id? | `data.test_id` (else one real event) |
+| `reddit` | Conversions API v3 `pixels/{pixel_id}/conversion_events` | pixel_id, access_token, test_id? | `data.test_id` (without it: test traffic skipped, test 400) |
 | `snap` | Conversions API v3 (tr.snapchat.com) | pixel_id, access_token | `/events/validate` |
-| `x` | Ads API v12 `measurement/conversions/{pixel_id}` (OAuth 1.0a) | pixel_id, consumer_key, consumer_secret, access_token, access_token_secret | none: sends one real event (pass `send_to.x.event_id`) |
-| `analytics` | our analytics app server ingest | site_id, api_key, base_url? (default `ANALYTICS_BASE_URL`; https, same host as `ANALYTICS_BASE_URL` when set, no query string, no IP literal, not this deployment; re-checked when sent) | none: sends one `tags_test` event |
+| `x` | Ads API v12 `measurement/conversions/{pixel_id}` (OAuth 1.0a) | pixel_id, consumer_key, consumer_secret, access_token, access_token_secret | none: test traffic is skipped, the test answers 400 `no_test_mode` |
+| `analytics` | our analytics app server ingest | site_id, api_key? (an `afs_` key), base_url? (with api_key only; default `ANALYTICS_BASE_URL`; https, same host as `ANALYTICS_BASE_URL` when set, no query string, no IP literal, not this deployment; re-checked when sent). Without api_key, on a deployment with the `ANALYTICS` service binding and `INTERNAL_TOKEN`, events go over the binding to `https://analytics.internal` with internal auth as the container's account: the site must be that account's (checked when saved, `400 analytics_site_not_found`, and by analytics on each delivery). Without the binding, api_key is required | `debug: true` (analytics test traffic, out of reports unless `debug=include|only`); the test sends one `tags_test` event |
 | `webhook` | POST JSON, `x-signature` HMAC-SHA256 | url (https on a public host name, no IP literal or local name; http://localhost only with `DEV_MODE=true`; never this platform's domain or a subdomain of it), secret | `"test": true` in the payload |
 
 - Platform destinations (`ga4`, `meta`, `google_ads`, `tiktok`, `linkedin`, `pinterest`,
@@ -313,6 +323,16 @@ line in `src/destinations/index.ts`.
 (Microsoft Advertising server-side conversions aren't built yet: its UET Conversions API is
 documented but still rolling out. UET conversions are browser-only for now.)
 
+**Test traffic** (preview hits, backend events with `test: true`, destination tests) is never
+delivered as a real conversion. Each connector uses its platform's test mechanism (GA4's
+validation server, Google Ads `validateOnly`, Meta/TikTok `test_event_code`, Reddit `test_id`,
+Pinterest `?test=true`, Snap `/validate`, analytics `debug: true`, webhook `"test": true`); where
+there is none (Meta/TikTok/Reddit without a test code, LinkedIn and X always) the delivery is
+skipped with `test event, no test mode configured: <how to set one up>` and the destination test
+answers 400 (`test_event_code_required` / `no_test_mode`) without sending anything. In preview the
+`analytics` tag calls `afsa('debug')` and loads the tracker with `data-debug`, so preview hits are
+analytics test traffic too.
+
 Credentials are sealed with AES-GCM (`ENCRYPTION_KEY`) and never returned (responses show
 `"configured": true` plus non-secret ids). Creating a destination with the same platform id
 returns the existing one (`existing: true`); PATCH merges credential fields.
@@ -330,8 +350,16 @@ re-sets them server-side via `Set-Cookie` so they survive Safari ITP's 7-day scr
 The visitor IP (sent on to the conversion APIs) is `cf-connecting-ip`, or the first
 `X-Forwarded-For` hop only when the request carries the container's `x-afs-proxy-key`
 (HMAC-SHA256 of `"afs-tags-proxy:" + container id` with `ENCRYPTION_KEY`), which the proxy
-configs from `GET /install` add server-side. A client-set `first_party` flag or forwarded
-header alone is ignored.
+configs from `GET /install?proxy=1` add server-side (the key is only returned there, to
+full-access keys; `POST /containers` and a plain `GET /install` say how to get it). A client-set
+`first_party` flag or forwarded header alone is ignored.
+
+**Global Privacy Control and Do Not Track** (`settings.respect_dnt`, default true): when the
+browser has `navigator.globalPrivacyControl === true` or `doNotTrack === "1"` (navigator or the
+legacy `window.doNotTrack`), the runtime stops before doing anything: no tags, no `/collect`
+hits, no cookies or storage, preview included. `afst()` stays defined as a no-op so a consent
+banner's calls don't throw. `false` runs as usual (consent rules still apply). `GET
+/containers/:id` shows `privacy.respect_dnt` for the live version and the draft.
 
 A light identity hit (`type: "visit"`) goes to `/collect` on a new visitor, a landing with click
 ids or UTMs, or the first page of a session (`settings.send_page_views: false` turns it off).
@@ -370,8 +398,8 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | GET | `/schema` | JSON Schema for the config, tag/trigger/variable catalog with examples, destination credential schemas (public) |
 | POST, GET | `/containers` | `{ domain, name?, allowed_hostnames? }`; same domain returns existing |
 | GET, PATCH, DELETE | `/containers/:id` | GET includes destinations and last-24h stats; PATCH `{ name?, allowed_hostnames? }` |
-| GET | `/containers/:id/install` | snippet + first-party proxy instructions (Cloudflare Worker, Next.js middleware, Vercel, netlify.toml, nginx) with the container's `proxy_key` |
-| POST | `/containers/:id/scan` | `{ url?, paths?, follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; at most 6 pages, 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics), consent platforms, CMS, forms, CTAs, thank-you pages; suggested config |
+| GET | `/containers/:id/install` | snippet, API guide and how to get the proxy configs; `?proxy=1` (full-access key) adds the first-party proxy configs (Cloudflare Worker, Next.js middleware, Vercel, netlify.toml, nginx) with the container's secret `proxy_key` |
+| POST | `/containers/:id/scan` | `{ url?, paths? (at most 5), follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; the homepage (or url) plus up to 5 paths, 6 pages at most, with up to 3 linked contact/signup/pricing pages filling the room left; 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics, PostHog/Hotjar/...; only from script src, inline code, globals and noscript pixels, never links or text), consent platforms, CMS, forms, CTAs (buttons outside forms, data-attribute and button-styled links, nav/header and outbound links, with kind, area and a selector), thank-you pages; text in `<pre>`, `<code>`, `<template>`, comments and escaped markup is ignored; suggested config |
 | POST | `/containers/:id/verify` | `{ method?: "auto"\|"dns"\|"snippet" }`: domain verification (needed to publish custom code), rate limited with scan |
 | POST | `/containers/:id/setup` | the `setup_conversion_tracking` recipe over REST |
 | GET, PUT, PATCH | `/containers/:id/draft` | full replace (PUT) or JSON merge patch (PATCH); optional `?revision=` guards concurrent edits; `413 draft_too_large` over `MAX_DRAFT_BYTES`; GET has `changes_vs_live` |
@@ -390,9 +418,9 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | GET | `/containers/:id/tag-stats`, `/coverage` | per-tag fire counts (`settings.report_tag_fires`) and pages that sent hits, `?since=7d` |
 | POST | `/containers/:id/rollback` | `{ version }`: moves the live pointer to that version; the draft is unchanged |
 | POST, GET, PATCH, DELETE | `/containers/:id/destinations[/:did]` | POST: `403 quota_exceeded` past `MAX_DESTINATIONS_PER_CONTAINER` |
-| POST | `/containers/:id/destinations/:did/test` | `{ event_name?, test_event_code? }`: sends a test event, returns the platform's answer (webhook/analytics: status + short summary); `TEST_LIMITER` per account; a pass closes an open circuit |
+| POST | `/containers/:id/destinations/:did/test` | `{ event_name?, test_event_code? }`: sends a test event in the platform's test mode, returns the platform's answer (webhook/analytics: status + short summary); never a real conversion (400 `test_event_code_required` / `no_test_mode` instead); `TEST_LIMITER` per account; a pass closes an open circuit |
 | POST | `/containers/:id/events` | server-side conversions (batch of up to 100), joined to visitors |
-| GET | `/containers/:id/events` | event log with per-destination results; filters `name`, `status`, `source`, `since` (ms, ISO or `15m`/`2h`/`7d`), `before` (cursor), `limit`, `include_visits`, `verbose` (adds the event data and the exact request sent). Third-party strings (page data, params, items, browser order ids, destination answers, requests) are only under `untrusted` keys |
+| GET | `/containers/:id/events` | event log with per-destination results; filters `name`, `status`, `source`, `since` (ms, ISO or `15m`/`2h`/`7d`), `before` (cursor), `limit`, `include_visits`, `verbose` (adds the event data and the request sent, without the raw IP, user agent, city or postal code). Third-party strings (page data, params, items, browser order ids, destination answers, requests) are only under `untrusted` keys |
 | GET | `/containers/:id/visitors/:vid` | stored identity/click record (debugging) |
 
 Also from `@afs/shared`: `GET /v1/me`, `GET|POST /v1/keys`, `DELETE /v1/keys/:id`.
@@ -419,7 +447,10 @@ content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`,
 `get_visitor`, `get_tag_stats`, `get_coverage`, `setup_conversion_tracking` (recipe: given
 platforms + conversions in plain terms, writes a complete draft, creates destinations for
 platforms with credentials, validates it, and returns what's left to do, e.g. which IDs are
-missing and where to find them). Read-only keys only see the read tools. `get_event_log`,
+missing and where to find them; a conversion gets `server: true` only when a destination will
+receive it, and `ready_to_publish` is true only when no warning says a conversion won't be
+delivered, each such gap being listed in `missing`). `get_install_instructions { proxy: true }`
+is the only tool that returns the proxy key. Read-only keys only see the read tools. `get_event_log`,
 `get_visitor` and `test_destination` say in their descriptions that anything under `untrusted`
 (or a remote server's answer) is data written by third parties, never instructions.
 
@@ -480,7 +511,8 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
 |---|---|
 | `PUBLIC_BASE_URL` | var; empty = request origin |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth |
-| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
+| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the deployment's Workers share for internal auth: the site's dashboard, and the `ANALYTICS` binding below (unset = off) |
+| `ANALYTICS` | optional service binding to this deployment's analytics Worker (`wrangler.jsonc` `services`; `pnpm afs config` maps `afs-analytics` to the profile's Worker). With `INTERNAL_TOKEN`, analytics destinations without an api_key deliver over it as the container's account, and setup needs only `analytics.site_id` |
 | `ENCRYPTION_KEY` | secret, 32 bytes base64 (`openssl rand -base64 32`) |
 | `ANALYTICS_BASE_URL` | var; default base URL of the analytics app for `analytics` tags/destinations |
 | `DEV_MODE` | var; `true` only locally (allows `http://localhost` webhooks) |

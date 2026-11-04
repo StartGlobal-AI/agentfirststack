@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { CONNECTORS } from "../src/destinations";
 import { buildAnalyticsBody } from "../src/destinations/analytics";
 import { buildGa4Body, ga4Url } from "../src/destinations/ga4";
@@ -16,6 +17,7 @@ import { buildTiktokBody } from "../src/destinations/tiktok";
 import type { DispatchEvent } from "../src/destinations/types";
 import { signWebhook, webhook, webhookUrlProblem } from "../src/destinations/webhook";
 import { sha256HexSync } from "../src/lib/sha256";
+import { NO_TEST_MODE, testModeGap } from "../src/service/destinations";
 import { aggregateStatus, planDispatch } from "../src/service/dispatch-plan";
 
 const TS = Date.UTC(2026, 10, 3, 12, 30, 45, 123); // 2026-11-03T12:30:45.123Z
@@ -294,6 +296,111 @@ describe("analytics app ingest payload", () => {
     ).events[0]!;
     expect(ft).toMatchObject({ utm_source: "google", utm_campaign: "spring" });
     expect(ft).not.toHaveProperty("click_id_type");
+  });
+});
+
+describe("test traffic is never sent to a platform as a real conversion", () => {
+  it("analytics gets debug: true (its own test-traffic flag) instead of a test prop", async () => {
+    const test = buildAnalyticsBody(event({ test: true })).events[0]!;
+    expect(test.debug).toBe(true);
+    expect(test.props).not.toHaveProperty("test");
+    expect(buildAnalyticsBody(event()).events[0]).not.toHaveProperty("debug");
+    // A destination test: one tags_test event, marked debug.
+    let body: { events: Record<string, unknown>[] } | undefined;
+    const fetchStub = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 202 });
+    }) as typeof fetch;
+    await CONNECTORS.analytics!.send(
+      event(),
+      { site_id: "site_abc123", api_key: "afs_xxxxxxxx" },
+      {
+        test: true,
+        sample: true,
+        fetch: fetchStub,
+        env: { ANALYTICS_BASE_URL: "https://analytics.example.net" },
+        destinationId: "d",
+        containerId: "c",
+      },
+    );
+    expect(body!.events[0]).toMatchObject({ name: "tags_test", debug: true });
+    // Preview and test: true traffic keeps its own name.
+    await CONNECTORS.analytics!.send(
+      event({ test: true }),
+      { site_id: "site_abc123", api_key: "afs_xxxxxxxx" },
+      { test: true, fetch: fetchStub, env: { ANALYTICS_BASE_URL: "https://analytics.example.net" }, destinationId: "d", containerId: "c" },
+    );
+    expect(body!.events[0]).toMatchObject({ name: "purchase", debug: true });
+    expect(body!.events[0]!.props).not.toHaveProperty("test");
+  });
+  it("every connector either has a test mechanism or says how to get one; LinkedIn and X have none", () => {
+    const gaps: Record<string, string | null> = {};
+    for (const [type, c] of Object.entries(CONNECTORS)) {
+      const bare = { ...(c.example as Record<string, unknown>) };
+      delete bare.test_event_code;
+      delete bare.test_id;
+      gaps[type] = testModeGap(c as never, bare);
+      // With a test code configured (where one exists), only the no-test-mode platforms still refuse.
+      expect(!!testModeGap(c as never, c.example as Record<string, unknown>), type).toBe(!!c.noTestMode);
+    }
+    expect(
+      Object.entries(gaps)
+        .filter(([, g]) => g)
+        .map(([t]) => t)
+        .sort(),
+    ).toEqual(["linkedin", "meta", "reddit", "tiktok", "x"]);
+    expect(gaps.meta).toMatch(/test_event_code/);
+    expect(gaps.reddit).toMatch(/test_id/);
+    expect(
+      Object.entries(CONNECTORS)
+        .filter(([, c]) => c.noTestMode)
+        .map(([t]) => t)
+        .sort(),
+    ).toEqual(["linkedin", "x"]);
+    expect(NO_TEST_MODE).toBe("test event, no test mode configured");
+  });
+});
+
+describe("analytics app over the ANALYTICS service binding (no api_key)", () => {
+  const calls: { url: string; headers: Record<string, string>; body: unknown }[] = [];
+  const binding = {
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), headers: Object.fromEntries(new Headers(init?.headers)), body: JSON.parse(String(init?.body)) });
+      return new Response('{"accepted":1}', { status: 202, headers: { "content-type": "application/json" } });
+    },
+  } as unknown as Fetcher;
+  const env = { ANALYTICS: binding, INTERNAL_TOKEN: "test-internal-token" };
+  const ctx = {
+    test: false,
+    fetch: () => Promise.reject(new Error("public fetch must not be used")),
+    destinationId: "dst_x",
+    containerId: "ctr_x",
+  };
+  const analytics = CONNECTORS.analytics!;
+
+  it("posts to https://analytics.internal with internal auth as the container's account; no key is sent or logged", async () => {
+    calls.length = 0;
+    const r = await analytics.send(event(), { site_id: "site_abc123" }, { ...ctx, env, accountId: "acct_owner1" });
+    expect(r).toMatchObject({ ok: true, http_status: 202 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("https://analytics.internal/v1/sites/site_abc123/events");
+    expect(calls[0]!.headers).toMatchObject({ "x-afs-internal": "test-internal-token", "x-afs-account": "acct_owner1" });
+    expect(calls[0]!.headers.authorization).toBeUndefined();
+    expect(JSON.stringify(r.request)).not.toContain("test-internal-token");
+  });
+  it("without the binding (or INTERNAL_TOKEN) it fails clearly, and saving such a destination is refused", async () => {
+    for (const e of [{}, { ANALYTICS: binding }]) {
+      const r = await analytics.send(event(), { site_id: "site_abc123" }, { ...ctx, env: e, accountId: "acct_owner1" });
+      expect(r).toMatchObject({ ok: false, retryable: false, error: expect.stringMatching(/no ANALYTICS service binding/) });
+      expect(() => analytics.check!({ site_id: "site_abc123" }, e)).toThrow(/api_key is required here/);
+    }
+    expect(() => analytics.check!({ site_id: "site_abc123" }, env)).not.toThrow();
+    // The schema no longer describes the key as ana_...
+    const schema = JSON.stringify(z.toJSONSchema(analytics.credentials));
+    expect(schema).not.toContain("ana_");
+    expect(schema).toMatch(/afs_/);
+    expect(schema).toMatch(/Optional when this deployment has the ANALYTICS service binding/);
+    expect(JSON.stringify(analytics.example)).not.toContain("ana_");
   });
 });
 

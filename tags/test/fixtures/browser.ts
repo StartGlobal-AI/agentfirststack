@@ -125,6 +125,10 @@ export function browser(
     body?: FakeEl[];
     /** Queue timers (run with flushTimers) instead of running them at once. */
     manualTimers?: boolean;
+    /** Extra navigator fields (globalPrivacyControl, doNotTrack...). */
+    navigator?: Record<string, unknown>;
+    /** Extra window fields (e.g. the legacy window.doNotTrack). */
+    window?: Record<string, unknown>;
   } = {},
 ) {
   const u = new URL(url);
@@ -180,7 +184,7 @@ export function browser(
       protocol: u.protocol,
       origin: u.origin,
     },
-    navigator: { userAgent: "test" },
+    navigator: { userAgent: "test", ...(opts.navigator ?? {}) },
     sessionStorage: {
       getItem: (k: string) => session[k] ?? null,
       setItem: (k: string, v: string) => {
@@ -229,6 +233,7 @@ export function browser(
     },
   };
   win.window = win;
+  Object.assign(win, opts.window ?? {});
   if (opts.dataLayer) win.dataLayer = opts.dataLayer;
   const run = (script: string) => {
     // `with` makes the fake window the global scope for the served script.

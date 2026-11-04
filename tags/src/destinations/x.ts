@@ -21,7 +21,7 @@ import { compact, type Connector, type DispatchEvent, execute, type HttpRequestS
  * Dedupe with the X Pixel: same Events Manager event (event_id) and the same per-occurrence
  * conversion_id on both sides (twq("event", "tw-<pixel>-<event>", { conversion_id })).
  *
- * No test mode exists: a test sends one real conversion.
+ * No test mode exists, so test traffic is never sent (noTestMode: skipped in dispatch, 400 in tests).
  *
  * (X's own GTM server template can authenticate with an Events Manager token in an X-Pixel-Token
  * header; X documents that for the template only and requires OAuth for custom integrations.)
@@ -120,7 +120,11 @@ export const x: Connector<XCredentials> = {
   naturalKey: (c) => c.pixel_id,
   requiredConsent: ["ad_user_data"],
   needsMapping: true,
-  testMode: "X has no test mode: the test sends one real conversion to the mapped event (it shows in Events Manager).",
+  testMode:
+    "X has no test mode, so test traffic (preview hits, test: true server events, destination tests) is never sent to it: deliveries are skipped and the destination test answers 400 no_test_mode. Live conversions are delivered as usual; GET /events shows X's answer to the first ones.",
+  noTestMode: true,
+  testModeMissing: () =>
+    "X's Conversion API has no test mode, so test and preview events are never sent to it (live conversions are). Check the first live deliveries in GET /v1/containers/:id/events.",
   example: {
     pixel_id: "o1abc",
     consumer_key: "xvz1evFS4wEEPTGEFPHBog",

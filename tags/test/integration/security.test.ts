@@ -1,6 +1,9 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bindings } from "../../src/env";
+import { createDestination } from "../../src/service/destinations";
+import { recipeInput } from "../../src/service/recipe";
+import { applyRecipe } from "../../src/service/setup";
 import { listVersions, publish, putDraft } from "../../src/service/versions";
 
 const B = "https://tags.test";
@@ -76,7 +79,7 @@ async function liveContainer(domain: string) {
     (
       await a.api("POST", `/v1/containers/${C}/destinations`, {
         type: "analytics",
-        credentials: { site_id: "site_abc123", api_key: "ana_xxxxxxxx", base_url: "https://analytics.test" },
+        credentials: { site_id: "site_abc123", api_key: "afs_xxxxxxxx", base_url: "https://analytics.test" },
       })
     ).status,
   ).toBe(201);
@@ -363,17 +366,60 @@ describe("finding 4: /collect can't create Durable Objects", () => {
   });
 });
 
+describe("the proxy key is only printed when the proxy setup is asked for", () => {
+  it("create and plain install leave it out and say how to get it; install?proxy=1 (REST and MCP) returns it to full keys only", async () => {
+    const a = await account();
+    const created = await a.api("POST", "/v1/containers", { domain: "proxy-quiet.test" });
+    expect(created.status).toBe(201);
+    const C = created.body.container.id as string;
+    const key = (await a.api("GET", `/v1/containers/${C}/install?proxy=1`)).body.first_party_proxy.proxy_key as string;
+    expect(key).toMatch(/^[a-f0-9]{64}$/);
+    // Not in the create answer (nor its retry), nor the plain install guide.
+    const again = await a.api("POST", "/v1/containers", { domain: "proxy-quiet.test" });
+    for (const body of [created.body, again.body, (await a.api("GET", `/v1/containers/${C}/install`)).body]) {
+      expect(JSON.stringify(body)).not.toContain(key);
+      expect(body.install?.first_party_proxy ?? body.first_party_proxy).toMatchObject({
+        how_to_get: expect.stringContaining(`/v1/containers/${C}/install?proxy=1`),
+      });
+    }
+    expect(created.body.next_steps.join(" ")).toContain("install?proxy=1");
+    const mcp = async (k: string, name: string, args: Record<string, unknown>) =>
+      JSON.stringify(
+        await json(
+          await SELF.fetch(`${B}/mcp`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${k}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+          }),
+        ),
+      );
+    expect(await mcp(a.key, "get_install_instructions", { container_id: C })).not.toContain(key);
+    expect(await mcp(a.key, "create_container", { domain: "proxy-quiet.test" })).not.toContain(key);
+    expect(await mcp(a.key, "get_install_instructions", { container_id: C, proxy: true })).toContain(key);
+    // A read-only key gets the guide, not the key.
+    const readKey = (await a.api("POST", "/v1/keys", { scope: "read" })).body.api_key as string;
+    const asRead = await SELF.fetch(`${B}/v1/containers/${C}/install?proxy=1`, { headers: { authorization: `Bearer ${readKey}` } });
+    expect(asRead.status).toBe(403);
+    expect(JSON.stringify(await json(asRead))).not.toContain(key);
+    expect((await SELF.fetch(`${B}/v1/containers/${C}/install`, { headers: { authorization: `Bearer ${readKey}` } })).status).toBe(200);
+    const readMcp = await mcp(readKey, "get_install_instructions", { container_id: C, proxy: true });
+    expect(readMcp).not.toContain(key);
+    expect(readMcp).toMatch(/read-only keys can't see/);
+  });
+});
+
 describe("finding 7: only the container's own proxy may set the visitor IP", () => {
   it("X-Forwarded-For is ignored unless the request carries the container's x-afs-proxy-key", async () => {
     const a = await account();
     const C = (await a.api("POST", "/v1/containers", { domain: "proxy.test" })).body.container.id as string;
-    const install = (await a.api("GET", `/v1/containers/${C}/install`)).body;
+    const install = (await a.api("GET", `/v1/containers/${C}/install?proxy=1`)).body;
     const key = install.first_party_proxy.proxy_key as string;
     expect(key).toMatch(/^[a-f0-9]{64}$/);
     expect(install.first_party_proxy.cloudflare_worker).toContain(`h.set("x-afs-proxy-key", "${key}")`);
     expect(install.snippet).not.toContain(key);
-    const other = (await a.api("POST", "/v1/containers", { domain: "other-proxy.test" })).body;
-    const otherKey = other.install.first_party_proxy.proxy_key as string;
+    const otherId = (await a.api("POST", "/v1/containers", { domain: "other-proxy.test" })).body.container.id as string;
+    const otherKey = (await a.api("GET", `/v1/containers/${otherId}/install?proxy=1`)).body.first_party_proxy.proxy_key as string;
+    expect(otherKey).toMatch(/^[a-f0-9]{64}$/);
     expect(otherKey).not.toBe(key);
 
     const visit = (vid: string, headers: Record<string, string>) =>
@@ -506,5 +552,362 @@ describe("renames and scopes", () => {
       body: "{}",
     });
     expect(scan.status).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------- analytics over the ANALYTICS binding
+
+/** The analytics stand-in behind env.ANALYTICS (vitest.config.ts): register a site for an account, read what reached it. */
+const analyticsApi = (env as unknown as { ANALYTICS: Fetcher }).ANALYTICS;
+const ownSite = (site: string, account: string) =>
+  analyticsApi.fetch(`https://analytics.internal/__test/sites/${site}`, { method: "PUT", headers: { "x-afs-account": account } });
+const analyticsRequests = async () =>
+  (
+    (await (await analyticsApi.fetch("https://analytics.internal/__test/requests")).json()) as {
+      requests: {
+        method: string;
+        url: string;
+        account: string | null;
+        auth: boolean;
+        body: { events?: Record<string, unknown>[] } | null;
+      }[];
+    }
+  ).requests;
+const GAPS = ["no_route", "no_platforms", "no_destinations", "server_without_destination"];
+
+describe("setup delivers to analytics without an API key over the ANALYTICS binding", () => {
+  it("site_id alone: a service-binding destination, server: true, ready; events reach analytics as the container's account", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "binding.test" })).body.container.id as string;
+    await ownSite("site_bindingown001", a.accountId);
+    const setup = await a.api("POST", `/v1/containers/${C}/setup`, {
+      platforms: { analytics: { site_id: "site_bindingown001" } },
+      conversions: [
+        { name: "purchase", when: { data_layer_event: "purchase" }, value: 10, currency: "USD" },
+        { name: "sign_up", when: { data_layer_event: "sign_up" } },
+      ],
+      consent: "none",
+    });
+    expect(setup.status).toBe(200);
+    expect(setup.body.destination_errors).toEqual([]);
+    expect(setup.body.destinations).toEqual([
+      expect.objectContaining({
+        type: "analytics",
+        credentials: { configured: true, site_id: "site_bindingown001", delivery: "service_binding" },
+      }),
+    ]);
+    expect(setup.body.draft.conversions.map((c: { server: boolean }) => c.server)).toEqual([true, true]);
+    expect(setup.body.validation.warnings.filter((w: { code: string }) => GAPS.includes(w.code))).toEqual([]);
+    expect(setup.body.missing).toEqual([]);
+    expect(setup.body.ready_to_publish).toBe(true);
+    expect((await a.api("POST", `/v1/containers/${C}/publish`, {})).status).toBe(201);
+
+    const hit = await SELF.fetch(`${B}/collect`, {
+      method: "POST",
+      headers: { origin: "https://binding.test", "user-agent": UA },
+      body: JSON.stringify({
+        container_id: C,
+        type: "conversion",
+        event_id: "bind_evt_1",
+        name: "purchase",
+        value: 10,
+        currency: "USD",
+        consent: granted,
+      }),
+    });
+    expect((await json(hit)).destinations).toEqual([{ type: "analytics", status: "queued" }]);
+    const [ev] = await settled(a.api, C, 1);
+    expect(ev!.destinations[0]).toMatchObject({ type: "analytics", status: "delivered" });
+    const posted = (await analyticsRequests()).filter((r) => r.method === "POST" && r.url.endsWith("/v1/sites/site_bindingown001/events"));
+    expect(posted).toHaveLength(1);
+    // Internal auth as the container's own account; no API key anywhere.
+    expect(posted[0]).toMatchObject({
+      url: "https://analytics.internal/v1/sites/site_bindingown001/events",
+      account: a.accountId,
+      auth: false,
+    });
+    expect(posted[0]!.body!.events![0]).toMatchObject({ name: "purchase", props: expect.objectContaining({ event_id: "bind_evt_1" }) });
+  });
+
+  it("another account's site_id is refused: at creation (REST and setup), and at delivery if it changes hands", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "binding-other.test" })).body.container.id as string;
+    await ownSite("site_someoneelse01", "acct_someoneelse01");
+    const add = await a.api("POST", `/v1/containers/${C}/destinations`, {
+      type: "analytics",
+      credentials: { site_id: "site_someoneelse01" },
+    });
+    expect(add.status).toBe(400);
+    expect(add.body.error).toMatchObject({ code: "analytics_site_not_found", hint: expect.stringMatching(/same account/) });
+    const setup = await a.api("POST", `/v1/containers/${C}/setup`, {
+      platforms: { analytics: { site_id: "site_someoneelse01" } },
+      conversions: [{ name: "purchase", when: { data_layer_event: "purchase" } }],
+      consent: "none",
+    });
+    expect(setup.body.destinations).toEqual([]);
+    expect(setup.body.destination_errors).toEqual([
+      { type: "analytics", error: expect.objectContaining({ code: "analytics_site_not_found" }) },
+    ]);
+    // Nothing would receive it server-side, so setup leaves it browser-only and says why.
+    expect(setup.body.draft.conversions[0].server).toBe(false);
+    expect(setup.body.notes.join(" ")).toMatch(/server: false on "purchase".*analytics destination couldn't be created/);
+    expect(setup.body.validation.warnings.filter((w: { code: string }) => GAPS.includes(w.code))).toEqual([]);
+    expect((await a.api("GET", `/v1/containers/${C}/destinations`)).body.destinations).toEqual([]);
+
+    // A site of this account is accepted; if analytics later says it isn't (another account), delivery fails, not retried.
+    await ownSite("site_changeshands1", a.accountId);
+    const ok = await a.api("POST", `/v1/containers/${C}/destinations`, {
+      type: "analytics",
+      credentials: { site_id: "site_changeshands1" },
+    });
+    expect(ok.status).toBe(201);
+    await ownSite("site_changeshands1", "acct_someoneelse01");
+    const srv = await a.api("POST", `/v1/containers/${C}/events`, {
+      events: [{ name: "purchase", order_id: "HANDS-1", value: 1, currency: "USD" }],
+    });
+    expect(srv.body.results[0].destinations).toEqual([{ destination_id: ok.body.destination.id, type: "analytics", status: "queued" }]);
+    const [ev] = await settled(a.api, C, 1);
+    expect(ev!.destinations[0]).toMatchObject({ status: "failed", http_status: 404, attempts: 1 });
+  });
+
+  it("no binding and no api_key: no server: true, the reason in notes, api_key in missing, and no delivery warnings", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "nobinding.test" })).body.container.id as string;
+    const noBinding = { ...(env as unknown as Bindings), ANALYTICS: undefined } as unknown as Bindings;
+    const r = await applyRecipe(
+      noBinding,
+      { accountId: a.accountId, keyId: "test", scopes: ["*"] },
+      C,
+      recipeInput.parse({
+        platforms: { analytics: { site_id: "site_nobinding0001" } },
+        conversions: Array.from({ length: 20 }, (_, i) => ({ name: `conv_${i}`, when: { data_layer_event: `conv_${i}` } })),
+        consent: "none",
+      }),
+    );
+    expect(r.destinations).toEqual([]);
+    expect(r.draft.conversions!.every((c) => c.server === false)).toBe(true);
+    expect(r.notes.join(" ")).toMatch(/no ANALYTICS service binding/);
+    expect(r.missing).toEqual([expect.objectContaining({ platform: "analytics", field: "api_key" })]);
+    expect(r.validation.warnings.filter((w) => GAPS.includes(w.code))).toEqual([]);
+    expect(r.ready_to_publish).toBe(true);
+    // Creating such a destination directly says what's needed.
+    const add = await (async () => {
+      try {
+        await createDestination(noBinding, a.accountId, C, { type: "analytics", credentials: { site_id: "site_nobinding0001" } });
+      } catch (e) {
+        return (e as { toJSON(): { error: { message: string } } }).toJSON().error;
+      }
+    })();
+    expect(add?.message).toMatch(/api_key is required here: this deployment has no ANALYTICS service binding/);
+  });
+
+  it("an explicit server: true that nothing receives isn't ready: the gap is listed in missing", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "gap.test" })).body.container.id as string;
+    const setup = await a.api("POST", `/v1/containers/${C}/setup`, {
+      platforms: { ga4: { measurement_id: "G-ABC123XYZ" } },
+      conversions: [{ name: "purchase", when: { data_layer_event: "purchase" }, value: 5, currency: "USD", server: true }],
+      consent: "none",
+    });
+    expect(setup.body.validation.valid).toBe(true);
+    expect(setup.body.draft.conversions[0].server).toBe(true);
+    expect(setup.body.ready_to_publish).toBe(false);
+    // The ga4 gap is said once, by the missing api_secret; the container-wide gap is listed too.
+    const missing = setup.body.missing as { platform: string; field: string; impact: string }[];
+    expect(missing.map((m) => `${m.platform}.${m.field}`).sort()).toEqual(["ga4.api_secret", "server.destination"]);
+    expect(missing.find((m) => m.platform === "server")!.impact).toMatch(
+      /"purchase" has server: true, but the container has no destinations/,
+    );
+    expect(setup.body.next_steps.join(" ")).toMatch(/Not ready: some conversions won't reach a platform/);
+  });
+});
+
+// ---------------------------------------------------------------- what the event log keeps
+
+describe("the event log keeps no raw IP, user agent, city or postal code", () => {
+  const LONG_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  const denied = { ad_storage: "denied", analytics_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" };
+  const cf = { country: "DE", region: "Brandenburg", regionCode: "BB", city: "Potsdam", postalCode: "14467" };
+  const raw = ["198.51.100.23", LONG_UA, "Potsdam", "14467"];
+
+  it("consent denied, server: false, no destinations: only the /24, country and region are logged", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "pii-log.test" })).body.container.id as string;
+    const draft = {
+      triggers: [{ id: "p", type: "custom_event", event: "lead" }],
+      tags: [{ id: "ga4", type: "ga4", params: { measurement_id: "G-ABC123XYZ" }, triggers: ["p"] }],
+      conversions: [{ name: "lead", trigger: "p", send_to: { ga4: { event_name: "generate_lead" } }, server: false }],
+    };
+    expect((await a.api("PUT", `/v1/containers/${C}/draft`, draft)).body.validation.valid).toBe(true);
+    expect((await a.api("POST", `/v1/containers/${C}/publish`, {})).status).toBe(201);
+    const res = await SELF.fetch(`${B}/collect`, {
+      method: "POST",
+      headers: { origin: "https://pii-log.test", "user-agent": LONG_UA, "cf-connecting-ip": "198.51.100.23" },
+      body: JSON.stringify({ container_id: C, type: "conversion", event_id: "pii_evt_1", name: "lead", consent: denied }),
+      cf,
+    } as RequestInit);
+    expect(res.status).toBe(200);
+    const [ev] = (await a.api("GET", `/v1/containers/${C}/events?verbose=true`)).body.events;
+    const text = JSON.stringify(ev);
+    for (const v of raw) expect(text).not.toContain(v);
+    expect(ev.untrusted.data).toMatchObject({
+      ip_network: "198.51.100.0/24",
+      geo: { country: "DE", region: "Brandenburg", region_code: "BB" },
+    });
+    expect(ev.untrusted.data.ip).toBeUndefined();
+    expect(ev.untrusted.data.user_agent).toBeUndefined();
+    // The identity summary still says what the event carried.
+    expect(ev.identity).toMatchObject({ ip: true, user_agent: true, country: "DE" });
+    // Dedupe is unaffected.
+    const again = await SELF.fetch(`${B}/collect`, {
+      method: "POST",
+      headers: { origin: "https://pii-log.test", "user-agent": LONG_UA, "cf-connecting-ip": "198.51.100.23" },
+      body: JSON.stringify({ container_id: C, type: "conversion", event_id: "pii_evt_1", name: "lead", consent: denied }),
+    });
+    expect((await json(again)).duplicate).toBe(true);
+  });
+
+  it("a destination still gets the raw IP and user agent (also through a visitor join); the logged request doesn't", async () => {
+    const t = await liveContainer("pii-deliver.test");
+    const ip = { "cf-connecting-ip": "203.0.113.77", "user-agent": LONG_UA };
+    expect((await t.hit({ type: "visit", visitor_id: "vis_pii_1" }, ip)).status).toBe(200);
+    expect((await t.hit({ type: "conversion", event_id: "pii_evt_2", name: "purchase", visitor_id: "vis_pii_1" }, ip)).status).toBe(200);
+    // A backend event joined by visitor_id inherits the visitor's IP and user agent for delivery.
+    const srv = await t.api("POST", `/v1/containers/${t.C}/events`, {
+      events: [{ name: "purchase", order_id: "PII-1", value: 3, currency: "USD", visitor_id: "vis_pii_1" }],
+    });
+    expect(srv.body.results[0]).toMatchObject({ status: "accepted", joined: { by: "visitor_id" } });
+    const events = await settled(t.api, t.C, 2);
+    const hooks = sent.filter((s) => s.url === "https://hooks.test/pii-deliver.test").map((h) => h.body.event as Record<string, unknown>);
+    expect(hooks.map((e) => [e.event_id, e.ip, e.user_agent])).toEqual(
+      expect.arrayContaining([
+        ["pii_evt_2", "203.0.113.77", LONG_UA],
+        ["purchase.PII-1", "203.0.113.77", LONG_UA],
+      ]),
+    );
+    const log = (await t.api("GET", `/v1/containers/${t.C}/events?verbose=true`)).body.events as { destinations: unknown[] }[];
+    expect(events.every((e) => e.destinations.every((d) => d.status === "delivered"))).toBe(true);
+    const text = JSON.stringify(log);
+    expect(text).not.toContain("203.0.113.77");
+    expect(text).not.toContain(LONG_UA);
+    expect(text).toContain("203.0.113.0/24");
+    expect(text).toContain("(user agent not kept)");
+  });
+
+  it("rows written by older code lose their raw fields and logged requests on upgrade", async () => {
+    const stub = (env as unknown as Bindings).CONTAINER.getByName("ctr_piiupgrade000001");
+    await runInDurableObject(stub, async (instance, state) => {
+      const sql = state.storage.sql;
+      const i = instance as unknown as { ready: boolean; migrate(): void; scrubLegacyEvents(): void };
+      i.ready = true;
+      i.migrate();
+      const data = {
+        event_id: "old1",
+        ip: "192.0.2.10",
+        user_agent: LONG_UA,
+        geo: { country: "DE", city: "Potsdam", postal_code: "14467" },
+        device: { category: "desktop", model: "Mac" },
+        user: {},
+        click_ids: {},
+      };
+      const results = {
+        dst_1: { type: "meta", status: "delivered", attempts: 1, request: { body: { client_ip_address: "192.0.2.10" } }, updated_at: 1 },
+      };
+      sql.exec(
+        "INSERT INTO events (event_id, type, name, source, ts, received_at, status, data, results) VALUES ('old1', 'conversion', 'purchase', 'browser', 1, ?, 'delivered', ?, ?)",
+        Date.now(),
+        JSON.stringify(data),
+        JSON.stringify(results),
+      );
+      i.scrubLegacyEvents();
+      const row = sql.exec<{ data: string; results: string }>("SELECT data, results FROM events WHERE event_id = 'old1'").toArray()[0]!;
+      expect(JSON.parse(row.data)).toEqual({
+        event_id: "old1",
+        geo: { country: "DE" },
+        device: { category: "desktop" },
+        user: {},
+        click_ids: {},
+      });
+      expect(JSON.parse(row.results)).toEqual({ dst_1: { type: "meta", status: "delivered", attempts: 1, updated_at: 1 } });
+    });
+  });
+});
+
+// ---------------------------------------------------------------- test traffic stays test traffic
+
+describe("test and preview traffic never reaches a platform as a real conversion", () => {
+  it("Meta without a test_event_code and LinkedIn are skipped; Meta with one gets it; analytics gets debug: true", async () => {
+    const platform: { url: string; body: Record<string, unknown> }[] = [];
+    const prior = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (/graph\.facebook\.com|api\.linkedin\.com/.test(url)) {
+        platform.push({ url, body: JSON.parse(String(init?.body)) });
+        return new Response('{"events_received":1}', { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return prior(input, init);
+    });
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "testmode.test" })).body.container.id as string;
+    await ownSite("site_testmode00001", a.accountId);
+    const add = async (type: string, credentials: Record<string, unknown>) => {
+      const r = await a.api("POST", `/v1/containers/${C}/destinations`, { type, credentials });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.destination.id as string;
+    };
+    const metaCoded = await add("meta", { pixel_id: "1111111111111111", access_token: "meta-test-token-0000", test_event_code: "TEST123" });
+    const metaBare = await add("meta", { pixel_id: "2222222222222222", access_token: "meta-test-token-0000" });
+    const linkedin = await add("linkedin", { ad_account_id: "512345678", access_token: "linkedin-test-token-0000" });
+    const analytics = await add("analytics", { site_id: "site_testmode00001" });
+
+    // Destination tests send nothing that would be recorded as real.
+    const t1 = await a.api("POST", `/v1/containers/${C}/destinations/${linkedin}/test`, {
+      send_to: { linkedin: { conversion_id: "1234567" } },
+    });
+    expect(t1.status).toBe(400);
+    expect(t1.body.error).toMatchObject({ code: "no_test_mode", hint: expect.stringMatching(/no test mode/) });
+    const t2 = await a.api("POST", `/v1/containers/${C}/destinations/${metaBare}/test`, {});
+    expect(t2.status).toBe(400);
+    expect(t2.body.error).toMatchObject({ code: "test_event_code_required", hint: expect.stringMatching(/test_event_code/) });
+    expect(platform).toEqual([]);
+
+    // Backend events marked test: true (replay's test batches arrive the same way).
+    const srv = await a.api("POST", `/v1/containers/${C}/events`, {
+      test: true,
+      events: [
+        {
+          name: "purchase",
+          order_id: "TESTMODE-1",
+          value: 9,
+          currency: "USD",
+          email: "test-buyer@example.com",
+          consent: granted,
+          send_to: { meta: { event_name: "Purchase" }, linkedin: { conversion_id: "1234567" } },
+        },
+      ],
+    });
+    expect(srv.status).toBe(202);
+    const [ev] = await settled(a.api, C, 1);
+    const by = Object.fromEntries(ev!.destinations.map((d) => [(d as unknown as { destination_id: string }).destination_id, d])) as Record<
+      string,
+      { status: string; reason?: string }
+    >;
+    expect(by[metaCoded]!.status).toBe("delivered");
+    expect(by[metaBare]).toMatchObject({
+      status: "skipped",
+      reason: expect.stringMatching(/^test event, no test mode configured: .*test_event_code/),
+    });
+    expect(by[linkedin]).toMatchObject({
+      status: "skipped",
+      reason: expect.stringMatching(/^test event, no test mode configured: .*no test mode/),
+    });
+    expect(by[analytics]!.status).toBe("delivered");
+    // Only the coded pixel was called, with its test_event_code; nothing reached LinkedIn.
+    expect(platform.map((p) => new URL(p.url).pathname)).toEqual([expect.stringContaining("/1111111111111111/events")]);
+    expect(platform[0]!.body.test_event_code).toBe("TEST123");
+    const toAnalytics = (await analyticsRequests()).filter((r) => r.url.endsWith("/v1/sites/site_testmode00001/events"));
+    expect(toAnalytics).toHaveLength(1);
+    expect(toAnalytics[0]!.body!.events![0]).toMatchObject({ name: "purchase", debug: true });
+    expect(toAnalytics[0]!.body!.events![0]!.props).not.toHaveProperty("test");
   });
 });

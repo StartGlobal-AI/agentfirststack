@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hashUserData, normCountry, normEmail, normName, normPhoneDigits, normPhoneE164, normZip } from "../src/lib/pii";
 import { sha256HexSync } from "../src/lib/sha256";
+import { eventForLog, LOG_IDENTITY, scrubDelivered, truncateIp } from "../src/service/privacy";
 
 async function subtle(s: string) {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -105,5 +106,63 @@ describe("hashUserData", () => {
     const h = hashUserData({ email: pre, phone: "+16505551212" });
     expect(h.em).toBe(pre);
     expect(JSON.stringify(h)).not.toContain("6505551212");
+  });
+});
+
+describe("what the event log keeps of an event's network identity", () => {
+  const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0 Safari/537.36";
+  const e = {
+    event_id: "e1",
+    name: "purchase",
+    ts: 1,
+    source: "browser" as const,
+    ip: "198.51.100.23",
+    user_agent: ua,
+    geo: { country: "DE", region: "Brandenburg", region_code: "BB", city: "Potsdam", postal_code: "14467" },
+    device: { category: "desktop", browser: "Chrome", browser_version: "131", os: "macOS", os_version: "10.15", model: "Macintosh" },
+    click_ids: { gclid: "TEST-GCLID" },
+    user: {},
+    consent: {},
+    send_to: {},
+  };
+  it("truncates IPv4 to /24 and IPv6 to /48", () => {
+    expect(truncateIp("198.51.100.23")).toBe("198.51.100.0/24");
+    expect(truncateIp("::ffff:198.51.100.23")).toBe("198.51.100.0/24");
+    expect(truncateIp("2001:db8:85a3:8d3:1319:8a2e:370:7348")).toBe("2001:db8:85a3::/48");
+    expect(truncateIp("2001:0db8:0001::1")).toBe("2001:db8:1::/48");
+    expect(truncateIp("2001:db8::1")).toBe("2001:db8:0::/48");
+    for (const bad of ["", "nonsense", "999.1.1.1", "1::2::3", undefined]) expect(truncateIp(bad)).toBeNull();
+  });
+  it("logs the network, country and region and coarse device; no raw IP, user agent, city or postal code", () => {
+    const row = eventForLog(e);
+    const text = JSON.stringify(row);
+    for (const v of ["198.51.100.23", ua, "Potsdam", "14467", "Macintosh", "131"]) expect(text).not.toContain(v);
+    expect(row).toMatchObject({
+      ip_network: "198.51.100.0/24",
+      geo: { country: "DE", region: "Brandenburg", region_code: "BB" },
+      device: { category: "desktop", browser: "Chrome", os: "macOS" },
+      click_ids: { gclid: "TEST-GCLID" },
+      [LOG_IDENTITY]: expect.objectContaining({ ip: true, user_agent: true, country: "DE", click_ids: ["gclid"] }),
+    });
+  });
+  it("scrubs a logged request or answer, wherever the raw values appear", () => {
+    const req = {
+      url: "https://x.test/collect?uip=198.51.100.23",
+      body: {
+        data: [{ user_data: { client_ip_address: "198.51.100.23", client_user_agent: ua, ct: "hash" } }],
+        city: "Potsdam",
+        zip: "14467",
+      },
+    };
+    expect(scrubDelivered(req, e)).toEqual({
+      url: "https://x.test/collect?uip=198.51.100.0/24",
+      body: {
+        data: [{ user_data: { client_ip_address: "198.51.100.0/24", client_user_agent: "(user agent not kept)", ct: "hash" } }],
+        city: "(city not kept)",
+        zip: "(postal code not kept)",
+      },
+    });
+    expect(scrubDelivered("echo: 198.51.100.23", e)).toBe("echo: 198.51.100.0/24");
+    expect(scrubDelivered({ a: 1 }, { ip: undefined, user_agent: undefined, geo: undefined })).toEqual({ a: 1 });
   });
 });

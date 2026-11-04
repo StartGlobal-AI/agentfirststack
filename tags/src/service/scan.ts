@@ -50,7 +50,14 @@ export interface FormInfo {
 export interface CtaInfo {
   text: string;
   href: string | null;
-  kind: "purchase" | "signup" | "contact" | "booking" | "call" | "email" | "download" | "other";
+  kind: "purchase" | "signup" | "login" | "contact" | "booking" | "call" | "email" | "download" | "copy" | "outbound" | "other";
+  element: "a" | "button";
+  /** Where it sits: the site's nav, header or footer, or the page body. */
+  area: "nav" | "header" | "footer" | "main";
+  /** A link to another site. */
+  outbound: boolean;
+  /** Its data-* attribute names (hooks for click triggers), when it has any. */
+  data_attributes?: string[];
   selector: string;
   page: string;
 }
@@ -95,8 +102,114 @@ function cssEscape(s: string) {
   return /^[A-Za-z_][\w-]*$/.test(s) ? s : null;
 }
 
-export function detectTags(html: string): DetectedTags {
-  const h = html;
+// ---------------------------------------------------------------- reading a page
+
+/** What a scan reads from one page. */
+export interface PageParts {
+  /**
+   * The markup that renders, without comments, <script>, <style> and <noscript>, and without the
+   * content of <template>, <pre>, <code>, <xmp> and <textarea> (example code a page shows, never
+   * page structure). Escaped markup (&lt;script ...&gt;) stays text: it is never read as a tag.
+   */
+  markup: string;
+  /** Each real <script> element: its start tag, attributes (names lowercased) and inline code. */
+  scripts: { tag: string; attrs: Record<string, string>; code: string }[];
+  /** <noscript> contents: tag fallbacks (<img src>, <iframe src>). */
+  noscript: string[];
+}
+
+/** A start tag at a position: name and attributes (quoted values may hold ">"). */
+const START_TAG = /<([A-Za-z][A-Za-z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/y;
+/** Elements whose content a scan skips (the start and end tags of <textarea> stay: it's a form field). */
+const SKIP_CONTENT = new Set(["script", "style", "noscript", "template", "pre", "code", "xmp", "textarea"]);
+/** Script types that hold data or templates, not code that runs. */
+const NOT_CODE = /json|importmap|speculationrules|template|tmpl|text\/html|handlebars|mustache|shader/i;
+
+export function attrsOf(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    const k = m[1]!.toLowerCase();
+    if (!(k in out)) out[k] = decodeEntities(m[2] ?? m[3] ?? m[4] ?? "");
+  }
+  return out;
+}
+
+/** Index of the "</name" that closes an element whose content starts at `from` (nested <template>s counted), or -1. */
+function closingTag(html: string, from: number, name: string): number {
+  const re = new RegExp(`<(/?)${name}(?=[\\s/>])`, "gi");
+  re.lastIndex = from;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (!m[1]) {
+      if (name === "template") depth++;
+      continue;
+    }
+    if (depth === 0) return m.index;
+    depth--;
+  }
+  return -1;
+}
+
+export function pageParts(html: string): PageParts {
+  const out: string[] = [];
+  const scripts: PageParts["scripts"] = [];
+  const noscript: string[] = [];
+  const n = html.length;
+  let i = 0;
+  while (i < n) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) {
+      out.push(html.slice(i));
+      break;
+    }
+    out.push(html.slice(i, lt));
+    if (html.startsWith("<!--", lt)) {
+      const e = html.indexOf("-->", lt + 4);
+      i = e < 0 ? n : e + 3;
+      continue;
+    }
+    START_TAG.lastIndex = lt;
+    const m = START_TAG.exec(html);
+    if (!m) {
+      out.push("<");
+      i = lt + 1;
+      continue;
+    }
+    const name = m[1]!.toLowerCase();
+    const end = lt + m[0].length;
+    if (!SKIP_CONTENT.has(name)) {
+      out.push(m[0]);
+      i = end;
+      continue;
+    }
+    const close = closingTag(html, end, name);
+    const body = html.slice(end, close < 0 ? n : close);
+    if (name === "script") scripts.push({ tag: m[0], attrs: attrsOf(m[2] ?? ""), code: body });
+    else if (name === "noscript") noscript.push(body);
+    else if (name === "textarea") out.push(m[0], "</textarea>");
+    if (close < 0) break;
+    const gt = html.indexOf(">", close);
+    i = gt < 0 ? n : gt + 1;
+  }
+  return { markup: out.join(""), scripts, noscript };
+}
+
+/** Text tags can be detected in: script srcs, inline code that runs, and <noscript> pixel fallbacks. Never link hrefs or visible text. */
+function codeOf(p: PageParts) {
+  const srcs = p.scripts.flatMap((s) => (s.attrs.src ? [s.attrs.src] : []));
+  const inline = p.scripts.filter((s) => !s.attrs.src && !NOT_CODE.test(s.attrs.type ?? "")).map((s) => s.code);
+  const fallbacks = p.noscript.flatMap((ns) => all(/<(?:img|iframe)\b[^>]*?\ssrc\s*=\s*["']([^"']+)["']/i, ns));
+  return { srcs, code: [...srcs, ...inline, ...fallbacks].join("\n") };
+}
+
+// ---------------------------------------------------------------- tags
+
+export function detectTags(html: string | PageParts): DetectedTags {
+  const parts = typeof html === "string" ? pageParts(html) : html;
+  const { srcs, code: h } = codeOf(parts);
   const gtm = all(/\b(GTM-[A-Z0-9]{4,9})\b/, h);
   const ga4 = all(/\b(G-[A-Z0-9]{6,12})\b/, h).filter((id) => !/^G-(XXXX|TEST)/.test(id));
   const google_ads = all(/\b(AW-\d{6,12})\b/, h);
@@ -114,25 +227,33 @@ export function detectTags(html: string): DetectedTags {
   const x_pixel = uniq([...all(/twq\(\s*['"](?:config|init)['"]\s*,\s*['"]([a-z0-9]{4,10})['"]/, h)]);
   const pinterest_tag = all(/pintrk\(\s*['"]load['"]\s*,\s*['"](\d{8,16})['"]/, h);
   const other: string[] = [];
+  // Script hosts, loader calls and globals only: a link to /posthog-mcp or the word "Hotjar" in text isn't a tag.
   const otherTools: [RegExp, string][] = [
-    [/static\.hotjar\.com|hjid\s*:/, "Hotjar"],
+    [/static\.hotjar\.com|\bhjid\s*:|\bwindow\.hj\b/, "Hotjar"],
     [/clarity\.ms\/tag/, "Microsoft Clarity"],
-    [/plausible\.io\/js/, "Plausible"],
-    [/cdn\.segment\.com|analytics\.load\(/, "Segment"],
-    [/posthog/i, "PostHog"],
-    [/js\.hs-scripts\.com|hbspt\.forms/, "HubSpot"],
-    [/widget\.intercom\.io|intercomSettings/, "Intercom"],
+    [/plausible\.io\/js|\bwindow\.plausible\b/, "Plausible"],
+    [/cdn\.segment\.com|\banalytics\.load\(/, "Segment"],
+    [/[./]posthog\.com\/|\bposthog\.init\(|\bwindow\.posthog\b|posthog-js/, "PostHog"],
+    [/js\.hs-scripts\.com|\bhbspt\.forms/, "HubSpot"],
+    [/widget\.intercom\.io|\bintercomSettings\b/, "Intercom"],
     [/snap\.licdn\.com/, "LinkedIn Insight (script)"],
-    [/sc-static\.net\/scevent|snaptr\(/, "Snap Pixel"],
+    [/sc-static\.net\/scevent|\bsnaptr\(/, "Snap Pixel"],
     [/js\.stripe\.com/, "Stripe.js"],
     [/assets\.calendly\.com/, "Calendly"],
     [/embed\.typeform\.com/, "Typeform"],
   ];
   for (const [re, name] of otherTools) if (re.test(h)) other.push(name);
   const our_containers = all(/\/c\/(ctr_[a-z0-9]{8,32})\.js/, h);
-  const our_analytics_sites = /\/s\.js/.test(h) ? all(/data-site\s*=\s*["'](site_[a-z0-9]+)["']/, h) : [];
+  // The analytics snippet: a real <script src=".../s.js" data-site="site_..."> (or a loader setting data-site).
+  const our_analytics_sites = uniq([
+    ...parts.scripts.flatMap((s) => {
+      const site = s.attrs["data-site"];
+      return s.attrs.src && /\/s\.js(?:[?#]|$)/.test(s.attrs.src) && site && /^site_[a-z0-9]+$/.test(site) ? [site] : [];
+    }),
+    ...(/\/s\.js\b/.test(h) ? all(/["']data-site["']\s*,\s*["'](site_[a-z0-9]+)["']/, h) : []),
+  ]);
   const consentTools: [RegExp, string][] = [
-    [/consent\.cookiebot\.com|Cookiebot/, "Cookiebot"],
+    [/consent\.cookiebot\.com|\bCookiebot\b/, "Cookiebot"],
     [/cdn\.cookielaw\.org|OneTrust|optanon/i, "OneTrust"],
     [/cookieyes/i, "CookieYes"],
     [/didomi/i, "Didomi"],
@@ -144,6 +265,8 @@ export function detectTags(html: string): DetectedTags {
     [/klaro/i, "Klaro"],
   ];
   const consent_platforms = consentTools.filter(([re]) => re.test(h)).map(([, n]) => n);
+  // The CMS shows in markup too (stylesheet links, generator meta, data attributes) and in script tags.
+  const site = `${parts.markup}\n${parts.scripts.map((s) => s.tag).join("\n")}\n${srcs.join("\n")}`;
   const platforms: [RegExp, string][] = [
     [/cdn\.shopify\.com|Shopify\.theme/, "Shopify"],
     [/wp-content|wp-includes/, "WordPress"],
@@ -157,7 +280,7 @@ export function detectTags(html: string): DetectedTags {
     [/\/_astro\//, "Astro"],
     [/__nuxt|_nuxt\//, "Nuxt"],
   ];
-  const platform = platforms.filter(([re]) => re.test(h)).map(([, n]) => n);
+  const platform = platforms.filter(([re]) => re.test(site)).map(([, n]) => n);
   const data_layer_events = all(/dataLayer\.push\(\s*\{[^}]*?['"]?event['"]?\s*:\s*['"]([A-Za-z0-9_.-]{2,50})['"]/, h).filter(
     (e) => !e.startsWith("gtm."),
   );
@@ -184,6 +307,8 @@ export function detectTags(html: string): DetectedTags {
   };
 }
 
+// ---------------------------------------------------------------- forms
+
 function formKind(text: string, fields: FormInfo["fields"], action: string | null): FormInfo["kind"] {
   const t = `${text} ${action ?? ""} ${fields.map((f) => `${f.name ?? ""} ${f.placeholder ?? ""} ${f.type}`).join(" ")}`.toLowerCase();
   if (fields.some((f) => f.type === "search") || /\bsearch\b|[?&]q=/.test(t)) return "search";
@@ -197,12 +322,13 @@ function formKind(text: string, fields: FormInfo["fields"], action: string | nul
   return "other";
 }
 
-export function detectForms(html: string, page: string): FormInfo[] {
+export function detectForms(html: string | PageParts, page: string): FormInfo[] {
+  const markup = typeof html === "string" ? pageParts(html).markup : html.markup;
   const forms: FormInfo[] = [];
   const re = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
   let m: RegExpExecArray | null;
   let index = 0;
-  while ((m = re.exec(html)) && forms.length < 30) {
+  while ((m = re.exec(markup)) && forms.length < 30) {
     index++;
     const open = `<form${m[1]}>`;
     const body = m[2] ?? "";
@@ -257,58 +383,157 @@ export function detectForms(html: string, page: string): FormInfo[] {
   return forms;
 }
 
-const CTA_PATTERNS: [RegExp, CtaInfo["kind"]][] = [
-  [/buy|add to cart|checkout|order now|purchase|shop now|get it now|pre-?order/i, "purchase"],
-  [/sign ?up|get started|start (your )?(free )?trial|create (an )?account|register|join|try (it )?free/i, "signup"],
-  [/book|schedule|reserve|appointment|demo/i, "booking"],
-  [/contact|get in touch|request a quote|get a quote|talk to|enquire|inquire/i, "contact"],
-  [/download/i, "download"],
-];
+// ---------------------------------------------------------------- calls to action
 
-export function detectCtas(html: string, page: string): CtaInfo[] {
-  const out: CtaInfo[] = [];
-  const re = /<(a|button)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+/** Paths of a signup, login, checkout or guide page (one path segment, any case). */
+const seg = (words: string) => new RegExp(`(?:^|/)(?:${words})(?:[/?#.]|$)`, "i");
+const SIGNUP_PATH = seg("sign-?up|register|registration|join|create-account|start-trial|free-trial|trial");
+const LOGIN_PATH = seg("sign-?in|log-?in");
+const CHECKOUT_PATH = seg("checkout|cart|basket");
+/** Docs, guides and articles: a link there is reading material, whatever its text says. */
+const GUIDE_PATH = /(?:^|\/)(?:guides?|docs?|documentation|blog|help|learn|articles?|tutorials?|kb|news)(?:\/|$)/i;
+
+/** Signup only when the label itself is a signup verb, or the link goes to a signup page ("Get started" alone isn't). */
+const SIGNUP_TEXT =
+  /^(?:free\s+)?(?:(?:sign[\s-]?up|register|create\s+(?:a\s+|an\s+|your\s+)?(?:free\s+)?account|start\s+(?:a\s+|your\s+)?(?:free\s+)?trial|start\s+for\s+free|(?:get\s+|start\s+)?(?:a\s+)?free\s+trial|try\s+(?:it\s+|us\s+)?(?:for\s+)?free)\b|join(?:\s+(?:now|free|today|us|the\s+waitlist|for\s+free))?[\s!.]*$)/i;
+const LOGIN_TEXT = /^(?:sign|log)[\s-]?in\b/i;
+const CTA_TEXT: [RegExp, CtaInfo["kind"]][] = [
+  [/\b(?:buy|add\s+to\s+(?:cart|bag|basket)|check\s?out|order\s+now|purchase|shop\s+now|get\s+it\s+now|pre-?order)\b/i, "purchase"],
+  [/\b(?:book|schedule|reserve)\b|\bappointment\b|\bdemo\b/i, "booking"],
+  [/\bcontact\b|get\s+in\s+touch|(?:request|get)\s+a\s+quote|talk\s+to\s+(?:us|sales|an?\s+expert|someone)|\benquir|\binquir/i, "contact"],
+  [/\bdownload\b/i, "download"],
+];
+const BUTTON_CLASS = /(?:^|[\s_-])(?:btn|button|cta)(?:$|[\s_-])/i;
+const MAX_CTAS_PER_PAGE = 60;
+
+export function ctaKind(
+  text: string,
+  href: string | null,
+  o: { dataAttrs?: string[]; outbound?: boolean; path?: string | null } = {},
+): CtaInfo["kind"] {
+  if (href?.startsWith("tel:")) return "call";
+  if (href?.startsWith("mailto:")) return "email";
+  if ((o.dataAttrs ?? []).some((a) => /^data-(?:copy|clipboard)/.test(a)) || /^copy\b/i.test(text)) return "copy";
+  const path = o.path ?? null;
+  const guide = !!path && GUIDE_PATH.test(path);
+  if (CTA_TEXT[0]![0].test(text) || (path && CHECKOUT_PATH.test(path))) return "purchase";
+  if (LOGIN_TEXT.test(text) || (path && LOGIN_PATH.test(path) && !SIGNUP_TEXT.test(text))) return "login";
+  if ((path && SIGNUP_PATH.test(path)) || (SIGNUP_TEXT.test(text) && !guide)) return "signup";
+  for (const [p, k] of CTA_TEXT.slice(1)) if (p.test(text)) return k;
+  return o.outbound ? "outbound" : "other";
+}
+
+/** [start, end) of each element `name` in the markup (non-nested). */
+function ranges(markup: string, name: string): [number, number][] {
+  const out: [number, number][] = [];
+  const re = new RegExp(`<${name}\\b[\\s\\S]*?<\\/${name}\\s*>`, "gi");
   let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) && out.length < 40) {
-    const open = `<${m[1]}${m[2]}>`;
-    const href = attr(open, "href");
-    const text = clip(stripTags(m[3] ?? ""), 80) ?? "";
-    let kind: CtaInfo["kind"] | null = null;
-    if (href?.startsWith("tel:")) kind = "call";
-    else if (href?.startsWith("mailto:")) kind = "email";
-    else
-      for (const [p, k] of CTA_PATTERNS)
-        if (p.test(text)) {
-          kind = k;
-          break;
+  while ((m = re.exec(markup))) out.push([m.index, m.index + m[0].length]);
+  return out;
+}
+const inside = (r: [number, number][], i: number) => r.some(([a, b]) => i >= a && i < b);
+
+function ctaSelector(tag: "a" | "button", a: Record<string, string>, href: string | null, dataAttrs: string[]): string {
+  const q = (v: string) => v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  if (a.id && cssEscape(a.id)) return `#${a.id}`;
+  if (tag === "a" && href) return `a[href="${q(href)}"]`;
+  const d = dataAttrs[0];
+  if (d) {
+    const v = a[d] ?? "";
+    return v && v.length <= 60 ? `${tag}[${d}="${q(v)}"]` : `${tag}[${d}]`;
+  }
+  if (a["aria-label"]) return `${tag}[aria-label="${q(a["aria-label"].slice(0, 80))}"]`;
+  if (tag === "button" && a.name && cssEscape(a.name)) return `button[name="${a.name}"]`;
+  const cls = (a.class ?? "").split(/\s+/).find((c) => cssEscape(c));
+  return cls ? `${tag}.${cls}` : tag;
+}
+
+/**
+ * The page's main calls to action: <button>s outside forms, links and buttons with data-*
+ * attributes or button styling, nav and header links, outbound links, and anything whose label
+ * or target reads as purchase, signup, login, booking, contact, download, call or email. Example
+ * code (<pre>, <code>, <template>, comments) and hidden elements are skipped. `host` (the page's
+ * host) tells outbound links apart.
+ */
+export function detectCtas(html: string | PageParts, page: string, host?: string): CtaInfo[] {
+  const markup = typeof html === "string" ? pageParts(html).markup : html.markup;
+  const area = { nav: ranges(markup, "nav"), header: ranges(markup, "header"), footer: ranges(markup, "footer") };
+  const forms = ranges(markup, "form");
+  const bare = (h: string) => h.toLowerCase().replace(/^www\./, "");
+  const out: CtaInfo[] = [];
+  const re = /<(a|button)\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/\1\s*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(markup)) && out.length < MAX_CTAS_PER_PAGE) {
+    const tag = m[1]!.toLowerCase() as "a" | "button";
+    const a = attrsOf(m[2] ?? "");
+    if ("hidden" in a || a["aria-hidden"] === "true") continue;
+    const inForm = inside(forms, m.index);
+    if (tag === "button" && inForm && (a.type ?? "submit").toLowerCase() !== "button") continue; // the form's own submit
+    const href = tag === "a" && a.href !== undefined ? a.href.trim() || null : null;
+    const text = clip(stripTags(m[3] ?? ""), 80) || clip(a["aria-label"] ?? a.title ?? "", 80) || "";
+    let path: string | null = null;
+    let outbound = false;
+    if (href && !/^(?:tel|mailto|javascript):/i.test(href)) {
+      try {
+        const u = new URL(href, `https://${host ?? "page.invalid"}${page.startsWith("/") ? page : "/"}`);
+        if (/^https?:$/.test(u.protocol)) {
+          path = u.pathname;
+          const h = bare(u.hostname);
+          const own = host ? bare(host) : "page.invalid";
+          outbound = h !== own && !h.endsWith(`.${own}`) && !own.endsWith(`.${h}`);
         }
-    if (!kind || (!text && kind !== "call" && kind !== "email")) continue;
-    const id = attr(open, "id");
-    const selector =
-      kind === "call"
-        ? "a[href^='tel:']"
-        : kind === "email"
-          ? "a[href^='mailto:']"
-          : id && cssEscape(id)
-            ? `#${id}`
-            : href && m[1] === "a"
-              ? `a[href="${href.replace(/"/g, '\\"')}"]`
-              : m[1]!.toLowerCase();
+      } catch {
+        /* not a URL */
+      }
+    }
+    const dataAttrs = Object.keys(a).filter((k) => k.startsWith("data-"));
+    const kind = ctaKind(text, href, { dataAttrs, outbound, path });
+    const where: CtaInfo["area"] = inside(area.nav, m.index)
+      ? "nav"
+      : inside(area.header, m.index)
+        ? "header"
+        : inside(area.footer, m.index)
+          ? "footer"
+          : "main";
+    const main =
+      kind !== "other" ||
+      tag === "button" ||
+      dataAttrs.length > 0 ||
+      where === "nav" ||
+      where === "header" ||
+      BUTTON_CLASS.test(a.class ?? "") ||
+      a.role === "button";
+    if (!main || (!text && kind !== "call" && kind !== "email")) continue;
+    const selector = kind === "call" ? "a[href^='tel:']" : kind === "email" ? "a[href^='mailto:']" : ctaSelector(tag, a, href, dataAttrs);
     if (out.some((c) => c.selector === selector && c.kind === kind)) continue;
-    out.push({ text, href: clip(href, 200), kind, selector, page });
+    out.push({
+      text,
+      href: clip(href, 200),
+      kind,
+      element: tag,
+      area: where,
+      outbound,
+      ...(dataAttrs.length ? { data_attributes: dataAttrs.slice(0, 5) } : {}),
+      selector,
+      page,
+    });
   }
   return out;
 }
 
+// ---------------------------------------------------------------- thank-you pages and links to follow
+
 const THANK_YOU = /thank[-_]?you|thanks|\/success|confirmation|order[-_]?received|order[-_]?complete|\/welcome|\/booked|\/submitted/i;
 
-export function detectThankYouUrls(html: string, base: string): string[] {
+export function detectThankYouUrls(html: string | PageParts, base: string): string[] {
+  const parts = typeof html === "string" ? pageParts(html) : html;
+  const { code } = codeOf(parts);
   const out: string[] = [];
   for (const v of [
-    ...all(/href\s*=\s*["']([^"'#]+)["']/, html),
-    ...all(/action\s*=\s*["']([^"'#]+)["']/, html),
-    ...all(/value\s*=\s*["'](\/[^"']+)["']/, html),
-    ...all(/location(?:\.href)?\s*=\s*["']([^"']+)["']/, html),
+    ...all(/href\s*=\s*["']([^"'#]+)["']/, parts.markup),
+    ...all(/action\s*=\s*["']([^"'#]+)["']/, parts.markup),
+    ...all(/value\s*=\s*["'](\/[^"']+)["']/, parts.markup),
+    ...all(/location(?:\.href)?\s*=\s*["']([^"']+)["']/, code),
   ]) {
     if (!THANK_YOU.test(v)) continue;
     try {
@@ -322,15 +547,16 @@ export function detectThankYouUrls(html: string, base: string): string[] {
 }
 
 /** Same-site links worth scanning for forms (contact, signup, pricing...). */
-export function interestingLinks(html: string, base: string): string[] {
+export function interestingLinks(html: string | PageParts, base: string): string[] {
+  const markup = typeof html === "string" ? pageParts(html).markup : html.markup;
   const out: string[] = [];
   const b = new URL(base);
-  for (const href of all(/<a\b[^>]*href\s*=\s*["']([^"'#]+)["']/i, html)) {
+  const worth = /(?:^|[/-])(?:contact|sign-?up|register|get-?started|demo|quote|book|booking|pricing|checkout|cart|trial)(?:[-/.]|$)/i;
+  for (const href of all(/<a\b[^>]*href\s*=\s*["']([^"'#]+)["']/i, markup)) {
     try {
       const u = new URL(href, base);
       if (u.hostname.replace(/^www\./, "") !== b.hostname.replace(/^www\./, "") || !/^https?:$/.test(u.protocol)) continue;
-      if (/contact|sign-?up|register|get-?started|demo|quote|book|pricing|checkout|cart|trial/i.test(u.pathname))
-        out.push(`${u.origin}${u.pathname}`);
+      if (worth.test(u.pathname) && !GUIDE_PATH.test(u.pathname)) out.push(`${u.origin}${u.pathname}`);
     } catch {
       /* skip */
     }
@@ -357,12 +583,19 @@ export interface ScanResult {
 }
 
 export function analyze(pages: { url: string; html: string }[], containerId: string): Omit<ScanResult, "url" | "pages"> {
-  const html = pages.map((p) => p.html).join("\n");
-  const detected = detectTags(html);
-  const forms = pages.flatMap((p) => detectForms(p.html, new URL(p.url).pathname));
-  const ctas = pages.flatMap((p) => detectCtas(p.html, new URL(p.url).pathname));
-  const thank = uniq(pages.flatMap((p) => detectThankYouUrls(p.html, p.url)));
-  const title = clip(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(pages[0]?.html ?? "")?.[1] ?? null, 120);
+  const read = pages.map((p) => ({ url: p.url, u: new URL(p.url), parts: pageParts(p.html) }));
+  const detected = detectTags({
+    markup: read.map((p) => p.parts.markup).join("\n"),
+    scripts: read.flatMap((p) => p.parts.scripts),
+    noscript: read.flatMap((p) => p.parts.noscript),
+  });
+  const forms = read.flatMap((p) => detectForms(p.parts, p.u.pathname));
+  // A nav or footer link repeats on every page: listed once, on the first page it was seen.
+  const ctas: CtaInfo[] = [];
+  for (const c of read.flatMap((p) => detectCtas(p.parts, p.u.pathname, p.u.hostname)))
+    if (!ctas.some((x) => x.selector === c.selector && x.kind === c.kind)) ctas.push(c);
+  const thank = uniq(read.flatMap((p) => detectThankYouUrls(p.parts, p.url)));
+  const title = clip(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(read[0]?.parts.markup ?? "")?.[1] ?? null, 120);
   const notes: string[] = [];
   const installed = detected.our_containers.includes(containerId);
   if (!installed)
@@ -511,6 +744,12 @@ export const MAX_REDIRECTS = 3;
 /** Pages fetched per scan (homepage + paths + linked pages), and how many at once. */
 export const MAX_SCAN_PAGES = 6;
 export const SCAN_CONCURRENCY = 2;
+/** `paths` entries per scan: the homepage (or `url`) is always the first page, so 5 more. */
+export const MAX_SCAN_PATHS = MAX_SCAN_PAGES - 1;
+/** Linked contact/signup/pricing pages a scan may add (follow_links), only into pages left over. */
+export const MAX_FOLLOWED_LINKS = 3;
+/** What `paths` allows, for docs and the 400 hint. */
+export const SCAN_PAGES_RULE = `A scan fetches the homepage (or url) plus up to ${MAX_SCAN_PATHS} paths: ${MAX_SCAN_PAGES} pages at most. With follow_links (default true) up to ${MAX_FOLLOWED_LINKS} linked contact/signup/pricing pages fill whatever room is left. Scan more pages with another call.`;
 const SCAN_HEADERS = { "user-agent": "Mozilla/5.0 (compatible; afs-tags-scan/1; +https://agentfirststack.com)", accept: "text/html,*/*" };
 
 /**
@@ -681,12 +920,12 @@ export async function scanSite(
   const urls = [
     ...new Set([
       first.toString(),
-      ...(opts.paths ?? []).slice(0, 5).map((p) => scanTarget(domain, undefined, p.startsWith("/") ? p : `/${p}`).toString()),
+      ...(opts.paths ?? []).slice(0, MAX_SCAN_PATHS).map((p) => scanTarget(domain, undefined, p.startsWith("/") ? p : `/${p}`).toString()),
     ]),
   ].slice(0, MAX_SCAN_PAGES);
   const get = (u: string) => fetchPage(u, domain, fetchImpl);
   const fetched = await pool(urls, SCAN_CONCURRENCY, get);
-  const room = Math.min(3, MAX_SCAN_PAGES - urls.length);
+  const room = Math.min(MAX_FOLLOWED_LINKS, MAX_SCAN_PAGES - urls.length);
   if (opts.follow_links !== false && fetched[0]?.html && room > 0) {
     const extra = interestingLinks(fetched[0].html, fetched[0].url).filter((u) => !urls.includes(u) && onDomain(new URL(u), domain));
     fetched.push(...(await pool(extra.slice(0, room), SCAN_CONCURRENCY, get)));

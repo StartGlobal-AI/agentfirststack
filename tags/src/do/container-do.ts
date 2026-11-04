@@ -19,6 +19,7 @@ import {
 } from "../service/ingest";
 import type { ServerEvent } from "../service/ingest-schema";
 import { hostAllowed, originHost } from "../service/origin";
+import { eventForLog, LOG_IDENTITY } from "../service/privacy";
 
 export const EVENT_RETENTION_DAYS = 7;
 export const VISITOR_RETENTION_DAYS = 180;
@@ -111,7 +112,7 @@ type EventRow = {
 /** Event log rows are keyed by (source, event_id): browser and server rows never collide. */
 type Origin = "browser" | "server";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const EVENTS_DDL = `
   CREATE TABLE events (
     event_id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL,
@@ -202,6 +203,7 @@ export class ContainerDO extends DurableObject<Bindings> {
           "UPDATE visitors SET user_id = NULL, em = NULL, ph = NULL WHERE user_id IS NOT NULL OR em IS NOT NULL OR ph IS NOT NULL",
         );
       }
+      if (version < 4 && hasEvents) this.scrubLegacyEvents();
       if (version < SCHEMA_VERSION) this.setMeta("schema", SCHEMA_VERSION);
       this.sql.exec(`
         CREATE INDEX IF NOT EXISTS events_received ON events(received_at);
@@ -209,6 +211,28 @@ export class ContainerDO extends DurableObject<Bindings> {
         CREATE INDEX IF NOT EXISTS events_txn ON events(transaction_id, name, source);
       `);
     });
+  }
+
+  /**
+   * v4: rows written by older code kept the raw IP, user agent, city and postal code of conversions,
+   * and the exact requests sent to destinations. Those are removed (the network isn't recoverable
+   * for these rows, so their identity summary may show ip/user_agent false). Public so tests can
+   * run it on a row written the old way.
+   */
+  scrubLegacyEvents() {
+    // Best effort: a failure here must never stop the object from starting (rows age out in 7 days anyway).
+    try {
+      this.sql.exec(
+        `UPDATE events SET data = json_remove(data, '$.ip', '$.user_agent', '$.geo.city', '$.geo.postal_code', '$.device.model', '$.device.brand', '$.device.browser_version', '$.device.os_version')
+         WHERE type = 'conversion' AND json_valid(data) AND json_extract(data, '$._identity') IS NULL`,
+      );
+      this.sql.exec(
+        `UPDATE events SET results = (SELECT json_group_object(key, CASE WHEN type = 'object' THEN json_remove(value, '$.request') ELSE value END) FROM json_each(events.results))
+         WHERE json_valid(results) AND json_valid(data) AND results LIKE '%"request"%' AND json_extract(data, '$._identity') IS NULL`,
+      );
+    } catch (e) {
+      console.error("event log scrub (schema v4) failed", e);
+    }
   }
 
   // ------------------------------------------------------------------ control plane sync
@@ -841,7 +865,9 @@ export class ContainerDO extends DurableObject<Bindings> {
       value: event.value ?? null,
       currency: event.currency ?? null,
       preview: !!hit.preview_config,
-      data: JSON.stringify(event),
+      // The log keeps no raw IP, user agent, city or postal code (src/service/privacy.ts); the
+      // queue messages enqueued below carry them for delivery only.
+      data: JSON.stringify(eventForLog(event)),
       results: planned,
       note,
     });
@@ -967,7 +993,9 @@ export class ContainerDO extends DurableObject<Bindings> {
         value: ev.value ?? null,
         currency: ev.currency ?? null,
         preview: opts.test,
-        data: JSON.stringify(event),
+        // The log keeps no raw IP, user agent, city or postal code (src/service/privacy.ts); the
+        // queue messages enqueued below carry them for delivery only.
+        data: JSON.stringify(eventForLog(event)),
         results: planned,
         note: note ?? null,
       });
@@ -1053,7 +1081,7 @@ export class ContainerDO extends DurableObject<Bindings> {
    */
   private present(r: EventRow, verbose: boolean) {
     const results = JSON.parse(r.results) as Record<string, TargetResult>;
-    const data = JSON.parse(r.data) as Record<string, unknown>;
+    const { [LOG_IDENTITY]: identity, ...data } = JSON.parse(r.data) as Record<string, unknown>;
     const isConversion = r.type === "conversion";
     const browser = r.source === "browser";
     const untrusted: Record<string, unknown> = {};
@@ -1076,7 +1104,11 @@ export class ContainerDO extends DurableObject<Bindings> {
       status: r.status,
       ...(r.note ? { note: r.note } : {}),
       ...(isConversion
-        ? { identity: identitySummary(data as unknown as DispatchEvent), fired_in_browser: (data.fired as string[] | undefined) ?? [] }
+        ? {
+            // What the event carried when it was delivered (the row itself keeps less, see eventForLog).
+            identity: (identity as ReturnType<typeof identitySummary> | undefined) ?? identitySummary(data as unknown as DispatchEvent),
+            fired_in_browser: (data.fired as string[] | undefined) ?? [],
+          }
         : {}),
       destinations: Object.entries(results).map(([id, res]) => {
         const { request, response, ...rest } = res;

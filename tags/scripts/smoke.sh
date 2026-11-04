@@ -148,7 +148,8 @@ check "visitor record (browser-written fields under untrusted)" "$(jq -r '.visit
 check "backend linked the visitor to its user" "$(jq -r '.visitor.linked.email_hash' <<<"$VIS")" "true"
 
 echo "9b. first-party proxy: X-Forwarded-For trusted only with the container's proxy key"
-PKEY=$(api GET "/v1/containers/$C/install" | jq -r .first_party_proxy.proxy_key)
+PKEY=$(api GET "/v1/containers/$C/install?proxy=1" | jq -r .first_party_proxy.proxy_key)
+[[ "$(api GET "/v1/containers/$C/install" | jq -r .first_party_proxy.proxy_key)" == "null" ]] && ok "plain install leaves the proxy key out" || bad "proxy key printed without ?proxy=1"
 [[ "$PKEY" =~ ^[a-f0-9]{64}$ ]] && ok "install returns a proxy key" || bad "proxy key" "$PKEY"
 pvisit() { curl -sS -o /dev/null -X POST "$BASE/_t/collect" -H "origin: $ORIGIN" -H 'user-agent: Mozilla/5.0 Chrome/130.0' -H 'x-forwarded-for: 198.51.100.77' "$@"; }
 pvisit -d "{\"container_id\":\"$C\",\"type\":\"visit\",\"visitor_id\":\"${VID}spoof\",\"first_party\":true,\"consent\":{\"analytics_storage\":\"granted\"}}"
@@ -176,7 +177,7 @@ check "third-party strings only under untrusted" "$(jq -r --arg ev "$EV" '.event
 UNM=$(api POST "/v1/containers/$C/events" -d '{"events":[{"name":"not_a_conversion","event_id":"smoke_unmatched_1"}]}')
 check "webhook skips backend events that match no conversion" "$(jq -r '.results[0].destinations | length' <<<"$UNM")" "0"
 check "*.com can't be an allowed hostname" "$(api PATCH "/v1/containers/$C" -d '{"allowed_hostnames":["*.com"]}' -o /dev/null -w '%{http_code}')" "400"
-check "analytics base_url must be the analytics app" "$(api POST "/v1/containers/$C/destinations" -d '{"type":"analytics","credentials":{"site_id":"site_abc123","api_key":"ana_xxxxxxxx","base_url":"https://evil.test/x?y="}}' -o /dev/null -w '%{http_code}')" "400"
+check "analytics base_url must be the analytics app" "$(api POST "/v1/containers/$C/destinations" -d '{"type":"analytics","credentials":{"site_id":"site_abc123","api_key":"afs_xxxxxxxx","base_url":"https://evil.test/x?y="}}' -o /dev/null -w '%{http_code}')" "400"
 CJ=$(api POST "/v1/containers/$C/draft/validate" -d '{"config":{"triggers":[{"id":"all","type":"page_view"}],"tags":[{"id":"j","type":"custom_js","params":{"code":"1"},"triggers":["all"]}]}}')
 check "custom code can't be published from an unclaimed account / unverified domain" "$(jq -r '.valid, ([.errors[].code] | map(select(. == "custom_code_not_allowed" or . == "domain_not_verified")) | length > 0)' <<<"$CJ" | tr '\n' ' ')" "false true "
 VER=$(api POST "/v1/containers/$C/verify" -d '{"method":"dns"}')

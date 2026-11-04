@@ -18,6 +18,44 @@ const textModules: Plugin = {
   },
 };
 
+/** Internal auth between this test Worker and the analytics stand-in (obviously fake). */
+const INTERNAL_TOKEN = "test-internal-token";
+
+/**
+ * A stand-in for the analytics Worker behind the ANALYTICS service binding. Like analytics, it
+ * accepts internal auth only on https://<svc>.internal URLs with the right token, and a site only
+ * for the account that owns it: tests register sites (PUT /__test/sites/:id, x-afs-account) and
+ * read back what reached it (GET /__test/requests).
+ */
+const analyticsSites = new Map<string, string>();
+const analyticsRequests: { method: string; url: string; account: string | null; auth: boolean; body: unknown }[] = [];
+async function analyticsStub(req: Request): Promise<Response> {
+  const u = new URL(req.url);
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const account = req.headers.get("x-afs-account");
+  if (u.pathname.startsWith("/__test/sites/")) {
+    analyticsSites.set(u.pathname.slice("/__test/sites/".length), account ?? "");
+    return json({ ok: true });
+  }
+  if (u.pathname === "/__test/requests") return json({ requests: analyticsRequests });
+  const text = req.method === "GET" ? "" : await req.text();
+  const internal = u.hostname.endsWith(".internal") && req.headers.get("x-afs-internal") === INTERNAL_TOKEN;
+  analyticsRequests.push({
+    method: req.method,
+    url: req.url,
+    account,
+    auth: !!req.headers.get("authorization"),
+    body: text ? JSON.parse(text) : null,
+  });
+  if (!internal) return json({ error: { code: "unauthorized" } }, 401);
+  const m = /^\/v1\/sites\/([a-z0-9_]+)(\/events)?$/.exec(u.pathname);
+  if (!m || !account || analyticsSites.get(m[1]!) !== account)
+    return json({ error: { code: "not_found", message: "Site not found." } }, 404);
+  if (!m[2]) return json({ site: { id: m[1], domain: "analytics.test" } });
+  return json({ accepted: ((JSON.parse(text) as { events?: unknown[] }).events ?? []).length }, 202);
+}
+
 export default defineConfig({
   test: {
     projects: [
@@ -33,6 +71,7 @@ export default defineConfig({
             miniflare: {
               // The pool bundles an older workerd than wrangler 4.156; pin a date it supports.
               compatibilityDate: "2026-08-01",
+              serviceBindings: { ANALYTICS: analyticsStub },
               // The app's own rate limiters stay out of the way (tests send many hits from one
               // "network"); their logic is tested with stub limiters.
               ratelimits: Object.fromEntries(
@@ -74,6 +113,7 @@ export default defineConfig({
                 CIRCUIT_BREAKER_FAILURES: "",
                 CIRCUIT_BREAKER_MINUTES: "",
                 ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+                INTERNAL_TOKEN,
                 DEV_MODE: "true",
                 ANALYTICS_BASE_URL: "https://analytics.test",
               },

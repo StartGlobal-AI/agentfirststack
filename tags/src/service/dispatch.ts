@@ -4,9 +4,10 @@ import type { DeliveryResult } from "../destinations/types";
 import type { DispatchMessage } from "../do/container-do";
 import type { Bindings } from "../env";
 import { containerStub, getContainerRow, syncToDO } from "./containers";
-import { type DestinationRow, loadCredentials, loadLookups } from "./destinations";
+import { type DestinationRow, loadCredentials, loadLookups, NO_TEST_MODE, testModeGap } from "./destinations";
 import { circuitReason } from "./dispatch-plan";
 import { circuitBreaker } from "./limits";
+import { scrubDelivered } from "./privacy";
 import { sanitizeText } from "./sanitize";
 import { applyParamRules, type Lookups, lookupsUsed, type ParamRules } from "./transform";
 
@@ -120,6 +121,10 @@ export async function handleDispatchBatch(batch: MessageBatch<DispatchMessage>, 
       let result: DeliveryResult;
       try {
         if (!creds.has(row.id)) creds.set(row.id, await loadCredentials(env, row));
+        // Test traffic (preview hits, test: true server events) never reaches a platform as a real
+        // conversion: without a test mechanism (test code, validation endpoint) it's skipped.
+        const noTest = m.test || m.event.test ? testModeGap(connector, creds.get(row.id)!) : null;
+        if (noTest) return await skip(`${NO_TEST_MODE}: ${noTest}`);
         // settings.params (allow/exclude/set/redact_query, lookups) shape what this destination gets.
         const settings = JSON.parse(row.settings) as { params?: ParamRules; template?: never };
         const used = lookupsUsed(settings.params);
@@ -131,6 +136,7 @@ export async function handleDispatchBatch(batch: MessageBatch<DispatchMessage>, 
           env,
           destinationId: row.id,
           containerId: m.container_id,
+          accountId: row.account_id,
           settings,
         });
       } catch (e) {
@@ -138,18 +144,20 @@ export async function handleDispatchBatch(batch: MessageBatch<DispatchMessage>, 
       }
       const o = outcomes.get(row.id) ?? { results: [] };
       o.results.push(result.ok);
-      if (!result.ok) o.lastError = result.error ?? `HTTP ${result.http_status ?? "error"}`;
+      if (!result.ok) o.lastError = scrubDelivered(result.error ?? `HTTP ${result.http_status ?? "error"}`, m.event);
       outcomes.set(row.id, o);
       const maxAttempts = connector.maxAttempts ?? MAX_ATTEMPTS;
       const final = result.ok || !result.retryable || msg.attempts >= maxAttempts;
+      // The log keeps what was sent minus the raw IP, user agent, city and postal code: only this
+      // queue message (gone once acked) holds them while the delivery is pending or retried.
       await record({
         type: m.type,
         status: result.ok ? "delivered" : final ? "failed" : "retrying",
         attempts: msg.attempts,
         http_status: result.http_status,
-        response: clip(result.response),
-        error: result.error,
-        request: clip(result.request, 8000),
+        response: clip(scrubDelivered(result.response, m.event)),
+        error: result.error === undefined ? undefined : scrubDelivered(result.error, m.event),
+        request: clip(scrubDelivered(result.request, m.event), 8000),
         ...(!final ? { reason: `retrying in ${backoffSeconds(msg.attempts)}s (attempt ${msg.attempts} of ${maxAttempts})` } : {}),
       });
       if (final) msg.ack();

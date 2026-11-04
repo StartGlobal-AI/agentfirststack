@@ -1,4 +1,4 @@
-import { type AuthContext, assertPermanentKey, badRequest, notFound, sha256Hex } from "@afs/shared";
+import { type AuthContext, assertPermanentKey, badRequest, canWrite, forbidden, notFound, parse, sha256Hex } from "@afs/shared";
 import { z } from "zod";
 import { schemaDocument } from "../config/catalog";
 import type { EventFilter } from "../do/container-do";
@@ -36,7 +36,7 @@ import { assertRate } from "./ratelimit";
 import { checkDomain, dnsRecord, markVerified, verificationInfo } from "./verify";
 import type { ServerEvent } from "./ingest-schema";
 import type { RecipeInput } from "./recipe";
-import { scanSite } from "./scan";
+import { MAX_FOLLOWED_LINKS, MAX_SCAN_PAGES, MAX_SCAN_PATHS, SCAN_PAGES_RULE, scanSite } from "./scan";
 import { applyRecipe } from "./setup";
 import {
   createPreview,
@@ -125,13 +125,39 @@ export const testInput = z.strictObject({
       x: z.strictObject({ event_id: z.string().regex(/^tw-[a-z0-9]+-[a-z0-9]+$/) }).optional(),
     })
     .optional()
-    .describe("LinkedIn and X tests: the conversion rule id / event id to send to."),
+    .describe(
+      "Accepted for older clients, no longer needed: LinkedIn and X have no test mode, so their tests answer 400 no_test_mode and send nothing.",
+    ),
 });
 export const scanInput = z.strictObject({
   url: z.string().max(2048).optional().describe("https page to scan (on the container's domain, default port). Default https://<domain>/."),
-  paths: z.array(z.string().max(500)).max(5).optional().describe("Extra paths to scan, e.g. ['/contact', '/checkout']."),
-  follow_links: z.boolean().optional().describe("Also scan up to 3 linked contact/signup/pricing pages (default true)."),
+  paths: z
+    .array(z.string().max(500))
+    .max(MAX_SCAN_PATHS, `At most ${MAX_SCAN_PATHS} paths. ${SCAN_PAGES_RULE}`)
+    .optional()
+    .describe(
+      `Extra paths to scan, at most ${MAX_SCAN_PATHS}, e.g. ['/contact', '/checkout']: the homepage (or url) is always scanned too, ${MAX_SCAN_PAGES} pages in all.`,
+    ),
+  follow_links: z
+    .boolean()
+    .optional()
+    .describe(
+      `Also scan up to ${MAX_FOLLOWED_LINKS} linked contact/signup/pricing pages (default true), only into the ${MAX_SCAN_PAGES}-page room the homepage and paths leave.`,
+    ),
 });
+
+/**
+ * The scan body. Too many paths is answered with the rule itself in the hint (REST); MCP clients
+ * see maxItems in the tool schema and the same rule in the validation message.
+ */
+export function readScanInput(raw: unknown): z.infer<typeof scanInput> {
+  const paths = raw && typeof raw === "object" ? (raw as { paths?: unknown }).paths : undefined;
+  if (Array.isArray(paths) && paths.length > MAX_SCAN_PATHS)
+    throw badRequest(`paths has ${paths.length} entries; at most ${MAX_SCAN_PATHS} are allowed.`, SCAN_PAGES_RULE, [
+      { path: "paths", message: `At most ${MAX_SCAN_PATHS} paths (the homepage or url is the ${MAX_SCAN_PAGES}th page).` },
+    ]);
+  return parse(scanInput, raw);
+}
 export const verifyInput = z.strictObject({
   method: z
     .enum(["auto", "dns", "snippet"])
@@ -166,7 +192,8 @@ export const ops = {
       body: {
         container: publicContainer(row, o.base),
         existing,
-        install: installInstructions(o.base, row, await proxyKey(o.env, row.id)),
+        // The proxy key stays out of this answer: GET /install?proxy=1 returns it when a proxy is set up.
+        install: installInstructions(o.base, row),
         next_steps: containerNextSteps(row.id, existing, row.live_version != null),
       },
     };
@@ -198,9 +225,15 @@ export const ops = {
     for (const d of dest.map(presentDestination))
       if (d.health.circuit === "open")
         warnings.push(`Destination ${d.id} (${d.type}) has an open circuit after repeated failures; fix it and run its test.`);
+    const live = await liveConfig(o.env, row);
     return {
       container: publicContainer(row, o.base),
       verification: { ...verificationInfo(row), dns_record: await dnsRecord(o.env, row), verify: `POST /v1/containers/${id}/verify` },
+      privacy: {
+        // settings.respect_dnt: the live version's (null = nothing published yet) and the draft's.
+        respect_dnt: { live: live ? live.settings?.respect_dnt !== false : null, draft: draftConfig(row).settings?.respect_dnt !== false },
+        note: "With respect_dnt on (the default), the snippet does nothing in a browser sending Global Privacy Control or Do Not Track: no tags, no /collect hits, no cookies. Change it with PATCH /draft { settings: { respect_dnt: false } } and publish.",
+      },
       destinations: dest.map(presentDestination),
       stats,
       ...(warnings.length ? { warnings } : {}),
@@ -223,9 +256,16 @@ export const ops = {
     return { deleted: id, note: "The snippet now serves a 404 comment; remove it from the site." };
   },
 
-  async install(o: OpCtx, id: string) {
+  async install(o: OpCtx, id: string, opts: { proxy?: boolean } = {}) {
     const row = await getContainerRow(o.env, o.auth.accountId, id);
-    return { container_id: id, ...installInstructions(o.base, row, await proxyKey(o.env, row.id)) };
+    if (!opts.proxy) return { container_id: id, ...installInstructions(o.base, row) };
+    // The proxy key lets a request set the visitor IP /collect sends on: full-access keys only.
+    if (!canWrite(o.auth))
+      throw forbidden(
+        "The proxy configs carry the container's proxy key, which read-only keys can't see.",
+        `Use a key with scope "*" for GET /v1/containers/${id}/install?proxy=1, or leave proxy out for the snippet and the rest.`,
+      );
+    return { container_id: id, ...installInstructions(o.base, row, { key: await proxyKey(o.env, row.id) }) };
   },
 
   async scan(o: OpCtx, id: string, input: z.infer<typeof scanInput>) {
@@ -430,7 +470,7 @@ export const ops = {
       preview_url: `https://${r.row.domain}${r.path}${sep}afst_preview=${r.token}`,
       script_url: `${o.base}/c/${id}.js?preview=${r.token}`,
       how_it_works:
-        "Open preview_url in a browser: the installed live snippet sees afst_preview, remembers it for the tab (sessionStorage) and loads the DRAFT with console debug logging. Preview conversions go to /collect marked preview and destinations use their test modes. Add ?afst_preview=off to leave.",
+        "Open preview_url in a browser: the installed live snippet sees afst_preview, remembers it for the tab (sessionStorage) and loads the DRAFT with console debug logging. Preview conversions go to /collect marked preview and destinations use their test modes; a destination without one (Meta/TikTok/Reddit with no test code, LinkedIn, X) skips them, so they never count as real conversions. Add ?afst_preview=off to leave.",
       next_steps: [
         "Open preview_url (or drive it with a headless browser) and trigger each conversion.",
         `GET /v1/containers/${id}/preview/${r.token}/log (MCP get_preview_log) shows, per event, which triggers matched and which tags fired, waited for consent or didn't fire, and why.`,

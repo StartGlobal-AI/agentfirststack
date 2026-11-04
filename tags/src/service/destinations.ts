@@ -123,6 +123,8 @@ function publicFields(connector: Connector, creds: Record<string, unknown>) {
     const u = new URL(creds.url);
     out.url = `${u.origin}${u.pathname}${u.search ? "?..." : ""}`;
   }
+  // How analytics events travel: with the saved key, or over this deployment's ANALYTICS binding.
+  if (connector.type === "analytics") out.delivery = creds.api_key ? "api_key" : "service_binding";
   return out;
 }
 
@@ -185,6 +187,7 @@ export async function createDestination(
   const connector = connectorOr400(input.type);
   assertSettingsFor(input.type, input.settings);
   const creds = parseCredentials(env, connector, input.credentials, origins);
+  await connector.verify?.(creds as never, env, accountId);
   const natural = connector.naturalKey(creds as never);
   const found = await env.DB.prepare("SELECT * FROM destinations WHERE container_id = ? AND type = ? AND natural_key = ?")
     .bind(containerId, input.type, natural)
@@ -261,6 +264,7 @@ export async function updateDestination(
     const merged = { ...current, ...input.credentials };
     for (const [k, v] of Object.entries(input.credentials)) if (v === null) delete merged[k];
     const creds = parseCredentials(env, connector, merged, origins);
+    await connector.verify?.(creds as never, env, accountId);
     credentials = await encryptSecret(encryptionKey(env), JSON.stringify(creds));
     pub = JSON.stringify(publicFields(connector, creds));
     natural_key = connector.naturalKey(creds as never);
@@ -298,6 +302,14 @@ export async function closeCircuit(env: Bindings, id: string) {
   )
     .bind(id)
     .run();
+}
+
+/** Skip reason for test traffic a destination has no test mechanism for (it is never sent as real). */
+export const NO_TEST_MODE = "test event, no test mode configured";
+
+/** How to give this destination a test mode, or null when its test traffic can be sent safely. */
+export function testModeGap(connector: Connector, creds: Record<string, unknown>): string | null {
+  return connector.testModeMissing?.(creds as never) ?? null;
 }
 
 /** Destination types whose URL the account chooses: tests return a summary, never the raw body. */
@@ -364,24 +376,22 @@ export async function testDestination(
   const creds = await loadCredentials(env, row);
   // Reddit calls its test code test_id (Events Manager > Event Testing).
   if (opts.test_event_code) creds[row.type === "reddit" ? "test_id" : "test_event_code"] = opts.test_event_code;
-  // LinkedIn and X map events to ids from the account (a conversion rule, an Events Manager event).
-  const needs = {
-    linkedin: ["conversion_id", "a conversion rule id (Campaign Manager > Measurement > Conversion tracking)"],
-    x: ["event_id", "an event id like tw-o1abc-o2def (Events Manager)"],
-  }[row.type as "x"];
-  if (needs && !(opts.send_to as Record<string, Record<string, string>> | undefined)?.[row.type]?.[needs[0]!])
-    throw badRequest(
-      `Testing ${row.type} needs ${needs[1]}.`,
-      `Pass { "send_to": { "${row.type}": { "${needs[0]}": "..." } } } in this request (the id your conversions' send_to.${row.type} uses).`,
+  // A test is test traffic: it never reaches a platform as a real conversion.
+  const gap = testModeGap(connector, creds);
+  if (gap && connector.noTestMode)
+    throw new ApiError(
+      400,
+      "no_test_mode",
+      `${row.type} has no test mode, so a test would record a real conversion; nothing was sent.`,
+      `${gap} Preview hits and test: true server events are skipped for it the same way.`,
     );
-  if ((row.type === "meta" || row.type === "tiktok") && !creds.test_event_code) {
+  if (gap)
     throw new ApiError(
       400,
       "test_event_code_required",
-      `Testing ${row.type} without a test_event_code would record a real event.`,
-      `Copy the code from ${row.type === "meta" ? "Meta Events Manager > (pixel) > Test events" : "TikTok Events Manager > (pixel) > Test events"} and pass { "test_event_code": "TEST..." } in this request, or PATCH it into credentials.`,
+      `Testing ${row.type} without a test code would record a real event; nothing was sent.`,
+      `${gap} Or pass { "test_event_code": "..." } in this request.`,
     );
-  }
   const sample = sampleEvent(opts.event_name ?? "purchase", containerId, container.domain);
   if (opts.send_to) Object.assign(sample.send_to, opts.send_to);
   // The destination's own transformations apply to the test too (its request shows them).
@@ -389,10 +399,12 @@ export async function testDestination(
   const event = applyParamRules(sample, settings.params, await loadLookups(env, containerId, lookupsUsed(settings.params)));
   const result = await connector.send(event, creds as never, {
     test: true,
+    sample: true,
     fetch: (...a) => fetch(...a),
     env,
     destinationId: id,
     containerId,
+    accountId: row.account_id,
     settings,
   });
   if (USER_URL_TYPES.has(row.type)) {

@@ -44,7 +44,8 @@
   //   CIRCUIT_BREAKER_MINUTES (default 60), MAX_ENVIRONMENTS_PER_CONTAINER (default 5),
   //   MAX_LOOKUPS_PER_CONTAINER (default 10), MAX_LOOKUP_ROWS (default 10000),
   //   MAX_LOOKUP_BYTES (default 1048576). See README.md "Config".
-  // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN.
+  // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared by the
+  // deployment's Workers: the site's dashboard and the ANALYTICS binding use it).
 
   // SIGNUP_LIMITER is shared by every app (the deploy tool sets its namespace); the others are this
   // app's own (namespaces 42011-42019) and are counted per Cloudflare location. Keys: client network
@@ -80,6 +81,12 @@
       "migrations_dir": "../site/migrations"
     }
   ],
+
+  // Optional, internal auth with INTERNAL_TOKEN (unbound or no INTERNAL_TOKEN = off): ANALYTICS is
+  // this deployment's analytics Worker. Analytics destinations without an api_key (setup with just
+  // platforms.analytics.site_id) deliver over it as the container's account; analytics refuses a
+  // site of another account. `pnpm afs config` maps afs-analytics to the profile's own Worker.
+  "services": [{ "binding": "ANALYTICS", "service": "afs-analytics" }],
 
   // One ContainerDO (SQLite) per container: visitors, event log, dedupe, live config copy.
   "durable_objects": {

@@ -172,3 +172,73 @@ describe("semantic validation", () => {
     expect(codes(r).warnings).toContain("google_ads_double_count");
   });
 });
+
+describe("unused_variable counts every place a template can name a variable", () => {
+  const base = {
+    triggers: [
+      { id: "all_pages", type: "page_view" },
+      { id: "p", type: "custom_event", event: "purchase" },
+    ],
+    tags: [{ id: "ga4", type: "ga4", params: { measurement_id: "G-ABC123XYZ" }, triggers: ["all_pages"] }],
+  };
+  const codes = (cfg: unknown) => validateConfig(cfg).warnings.map((w) => `${w.code}:${w.path}`);
+
+  it("a variable used only as {{name}} in conversions[].params is used", () => {
+    const cfg = {
+      ...base,
+      variables: [
+        { name: "plan", type: "url_param", param: "plan" },
+        { name: "coupon", type: "data_layer", key: "ecommerce.coupon" },
+      ],
+      conversions: [
+        {
+          name: "purchase",
+          trigger: "p",
+          params: { plan: "{{plan}}", label: "order {{ coupon }} done" },
+          send_to: { ga4: { event_name: "purchase" } },
+        },
+      ],
+    };
+    expect(codes(cfg).filter((c) => c.startsWith("unused_variable"))).toEqual([]);
+  });
+
+  it("tag params, param_set params and event_params_from still count; an unreferenced variable still warns", () => {
+    const cfg = {
+      variables: [
+        { name: "page_type", type: "constant", value: "home" },
+        { name: "shared", type: "param_set", params: { section: "{{section}}" } },
+        { name: "section", type: "url_param", param: "s" },
+        { name: "lonely", type: "constant", value: 1 },
+      ],
+      triggers: base.triggers.slice(0, 1),
+      tags: [
+        {
+          id: "ga4",
+          type: "ga4",
+          params: { measurement_id: "G-ABC123XYZ", event_params: { page_type: "{{page_type}}" }, event_params_from: "shared" },
+          triggers: ["all_pages"],
+        },
+      ],
+    };
+    expect(codes(cfg).filter((c) => c.startsWith("unused_variable"))).toEqual(["unused_variable:variables.3"]);
+  });
+
+  it("an undefined {{name}} in conversions[].params warns; templates in send_to params say they aren't rendered", () => {
+    const cfg = {
+      ...base,
+      variables: [{ name: "sku", type: "data_layer", key: "ecommerce.sku" }],
+      conversions: [
+        {
+          name: "purchase",
+          trigger: "p",
+          params: { missing: "{{nope}}" },
+          send_to: { ga4: { event_name: "purchase", params: { sku: "{{sku}}" } } },
+        },
+      ],
+    };
+    const w = codes(cfg);
+    expect(w).toContain("undefined_variable:conversions.0.params");
+    expect(w).toContain("template_not_rendered:conversions.0.send_to.ga4.params");
+    expect(w.filter((c) => c.startsWith("unused_variable"))).toEqual([]);
+  });
+});

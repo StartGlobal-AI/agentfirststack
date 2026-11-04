@@ -107,7 +107,7 @@ const hook = (path: string, settings?: object) => ({
 });
 const analyticsDest = {
   type: "analytics",
-  credentials: { site_id: "site_abc123", api_key: "ana_xxxxxxxx", base_url: "https://analytics.test" },
+  credentials: { site_id: "site_abc123", api_key: "afs_xxxxxxxx", base_url: "https://analytics.test" },
 };
 
 /** Run a ContainerDO method with extra vars (the DO reads its caps from env). */
@@ -267,7 +267,7 @@ describe("finding 2: analytics destination and test answers", () => {
     ]) {
       const r = await a.api("POST", `/v1/containers/${C}/destinations`, {
         type: "analytics",
-        credentials: { site_id: "site_abc123", api_key: "ana_xxxxxxxx", base_url },
+        credentials: { site_id: "site_abc123", api_key: "afs_xxxxxxxx", base_url },
       });
       expect(r.status, base_url).toBe(400);
     }

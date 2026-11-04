@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config/validate";
-import { buildRecipe, recipeInput } from "../src/service/recipe";
+import { buildRecipe, deliveryGaps, recipeInput, withGaps } from "../src/service/recipe";
 
 describe("setup_conversion_tracking recipe", () => {
   const input = recipeInput.parse({
@@ -74,5 +74,67 @@ describe("setup_conversion_tracking recipe", () => {
     expect(again.config.tags!.some((t) => t.id === "ga4")).toBe(true);
     expect(again.config.conversions!.filter((c) => c.name === "lead")).toHaveLength(1);
     expect(again.config.triggers!.find((t) => t.id === "lead_trigger")!.type).toBe("page_view");
+  });
+});
+
+describe("setup sets server: true only when a destination receives the conversion", () => {
+  const conversions = [
+    { name: "purchase", when: { data_layer_event: "purchase" }, value: 5, currency: "USD" },
+    { name: "sign_up", when: { data_layer_event: "sign_up" } },
+  ];
+  const analyticsOnly = recipeInput.parse({ platforms: { analytics: { site_id: "site_abc123" } }, conversions, consent: "none" });
+  const validate = (r: ReturnType<typeof buildRecipe>, types: string[]) =>
+    validateConfig(r.config, { destinations: types.map((type, i) => ({ id: `d${i}`, type, enabled: true })) });
+
+  it("analytics site_id with the ANALYTICS binding: a keyless destination and server: true, no delivery gaps", () => {
+    const r = buildRecipe(analyticsOnly, {}, { analyticsBinding: true });
+    expect(r.destinations).toEqual([
+      { type: "analytics", name: "analytics app (service binding)", credentials: { site_id: "site_abc123" } },
+    ]);
+    expect(r.config.conversions!.map((c) => c.server)).toEqual([true, true]);
+    expect(r.missing).toEqual([]);
+    expect(deliveryGaps(validate(r, ["analytics"]), r.config)).toEqual([]);
+  });
+  it("without the binding or a key: server: false, the reason in notes, api_key in missing, no server_without_destination", () => {
+    const r = buildRecipe(analyticsOnly, {}, { analyticsBinding: false });
+    expect(r.destinations).toEqual([]);
+    expect(r.config.conversions!.map((c) => c.server)).toEqual([false, false]);
+    expect(r.notes.join(" ")).toMatch(/server: false on "purchase", "sign_up".*no ANALYTICS service binding/);
+    expect(r.missing.map((m) => `${m.platform}.${m.field}`)).toEqual(["analytics.api_key"]);
+    const v = validate(r, []);
+    expect(v.warnings.map((w) => w.code)).not.toContain("server_without_destination");
+    expect(deliveryGaps(v, r.config)).toEqual([]);
+  });
+  it("an api_key still plans a keyed destination; existing destinations count as receivers", () => {
+    const keyed = buildRecipe(
+      recipeInput.parse({ platforms: { analytics: { site_id: "site_abc123", api_key: "afs_xxxxxxxx" } }, conversions }),
+      {},
+    );
+    expect(keyed.destinations[0]!.credentials).toEqual({ site_id: "site_abc123", api_key: "afs_xxxxxxxx" });
+    const viaHook = buildRecipe(analyticsOnly, {}, { existingDestinations: ["webhook"] });
+    expect(viaHook.config.conversions!.every((c) => c.server)).toBe(true);
+    // A destination that couldn't be created doesn't count, and the note says so.
+    const failed = buildRecipe(analyticsOnly, {}, { analyticsBinding: true, available: [], failed: ["analytics"] });
+    expect(failed.config.conversions!.every((c) => c.server === false)).toBe(true);
+    expect(failed.notes.join(" ")).toMatch(/analytics destination couldn't be created/);
+  });
+  it("an explicit server: true is kept and its gap is listed (setup then isn't ready)", () => {
+    const r = buildRecipe(
+      recipeInput.parse({
+        platforms: { ga4: { measurement_id: "G-ABC123XYZ" }, meta: { pixel_id: "1234567890123456" } },
+        conversions: [{ name: "purchase", when: { data_layer_event: "purchase" }, value: 5, currency: "USD", server: true }],
+      }),
+      {},
+    );
+    expect(r.config.conversions![0]!.server).toBe(true);
+    const gaps = deliveryGaps(validate(r, []), r.config);
+    expect(gaps.map((g) => `${g.platform}.${g.field}`).sort()).toEqual(["ga4.destination", "meta.destination", "server.destination"]);
+    expect(gaps.every((g) => g.impact.includes('"purchase"') && g.where.length > 0)).toBe(true);
+    // In missing[], a gap that a missing server credential already explains is said once.
+    expect(withGaps(r.missing, gaps).map((m) => `${m.platform}.${m.field}`)).toEqual([
+      "ga4.api_secret",
+      "meta.access_token",
+      "server.destination",
+    ]);
   });
 });

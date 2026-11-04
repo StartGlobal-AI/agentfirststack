@@ -52,13 +52,22 @@ describe("/collect helpers", () => {
     expect(await fromTrustedProxy({}, req({ [PROXY_KEY_HEADER]: a! }), "ctr_abcdefgh12345678")).toBe(false);
   });
   it("install snippets carry the proxy key server-side, never in the page snippet", () => {
-    const i = installInstructions("https://tags.example.net", { id: "ctr_abcdefgh12345678", domain: "shop.test" }, "k".repeat(64));
-    const p = i.first_party_proxy;
+    const i = installInstructions("https://tags.example.net", { id: "ctr_abcdefgh12345678", domain: "shop.test" }, { key: "k".repeat(64) });
+    const p = i.first_party_proxy as Record<string, string>;
     for (const k of ["cloudflare_worker", "nextjs", "netlify", "nginx"] as const)
       expect(p[k]).toContain(`x-afs-proxy-key`), expect(p[k]).toContain("k".repeat(64));
     expect(i.snippet).not.toContain("k".repeat(10));
     expect(p.snippet).not.toContain("k".repeat(10));
     expect(p.vercel).toMatch(/can't add request headers/);
+  });
+  it("install instructions leave the proxy key and configs out unless asked for", () => {
+    const i = installInstructions("https://tags.example.net", { id: "ctr_abcdefgh12345678", domain: "shop.test" });
+    const p = i.first_party_proxy as Record<string, string>;
+    expect(JSON.stringify(i)).not.toMatch(/[a-f0-9]{64}/);
+    expect(p.proxy_key).toBeUndefined();
+    expect(p.cloudflare_worker).toBeUndefined();
+    expect(p.how_to_get).toContain("/v1/containers/ctr_abcdefgh12345678/install?proxy=1");
+    expect(p.how_to_get).toMatch(/get_install_instructions \{ "proxy": true \}/);
   });
   it("parses the user agent for GA4 device info", () => {
     const d = deviceFrom(

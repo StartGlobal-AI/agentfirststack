@@ -45,7 +45,16 @@ export const recipeInput = z.strictObject({
       x: z.strictObject({ pixel_id: z.string().optional(), event_ids: z.record(z.string(), z.string()).optional() }).optional(),
       pinterest: z.strictObject({ tag_id: z.string().optional() }).optional(),
       analytics: z
-        .strictObject({ site_id: z.string().optional(), api_key: z.string().optional(), base_url: z.string().optional() })
+        .strictObject({
+          site_id: z.string().optional().describe("The analytics site (site_...): the browser tag, and server-side delivery."),
+          api_key: z
+            .string()
+            .optional()
+            .describe(
+              "afs_ key for server-side delivery. Not needed when this deployment has the ANALYTICS service binding (setup then delivers over it as this account).",
+            ),
+          base_url: z.string().optional(),
+        })
         .optional(),
       webhook: z.strictObject({ url: z.string(), secret: z.string() }).optional(),
     })
@@ -135,8 +144,24 @@ const WHERE: Record<string, string> = {
   "x.event_ids": "X Ads > Events manager > (event) id 'tw-<pixel>-<event>' per conversion.",
   "pinterest.tag_id": "Pinterest Ads > Conversions > Tag manager > Tag ID.",
   "analytics.site_id": "analytics app: POST /v1/sites { domain } returns site_...",
-  "analytics.api_key": "analytics app: POST /v1/signup (or an existing key) for server-side delivery.",
+  "analytics.api_key":
+    "Your afs_ API key (POST /v1/signup on any app; one key works for every app). Only needed where the deployment has no ANALYTICS service binding.",
 };
+
+/** What buildRecipe needs to know about the deployment and the container beyond the input. */
+export interface RecipeOptions {
+  /** Analytics is reachable without an API key (ANALYTICS service binding + INTERNAL_TOKEN). */
+  analyticsBinding?: boolean;
+  /** Types of the container's enabled destinations before setup. */
+  existingDestinations?: string[];
+  /**
+   * Destination types that will exist after setup. Default: the existing ones plus every planned
+   * one; applyRecipe passes the real set when a planned destination couldn't be created.
+   */
+  available?: string[];
+  /** Planned destination types that couldn't be created (named in the server: false note). */
+  failed?: string[];
+}
 
 const KINDS = new Set(Object.keys(STANDARD_EVENTS));
 const EEA_DENIED = { ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied", analytics_storage: "denied" } as const;
@@ -150,6 +175,7 @@ function upsert<T>(list: T[], item: T, key: (t: T) => string) {
 export function buildRecipe(
   input: RecipeInput,
   existing: ContainerConfig,
+  opts: RecipeOptions = {},
 ): { config: ContainerConfig; destinations: PlannedDestination[]; missing: Missing[]; notes: string[] } {
   const base: ContainerConfig = input.mode === "replace" ? {} : (JSON.parse(JSON.stringify(existing)) as ContainerConfig);
   const variables: Variable[] = base.variables ?? [];
@@ -159,6 +185,8 @@ export function buildRecipe(
   const missing: Missing[] = [];
   const notes: string[] = [];
   const destinations: PlannedDestination[] = [];
+  /** Why server delivery can't happen, for the note on conversions left browser-only. */
+  const serverOffReasons: string[] = [];
   const p = input.platforms;
   const miss = (platform: string, field: string, impact: string) =>
     missing.push({ platform, field, impact, where: WHERE[`${platform}.${field}`] ?? "" });
@@ -257,11 +285,29 @@ export function buildRecipe(
           ...(p.analytics.base_url ? { base_url: p.analytics.base_url } : {}),
         },
       });
+    } else if (p.analytics.site_id && opts.analyticsBinding) {
+      // No key needed: delivered over this deployment's ANALYTICS binding as the container's account.
+      destinations.push({ type: "analytics", name: "analytics app (service binding)", credentials: { site_id: p.analytics.site_id } });
+    } else if (p.analytics.site_id) {
+      miss(
+        "analytics",
+        "api_key",
+        "No server-side delivery to analytics: this deployment has no ANALYTICS service binding, so that needs an API key. The analytics tag still counts conversions in the browser.",
+      );
+      serverOffReasons.push(
+        "platforms.analytics has a site_id but no api_key, and this deployment has no ANALYTICS service binding to deliver without one",
+      );
     }
   }
   if (p.webhook) destinations.push({ type: "webhook", name: "webhook", credentials: { url: p.webhook.url, secret: p.webhook.secret } });
 
-  const serverTypes = new Set(destinations.map((d) => d.type));
+  // Destination types that will receive server conversions: existing + planned (or what was really created).
+  const serverTypes = new Set(opts.available ?? [...(opts.existingDestinations ?? []), ...destinations.map((d) => d.type)]);
+  if (opts.failed?.length)
+    serverOffReasons.push(
+      `the ${opts.failed.join(", ")} destination${opts.failed.length > 1 ? "s" : ""} couldn't be created (destination_errors)`,
+    );
+  const browserOnly: string[] = [];
   for (const c of input.conversions) {
     const kind = c.kind ?? (KINDS.has(c.name) ? c.name : "custom");
     const std = STANDARD_EVENTS[kind] ?? {};
@@ -336,7 +382,22 @@ export function buildRecipe(
     }
     if (p.pinterest && has("pinterest_tag")) conv.send_to.pinterest = { event_name: custom ? c.name : std.pinterest! };
     if (p.analytics) conv.send_to.analytics = { event_name: c.name };
+    // server: true only when a destination will receive it (analytics and webhooks take every server
+    // conversion, the others their send_to platform). An explicit server: true is kept; the gap then
+    // shows in validation and missing.
+    const receivable =
+      serverTypes.has("analytics") || serverTypes.has("webhook") || Object.keys(conv.send_to).some((x) => serverTypes.has(x));
+    if (conv.server && !receivable && c.server !== true) {
+      conv.server = false;
+      browserOnly.push(c.name);
+    }
     upsert(conversions, conv, (x) => x.name);
+  }
+  if (browserOnly.length) {
+    const why = serverOffReasons.length ? `: ${serverOffReasons.join("; ")}` : "";
+    notes.push(
+      `server: false on ${browserOnly.map((n) => `"${n}"`).join(", ")}, because no server-side destination would receive ${browserOnly.length > 1 ? "them" : "it"}${why}. Browser tags still fire. To deliver server-side too, give server credentials here (ga4.api_secret, meta.access_token, tiktok.access_token, analytics.api_key...) or add a destination (POST /v1/containers/:id/destinations), then run setup again (it merges).`,
+    );
   }
 
   const consent = input.consent ?? "eea_opt_in";
@@ -361,13 +422,74 @@ export function buildRecipe(
   };
 }
 
-export function recipeNextSteps(containerId: string, validation: ValidationResult, missing: Missing[], published: boolean) {
+/** Validation warnings that mean a conversion won't reach a platform it targets (or won't go server-side as asked). */
+export const DELIVERY_GAP_CODES = new Set(["no_route", "no_platforms", "no_destinations", "server_without_destination"]);
+
+/**
+ * The draft's delivery gaps as missing[] entries, one per (warning, platform), naming the
+ * conversions. setup reports ready_to_publish only when there are none.
+ */
+export function deliveryGaps(validation: ValidationResult, config: ContainerConfig): Missing[] {
+  const groups = new Map<string, { code: string; platform: string; names: string[]; hint: string }>();
+  for (const w of validation.warnings) {
+    if (!DELIVERY_GAP_CODES.has(w.code)) continue;
+    const i = Number(/^conversions\.(\d+)/.exec(w.path)?.[1]);
+    const name = config.conversions?.[i]?.name ?? w.path;
+    const platform = /send_to\.([a-z0-9_]+)/.exec(w.path)?.[1] ?? /targets ([a-z0-9_]+)/.exec(w.message)?.[1] ?? "server";
+    const key = `${w.code}:${platform}`;
+    const g = groups.get(key) ?? { code: w.code, platform, names: [], hint: w.hint };
+    if (!g.names.includes(name)) g.names.push(name);
+    groups.set(key, g);
+  }
+  return [...groups.values()].map((g) => {
+    const names = g.names.map((n) => `"${n}"`).join(", ");
+    const impact = {
+      no_route: `Conversion ${names} targets ${g.platform}, but nothing delivers it there (no browser tag, no destination).`,
+      no_platforms: `Conversion ${names} has an empty send_to: nothing receives it.`,
+      no_destinations: `Conversion ${names} has server: true, but the container has no destinations: nothing is sent server-side.`,
+      server_without_destination: `Conversion ${names} has server: true and targets ${g.platform}, but there's no ${g.platform} destination: server-side delivery to ${g.platform} won't happen.`,
+    }[g.code]!;
+    const field = g.code === "no_platforms" ? "send_to" : g.code === "no_route" ? "tag_or_destination" : "destination";
+    return { platform: g.platform, field, impact, where: g.hint };
+  });
+}
+
+/** The missing[] field that turns server-side delivery on for each platform setup can configure. */
+const SERVER_CREDENTIAL: Record<string, string> = {
+  ga4: "api_secret",
+  meta: "access_token",
+  tiktok: "access_token",
+  google_ads: "server",
+  analytics: "api_key",
+};
+
+/**
+ * missing[] with the delivery gaps added, except a platform's "no destination" gap when missing
+ * already asks for that platform's server credential (the same gap, said once).
+ */
+export function withGaps(missing: Missing[], gaps: Missing[]): Missing[] {
+  const covered = (g: Missing) =>
+    g.field === "destination" && missing.some((m) => m.platform === g.platform && m.field === SERVER_CREDENTIAL[g.platform]);
+  return [...missing, ...gaps.filter((g) => !covered(g))];
+}
+
+export function recipeNextSteps(
+  containerId: string,
+  validation: ValidationResult,
+  missing: Missing[],
+  published: boolean,
+  gaps: Missing[] = [],
+) {
   const steps: string[] = [];
   if (!validation.valid)
     steps.push(`Fix the ${validation.errors.length} validation error(s) (validation.errors) with patch_draft, then validate_draft.`);
+  if (validation.valid && gaps.length)
+    steps.push(
+      `Not ready: some conversions won't reach a platform they target (missing[] lists each gap and the credential or destination that closes it). The draft is valid and would publish; close the gaps first, or set server: false / drop that platform from send_to if that's intended.`,
+    );
   if (missing.length)
     steps.push(
-      `Collect the ${missing.length} missing id(s)/credential(s) listed in missing[] and run setup_conversion_tracking again (it merges).`,
+      `Collect what missing[] lists (${missing.length} item(s), each with where to find it) and run setup_conversion_tracking again (it merges).`,
     );
   steps.push(`test_destination for each created destination (Meta/TikTok need a test_event_code).`);
   steps.push(
