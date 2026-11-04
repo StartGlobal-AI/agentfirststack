@@ -7,6 +7,7 @@ import {
   extractKey,
   isTemporaryCredential,
   mcpChallenge,
+  renameProject,
 } from "@afs/shared";
 import { claimLinkResponse, createClaimLink } from "./claims";
 import type { Bindings } from "./env";
@@ -73,6 +74,20 @@ const CLAIM_TOOL: Tool = {
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 };
 
+const RENAME_TOOL: Tool = {
+  name: "afs_update_project",
+  title: "Rename this project",
+  description:
+    "Sets the project's name, shown in the owner's dashboard and on the claim page. Use the site's domain or the product name. Same as PATCH /v1/me {name}.",
+  inputSchema: {
+    type: "object",
+    properties: { name: { type: "string", description: "1-100 visible characters, e.g. acme.com" } },
+    required: ["name"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+};
+
 interface Caller {
   authHeader: string;
   auth: AuthContext;
@@ -121,10 +136,23 @@ async function buildToolList(env: Bindings, caller: Caller): Promise<Tool[]> {
       return tools.map((t) => ({ ...t, name: `${s.key}_${t.name}`, description: `[${s.label}] ${t.description ?? ""}`.trim() }));
     }),
   );
-  return [...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []), ...lists.flat()];
+  return [...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []), ...(canWrite(caller.auth) ? [RENAME_TOOL] : []), ...lists.flat()];
 }
 
-async function callGatewayTool(env: Bindings, caller: Caller, name: string) {
+async function callGatewayTool(env: Bindings, caller: Caller, name: string, args: Record<string, unknown> = {}) {
+  if (name === RENAME_TOOL.name) {
+    if (!canWrite(caller.auth))
+      return toolResult(
+        { error: { code: "forbidden", message: "This is a read-only key.", hint: 'Renaming needs a key with scope "*".' } },
+        true,
+      );
+    try {
+      return toolResult(await renameProject(env, caller.auth.accountId, args.name));
+    } catch (err) {
+      const e = err as { toJSON?: () => unknown; message?: string };
+      return toolResult(e.toJSON ? e.toJSON() : { error: { code: "internal", message: e.message ?? String(err) } }, true);
+    }
+  }
   if (name === CLAIM_TOOL.name) {
     if (!canWrite(caller.auth)) {
       return toolResult(
@@ -172,7 +200,8 @@ async function handle(env: Bindings, caller: Caller, msg: RpcRequest): Promise<u
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
       if (name.startsWith("afs_")) {
-        const result = await callGatewayTool(env, caller, name);
+        const args = msg.params?.arguments;
+        const result = await callGatewayTool(env, caller, name, args && typeof args === "object" ? (args as Record<string, unknown>) : {});
         if (result) return { jsonrpc: "2.0", id: msg.id, result };
       }
       const svc = SERVICES.find((s) => name.startsWith(`${s.key}_`));

@@ -33,6 +33,23 @@ describe("MCP gateway", () => {
     expect(init.json.result.instructions).toContain("afs_create_claim_link");
   });
 
+  it("renames the project over REST (PATCH /v1/me) and with afs_update_project; read keys can't", async () => {
+    const agent = await signup("dogfood");
+    const rest = await call("PATCH", "/v1/me", { key: agent.key, json: { name: "  acme.com\u200b " } });
+    expect(rest.status).toBe(200);
+    expect(rest.json.account.name).toBe("acme.com");
+    expect((await call("PATCH", "/v1/me", { key: agent.key, json: { name: "   " } })).json.error.code).toBe("bad_request");
+    const tool = await mcp(agent.key, "tools/call", { name: "afs_update_project", arguments: { name: "acme.com shop" } });
+    expect(tool.json.result.isError).toBeUndefined();
+    expect(JSON.parse(tool.json.result.content[0].text).account.name).toBe("acme.com shop");
+    expect((await call("GET", "/v1/me", { key: agent.key })).json.account.name).toBe("acme.com shop");
+    const read = (await call("POST", "/v1/keys", { key: agent.key, json: { scope: "read" } })).json.api_key as string;
+    expect((await call("PATCH", "/v1/me", { key: read, json: { name: "x" } })).status).toBe(403);
+    const names = ((await mcp(read, "tools/list")).json.result.tools as { name: string }[]).map((t) => t.name);
+    expect(names).not.toContain("afs_update_project");
+    expect((await mcp(read, "tools/call", { name: "afs_update_project", arguments: { name: "x" } })).json.result.isError).toBe(true);
+  });
+
   it("hides and refuses the claim tool for read-only keys", async () => {
     const agent = await signup();
     const read = (await call("POST", "/v1/keys", { key: agent.key, json: { scope: "read" } })).json.api_key as string;

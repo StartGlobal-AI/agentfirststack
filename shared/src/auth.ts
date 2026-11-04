@@ -1,7 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { sha256Hex, timingSafeEqual } from "./crypto";
-import { ApiError, accountSuspended, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
+import { ApiError, accountSuspended, badRequest, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
 import { clientAsn, clientNetwork, publicBaseUrl, readJson } from "./http";
 import { newId, randomString } from "./ids";
 import { accountStanding, capFor } from "./standing";
@@ -595,6 +595,20 @@ const createKeyBody = z.object({
  *   POST   /v1/keys       -> create key { name?, scope?: "*" | "read" } (not with an OAuth access token; capped per account)
  *   DELETE /v1/keys/:id   -> revoke key
  */
+/**
+ * Rename the project (the account). Shared by PATCH /v1/me on every app and the gateway's
+ * afs_update_project tool; the name shows in the owner's dashboard and claim page.
+ */
+export async function renameProject(env: AuthBindings, accountId: string, raw: unknown) {
+  const name = cleanName(raw, 100);
+  if (!name)
+    throw badRequest("Pass a name: 1-100 visible characters.", 'Use the site\'s domain or the product name, e.g. {"name":"acme.com"}.');
+  const db = identityDb(env);
+  await db.prepare("UPDATE accounts SET name = ? WHERE id = ?").bind(name, accountId).run();
+  const account = await db.prepare("SELECT id, name, email, created_at FROM accounts WHERE id = ?").bind(accountId).first();
+  return { account };
+}
+
 export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions<B>) {
   const app = new Hono<{ Bindings: B; Variables: { auth: AuthContext } }>();
 
@@ -685,6 +699,11 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
       .bind(auth.accountId)
       .first();
     return c.json({ app: opts.appName, account, key: { id: auth.keyId, scopes: auth.scopes } });
+  });
+
+  app.patch("/v1/me", async (c) => {
+    const body = await readJson(c, z.object({ name: z.string().max(400) }));
+    return c.json(await renameProject(c.env, c.var.auth.accountId, body.name));
   });
 
   app.get("/v1/keys", async (c) => {

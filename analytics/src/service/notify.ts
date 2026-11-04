@@ -195,7 +195,7 @@ async function sendOne(
 
 const statusOf = (ds: Delivery[], retrying: boolean): Sent["status"] => {
   const sent = ds.filter((d) => d.status !== "skipped");
-  if (!sent.length) return "failed";
+  if (!sent.length) return "suppressed"; // nothing was sent: daily limits, or nobody to email yet
   const ok = sent.filter((d) => d.status === "delivered").length;
   if (ok === sent.length) return "delivered";
   if (retrying) return "pending";
@@ -217,7 +217,10 @@ async function sendTo(
   const used = await usageToday(env, site.id, day);
   let budget = caps.deliveries - used.deliveries;
   let emailBudget = caps.emails - used.emails;
+  // Email goes to the project's members; before anyone claims it, those deliveries are skipped (no budget used).
+  const noMembers = dests.some((d) => d.type === "email") && !(await memberEmails(env, site.account_id)).length;
   const planned: { d: DestinationRow; skip: string | null }[] = dests.map((d) => {
+    if (d.type === "email" && noMembers) return { d, skip: "nobody has claimed the project yet, so there is nobody to email" };
     if (budget <= 0) return { d, skip: "daily delivery limit reached (MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY)" };
     if (d.type === "email" && emailBudget <= 0) return { d, skip: "daily email limit reached (MAX_ALERT_EMAILS_PER_SITE_PER_DAY)" };
     budget--;

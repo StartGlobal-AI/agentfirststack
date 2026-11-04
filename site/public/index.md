@@ -100,13 +100,28 @@ Or one per service at `https://<service>.agentfirststack.com/mcp`.
 ## Prompt for your agent
 
 ```text
-Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt first; it is
-the complete manual. If .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get a key with
-POST https://agentfirststack.com/v1/signup and save it there. Then set up analytics, conversion
-tracking and an inbox, verifying each step, and note what you set up in AGENTFIRSTSTACK.md (ids and
-env var names, never key values). Ask me only for ad platform IDs and tokens. Finish with POST
-https://agentfirststack.com/v1/claim-link and give me the claim link it returns. Tell me what you
-set up and what still needs me.
+Set up AgentFirstStack for this project, completely, and verify it yourself. It's free, open-source infrastructure built for agents: web analytics, a tag manager with server-side conversion tracking, email inboxes and session replay. There is no signup form: one request gets a key, and you can do every step without me.
+
+1. Read https://agentfirststack.com/llms.txt, then follow its "Full setup" section from start to finish. Read each service's manual before you use that service.
+
+2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, and read AGENTFIRSTSTACK.md for what earlier runs set up. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
+
+3. The full setup, in this order:
+   - Map the site first: its main pages, every main button, link and form, and what counts as a sign-up, lead or purchase here.
+   - Email: an inbox for the project, for any third-party signups the setup needs.
+   - Analytics: the site, a goal for each conversion and main action, server events for what only the backend knows, payments if the business takes them, and a weekly email report and alerts for me.
+   - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
+   - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
+
+4. Deploy, then verify like a visitor: open the main pages in a real browser if you can, click the main actions, and check that each one shows up in analytics and in the tags event log, that each service's verify passes, and that a replay transcript shows your visit. Fix what fails and check again.
+
+5. Don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
+
+6. Write what you set up in AGENTFIRSTSTACK.md at the repo root (ids, env var names, every goal and event and what triggers it; never key values) and commit it.
+
+7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
+
+When you're done, tell me what you set up, how you verified each part (with the numbers you saw), what's waiting on me, and give me the claim link.
 ```
 
 ## Free and open source

@@ -48,7 +48,7 @@ export const createDestinationInput = z.object({
   type: z
     .enum(DESTINATION_TYPES)
     .describe(
-      "webhook: a signed JSON POST to your https endpoint. slack: a Slack incoming-webhook URL (https://hooks.slack.com/services/...). email: every member of this project (people who claimed it), when the deployment has email sending.",
+      "webhook: a signed JSON POST to your https endpoint. slack: a Slack incoming-webhook URL (https://hooks.slack.com/services/...). email: every member of this project (people who claimed it), when the deployment has email sending; skipped until someone claims it.",
     ),
   url: z.string().max(2000).optional().describe("webhook and slack: the URL (https, public host). Not for email."),
   name: z.string().max(120).optional().describe('A label, e.g. "Ops channel".'),
@@ -125,6 +125,7 @@ export async function createDestination(ctx: Ctx, siteId: string, raw: unknown) 
   const db = ctx.env.DB;
   let urlHash = "email";
   let url: string | null = null;
+  let waitingForOwner = false;
   if (input.type === "email") {
     if (input.url) throw badRequest("Email destinations take no url.", "They go to every member of this project (people who claimed it).");
     if (!emailConfigured(ctx.env))
@@ -134,11 +135,9 @@ export async function createDestination(ctx: Ctx, siteId: string, raw: unknown) 
         "This deployment doesn't send email (no EMAIL binding or ALERT_EMAIL_FROM).",
         "Use a webhook or Slack destination instead. Operator: add the send_email binding EMAIL and ALERT_EMAIL_FROM (an address on a domain onboarded for Cloudflare Email Sending).",
       );
-    if (!(await memberEmails(ctx.env, ctx.accountId)).length)
-      throw badRequest(
-        "This project has no members to email yet.",
-        "Email goes only to people who claimed the project (POST /v1/claim-link on the platform site, then sign in). Or use a webhook or Slack destination.",
-      );
+    // Before anyone claims the project there is nobody to email: the destination is kept and its
+    // deliveries are skipped until then, so an agent can set up the owner's reports on the first run.
+    waitingForOwner = !(await memberEmails(ctx.env, ctx.accountId)).length;
   } else {
     if (!input.url)
       throw badRequest(
@@ -229,6 +228,11 @@ export async function createDestination(ctx: Ctx, siteId: string, raw: unknown) 
           signing_secret: secret,
           verify:
             'Each POST carries x-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(signing_secret, "<t>.<raw body>")>. Recompute it over the raw body and reject timestamps older than 5 minutes. This is the only time the secret is shown.',
+        }
+      : {}),
+    ...(waitingForOwner
+      ? {
+          note: "Nobody has claimed this project yet, so there is nobody to email: deliveries are skipped until someone opens a claim link (POST /v1/claim-link on the platform site) and signs in. Then they reach every member.",
         }
       : {}),
     next_steps: [

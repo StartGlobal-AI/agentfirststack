@@ -451,29 +451,28 @@ pnpm afs deploy mystack</pre>
   </div>
 </footer>
 
-<template id="prompt-text">Set up AgentFirstStack for this project. It's free, open-source infrastructure built for agents: web analytics, a tag manager with server-side conversion tracking, email inboxes and session replay. You can do all of it yourself. There is no signup form, and no email or verification is needed.
+<template id="prompt-text">Set up AgentFirstStack for this project, completely, and verify it yourself. It's free, open-source infrastructure built for agents: web analytics, a tag manager with server-side conversion tracking, email inboxes and session replay. There is no signup form: one request gets a key, and you can do every step without me.
 
-1. Read https://agentfirststack.com/llms.txt. It is the complete manual.
+1. Read https://agentfirststack.com/llms.txt, then follow its "Full setup" section from start to finish. Read each service's manual before you use that service.
 
-2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and skip to step 3; don't sign up again. Otherwise get a key with one request:
-   curl -X POST https://agentfirststack.com/v1/signup
-   Save api_key in this project's .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
-   The same key works for analytics, tags, mail and replay.
+2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, and read AGENTFIRSTSTACK.md for what earlier runs set up. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
 
-3. Set up what this project needs, and verify each step with the checks the manual describes:
-   - Analytics: create a site for the production domain, add the tracking snippet to the site's layout, deploy, then run verify. Set up goals for sign-ups and purchases; send the ones only the server knows about (paid orders) as server events.
-   - Conversion tracking: create a tags container, add its snippet, scan the site, define the conversions that matter here (sign-ups, purchases, leads), validate, test and publish. If the backend also reports a conversion the browser tracks, pass the browser's event_id with it as the tags manual explains, so ad platforms count it once.
-   - Ad accounts: connect the platforms this business uses (Google Ads, Meta, GA4, TikTok). If you have tools for those platforms, use them to find or create the pixel, measurement and conversion IDs. Otherwise ask me for exactly the IDs and tokens the manual lists, and tell me where to find each one.
-   - Email: create an inbox for signing up to third-party services, and use wait_for_email to receive their verification codes.
-   - Replay (optional, ask me first): turn on session replay for the production domain, linked to its analytics site so the analytics snippet loads it (nothing else to paste). Text and inputs are masked by default. Later, use search_sessions and get_session_transcript to answer why visitors drop off or what's broken.
+3. The full setup, in this order:
+   - Map the site first: its main pages, every main button, link and form, and what counts as a sign-up, lead or purchase here.
+   - Email: an inbox for the project, for any third-party signups the setup needs.
+   - Analytics: the site, a goal for each conversion and main action, server events for what only the backend knows, payments if the business takes them, and a weekly email report and alerts for me.
+   - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
+   - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
 
-4. If you support MCP, add the servers listed in the manual so you can call the tools directly.
+4. Deploy, then verify like a visitor: open the main pages in a real browser if you can, click the main actions, and check that each one shows up in analytics and in the tags event log, that each service's verify passes, and that a replay transcript shows your visit. Fix what fails and check again.
 
-5. Write what you set up (site, container and inbox ids, and which env vars hold keys, never the key values) in AGENTFIRSTSTACK.md at the repo root and commit it, so the next run updates it instead of starting over.
+5. Don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
 
-6. Last, create a claim link for me with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool). It lets me sign in and see everything you set up in a dashboard.
+6. Write what you set up in AGENTFIRSTSTACK.md at the repo root (ids, env var names, every goal and event and what triggers it; never key values) and commit it.
 
-When you're done, tell me what you set up, how you verified it, anything still waiting on me, and give me the claim link.</template>
+7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
+
+When you're done, tell me what you set up, how you verified each part (with the numbers you saw), what's waiting on me, and give me the claim link.</template>
 
 <script src="/app.js" defer></script>
 </body>

@@ -384,7 +384,7 @@ describe("alerts: destinations, rules, cron delivery", () => {
     expect(again.status).toBe(200);
     expect(again.body.existing).toBe(true);
     expect(again.body.signing_secret).toBeUndefined();
-    // email: off without the binding; with it, only for a project with members
+    // email: off without the binding; with it, allowed before anyone claims the project
     expect(
       (await callWith({ EMAIL: undefined }, `/v1/sites/${site}/destinations`, { method: "POST", key, json: { type: "email" } })).status,
     ).toBe(503);
@@ -393,8 +393,9 @@ describe("alerts: destinations, rules, cron delivery", () => {
       key,
       json: { type: "email" },
     });
-    expect(noMembers.status).toBe(400);
-    expect(noMembers.body.error.hint).toContain("claim");
+    // before anyone claims the project: kept, with a note; deliveries are skipped until then
+    expect(noMembers.status).toBe(201);
+    expect(noMembers.body.note).toContain("claim");
     // an OAuth access token can't leave a destination behind
     const me = (await call("/v1/me", { key })).body;
     const token = (await createApiKey(env.AUTH_DB ?? env.DB, me.account.id, { keyPrefix: "afs", expiresAt: Date.now() + 3_600_000 })).key;
@@ -404,7 +405,8 @@ describe("alerts: destinations, rules, cron delivery", () => {
       json: { type: "slack", url: "https://hooks.slack.com/services/T/B/C" },
     });
     expect(tmp.body.error.code).toBe("temporary_credential");
-    expect((await call(`/v1/sites/${site}/destinations`, { key: token })).body.destinations).toHaveLength(1);
+    // the webhook, and the email destination kept for the future owner
+    expect((await call(`/v1/sites/${site}/destinations`, { key: token })).body.destinations).toHaveLength(2);
   });
 
   it("a goal alert fires through the cron with a signed webhook; evaluate, test, history, cooldown; caps", async () => {

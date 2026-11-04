@@ -6,8 +6,8 @@
  *   node scripts/tool-counts.mjs --check  exit 1 if any of them is out of date
  *
  * Reads every t.read("name", ...) / t.write("name", ...) registration, then updates:
- *   site/public/mcp.html                     "<Service> (N tools)" headings and the Read / Write lists
- *   site/public/llms.txt                     the gateway total in section 8
+ *   site/public/mcp.html                     "<Service> (N tools)" headings, the Read / Write lists, the gateway count
+ *   site/public/llms.txt                     the gateway total in the MCP section
  *   site/public/.well-known/mcp/*.json       toolCount (server-card.json is the gateway total)
  *   site/public/gmail-mcp.html               "all N tools" in the mail manual sentence
  */
@@ -29,6 +29,8 @@ for (const app of APPS) {
   tools[app] = { read, write, count: read.length + write.length };
 }
 const total = APPS.reduce((n, a) => n + tools[a].count, 0);
+// The gateway's own tools (not forwarded to a service), e.g. afs_create_claim_link.
+const gateway = [...readFileSync(join(root, "site/src/mcp-gateway.ts"), "utf8").matchAll(/\bname: "(afs_[a-z0-9_]+)"/g)].map((m) => m[1]);
 
 const edits = [];
 function edit(rel, fn) {
@@ -54,6 +56,9 @@ edit("site/public/mcp.html", (s) => {
     must(s, block, `${app} Read/Write lists in mcp.html`);
     s = s.replace(block, `$1${code(t.read)}$2${code(t.write)}$3`);
   }
+  const gw = /(<h3 id="gateway-tools">Gateway \()\d+ tools?(\)<\/h3>)/;
+  must(s, gw, "gateway heading in mcp.html");
+  s = s.replace(gw, `$1${gateway.length} tool${gateway.length === 1 ? "" : "s"}$2`);
   return s;
 });
 edit("site/public/llms.txt", (s) => {
@@ -74,7 +79,7 @@ edit("site/public/gmail-mcp.html", (s) => {
   return s.replace(re, `$1${tools.mail.count}$2`);
 });
 
-const summary = `${APPS.map((a) => `${a} ${tools[a].count}`).join(", ")}; gateway ${total} + afs_create_claim_link`;
+const summary = `${APPS.map((a) => `${a} ${tools[a].count}`).join(", ")}; gateway ${total} + ${gateway.join(", ")}`;
 if (check) {
   if (edits.length) {
     console.error(`Out of date (${summary}): ${edits.map((e) => e.rel).join(", ")}. Run: node scripts/tool-counts.mjs`);

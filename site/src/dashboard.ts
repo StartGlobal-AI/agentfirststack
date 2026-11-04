@@ -66,7 +66,7 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project. Read https://agentfirststack.com/llms.txt and follow it: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it; otherwise get this project its own key. Set up analytics, conversion tracking and an inbox as the project needs (ask me before turning on session replay), and verify each step. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values). When you're done, send me a claim link for the project.";
+  "Set up AgentFirstStack for this project, completely, and verify it yourself. Read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, and verify each one like a visitor would. Don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values), and send me a claim link for the project.";
 
 /** The screens an agent can build for a project, one prompt each (see dashboard-prompt.ts). */
 const BUILDS: { kind: BuildKind; title: string; what: string }[] = [
