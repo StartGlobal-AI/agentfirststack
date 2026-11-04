@@ -3,7 +3,22 @@ import { type AppEnv, type Standing, cap } from "../env";
 import { utcDay } from "./format";
 
 /** Kinds of per-account daily budget kept in `account_daily`. */
-export type DailyKind = "inbox_create" | "inbox_delete" | "webhook_test";
+export type DailyKind = "inbox_create" | "inbox_delete" | "inbox_clear" | "webhook_test" | "event" | "attachment_text";
+
+/** Seconds from `now` to the next 00:00 UTC, when every daily budget resets (at least 1). */
+export function secondsToUtcMidnight(now = Date.now()): number {
+  const next = new Date(now);
+  next.setUTCHours(24, 0, 0, 0);
+  return Math.max(1, Math.ceil((next.getTime() - now) / 1000));
+}
+
+/** The next 00:00 UTC as unix ms. */
+export function nextUtcMidnight(now = Date.now()): number {
+  return now + secondsToUtcMidnight(now) * 1000;
+}
+
+/** Window of the Workers rate-limit bindings (wrangler.jsonc: period 60). */
+export const RATE_LIMIT_PERIOD_S = 60;
 
 /** MAX_BLOB_BYTES_PER_ACCOUNT defaults (claimed / unclaimed accounts). */
 export const DEFAULT_MAX_BLOB_BYTES = 1024 * 1024 * 1024;
@@ -62,6 +77,7 @@ export function dailyLimitError(what: string, limit: number, hint: string, detai
     `${hint} The budget resets at 00:00 UTC.`,
     {
       limit,
+      retry_after_s: secondsToUtcMidnight(),
       ...details,
     },
   );
@@ -80,5 +96,6 @@ export async function rateLimit(limiter: RateLimit | undefined, key: string, wha
     console.error("rate limiter failed", e);
     return; // fail open: the D1 caps still apply
   }
-  if (!ok) throw new ApiError(429, "rate_limited", `Too many ${what} requests from this account.`, hint);
+  if (!ok)
+    throw new ApiError(429, "rate_limited", `Too many ${what} requests from this account.`, hint, { retry_after_s: RATE_LIMIT_PERIOD_S });
 }

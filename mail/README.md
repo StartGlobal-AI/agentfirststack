@@ -241,7 +241,8 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
     to pass. Note: catch-all rules exist only on the zone apex; the apex catch-all also receives
     mail for routing subdomains that have no literal rule. Deleting a domain never changes
     Cloudflare settings.
-- **Webhooks**: `message.received` events (and `webhook.test`) are written to a delivery log and
+- **Webhooks**: events (`message.received`, `message.sent`, `message.delivered`, `message.bounced`,
+  `message.complained`, `message.failed`, `domain.verified`, and `webhook.test`) are written to a delivery log and
   sent through a Queue. Each webhook has its own secret, returned once at creation and sealed at
   rest with `encryptSecret()` when `ENCRYPTION_KEY` is set. Header
   `x-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>` plus
@@ -264,6 +265,63 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   test event is sent once, without retries. Delivery log rows are purged after 7 days. Suspended
   accounts' events are not enqueued, and queued deliveries for them are dropped (`failed`).
   `message.received` events carry `data.untrusted`, naming the fields a third party wrote.
+- **Retries are safe for sends** (`src/service/idempotency.ts`): send, reply and forward take an
+  `Idempotency-Key` header (MCP `idempotency_key`). The first request claims the key in D1
+  (`send_keys`); a retry with the same key and body within 24 h gets the stored response (200,
+  `idempotent_replay: true`), another body is 409 `idempotency_conflict`, a retry while the first
+  is still sending is 409 `idempotency_in_progress`. A send that failed before Email Service
+  accepted it releases the key; a claim left by a dead Worker is taken over after 2 minutes.
+- **Own inboxes and own people** (`src/service/send.ts`): recipients that are this account's
+  inboxes (or the catch-all of one of its domains) are delivered internally: the Worker writes the
+  MIME (`src/lib/mime.ts`) and stores it with `ingestRaw` (receiving limits apply, authenticated
+  as `authserv_id: "internal"`), and Email Service only gets the other recipients. Under
+  `SHARED_SEND_POLICY=reply_only` those inboxes and the Google-verified emails of the account's
+  members (identity DB `memberships` + `users`; `dev:` sign-ins only with `DEV_MODE`) are allowed
+  without having written first. All recipients count toward `SEND_DAILY_LIMIT`.
+- **Plus-address tags and reply text**: the `+tag` of the envelope recipient is stored
+  (`messages.tag`, filter `tag=`). `src/extract/reply.ts` cuts the quoted history (attribution
+  lines in a dozen languages, Original/Forwarded separators, Outlook header blocks, `>` lines, a
+  trailing "Sent from my iPhone") in one linear pass; `reply_text` is stored only when it differs
+  from the text. Calendar invites (`text/calendar`) are parsed by `src/extract/calendar.ts` into
+  `calendar` at ingest.
+- **Forward**: `Fwd:` subject, your text, a From/Date/Subject/To block, the original text and HTML
+  (from the raw MIME when there is one), and its attachments; the same rules as send.
+- **Delivery status** (`src/service/delivery.ts`): Cloudflare Email Sending publishes
+  `cf.email.sending.message.*` events to a Queues event subscription, one per sending domain. This
+  Worker's `queue()` handler tells them from webhook jobs by shape, matches them to the sent
+  message by `provider_message_id`, and keeps one row per recipient (`deliveries`): a terminal
+  status is never replaced by a non-terminal one, an older event never replaces a newer one, and
+  `complained` always wins. Changes wake `GET /messages/:id/delivery?timeout=` (it parks on the
+  inbox's Durable Object like a wait) and emit `message.delivered|bounced|complained|failed`. See
+  "Delivery status" below for the Cloudflare setup.
+- **Event feed** (`src/service/feed.ts`, `events.ts`): every event webhooks get is also kept in D1
+  `events` for 7 days (`MAX_FEED_EVENTS_PER_DAY`), read with `GET /v1/events?after=` / `wait_for_event`.
+  Long-polls park on an `InboxDO` named `acct:<account>`, woken when an event is written, and use
+  the same concurrent-wait slots as other waits.
+- **Allow / block lists** (`src/service/lists.ts`): checked in `ingestRaw` right after the headers
+  are parsed and before the per-sender allowance, so refused mail is rejected at SMTP time. Allow
+  entries match only the authenticated sender (`senderIdentity`); block entries also match the
+  claimed From of unauthenticated mail. A send block list refuses recipients (403).
+- **Labels** (`labels_json` on messages and threads, `[a-z0-9:_-]{1,64}`, 20 each), system labels
+  for filters, account-wide threads, thread delete, inbox clear (`MAX_INBOX_CLEARS_PER_DAY`), and a
+  batch update of up to 100 messages.
+- **Send-only domains** (`receiving: false`): no receiving records, no inbound mail (no catch-all),
+  `verified` on ownership + sending; `auto_configure` leaves Email Routing alone. Zone-file export.
+- **Scheduled send** (`send_at` <= 7 days): stored with status `scheduled` (HTML and attachments in
+  R2, counted in the account's storage), capped by `MAX_SCHEDULED_PER_ACCOUNT`; the inbox's
+  `InboxDO` alarm sends it (claim `scheduled -> sending`, so never twice), the hourly cron is the
+  fallback. Rules and the daily limit are checked again then; a failure marks it `failed` and emits
+  `message.failed`. Deleting it cancels it. OAuth access tokens may only schedule to the account's
+  own inboxes and members.
+- **Deliverability report** (`src/service/analysis.ts`) and **attachment text** (Workers AI
+  `toMarkdown`, only with an `AI` binding, images not converted, `MAX_ATTACHMENT_TEXT_PER_DAY`).
+- **Webhook management**: PATCH (url, events, `inbox_ids`, enabled), secret rotation, up to 5
+  custom headers sealed with `ENCRYPTION_KEY` (names shown, values never), Standard Webhooks
+  headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`) next to `x-signature`. Changing
+  or re-pointing a webhook needs the project's own key (OAuth tokens may only disable).
+- **Usage** (`GET /v1/usage`): every cap with the configured value for the account's standing and
+  what it has used; every mail 429 has `Retry-After` and `details.retry_after_s`. `/llms.txt`
+  renders this deployment's configured limits per request.
 - **Cron** (hourly): deletes expired inboxes, shared-domain mail older than
   `SHARED_RETENTION_DAYS`, webhook delivery logs older than 7 days, daily counters older than a
   week, expired wait slots and lapsed address tombstones, and sweeps R2 for orphans: up to 5 list
@@ -282,23 +340,36 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 | POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days? }`; random username if omitted; same address returns existing (200); another account's address, or a recently deleted shared-domain address that received mail and was another account's, is 409; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
 | GET | `/inboxes`, `/inboxes/:id` | list (`?limit=&domain=`); one with message/unread counts |
 | PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days? }` (null = forever); delete removes all its mail and answers `address_reserved_until` (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |
-| GET | `/inboxes/:id/messages` | `?unread=true&q=search&from=&direction=in\|out&limit=&before=` -> `{ messages, next_before }` |
-| GET | `/inboxes/:id/threads` | `?limit=&before=` |
-| GET | `/inboxes/:id/wait` | `?from=&subject=&contains=&after=&timeout=` -> newest matching message, or 408 `timeout`; 429 `too_many_waits` / `rate_limited` |
-| GET | `/inboxes/:id/latest-code` | same wait, only mail with a code or action link, `from` = sender domain or address, authenticated senders only unless `allow_unauthenticated=true` -> `{ code, codes, link, link_kind, message_id, from, subject, received_at, auth_verdict, auth_required, waited_ms }` |
-| POST | `/inboxes/:id/send` | `{ to, cc?, bcc?, subject, text?, html?, reply_to?, attachments?, headers? }` |
-| GET | `/messages/:id` | full message incl. text (`text_truncated` when cut at 64 KB), html (`?html=false` to skip), codes, links, auth, attachments list |
+| GET | `/inboxes/:id/messages` | `?unread=true&q=&from=&to=&subject=&direction=in\|out&tag=&has=code,link,attachments&auth=pass\|fail\|unknown&labels=&status=&after=&before=&order=asc\|desc&limit=` -> `{ messages, next_before }` (`next_after` with `order=asc`) |
+| DELETE | `/inboxes/:id/messages` | clear the inbox (`?before=`); `{ deleted, more }`; 429 past `MAX_INBOX_CLEARS_PER_DAY` |
+| GET | `/inboxes/:id/threads` | `?limit=&before=&after=&q=&labels=` |
+| GET | `/inboxes/:id/wait` | `?from=&subject=&contains=&tag=&after=&timeout=` -> newest matching message (with `reply_text`), or 408 `timeout`; 429 `too_many_waits` / `rate_limited` |
+| GET | `/inboxes/:id/latest-code` | same wait, only mail with a code or action link, `from` = sender domain or address, authenticated senders only unless `allow_unauthenticated=true` -> `{ code, codes, link, link_kind, message_id, from, subject, received_at, auth_verdict, auth_required, tag, waited_ms }` |
+| POST | `/inboxes/:id/send` | `{ to, cc?, bcc?, subject, text?, html?, reply_to?, attachments?, headers?, send_at? }`; `Idempotency-Key` header; own inboxes delivered internally (`internal`); 202 when scheduled |
+| GET | `/messages/:id` | full message incl. `reply_text`, text (`text_truncated` when cut at 64 KB), html (`?html=false` to skip), codes, links, auth, tag, labels, calendar, attachments list; sent mail also `delivery` |
 | GET | `/messages/:id/raw` | original MIME (inbound only) |
 | GET | `/messages/:id/attachments/:aid` | download (always `content-disposition: attachment`, sandbox CSP) |
-| POST | `/messages/:id/reply` | `{ text?, html?, reply_all?, attachments?, headers? }` |
-| PATCH, DELETE | `/messages/:id` | `{ read: true }` |
-| GET | `/threads/:id` | thread with every message, oldest first |
-| GET | `/search?q=` | across all inboxes (`&inbox_id=&from=&limit=&before=`); every word of 3+ characters must appear (case-insensitive), within the account's 2,000 newest messages before the cursor; rate limited |
-| POST, GET | `/domains` | add `{ domain, auto_configure?, force?, catch_all_inbox_id? }` (`records[0]` = ownership challenge; 409 if another account owns it; `auto_configure`/`force` need header `x-admin-token`, else 403 `admin_required`) / list (+ shared domain) |
-| GET, PATCH, DELETE | `/domains/:domain` | records + status (`ownership`, `receiving`, `sending`); PATCH `{ catch_all_inbox_id?, auto_configure?, force? }`; DELETE `?delete_inboxes=true` |
-| POST | `/domains/:domain/verify` | live DNS check incl. the ownership challenge (while pending), per-record pass/fail with fixes; passing the challenge makes the account the owner |
-| POST, GET | `/webhooks` | `{ url, events: ["message.received"], inbox_id? }` -> secret once (403 `quota_exceeded` past `MAX_WEBHOOKS_PER_ACCOUNT`) / list with last delivery |
-| GET, DELETE | `/webhooks/:id` | GET includes the last 20 deliveries |
+| GET | `/messages/:id/attachments/:aid/text` | a document attachment as Markdown via Workers AI (only with the `AI` binding, else 501); `MAX_ATTACHMENT_TEXT_PER_DAY` |
+| GET | `/messages/:id/analysis` | deliverability checklist of a received message |
+| GET | `/messages/:id/delivery` | per-recipient delivery status; `?timeout=` blocks until all are final |
+| POST | `/messages/:id/reply` | `{ text?, html?, reply_all?, attachments?, headers?, send_at? }`; `Idempotency-Key` |
+| POST | `/messages/:id/forward` | `{ to, cc?, bcc?, text?, html?, include_attachments?, headers?, send_at? }`; `Idempotency-Key`; same rules as send |
+| PATCH, DELETE | `/messages/:id` | `{ read?, add_labels?, remove_labels? }`; DELETE cancels a scheduled message |
+| POST | `/messages/batch` | `{ ids (<= 100), read?, add_labels?, remove_labels? }` or `{ ids, delete: true }` |
+| GET | `/threads` | account-wide (`?inbox_id=&q=&labels=&after=&before=&limit=`) |
+| GET, PATCH, DELETE | `/threads/:id` | thread with every message, oldest first; PATCH `{ add_labels?, remove_labels?, read? }`; DELETE removes it and its messages |
+| GET | `/search?q=` | across all inboxes (the same filters as messages, plus `inbox_id`); every word of 3+ characters must appear (case-insensitive), within the account's 2,000 newest messages before the cursor; rate limited |
+| GET | `/events` | the account's event feed: `?after=latest\|<next_after>&types=&inbox_id=&limit=&timeout=` (long-poll, 7 days kept) |
+| POST, GET | `/lists/:direction/:kind` | `receive/allow`, `receive/block`, `send/block`: `{ entry, inbox_id?, reason? }` / list; `GET /lists` = all |
+| DELETE | `/lists/:direction/:kind/:entry` | `?inbox_id=` for an inbox-scoped entry |
+| GET | `/usage` | every cap with `used / limit / remaining / resets_at`, delivery counts (`?days=`) |
+| POST, GET | `/domains` | add `{ domain, receiving?, auto_configure?, force?, catch_all_inbox_id? }` (`records[0]` = ownership challenge; 409 if another account owns it; `auto_configure`/`force` need header `x-admin-token`, else 403 `admin_required`; `receiving: false` = send-only) / list (+ shared domain) |
+| GET, PATCH, DELETE | `/domains/:domain` | records + status (`ownership`, `receiving`, `sending`); PATCH `{ catch_all_inbox_id?, receiving?, auto_configure?, force? }`; DELETE `?delete_inboxes=true` |
+| GET | `/domains/:domain/zone-file` | the records as a BIND zone file (`text/dns`) |
+| POST | `/domains/:domain/verify` | live DNS check incl. the ownership challenge (while pending), per-record pass/fail with fixes; passing the challenge makes the account the owner; first `verified` emits `domain.verified` |
+| POST, GET | `/webhooks` | `{ url, events?, inbox_id? \| inbox_ids?, headers? }` -> secret once (403 `quota_exceeded` past `MAX_WEBHOOKS_PER_ACCOUNT`) / list with last delivery |
+| GET, PATCH, DELETE | `/webhooks/:id` | GET includes the last 20 deliveries; PATCH `{ url?, events?, inbox_ids?, enabled?, headers? }` (own key only, except disabling) |
+| POST | `/webhooks/:id/rotate-secret` | new secret, shown once (own key only) |
 | POST | `/webhooks/:id/test` | queue a signed `webhook.test` event, sent once; rate limited and capped per day |
 
 Also: `GET /` (service info), `GET /llms.txt` (manual), `GET /ui` (human view), `POST /mcp`.
@@ -307,10 +378,15 @@ Also: `GET /` (service info), `GET /llms.txt` (manual), `GET /ui` (human view), 
 
 `create_inbox`, `list_inboxes`, `get_inbox`, `update_inbox`, `delete_inbox`, `list_messages`,
 `get_message`, `get_raw_message`, `wait_for_email`, `get_latest_code`, `search_messages`,
-`get_thread`, `list_threads`, `send_email`, `reply_to_message`, `mark_read`, `delete_message`,
-`get_attachment`, `add_domain`, `list_domains`, `get_domain`, `update_domain`, `delete_domain`,
-`verify_domain`, `create_webhook`, `list_webhooks`, `get_webhook`, `test_webhook`,
-`delete_webhook`. Each calls the same service function as its REST route. Write tools are hidden
+`get_thread`, `list_threads`, `update_thread`, `delete_thread`, `send_email`, `reply_to_message`,
+`forward_message`, `get_delivery`, `mark_read`, `update_message`, `batch_update_messages`,
+`delete_message`, `clear_inbox`, `get_attachment`, `get_attachment_text`, `analyze_message`,
+`wait_for_event`, `add_list_entry`, `list_list_entries`, `delete_list_entry`, `get_usage`,
+`add_domain`, `list_domains`, `get_domain`, `update_domain`, `delete_domain`, `verify_domain`,
+`get_zone_file`, `create_webhook`, `list_webhooks`, `get_webhook`, `update_webhook`,
+`rotate_webhook_secret`, `test_webhook`, `delete_webhook`. Each calls the same service function as
+its REST route; `send_email`, `reply_to_message` and `forward_message` take `idempotency_key`
+(the `Idempotency-Key` header on REST) and `send_at`. Write tools are hidden
 from read-only keys. Operator-only arguments (`auto_configure`, `force`) need the `x-admin-token`
 header on the `/mcp` request, as on REST.
 
@@ -365,6 +441,13 @@ served with a strict CSP.
 | `MAX_CONCURRENT_WAITS_PER_INBOX` | optional var; parked waits per inbox (default 2) |
 | `MAX_WEBHOOKS_PER_ACCOUNT` | optional var; webhooks per account (default 10) |
 | `MAX_WEBHOOK_TESTS_PER_DAY` | optional var; `POST /webhooks/:id/test` calls per account per UTC day (unset = no cap) |
+| `MAX_FEED_EVENTS_PER_DAY` | optional var; events kept in the feed per account per UTC day (default 5000, 1000 unclaimed); webhooks still get the rest |
+| `MAX_LIST_ENTRIES_PER_ACCOUNT` | optional var; allow / block list entries per account (default 100) |
+| `MAX_INBOX_CLEARS_PER_DAY` | optional var; `DELETE /inboxes/:id/messages` calls per account per UTC day (unset = no cap) |
+| `MAX_SCHEDULED_PER_ACCOUNT` | optional var; scheduled sends waiting at once (default 20, 5 unclaimed) |
+| `MAX_ATTACHMENT_TEXT_PER_DAY` | optional var; attachment-to-text conversions per account per UTC day (default 20, 5 unclaimed) |
+| `DELIVERY_EVENTS_QUEUE` | optional var; name of the queue the Email Sending event subscriptions publish to (consumed by this Worker); set = delivery tracking on (see Delivery status) |
+| `UNCLAIMED_<name>` | optional var for every cap above |
 | `WEBHOOK_SIGNING_SECRET` | not needed: each webhook gets its own secret, returned once |
 
 Bindings (`wrangler.jsonc`): D1 `DB` (placeholder id), R2 `BLOBS`, Durable Object `INBOX`
@@ -373,8 +456,10 @@ Bindings (`wrangler.jsonc`): D1 `DB` (placeholder id), R2 `BLOBS`, Durable Objec
 enforces senders), rate limits `SIGNUP_LIMITER` (41001), `WAIT_LIMITER` (42021, 30/min per
 account), `WEBHOOK_TEST_LIMITER` (42022, 5/min), `SEARCH_LIMITER` (42023, 30/min) (each optional:
 without the binding the check is skipped; the D1 caps are the strict limits), hourly cron (purges
-expired inboxes, old shared-domain mail, delivery logs and counters, sweeps orphan blobs),
-observability on. `compatibility_date` is 2026-08-22, the newest date the
+expired inboxes, old shared-domain mail, delivery logs, idempotency keys, events and counters,
+sweeps orphan blobs, sends scheduled messages an alarm missed), observability on. Optional, not in
+the template: an `ai` binding named `AI` (attachment text) and a consumer for the Email Sending
+events queue (delivery status). `compatibility_date` is 2026-08-22, the newest date the
 workerd bundled with `@cloudflare/vitest-plugin` 1.5 supports, so tests run on the same
 runtime semantics as dev and production.
 
@@ -425,6 +510,26 @@ runtime semantics as dev and production.
    address you own. Run `bash scripts/smoke.sh` only against `wrangler dev` (it uses the local
    email endpoint).
 
+## Delivery status (Email Sending events)
+
+Off until the operator sets it up; without it, sent mail shows `status: "sent"` only and
+`GET /v1/messages/:id/delivery` says `tracking: "off"`.
+
+1. A queue this Worker consumes. Either the existing webhooks queue (`<prefix>-mail-webhooks`: no
+   new resource and no deploy-tool change, since `queue()` tells events from webhook jobs by shape),
+   or a dedicated one (`wrangler queues create <prefix>-mail-email-events`, plus a second consumer
+   entry in the deploy config; note `pnpm afs config` currently maps every mail consumer onto the
+   webhooks queue, so a dedicated queue needs that tool to learn a second name).
+2. An event subscription per sending domain (the shared `MAIL_DOMAIN`, and each custom domain that
+   sends): dashboard Queues > the queue > Subscriptions > Subscribe to events > source Email
+   Sending > the sending domain > events `message.delivered`, `message.deferred`,
+   `message.bounced`, `message.failed`, `message.rejected`, `message.complained` (or
+   `wrangler queues subscription create <queue> --source <email sending source> --events ...`).
+3. Set `DELIVERY_EVENTS_QUEUE` to that queue's name in the deployment's vars.
+4. Check: send to an address you own, then `GET /v1/messages/<id>/delivery?timeout=60` shows
+   `delivered` and `events_seen_at`. A custom domain without its own subscription keeps `sent` and
+   `events_seen_at: null`.
+
 ## Development and tests
 
 ```sh
@@ -468,14 +573,24 @@ pnpm smoke                   # against BASE (default http://localhost:8789); nee
   from the raw MIME, text-only copies of sent mail over the budget, webhooks refused (and not
   delivered) to the platform's own hosts or plain http outside `DEV_MODE`, and OAuth access tokens
   refused for webhook creation.
+- `test/integration/features*.test.ts` (with `test/unit/features-pure.test.ts`,
+  `features-p3-pure.test.ts`), the parity build (docs/parity/mail.md): idempotent sends,
+  reply_only exemptions and internal delivery, plus-address tags, reply_text, forward, usage,
+  Retry-After, list filters; delivery events (ordering, dedupe, waits, the mixed queue), the event
+  feed and its long-poll, allow/block lists at SMTP time, labels / threads / clear / batch,
+  send-only domains and zone files, webhook PATCH / rotation / sealed headers / Standard Webhooks
+  signatures (spec test vector); scheduled sends, calendar invites, the deliverability report,
+  attachment text with a fake AI binding, and llms.txt rendering the configured limits and every
+  MCP tool. Reply and ICS parsing are in the hostile-input corpus of `hardening-pure.test.ts`.
 - `scripts/smoke.sh`: the full path over HTTP against `wrangler dev`, including a local webhook
   receiver (`scripts/webhook-receiver.mjs`) that verifies signatures; it needs `DEV_MODE=true` in
   `.dev.vars` (see `.dev.vars.example`) for its `http://127.0.0.1` webhook.
 
 ## Not yet (v2)
 
-IMAP/SMTP access, labels/folders beyond in/out, scheduled send, templates, bounce/complaint
-processing (and `message.sent`/`message.bounced` webhook events), inbound spam scoring beyond Email
-Routing's own checks, per-inbox allow-lists, literal per-address Email Routing rules for custom
-subdomains whose zone catch-all must stay elsewhere, HTML sanitising for API consumers (HTML is
-returned as received), `latest-code` for word-based login codes ("hungry-robot-lunch").
+IMAP/SMTP access, templates, inbox-scoped API keys (need an identity-DB change in `@afs/shared`),
+inbound spam scoring beyond Email Routing's own checks, creating Email Sending event subscriptions
+for custom domains automatically, literal per-address Email Routing rules for custom subdomains
+whose zone catch-all must stay elsewhere, HTML sanitising for API consumers (HTML is returned as
+received), `latest-code` for word-based login codes ("hungry-robot-lunch"). See
+docs/parity/mail.md for the decisions on everything else.

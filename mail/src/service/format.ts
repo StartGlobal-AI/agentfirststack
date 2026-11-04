@@ -65,6 +65,20 @@ export interface MessageRow {
   attachments_omitted?: number;
   /** Bytes this message keeps in R2 (MAX_BLOB_BYTES_PER_ACCOUNT; summed in account_usage by triggers). */
   blob_bytes?: number;
+  /** Plus-address tag of the recipient (`me+github@` -> "github"); inbound only. */
+  tag?: string | null;
+  /** text_body without the quoted history; NULL = the same as text_body. */
+  reply_text?: string | null;
+  /** Sent mail: the message id Email Service returned (delivery events name it). */
+  provider_message_id?: string | null;
+  /** Custom labels, JSON array; NULL = none. */
+  labels_json?: string | null;
+  /** status 'scheduled': when it goes out (unix ms). */
+  scheduled_at?: number | null;
+  /** Scheduled sends: what has no column (custom headers). */
+  scheduled_json?: string | null;
+  /** The parsed calendar invite (src/extract/calendar.ts), JSON. */
+  calendar_json?: string | null;
 }
 
 export interface AttachmentRow {
@@ -90,7 +104,11 @@ export interface ThreadRow {
   message_count: number;
   last_message_at: number;
   created_at: number;
+  labels_json?: string | null;
 }
+
+/** Custom labels of a message or thread. */
+export const labelsOf = (r: { labels_json?: string | null }) => parseJson<string[]>(r.labels_json, []);
 
 export interface Addr {
   address: string;
@@ -148,10 +166,16 @@ export function messageSummary(row: MessageRow) {
     attachment_count: row.attachment_count,
     read: !!row.read,
     status: row.status,
+    ...(row.scheduled_at ? { scheduled_at: row.scheduled_at } : {}),
+    tag: row.tag ?? null,
+    labels: labelsOf(row),
     received_at: row.received_at,
     received_at_iso: iso(row.received_at),
   };
 }
+
+/** The reply part of a message: reply_text, or the whole text when nothing was quoted. */
+export const replyTextOf = (row: Pick<MessageRow, "reply_text" | "text_body">) => row.reply_text ?? row.text_body ?? null;
 
 export function messageDetail(row: MessageRow, extra: { html: string | null; attachments: AttachmentRow[] }) {
   return {
@@ -166,6 +190,7 @@ export function messageDetail(row: MessageRow, extra: { html: string | null; att
     sent_at: row.sent_at,
     size: row.size,
     text: row.text_body,
+    reply_text: replyTextOf(row),
     text_truncated: !!row.text_truncated,
     html: extra.html,
     links: parseJson<ExtractedLink[]>(row.links_json, []),
@@ -173,6 +198,7 @@ export function messageDetail(row: MessageRow, extra: { html: string | null; att
     attachments: extra.attachments.map(attachmentJson),
     attachments_omitted: row.attachments_omitted ?? 0,
     automated: !!row.automated,
+    calendar: parseJson<unknown>(row.calendar_json, null),
     error: row.error,
     raw_available: !!row.raw_key,
   };
@@ -196,6 +222,7 @@ export function threadJson(t: ThreadRow) {
     inbox_id: t.inbox_id,
     subject: t.subject,
     message_count: t.message_count,
+    labels: labelsOf(t),
     last_message_at: t.last_message_at,
     created_at: t.created_at,
   };
@@ -220,9 +247,11 @@ export const UNTRUSTED_MESSAGE_FIELDS = [
   "to[].name",
   "cc[].name",
   "text",
+  "reply_text",
   "html",
   "links",
   "attachments[].filename",
+  "calendar",
 ];
 
 export function untrustedMarker(paths: string[], extra: string[] = []) {
@@ -242,11 +271,14 @@ export function fence(label: string, content: string | null | undefined, maxChar
 }
 
 /** MCP shape of a message: metadata in the clear, sender-written text fenced. */
-export function untrustedMessage<T extends ReturnType<typeof messageSummary> & { text?: string | null; html?: string | null }>(
-  m: T,
-  opts: { maxChars?: number; includeHtml?: boolean } = {},
-) {
-  const { text, html, subject, preview, from, ...rest } = m as T & { text?: string | null; html?: string | null };
+export function untrustedMessage<
+  T extends ReturnType<typeof messageSummary> & { text?: string | null; html?: string | null; reply_text?: string | null },
+>(m: T, opts: { maxChars?: number; includeHtml?: boolean } = {}) {
+  const { text, html, subject, preview, from, reply_text, ...rest } = m as T & {
+    text?: string | null;
+    html?: string | null;
+    reply_text?: string | null;
+  };
   return {
     ...rest,
     from_address: from.address,
@@ -255,6 +287,8 @@ export function untrustedMessage<T extends ReturnType<typeof messageSummary> & {
       from_name: from.name,
       subject,
       preview,
+      // The new part first: what the sender wrote this time, without the quoted history.
+      ...(reply_text !== undefined ? { reply_text: fence("EMAIL_REPLY", reply_text, opts.maxChars ?? 20_000) } : {}),
       ...(text !== undefined ? { text: fence("EMAIL_TEXT", text, opts.maxChars ?? 20_000) } : {}),
       ...(opts.includeHtml && html !== undefined ? { html: fence("EMAIL_HTML", html, opts.maxChars ?? 20_000) } : {}),
     },

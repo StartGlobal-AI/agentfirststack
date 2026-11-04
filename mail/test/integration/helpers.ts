@@ -127,3 +127,73 @@ export function eml(opts: {
   }
   return [...head, "Content-Type: text/plain; charset=utf-8", "", opts.body, ""].join("\r\n");
 }
+
+// ---- shared by the feature tests ------------------------------------------------------------
+
+export const uniq = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`;
+export const acctOf = (s: { json: { account_id: string } }) => s.json.account_id;
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export async function errorOf(p: Promise<unknown>) {
+  try {
+    await p;
+  } catch (e) {
+    return e as { status: number; code: string; message: string; hint?: string; details?: any };
+  }
+  throw new Error("expected the call to fail");
+}
+
+/** One MCP tools/call; returns the parsed tool result (or the error object for tool errors). */
+export async function mcp(key: string, name: string, args: unknown, env: AppEnv = E) {
+  const res = await app.fetch(
+    new Request("http://mail.test/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    }),
+    env,
+    createExecutionContext(),
+  );
+  const body = (await res.json()) as any;
+  if (!body.result) throw new Error(`MCP ${name}: ${JSON.stringify(body)}`);
+  return JSON.parse(body.result.content[0].text);
+}
+
+/** MCP tools/list names for a key. */
+export async function mcpTools(key: string, env: AppEnv = E): Promise<string[]> {
+  const res = await app.fetch(
+    new Request("http://mail.test/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }),
+    env,
+    createExecutionContext(),
+  );
+  return ((await res.json()) as any).result.tools.map((t: { name: string }) => t.name);
+}
+
+/**
+ * A person claims the account (a membership). `sub` defaults to a Google subject; "dev:<email>" is
+ * what DEV_MODE sign-ins write (not Google-verified).
+ */
+export async function claimAs(accountId: string, email: string, sub = `google-${crypto.randomUUID().slice(0, 12)}`) {
+  const { forgetStanding } = await import("@afs/shared");
+  const user = `usr_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  await E.AUTH_DB!.batch([
+    E.AUTH_DB!.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)").bind(user, sub, email, Date.now()),
+    E.AUTH_DB!.prepare("INSERT INTO memberships (user_id, account_id, role, created_at) VALUES (?, ?, 'owner', ?)").bind(
+      user,
+      accountId,
+      Date.now(),
+    ),
+  ]);
+  forgetStanding(accountId);
+}
+
+/** Turn every key of the account into an OAuth access token (expiring, tied to a grant). */
+export async function makeOauth(accountId: string) {
+  await E.AUTH_DB!.prepare("UPDATE api_keys SET expires_at = ?, oauth_grant_id = ? WHERE account_id = ?")
+    .bind(Date.now() + 3_600_000, `grant_${crypto.randomUUID().slice(0, 8)}`, accountId)
+    .run();
+}

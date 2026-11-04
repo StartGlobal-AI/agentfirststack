@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { AppEnv } from "./env";
+import { runScheduled } from "./service/send";
 
 export interface WaitResult {
   /** true: a message was committed since `since` (re-check D1); false: the timeout passed. */
@@ -96,5 +97,25 @@ export class InboxDO extends DurableObject<AppEnv> {
   /** Number of parked waiters (diagnostics, tests). */
   async waiting(): Promise<number> {
     return this.ctx.getWebSockets().length;
+  }
+
+  /**
+   * Scheduled sends: wake at `at` (or earlier, if an earlier one is already set) and send what is
+   * due for this inbox. D1 holds the messages; the object only keeps its inbox id and the alarm.
+   */
+  async schedule(inboxId: string, at: number): Promise<void> {
+    await this.ctx.storage.put("inbox_id", inboxId);
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || at < current) await this.ctx.storage.setAlarm(at);
+  }
+
+  override async alarm(): Promise<void> {
+    const inboxId = await this.ctx.storage.get<string>("inbox_id");
+    if (!inboxId) return;
+    const r = await runScheduled(this.env, inboxId);
+    console.log(JSON.stringify({ event: "mail.scheduled", inbox_id: inboxId, ...r }));
+    // Next one; a deleted (canceled) message simply leaves nothing to do. The hourly cron catches
+    // anything an alarm missed.
+    if (r.next_at !== null) await this.ctx.storage.setAlarm(Math.max(r.next_at, Date.now() + 1_000));
   }
 }

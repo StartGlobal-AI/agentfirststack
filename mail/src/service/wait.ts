@@ -3,7 +3,7 @@ import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { normalizeDomain, splitAddress } from "../lib/address";
 import { parkOnInbox } from "../lib/park";
 import { assertActive, rateLimit } from "./budgets";
-import { type InboxRow, type MessageRow, messageSummary, utcDay } from "./format";
+import { type InboxRow, type MessageRow, messageSummary, replyTextOf, utcDay } from "./format";
 import { getInboxRow } from "./inboxes";
 import { maxInboundPerDay } from "./ingest";
 
@@ -47,6 +47,8 @@ export interface WaitFilters {
   sender?: SenderFilter;
   /** Only mail whose From domain is authenticated (auth.verdict "pass"). */
   requireAuth?: boolean;
+  /** Only mail to this plus-address tag (`me+github@` -> "github"), exact. */
+  tag?: string;
 }
 
 export type SenderFilter = { address: string } | { domain: string };
@@ -119,6 +121,10 @@ async function findMatch(env: AppEnv, inboxId: string, after: number, f: WaitFil
     where.push(c.sql);
     binds.push(...c.binds);
   }
+  if (f.tag) {
+    where.push("tag = ?");
+    binds.push(f.tag.toLowerCase());
+  }
   if (f.requireAuth) where.push("json_extract(auth_json, '$.verdict') = 'pass'");
   if (f.requireCodeOrLink) where.push("(code IS NOT NULL OR verify_link IS NOT NULL)");
   return env.DB.prepare(`SELECT * FROM messages WHERE ${where.join(" AND ")} ORDER BY received_at DESC, seq DESC LIMIT 1`)
@@ -126,8 +132,14 @@ async function findMatch(env: AppEnv, inboxId: string, after: number, f: WaitFil
     .first<MessageRow>();
 }
 
-/** Take a concurrent-wait slot, or throw 429 too_many_waits. null = no caps apply. */
-async function acquireWaitSlot(env: AppEnv, standing: Standing, inbox: InboxRow, deadline: number): Promise<string | null> {
+/** What a wait parks on: an inbox, or a pseudo-inbox for account-wide waits (events, delivery). */
+export type WaitTarget = Pick<InboxRow, "id" | "account_id" | "address">;
+
+/**
+ * Take a concurrent-wait slot, or throw 429 too_many_waits. null = no caps apply. Every blocking
+ * call shares these slots: inbox waits, latest-code, the event feed and delivery waits.
+ */
+export async function acquireWaitSlot(env: AppEnv, standing: Standing, inbox: WaitTarget, deadline: number): Promise<string | null> {
   const perAccount = cap(env, standing, "MAX_CONCURRENT_WAITS", DEFAULT_MAX_CONCURRENT_WAITS);
   const perInbox = cap(env, standing, "MAX_CONCURRENT_WAITS_PER_INBOX", DEFAULT_MAX_CONCURRENT_WAITS_PER_INBOX);
   if (!Number.isFinite(perAccount) && !Number.isFinite(perInbox)) return null;
@@ -144,10 +156,14 @@ async function acquireWaitSlot(env: AppEnv, standing: Standing, inbox: InboxRow,
     .run();
   if (r.meta.changes) return id;
   const c = await env.DB.prepare(
-    "SELECT (SELECT COUNT(*) FROM active_waits WHERE account_id = ?1 AND expires_at > ?3) AS account, (SELECT COUNT(*) FROM active_waits WHERE inbox_id = ?2 AND expires_at > ?3) AS inbox",
+    `SELECT (SELECT COUNT(*) FROM active_waits WHERE account_id = ?1 AND expires_at > ?3) AS account,
+            (SELECT COUNT(*) FROM active_waits WHERE inbox_id = ?2 AND expires_at > ?3) AS inbox,
+            (SELECT MIN(expires_at) FROM active_waits WHERE account_id = ?1 AND expires_at > ?3) AS first_end`,
   )
     .bind(inbox.account_id, inbox.id, now)
-    .first<{ account: number; inbox: number }>();
+    .first<{ account: number; inbox: number; first_end: number | null }>();
+  // The earliest wait in progress ends by its deadline (its slot outlives it by SLOT_MARGIN_MS).
+  const retryAfter = c?.first_end ? Math.min(MAX_TIMEOUT_S, Math.max(1, Math.ceil((c.first_end - SLOT_MARGIN_MS - now) / 1000))) : 5;
   const inboxFull = (c?.inbox ?? 0) >= perInbox;
   throw new ApiError(
     429,
@@ -161,11 +177,12 @@ async function acquireWaitSlot(env: AppEnv, standing: Standing, inbox: InboxRow,
       limit_per_inbox: perInbox,
       in_progress_account: c?.account ?? null,
       in_progress_inbox: c?.inbox ?? null,
+      retry_after_s: retryAfter,
     },
   );
 }
 
-async function releaseWaitSlot(env: AppEnv, id: string) {
+export async function releaseWaitSlot(env: AppEnv, id: string) {
   try {
     await env.DB.prepare("DELETE FROM active_waits WHERE id = ?").bind(id).run();
   } catch (e) {
@@ -200,7 +217,12 @@ export async function waitForEmail(
   const timeout = clampTimeout(timeoutS);
   const deadline = started + timeout * 1000;
   const stub = env.INBOX.get(env.INBOX.idFromName(inbox.id));
-  const found = (m: MessageRow) => ({ message: messageSummary(m), row: m, waited_ms: Date.now() - started, after });
+  const found = (m: MessageRow) => ({
+    message: { ...messageSummary(m), reply_text: replyTextOf(m) },
+    row: m,
+    waited_ms: Date.now() - started,
+    after,
+  });
 
   const first = await findMatch(env, inbox.id, after, filters);
   if (first) return found(first);
@@ -237,6 +259,7 @@ export async function waitForEmail(
     filters.sender && ("address" in filters.sender ? `from=${filters.sender.address}` : `from domain ${filters.sender.domain}`),
     filters.subject && `subject~"${filters.subject}"`,
     filters.contains && `contains~"${filters.contains}"`,
+    filters.tag && `tag=${filters.tag}`,
     filters.requireAuth && "authenticated sender",
   ]
     .filter(Boolean)
@@ -251,7 +274,12 @@ export async function waitForEmail(
       address: inbox.address,
       after,
       timeout_s: timeout,
-      filters: { from: filters.from ?? null, subject: filters.subject ?? null, contains: filters.contains ?? null },
+      filters: {
+        from: filters.from ?? null,
+        subject: filters.subject ?? null,
+        contains: filters.contains ?? null,
+        tag: filters.tag ?? null,
+      },
       ...(filters.sender ? { sender: filters.sender } : {}),
       ...(filters.requireAuth !== undefined ? { require_auth: filters.requireAuth } : {}),
     },
@@ -286,6 +314,8 @@ export interface LatestCodeFilters {
   after?: string | number;
   /** Opt out of the default: accept mail whose sender is not authenticated (auth_verdict != "pass"). */
   allow_unauthenticated?: boolean;
+  /** Only mail to this plus-address tag. */
+  tag?: string;
 }
 
 export async function latestCode(env: AppEnv, accountId: string, inboxId: string, filters: LatestCodeFilters, timeoutS?: number) {
@@ -305,6 +335,7 @@ export async function latestCode(env: AppEnv, accountId: string, inboxId: string
     received_at: m.received_at,
     auth_verdict: m.auth_verdict,
     auth_required: requireAuth,
+    tag: m.tag,
     waited_ms: r.waited_ms,
   };
 }

@@ -2,8 +2,9 @@ import { ApiError, badRequest, conflict, hmacSha256Hex, newId, notFound, timingS
 import type { AppEnv } from "../env";
 import { normalizeDomain } from "../lib/address";
 import { type AutoConfigReport, type Fetcher, autoConfigure } from "../lib/cloudflare-api";
-import { type DnsRecord, type DomainCheck, buildDomainRecords, checkDomainDns, ownershipRecord } from "../lib/dns";
+import { type DnsRecord, type DomainCheck, buildDomainRecords, checkDomainDns, ownershipRecord, zoneFile } from "../lib/dns";
 import { deleteInbox, getInboxRow, sharedDomain } from "./inboxes";
+import { emitEvent } from "./webhooks";
 
 /**
  * Custom domains.
@@ -35,6 +36,19 @@ interface DomainRow {
   auto_config_json: string | null;
   owner_verified_at: number | null;
   created_at: number;
+  /** 0 = send-only (receiving: false): no receiving records, no inbound mail. */
+  receiving_enabled?: number;
+}
+
+const receives = (r: Pick<DomainRow, "receiving_enabled">) => r.receiving_enabled !== 0;
+
+/** The email records a domain needs: without the receiving ones for a send-only domain. Pure. */
+export function recordsFor(domain: string, receiving: boolean, current?: DnsRecord[]): DnsRecord[] {
+  const base = current ?? buildDomainRecords(domain);
+  const sending = base.filter((r) => r.purpose !== "receiving");
+  if (!receiving) return sending;
+  const have = base.filter((r) => r.purpose === "receiving");
+  return [...(have.length ? have : buildDomainRecords(domain).filter((r) => r.purpose === "receiving")), ...sending];
 }
 
 /** Operator authorisation for auto_configure / force: `x-admin-token` equal to ADMIN_TOKEN (constant time). */
@@ -78,7 +92,8 @@ function domainJson(r: DomainRow, challenge: DnsRecord | null) {
     domain: r.domain,
     status: r.status,
     ownership: r.owner_verified_at ? "verified" : "pending",
-    receiving: r.receiving_verified ? "verified" : "pending",
+    receiving: !receives(r) ? "disabled" : r.receiving_verified ? "verified" : "pending",
+    receiving_enabled: receives(r),
     sending: r.sending_verified ? "verified" : "pending",
     catch_all_inbox_id: r.catch_all_inbox_id,
     records: challenge ? [challenge, ...records] : records,
@@ -96,17 +111,23 @@ function ownershipStep(domain: string, challenge: DnsRecord): string {
   return `Prove you control ${domain} first: add TXT ${challenge.name} "${challenge.value}" (records[0]), then POST /v1/domains/${domain}/verify. Until it passes, ${domain} receives no mail, cannot send and gets no inboxes, and another account may claim it.`;
 }
 
-function manualSteps(domain: string, records: DnsRecord[]): string[] {
+function manualSteps(domain: string, records: DnsRecord[], receiving = true): string[] {
   return [
     `The zone for ${domain} must use Cloudflare DNS (Email Routing and Email Sending require it).`,
-    `Receiving: enable Email Routing for ${domain} (dashboard: Compute > Email Service > Email Routing > Onboard Domain; for a subdomain: the apex's Settings > Subdomains). It adds the "receiving" records listed here.`,
-    `Then set the zone's catch-all rule to "Send to a Worker" -> the mail Worker so every address reaches this app. Catch-all rules exist only on the zone apex; the apex catch-all also receives mail for routing subdomains that have no literal rule.`,
+    ...(receiving
+      ? [
+          `Receiving: enable Email Routing for ${domain} (dashboard: Compute > Email Service > Email Routing > Onboard Domain; for a subdomain: the apex's Settings > Subdomains). It adds the "receiving" records listed here.`,
+          `Then set the zone's catch-all rule to "Send to a Worker" -> the mail Worker so every address reaches this app. Catch-all rules exist only on the zone apex; the apex catch-all also receives mail for routing subdomains that have no literal rule.`,
+        ]
+      : [
+          `Send-only (receiving: false): keep your existing MX records (Google Workspace, Microsoft 365, ...); no Email Routing is needed and this app receives no mail for ${domain}.`,
+        ]),
     `Sending: onboard ${domain} to Email Sending (Compute > Email Service > Email Sending > Onboard Domain). It adds the cf-bounce MX/SPF/DKIM and the DMARC record.`,
     `Records to expect: ${records
       .map((r) => `${r.type} ${r.name}`)
       .filter((v, i, a) => a.indexOf(v) === i)
       .join("; ")}.`,
-    `POST /v1/domains/${domain}/verify checks them live and says what to fix.`,
+    `POST /v1/domains/${domain}/verify checks them live and says what to fix. GET /v1/domains/${domain}/zone-file has them as a BIND zone file.`,
   ];
 }
 
@@ -170,7 +191,7 @@ async function runAutoConfigure(env: AppEnv, row: DomainRow, force: boolean, fet
   const report = await autoConfigure(
     row.domain,
     JSON.parse(row.records_json) as DnsRecord[],
-    { token: env.CF_API_TOKEN!, accountId: env.CF_ACCOUNT_ID, workerName: env.WORKER_NAME || "afs-mail", force },
+    { token: env.CF_API_TOKEN!, accountId: env.CF_ACCOUNT_ID, workerName: env.WORKER_NAME || "afs-mail", force, receiving: receives(row) },
     fetcher,
   );
   await env.DB.prepare("UPDATE domains SET records_json = ?, cf_zone_id = ?, auto_config_json = ? WHERE id = ?")
@@ -184,6 +205,8 @@ export interface AddDomainInput {
   auto_configure?: boolean;
   force?: boolean;
   catch_all_inbox_id?: string | null;
+  /** false = send-only: keep the domain's existing MX, send from it, receive nothing here. */
+  receiving?: boolean;
 }
 
 export interface DomainCallOptions {
@@ -209,7 +232,13 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
     );
   }
   const challenge = await challengeRecord(env, accountId, d);
-  assertAutoConfigure(env, input, opts.adminToken, d, () => [challenge, ...buildDomainRecords(d)]);
+  const receiving = input.receiving ?? true;
+  assertAutoConfigure(env, input, opts.adminToken, d, () => [challenge, ...recordsFor(d, receiving)]);
+  if (input.catch_all_inbox_id && !receiving)
+    throw badRequest(
+      "A send-only domain (receiving: false) has no catch-all inbox.",
+      "Leave catch_all_inbox_id out, or add the domain with receiving: true.",
+    );
   if (input.catch_all_inbox_id) {
     const inbox = await getInboxRow(env, accountId, input.catch_all_inbox_id);
     if (inbox.domain !== d)
@@ -234,7 +263,7 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
       receiving_verified: 0,
       sending_verified: 0,
       catch_all_inbox_id: input.catch_all_inbox_id ?? null,
-      records_json: JSON.stringify(buildDomainRecords(d)),
+      records_json: JSON.stringify(recordsFor(d, receiving)),
       last_check_json: null,
       checked_at: null,
       verified_at: null,
@@ -242,12 +271,13 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
       auto_config_json: null,
       owner_verified_at: null,
       created_at: now,
+      receiving_enabled: receiving ? 1 : 0,
     };
     try {
       await env.DB.prepare(
-        "INSERT INTO domains (id, account_id, domain, status, receiving_verified, sending_verified, catch_all_inbox_id, records_json, created_at) VALUES (?, ?, ?, 'pending', 0, 0, ?, ?, ?)",
+        "INSERT INTO domains (id, account_id, domain, status, receiving_verified, sending_verified, catch_all_inbox_id, records_json, created_at, receiving_enabled) VALUES (?, ?, ?, 'pending', 0, 0, ?, ?, ?, ?)",
       )
-        .bind(fresh.id, accountId, d, fresh.catch_all_inbox_id, fresh.records_json, now)
+        .bind(fresh.id, accountId, d, fresh.catch_all_inbox_id, fresh.records_json, now, fresh.receiving_enabled)
         .run();
       row = fresh;
     } catch (e) {
@@ -257,6 +287,7 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
       existing = true;
     }
   }
+  if (existing && input.receiving !== undefined && receives(row) !== receiving) row = await setReceiving(env, row, receiving);
 
   let report: AutoConfigReport | null = null;
   if (input.auto_configure) {
@@ -274,7 +305,7 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
       ...(report
         ? report.next_steps
         : [
-            ...manualSteps(d, records),
+            ...manualSteps(d, records, receives(row)),
             ...(canAutoConfigure(env) && operator
               ? [
                   `Or let this app do it: POST /v1/domains {"domain":"${d}","auto_configure":true} with the x-admin-token header (zone must be in the operator's Cloudflare account).`,
@@ -314,15 +345,44 @@ export async function getDomain(env: AppEnv, accountId: string, domain: string) 
     next_steps:
       row.status === "verified"
         ? []
-        : [...(!row.owner_verified_at && challenge ? [ownershipStep(row.domain, challenge)] : []), ...manualSteps(row.domain, records)],
+        : [
+            ...(!row.owner_verified_at && challenge ? [ownershipStep(row.domain, challenge)] : []),
+            ...manualSteps(row.domain, records, receives(row)),
+          ],
   };
+}
+
+/** GET /v1/domains/:domain/zone-file: the records (ownership challenge first) as a BIND zone file. */
+export async function getDomainZoneFile(env: AppEnv, accountId: string, domain: string) {
+  const row = await getRow(env, accountId, domain);
+  const challenge = row.owner_verified_at ? null : await challengeOrNull(env, accountId, row.domain);
+  const records = JSON.parse(row.records_json) as DnsRecord[];
+  return { domain: row.domain, zone_file: zoneFile(row.domain, challenge ? [challenge, ...records] : records) };
+}
+
+/** Switch receiving on or off: the receiving records come and go, a send-only domain has no catch-all. */
+async function setReceiving(env: AppEnv, row: DomainRow, receiving: boolean): Promise<DomainRow> {
+  const records = recordsFor(row.domain, receiving, JSON.parse(row.records_json) as DnsRecord[]);
+  const next = {
+    ...row,
+    receiving_enabled: receiving ? 1 : 0,
+    records_json: JSON.stringify(records),
+    receiving_verified: receiving ? row.receiving_verified : 0,
+    catch_all_inbox_id: receiving ? row.catch_all_inbox_id : null,
+  };
+  await env.DB.prepare(
+    "UPDATE domains SET receiving_enabled = ?, records_json = ?, receiving_verified = ?, catch_all_inbox_id = ? WHERE id = ?",
+  )
+    .bind(next.receiving_enabled, next.records_json, next.receiving_verified, next.catch_all_inbox_id, row.id)
+    .run();
+  return next;
 }
 
 export async function updateDomain(
   env: AppEnv,
   accountId: string,
   domain: string,
-  input: { catch_all_inbox_id?: string | null; auto_configure?: boolean; force?: boolean },
+  input: { catch_all_inbox_id?: string | null; auto_configure?: boolean; force?: boolean; receiving?: boolean },
   opts: DomainCallOptions = {},
 ) {
   let row = await getRow(env, accountId, domain);
@@ -332,7 +392,10 @@ export async function updateDomain(
     ...(challenge ? [challenge] : []),
     ...(JSON.parse(row.records_json) as DnsRecord[]),
   ]);
+  if (input.receiving !== undefined && receives(row) !== input.receiving) row = await setReceiving(env, row, input.receiving);
   if (input.catch_all_inbox_id !== undefined) {
+    if (input.catch_all_inbox_id && !receives(row))
+      throw badRequest("A send-only domain (receiving: false) has no catch-all inbox.", 'PATCH it with {"receiving": true} first.');
     if (input.catch_all_inbox_id) {
       const inbox = await getInboxRow(env, accountId, input.catch_all_inbox_id);
       if (inbox.domain !== row.domain)
@@ -393,7 +456,9 @@ export async function verifyDomain(env: AppEnv, accountId: string, domain: strin
 
   const emailRecords = JSON.parse(row.records_json) as DnsRecord[];
   // Once ownership is proven it is kept; the challenge is only checked while it is pending.
-  const check = await checkDomainDns(row.domain, row.owner_verified_at ? emailRecords : [challenge, ...emailRecords], opts.fetcher, now);
+  const check = await checkDomainDns(row.domain, row.owner_verified_at ? emailRecords : [challenge, ...emailRecords], opts.fetcher, now, {
+    receiving: receives(row),
+  });
   let ownerVerifiedAt = row.owner_verified_at;
   if (!ownerVerifiedAt && check.ownership === "pass") {
     try {
@@ -408,13 +473,37 @@ export async function verifyDomain(env: AppEnv, accountId: string, domain: strin
   const owned = ownerVerifiedAt ? 1 : 0;
   const receiving = check.receiving === "pass" ? 1 : 0;
   const sending = check.sending === "pass" ? 1 : 0;
-  const passed = owned + receiving + sending;
-  const status = passed === 3 ? "verified" : passed > 0 ? "partial" : "pending";
+  // Send-only: verified once ownership and sending pass.
+  const needed = receives(row) ? 3 : 2;
+  const passed = owned + (receives(row) ? receiving : 0) + sending;
+  const status = passed === needed ? "verified" : passed > 0 ? "partial" : "pending";
   const verifiedAt = status === "verified" ? (row.verified_at ?? now) : row.verified_at;
   await env.DB.prepare(
     "UPDATE domains SET status = ?, receiving_verified = ?, sending_verified = ?, last_check_json = ?, checked_at = ?, verified_at = ? WHERE id = ?",
   )
     .bind(status, receiving, sending, JSON.stringify(check), now, verifiedAt, row.id)
     .run();
+  if (status === "verified" && row.status !== "verified") {
+    try {
+      await emitEvent(
+        env,
+        accountId,
+        null,
+        "domain.verified",
+        {
+          domain: row.domain,
+          status,
+          ownership: "pass",
+          receiving: check.receiving,
+          sending: check.sending,
+          owner_verified_at: ownerVerifiedAt,
+          url: `/v1/domains/${row.domain}`,
+        },
+        now,
+      );
+    } catch (e) {
+      console.error("domain.verified emit failed", e);
+    }
+  }
   return { ...check, ownership: owned ? ("pass" as const) : ("fail" as const), owner_verified_at: ownerVerifiedAt, status };
 }

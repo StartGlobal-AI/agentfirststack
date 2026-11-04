@@ -145,7 +145,7 @@ const errText = (r: CfResult) => r.errors.map((e) => `${e.code}: ${e.message}`).
 export async function autoConfigure(
   domain: string,
   records: DnsRecord[],
-  opts: { token: string; accountId?: string; workerName: string; force?: boolean },
+  opts: { token: string; accountId?: string; workerName: string; force?: boolean; receiving?: boolean },
   fetcher: Fetcher = fetch,
 ): Promise<AutoConfigReport> {
   const steps: AutoConfigStep[] = [];
@@ -191,52 +191,62 @@ export async function autoConfigure(
   }
   steps.push({ step: "find_zone", ok: true, detail: `${zone.name} (${zone.id})` });
 
-  // 2. Email Routing. The apex is enabled once per zone; a subdomain is added to Email Routing
-  // with the same endpoint and its own name (Cloudflare then publishes MX/SPF/DKIM on it).
-  const isApex = zone.name === domain;
-  const settings = isApex ? await call<{ enabled?: boolean; status?: string }>(cfRequests.routingSettings(zone.id)) : null;
-  if (settings?.ok && settings.result?.enabled) {
-    steps.push({ step: "enable_email_routing", ok: true, detail: `already enabled (status ${settings.result.status ?? "unknown"})` });
-  } else {
-    const en = await call(cfRequests.enableRouting(zone.id, domain));
+  // Send-only domains (receiving: false) keep their own MX: Email Routing and the catch-all are
+  // left alone.
+  if (opts.receiving === false) {
     steps.push({
       step: "enable_email_routing",
-      ok: en.ok,
-      detail: en.ok ? `enabled for ${domain}; Cloudflare added and locked the MX/SPF/DKIM records` : errText(en),
+      ok: true,
+      detail: "skipped: send-only domain (receiving: false); existing MX records stay",
     });
-    if (!en.ok)
-      next.push(
-        `Enable Email Routing for ${domain} in the dashboard (Compute > Email Service > Email Routing${isApex ? "" : " > Settings > Subdomains"}). Error 2008 means other MX records exist: remove them first.`,
-      );
-  }
-  const dns = await call<{ type: string; name: string; content: string; priority?: number }[]>(cfRequests.routingDns(zone.id));
-  if (dns.ok && Array.isArray(dns.result)) merged = mergeCloudflareRecords(merged, dns.result);
-
-  // 3. Catch-all -> Worker
-  const current = await call<CatchAll>(cfRequests.getCatchAll(zone.id));
-  const action = current.result?.actions?.[0];
-  const pointsHere = action?.type === "worker" && action.value?.[0] === opts.workerName;
-  const pointsElsewhere = !!current.result?.enabled && !!action && action.type !== "drop" && !pointsHere;
-  if (pointsHere && current.result?.enabled) {
-    steps.push({ step: "catch_all_to_worker", ok: true, detail: `already routes to ${opts.workerName}` });
-  } else if (pointsElsewhere && !opts.force) {
-    steps.push({
-      step: "catch_all_to_worker",
-      ok: false,
-      detail: `catch-all currently ${action!.type} -> ${(action!.value ?? []).join(", ")}; not changed`,
-    });
-    next.push(
-      `The zone's catch-all already routes elsewhere. Re-run with "force": true to point it at ${opts.workerName}, or add per-address routing rules instead.`,
-    );
   } else {
-    const set = await call(cfRequests.setCatchAllToWorker(zone.id, opts.workerName));
-    steps.push({ step: "catch_all_to_worker", ok: set.ok, detail: set.ok ? `catch-all -> Worker ${opts.workerName}` : errText(set) });
-    if (!set.ok) next.push(`Set the catch-all rule to "Send to a Worker: ${opts.workerName}" in Email Routing > Routing rules.`);
-  }
-  if (!isApex) {
-    next.push(
-      `Note: Email Routing catch-all rules exist only on the zone apex (${zone.name}). It also receives mail for ${domain} (and any other routing subdomain without a literal rule), so unknown addresses on ${zone.name} now reach this Worker too, which rejects them unless that domain is registered here.`,
-    );
+    // 2. Email Routing. The apex is enabled once per zone; a subdomain is added to Email Routing
+    // with the same endpoint and its own name (Cloudflare then publishes MX/SPF/DKIM on it).
+    const isApex = zone.name === domain;
+    const settings = isApex ? await call<{ enabled?: boolean; status?: string }>(cfRequests.routingSettings(zone.id)) : null;
+    if (settings?.ok && settings.result?.enabled) {
+      steps.push({ step: "enable_email_routing", ok: true, detail: `already enabled (status ${settings.result.status ?? "unknown"})` });
+    } else {
+      const en = await call(cfRequests.enableRouting(zone.id, domain));
+      steps.push({
+        step: "enable_email_routing",
+        ok: en.ok,
+        detail: en.ok ? `enabled for ${domain}; Cloudflare added and locked the MX/SPF/DKIM records` : errText(en),
+      });
+      if (!en.ok)
+        next.push(
+          `Enable Email Routing for ${domain} in the dashboard (Compute > Email Service > Email Routing${isApex ? "" : " > Settings > Subdomains"}). Error 2008 means other MX records exist: remove them first.`,
+        );
+    }
+    const dns = await call<{ type: string; name: string; content: string; priority?: number }[]>(cfRequests.routingDns(zone.id));
+    if (dns.ok && Array.isArray(dns.result)) merged = mergeCloudflareRecords(merged, dns.result);
+
+    // 3. Catch-all -> Worker
+    const current = await call<CatchAll>(cfRequests.getCatchAll(zone.id));
+    const action = current.result?.actions?.[0];
+    const pointsHere = action?.type === "worker" && action.value?.[0] === opts.workerName;
+    const pointsElsewhere = !!current.result?.enabled && !!action && action.type !== "drop" && !pointsHere;
+    if (pointsHere && current.result?.enabled) {
+      steps.push({ step: "catch_all_to_worker", ok: true, detail: `already routes to ${opts.workerName}` });
+    } else if (pointsElsewhere && !opts.force) {
+      steps.push({
+        step: "catch_all_to_worker",
+        ok: false,
+        detail: `catch-all currently ${action!.type} -> ${(action!.value ?? []).join(", ")}; not changed`,
+      });
+      next.push(
+        `The zone's catch-all already routes elsewhere. Re-run with "force": true to point it at ${opts.workerName}, or add per-address routing rules instead.`,
+      );
+    } else {
+      const set = await call(cfRequests.setCatchAllToWorker(zone.id, opts.workerName));
+      steps.push({ step: "catch_all_to_worker", ok: set.ok, detail: set.ok ? `catch-all -> Worker ${opts.workerName}` : errText(set) });
+      if (!set.ok) next.push(`Set the catch-all rule to "Send to a Worker: ${opts.workerName}" in Email Routing > Routing rules.`);
+    }
+    if (!isApex) {
+      next.push(
+        `Note: Email Routing catch-all rules exist only on the zone apex (${zone.name}). It also receives mail for ${domain} (and any other routing subdomain without a literal rule), so unknown addresses on ${zone.name} now reach this Worker too, which rejects them unless that domain is registered here.`,
+      );
+    }
   }
 
   // 4. Email Sending

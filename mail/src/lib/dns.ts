@@ -273,7 +273,8 @@ export interface DomainCheck {
   checked_at: number;
   /** "pass" also when no ownership record was checked (ownership already proven). */
   ownership: "pass" | "fail";
-  receiving: "pass" | "fail";
+  /** "disabled" for a send-only domain (receiving: false). */
+  receiving: "pass" | "fail" | "disabled";
   sending: "pass" | "fail";
   records: RecordCheck[];
   next_steps: string[];
@@ -284,6 +285,7 @@ export async function checkDomainDns(
   records: DnsRecord[],
   fetcher: Fetcher = fetch,
   now = Date.now(),
+  opts: { receiving?: boolean } = {},
 ): Promise<DomainCheck> {
   const keys = [...new Set(records.map((r) => `${r.type} ${r.name}`))];
   const answers = new Map<string, string[] | Error>();
@@ -313,13 +315,14 @@ export async function checkDomainDns(
     }
     return evaluateRecord(r, a ?? []);
   });
-  return summarise(domain, checks, now);
+  return summarise(domain, checks, now, opts);
 }
 
-export function summarise(domain: string, checks: RecordCheck[], now = Date.now()): DomainCheck {
+export function summarise(domain: string, checks: RecordCheck[], now = Date.now(), opts: { receiving?: boolean } = {}): DomainCheck {
   const ok = (p: RecordPurpose) => (checks.filter((c) => c.purpose === p).every((c) => c.status === "pass") ? "pass" : "fail");
   const ownership = ok("ownership");
-  const receiving = ok("receiving");
+  const sendOnly = opts.receiving === false;
+  const receiving = sendOnly ? ("disabled" as const) : ok("receiving");
   const sending = ok("sending");
   const next: string[] = [];
   for (const c of checks) if (c.status === "fail" && c.fix && !next.includes(c.fix)) next.push(c.fix);
@@ -328,8 +331,53 @@ export function summarise(domain: string, checks: RecordCheck[], now = Date.now(
       `Make sure the zone's Email Routing catch-all rule (it lives on the zone apex and also covers routing subdomains without a literal rule) is "Send to a Worker" -> this Worker (the operator can run auto_configure).`,
     );
   }
-  if (ownership === "pass" && receiving === "pass" && sending === "pass")
-    next.unshift('All DNS records pass. Create inboxes on this domain with POST /v1/inboxes {"username":...,"domain":"' + domain + '"}.');
+  if (ownership === "pass" && receiving !== "fail" && sending === "pass")
+    next.unshift(
+      sendOnly
+        ? `All DNS records pass. ${domain} is send-only: create an inbox on it (POST /v1/inboxes {"username":...,"domain":"${domain}"}) to send from; its mail keeps going to your existing MX.`
+        : 'All DNS records pass. Create inboxes on this domain with POST /v1/inboxes {"username":...,"domain":"' + domain + '"}.',
+    );
   else next.push("DNS changes on Cloudflare usually propagate in 5-15 minutes; run verify again after fixing.");
   return { domain, checked_at: now, ownership, receiving, sending, records: checks, next_steps: next };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Zone file export
+
+/** Default MX priorities for the zone file (Cloudflare assigns its own; any priority passes verify). */
+const MX_PRIORITY = [10, 20, 30];
+
+const quoteTxt = (v: string) => {
+  // TXT strings are at most 255 bytes each: split long values (DKIM keys) into several strings.
+  const parts: string[] = [];
+  for (let i = 0; i < v.length; i += 250) parts.push(`"${v.slice(i, i + 250).replace(/(["\\])/g, "\\$1")}"`);
+  return parts.join(" ");
+};
+
+/**
+ * The records as a BIND zone-file fragment (RFC 1035 master file), relative to `$ORIGIN <domain>.`,
+ * for DNS providers and tools that import zone files. Records whose value only exists once
+ * Cloudflare generated it (DKIM keys before onboarding) are written as comments. Pure.
+ */
+export function zoneFile(domain: string, records: DnsRecord[], now = Date.now()): string {
+  const d = domain.toLowerCase();
+  const lines = [
+    `; Email DNS records for ${d}, from AgentFirstStack Mail (${new Date(now).toISOString()}).`,
+    "; Import into the zone, or add each record by hand. Then POST /v1/domains/" + d + "/verify.",
+    `$ORIGIN ${d}.`,
+    "$TTL 3600",
+  ];
+  const mxSeen = new Map<string, number>();
+  for (const r of records) {
+    const host = r.host === "@" ? "@" : r.host;
+    lines.push(`; ${r.id} (${r.purpose})${r.note ? `: ${r.note.replace(/[\r\n]+/g, " ")}` : ""}`);
+    if (r.type === "MX") {
+      const i = mxSeen.get(r.name) ?? 0;
+      mxSeen.set(r.name, i + 1);
+      lines.push(`${host}\tIN\tMX\t${r.priority ?? MX_PRIORITY[i] ?? 30}\t${r.value}.`);
+    } else if (r.value.includes("<")) {
+      lines.push(`; ${host}\tIN\tTXT\t${quoteTxt(r.value)}  ; created by Cloudflare when the domain is onboarded`);
+    } else lines.push(`${host}\tIN\tTXT\t${quoteTxt(r.value)}`);
+  }
+  return `${lines.join("\n")}\n`;
 }

@@ -1,11 +1,15 @@
-import { accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
+import { ApiError, accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
 import { handleMcp } from "@afs/shared/mcp";
 import { Hono } from "hono";
 import type { AppEnv, AppHono, WebhookJob } from "./env";
+import { handleDeliveryEvent, isEmailSendingEvent } from "./service/delivery";
+import { purgeEvents } from "./service/feed";
 import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { api } from "./routes/api";
 import { createDefaultInbox, pruneCounters, purgeExpiredInboxes, purgeOldSharedMessages, sharedDomain } from "./service/inboxes";
+import { purgeSendKeys } from "./service/idempotency";
+import { runScheduled } from "./service/send";
 import { handleEmail } from "./service/ingest";
 import { sweepOrphanBlobs } from "./service/sweep";
 import { deliverBatch, purgeWebhookDeliveries } from "./service/webhooks";
@@ -13,10 +17,46 @@ import { uiHtml } from "./ui";
 
 export { InboxDO } from "./inbox-do";
 
+/**
+ * One consumer for every queue this Worker reads: webhook jobs (ours), and Cloudflare Email
+ * Sending events when an event subscription publishes to a queue we consume (DELIVERY_EVENTS_QUEUE,
+ * which may also be the webhooks queue). Dispatched per message by its shape.
+ */
+export async function handleQueue(batch: MessageBatch<unknown>, env: AppEnv) {
+  const jobs: Message<WebhookJob>[] = [];
+  for (const m of batch.messages) {
+    if (!isEmailSendingEvent(m.body)) {
+      jobs.push(m as Message<WebhookJob>);
+      continue;
+    }
+    try {
+      await handleDeliveryEvent(env, m.body);
+      m.ack();
+    } catch (e) {
+      console.error("delivery event failed (retried)", e);
+      m.retry({ delaySeconds: 30 });
+    }
+  }
+  if (jobs.length) await deliverBatch({ messages: jobs }, env);
+}
+
 const VERSION = "0.1.0";
 
+/** Seconds a client should wait before retrying, from error.details.retry_after_s (mail's own 429s and 409 in-progress). */
+export function retryAfterOf(err: unknown): number | null {
+  if (!(err instanceof ApiError)) return null;
+  const s = (err.details as { retry_after_s?: unknown } | undefined)?.retry_after_s;
+  return typeof s === "number" && Number.isFinite(s) && s > 0 ? Math.ceil(s) : null;
+}
+
 const app = new Hono<AppHono>();
-app.onError(onError);
+// The shared JSON error shape, plus Retry-After (RFC 9110) on every error that says when to retry.
+app.onError(async (err, c) => {
+  const res = await onError(err, c);
+  const s = retryAfterOf(err);
+  if (s) res.headers.set("retry-after", String(s));
+  return res;
+});
 app.notFound(onNotFound);
 // RFC 9728 metadata naming the platform's OAuth server (AUTH_ISSUER), for MCP connectors.
 app.route("/", protectedResourceRoutes({ name: "AgentFirstStack Mail" }));
@@ -35,7 +75,7 @@ app.get("/", (c) => {
 });
 
 app.get("/llms.txt", (c) =>
-  c.text(llmsTxt(publicBaseUrl(c), sharedDomain(c.env)), 200, { "content-type": "text/markdown; charset=utf-8" }),
+  c.text(llmsTxt(publicBaseUrl(c), sharedDomain(c.env), c.env), 200, { "content-type": "text/markdown; charset=utf-8" }),
 );
 
 app.get("/ui", (c) =>
@@ -84,7 +124,7 @@ export default {
     await handleEmail(message, env);
   },
   async queue(batch, env) {
-    await deliverBatch(batch, env);
+    await handleQueue(batch, env);
   },
   async scheduled(_controller, env, ctx) {
     // Each purge loops in batches under a wall-time budget (PURGE_BUDGET_MS) and reports `more`
@@ -104,10 +144,14 @@ export default {
         run("retention", purgeOldSharedMessages(env)),
         run("prune", pruneCounters(env)),
         run("deliveries", purgeWebhookDeliveries(env)),
+        run("send_keys", purgeSendKeys(env)),
+        run("events", purgeEvents(env)),
+        // Fallback for scheduled sends whose inbox alarm did not fire.
+        run("scheduled", runScheduled(env, null)),
         run("sweep", sweepOrphanBlobs(env)),
       ]).then((parts) => console.log(JSON.stringify(Object.assign({ event: "cron.purge" }, ...parts)))),
     );
   },
-} satisfies ExportedHandler<AppEnv, WebhookJob>;
+} satisfies ExportedHandler<AppEnv, unknown>;
 
 export { app };

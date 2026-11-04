@@ -1,4 +1,4 @@
-import { hmacSha256Hex, randomString, timingSafeEqual } from "@afs/shared";
+import { fromBase64, hmacSha256Hex, randomString, timingSafeEqual, toBase64 } from "@afs/shared";
 
 /**
  * Webhook signatures, Stripe-style:
@@ -41,4 +41,23 @@ export async function verifySignature(
   if (Math.abs(now - parsed.t) > (opts.toleranceSec ?? 300)) return false;
   const expected = await hmacSha256Hex(secret, `${parsed.t}.${body}`);
   return parsed.v1.some((v) => timingSafeEqual(v, expected));
+}
+
+/**
+ * Standard Webhooks signature (standardwebhooks.com): "v1,<base64 HMAC-SHA256(key, "<id>.<ts>.<body>")>"
+ * where the key is the base64-decoded secret after its "whsec_" prefix. Our secrets are 40
+ * characters of [0-9a-z], valid base64, so stock verifiers (Svix, standardwebhooks libraries)
+ * accept the same secret. A secret that is not valid base64 is used as UTF-8 bytes.
+ */
+export async function standardSignature(secret: string, id: string, timestampSec: number, body: string): Promise<string> {
+  const raw = secret.startsWith("whsec_") ? secret.slice(6) : secret;
+  let keyBytes: Uint8Array;
+  try {
+    keyBytes = fromBase64(raw);
+  } catch {
+    keyBytes = new TextEncoder().encode(raw);
+  }
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${id}.${timestampSec}.${body}`));
+  return `v1,${toBase64(new Uint8Array(mac))}`;
 }

@@ -40,6 +40,14 @@ export default defineConfig({
                 MAX_CONCURRENT_WAITS: "",
                 MAX_CONCURRENT_WAITS_PER_INBOX: "",
                 MAX_WEBHOOK_TESTS_PER_DAY: "",
+                // Features of the parity build: defaults apply unless a test sets them.
+                MAX_FEED_EVENTS_PER_DAY: "",
+                MAX_LIST_ENTRIES_PER_ACCOUNT: "",
+                MAX_INBOX_CLEARS_PER_DAY: "",
+                MAX_SCHEDULED_PER_ACCOUNT: "",
+                MAX_ATTACHMENT_TEXT_PER_DAY: "",
+                // Delivery tracking off, as in the generic template; its tests turn it on.
+                DELIVERY_EVENTS_QUEUE: "",
                 ...Object.fromEntries(
                   [
                     "SEND_DAILY_LIMIT",
@@ -55,6 +63,11 @@ export default defineConfig({
                     "MAX_CONCURRENT_WAITS_PER_INBOX",
                     "MAX_WEBHOOKS_PER_ACCOUNT",
                     "MAX_WEBHOOK_TESTS_PER_DAY",
+                    "MAX_FEED_EVENTS_PER_DAY",
+                    "MAX_LIST_ENTRIES_PER_ACCOUNT",
+                    "MAX_INBOX_CLEARS_PER_DAY",
+                    "MAX_SCHEDULED_PER_ACCOUNT",
+                    "MAX_ATTACHMENT_TEXT_PER_DAY",
                   ].map((n) => [`UNCLAIMED_${n}`, ""]),
                 ),
               },

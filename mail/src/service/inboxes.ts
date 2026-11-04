@@ -29,15 +29,17 @@ export async function resolveInboxDomain(
   env: AppEnv,
   accountId: string,
   domain?: string | null,
-): Promise<{ domain: string; shared: boolean; verified: boolean }> {
+): Promise<{ domain: string; shared: boolean; verified: boolean; sendOnly?: boolean }> {
   const shared = sharedDomain(env);
   if (!domain) return { domain: shared, shared: true, verified: true };
   const d = normalizeDomain(domain);
   if (!d) throw badRequest(`"${domain}" is not a valid domain.`, "Pass a hostname like example.com, or omit domain to use " + shared + ".");
   if (d === shared) return { domain: shared, shared: true, verified: true };
-  const row = await env.DB.prepare("SELECT receiving_verified, owner_verified_at FROM domains WHERE domain = ? AND account_id = ?")
+  const row = await env.DB.prepare(
+    "SELECT receiving_verified, owner_verified_at, receiving_enabled FROM domains WHERE domain = ? AND account_id = ?",
+  )
     .bind(d, accountId)
-    .first<{ receiving_verified: number; owner_verified_at: number | null }>();
+    .first<{ receiving_verified: number; owner_verified_at: number | null; receiving_enabled: number }>();
   if (!row) {
     throw new ApiError(
       404,
@@ -47,7 +49,7 @@ export async function resolveInboxDomain(
     );
   }
   if (!row.owner_verified_at) throw ownershipNotVerified(d);
-  return { domain: d, shared: false, verified: !!row.receiving_verified };
+  return { domain: d, shared: false, verified: !!row.receiving_verified, sendOnly: row.receiving_enabled === 0 };
 }
 
 export const ownershipNotVerified = (d: string) =>
@@ -164,9 +166,11 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   const inbox = inboxJson(result.row);
   const next_steps = [
     `Use ${inbox.address} in the signup form, then GET /v1/inboxes/${inbox.id}/wait?timeout=60 (or /latest-code) to block until the email arrives with codes and links extracted.`,
-    ...(dom.shared || dom.verified
-      ? []
-      : [`Domain ${dom.domain} has not passed the receiving DNS check yet: POST /v1/domains/${dom.domain}/verify.`]),
+    ...(dom.sendOnly
+      ? [`${dom.domain} is send-only: this inbox sends, but receives no mail here (its mail goes to your existing MX).`]
+      : dom.shared || dom.verified
+        ? []
+        : [`Domain ${dom.domain} has not passed the receiving DNS check yet: POST /v1/domains/${dom.domain}/verify.`]),
   ];
   return { inbox, existing: result.existing, next_steps };
 }
@@ -261,6 +265,7 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
     env.DB.prepare("UPDATE domains SET catch_all_inbox_id = NULL WHERE catch_all_inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM threads WHERE inbox_id = ?").bind(id),
     env.DB.prepare("UPDATE webhooks SET enabled = 0 WHERE inbox_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM list_entries WHERE inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM inboxes WHERE id = ?").bind(id),
     ...(tombstone
       ? [
@@ -374,7 +379,8 @@ export async function findInboxForRecipient(
   const shared = sharedDomain(env);
   const direct = await env.DB.prepare(
     `SELECT i.* FROM inboxes i WHERE i.address = ? AND (i.expires_at IS NULL OR i.expires_at > ?)
-       AND (i.domain = ? OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id AND d.owner_verified_at IS NOT NULL))`,
+       AND (i.domain = ? OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id AND d.owner_verified_at IS NOT NULL
+            AND d.receiving_enabled = 1))`,
   )
     .bind(address, now, shared)
     .first<InboxRow>();
@@ -383,7 +389,7 @@ export async function findInboxForRecipient(
   if (!domain || domain === shared) return null;
   const ca = await env.DB.prepare(
     `SELECT i.* FROM domains d JOIN inboxes i ON i.id = d.catch_all_inbox_id
-     WHERE d.domain = ? AND d.owner_verified_at IS NOT NULL AND i.account_id = d.account_id AND (i.expires_at IS NULL OR i.expires_at > ?)`,
+     WHERE d.domain = ? AND d.owner_verified_at IS NOT NULL AND d.receiving_enabled = 1 AND i.account_id = d.account_id AND (i.expires_at IS NULL OR i.expires_at > ?)`,
   )
     .bind(domain, now)
     .first<InboxRow>();

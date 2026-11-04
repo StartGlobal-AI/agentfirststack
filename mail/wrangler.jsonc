@@ -32,7 +32,11 @@
   // MAX_INBOUND_PER_SENDER_PER_DAY, MAX_TEXT_BYTES_PER_ACCOUNT, MAX_BLOB_BYTES_PER_ACCOUNT (default
   // 1 GiB, 256 MiB unclaimed; "0" = off), MAX_CONCURRENT_WAITS (default 3),
   // MAX_CONCURRENT_WAITS_PER_INBOX (default 2), MAX_WEBHOOKS_PER_ACCOUNT (default 10),
-  // MAX_WEBHOOK_TESTS_PER_DAY, and UNCLAIMED_<name> of each per-account cap. Secrets:
+  // MAX_WEBHOOK_TESTS_PER_DAY, MAX_FEED_EVENTS_PER_DAY (default 5000, 1000 unclaimed),
+  // MAX_LIST_ENTRIES_PER_ACCOUNT (default 100), MAX_INBOX_CLEARS_PER_DAY, MAX_SCHEDULED_PER_ACCOUNT
+  // (default 20, 5 unclaimed), MAX_ATTACHMENT_TEXT_PER_DAY (default 20, 5 unclaimed),
+  // DELIVERY_EVENTS_QUEUE (turns delivery status on; see "queues" below), and UNCLAIMED_<name> of
+  // each per-account cap. Secrets:
   // ENCRYPTION_KEY (also keys custom-domain ownership challenges), ADMIN_TOKEN (also the
   // x-admin-token for auto_configure), SIGNUP_TOKEN, CF_API_TOKEN.
 
@@ -77,6 +81,12 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InboxDO"] }],
 
   // Webhook deliveries: signed, retried with backoff.
+  // Delivery status (optional, off by default): Cloudflare Email Sending publishes per-recipient
+  // events to a Queues event subscription (one per sending domain). queue() tells those events
+  // from webhook jobs by their shape, so the subscription may publish to this webhooks queue (no
+  // new resource), or to a queue of its own consumed here, e.g.
+  //   { "queue": "afs-mail-email-events", "max_batch_size": 50, "max_batch_timeout": 5, "max_retries": 5 }
+  // Then set DELIVERY_EVENTS_QUEUE to that queue's name. Without it the feature reports tracking "off".
   "queues": {
     "producers": [{ "binding": "WEBHOOKS", "queue": "afs-mail-webhooks" }],
     "consumers": [
@@ -89,6 +99,9 @@
       }
     ]
   },
+
+  // Optional, not set here (local dev and tests need no remote AI): "ai": { "binding": "AI" } turns
+  // on GET /v1/messages/:id/attachments/:aid/text (Workers AI toMarkdown). Without it: 501.
 
   // Cloudflare Email Service (Email Sending). No restriction attributes: the from-domain must be
   // onboarded for sending; the app itself enforces which addresses an account may send from.

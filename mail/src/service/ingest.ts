@@ -2,14 +2,16 @@ import { newId } from "@afs/shared";
 import PostalMime, { type Address, type Email } from "postal-mime";
 import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { type ExtractedLink, extractAll } from "../extract";
-import { extractAuth } from "../extract/auth";
-import { normalizeRecipient } from "../lib/address";
+import { type AuthResults, extractAuth } from "../extract/auth";
+import { MAX_ICS_CHARS, parseIcs } from "../extract/calendar";
+import { cleanTag, normalizeRecipient } from "../lib/address";
 import { headerSafe, isMimeType } from "../lib/headers";
 import { UNAUTHENTICATED_SENDER, isAutomated, senderKeyFor } from "../lib/sender";
 import { bracketMessageId, hasReplyPrefix, normalizeSubject, threadLookupIds } from "../lib/threading";
 import { type Addr, type InboxRow, type MessageRow, UNTRUSTED_NOTICE, messageSummary, utcDay } from "./format";
 import { maxBlobBytes } from "./budgets";
 import { findInboxForRecipient, sharedDomain } from "./inboxes";
+import { receiveRefusal } from "./lists";
 import { deleteMessageRows } from "./messages";
 
 export { DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES, maxBlobBytes, storedBlobBytes } from "./budgets";
@@ -347,6 +349,13 @@ export const MESSAGE_COLUMNS = [
   "automated",
   "attachments_omitted",
   "blob_bytes",
+  "tag",
+  "reply_text",
+  "provider_message_id",
+  "labels_json",
+  "scheduled_at",
+  "scheduled_json",
+  "calendar_json",
 ] as const;
 
 const ZERO_DEFAULT = new Set<string>(["text_truncated", "read", "attachment_count", "automated", "attachments_omitted", "blob_bytes"]);
@@ -410,6 +419,11 @@ export async function ingestRaw(
     raw: ArrayBuffer | Uint8Array;
     inbox?: { inbox: InboxRow; via: "address" | "catch_all" };
     standing?: Standing;
+    /**
+     * Internal delivery (send to one of the account's own inboxes): the message never left the
+     * Worker, so its sender is known for certain and counts as authenticated (authserv_id "internal").
+     */
+    internalFrom?: InboxRow;
   },
   now = Date.now(),
 ): Promise<IngestResult> {
@@ -439,7 +453,10 @@ export async function ingestRaw(
 
   const from = firstMailbox(head.from) ?? { address: input.envelopeFrom.toLowerCase(), name: null };
   const envelopeFrom = input.envelopeFrom.toLowerCase();
-  const auth = extractAuth(head.headers, from.address);
+  const auth = input.internalFrom ? internalAuth() : extractAuth(head.headers, from.address);
+  // Allow / block lists: refused before the body is read or any per-sender allowance is spent.
+  const listed = await receiveRefusal(env, inbox, { fromAddress: from.address, envelopeFrom, auth });
+  if (listed) return { status: "rejected", reason: listed };
   const senderKey = senderKeyFor({ fromAddress: from.address, envelopeFrom, auth }, [sharedDomain(env)]);
   const sender = await admitSender(env, standing, inbox, senderKey, now);
   if (!sender.ok) return { status: "rejected", reason: sender.reason };
@@ -487,11 +504,13 @@ export async function ingestRaw(
     );
     let text = capText(ex.text);
     let links = ex.links;
-    if (await overTextBudget(env, standing, inbox.account_id, utf8Bytes(text.text) + utf8Bytes(JSON.stringify(links)))) {
+    let reply = replyColumn(ex.reply_text, text.text);
+    if (await overTextBudget(env, standing, inbox.account_id, utf8Bytes(text.text) + utf8Bytes(JSON.stringify(links)) + utf8Bytes(reply))) {
       // Over the account's text budget: keep an excerpt (codes and links were extracted from all of it).
       const short = capText(ex.text, OVER_BUDGET_TEXT_BYTES);
       text = { text: short.text, truncated: short.truncated || text.truncated };
       links = trimLinks(ex.links);
+      reply = replyColumn(ex.reply_text, text.text, OVER_BUDGET_TEXT_BYTES);
     }
     const thread = threadUpsert(env, inbox, threadId, subject, now);
     const sentAt = parsed.date ? Date.parse(parsed.date) : NaN;
@@ -532,9 +551,12 @@ export async function ingestRaw(
       received_at: now,
       sent_at: Number.isNaN(sentAt) ? null : sentAt,
       sender_key: senderKey,
-      automated: isAutomated(parsed.headers, input.envelopeFrom) ? 1 : 0,
+      automated: !input.internalFrom && isAutomated(parsed.headers, input.envelopeFrom) ? 1 : 0,
       attachments_omitted: parsed.attachments.length - attachments.length,
       blob_bytes: blobBytes,
+      tag: cleanTag(rcpt.tag),
+      reply_text: reply,
+      calendar_json: calendarOf(parsed.attachments),
     };
 
     const day = utcDay(now);
@@ -610,24 +632,7 @@ export async function ingestRaw(
       console.error("InboxDO notify failed", e);
     }
     try {
-      await emitEvent(
-        env,
-        inbox.account_id,
-        inbox.id,
-        "message.received",
-        {
-          untrusted: {
-            notice: UNTRUSTED_NOTICE,
-            fields: ["data.message.subject", "data.message.preview", "data.message.from.name", "data.message.to[].name", "data.links"],
-          },
-          inbox: { id: inbox.id, address: inbox.address },
-          message: messageSummary({ ...row, seq: 0 }),
-          links: ex.links.filter((l) => l.kind !== "other").slice(0, 10),
-          auth: ex.auth,
-          url: `/v1/messages/${id}`,
-        },
-        now,
-      );
+      await emitEvent(env, inbox.account_id, inbox.id, "message.received", receivedEventData(inbox, row, ex.links, ex.auth), now);
     } catch (e) {
       console.error("webhook enqueue failed", e);
     }
@@ -635,6 +640,58 @@ export async function ingestRaw(
   } finally {
     if (!stored) await refundSender(env, inbox.id, senderKey, sender.day).catch(() => {});
   }
+}
+
+/** The first calendar invite among a message's parts, parsed (src/extract/calendar.ts), as JSON; or null. */
+export function calendarOf(attachments: Email["attachments"]): string | null {
+  const part = attachments.find((a) => /^(text\/calendar|application\/ics)\b/i.test(a.mimeType ?? "") || /\.ics$/i.test(a.filename ?? ""));
+  if (!part) return null;
+  const bytes = typeof part.content === "string" ? null : new Uint8Array(part.content as ArrayBuffer);
+  const text = bytes ? new TextDecoder().decode(bytes.subarray(0, MAX_ICS_CHARS * 2)) : String(part.content).slice(0, MAX_ICS_CHARS);
+  const ev = parseIcs(text);
+  return ev ? JSON.stringify(ev) : null;
+}
+
+/** Webhook and event-feed text excerpts are at most this many UTF-8 bytes. */
+export const EVENT_TEXT_BYTES = 8 * 1024;
+
+/** `data` of a message.received event (webhooks and the event feed). */
+export function receivedEventData(inbox: InboxRow, row: Omit<MessageRow, "seq">, links: ExtractedLink[], auth: AuthResults) {
+  const replyText = row.reply_text ?? row.text_body ?? "";
+  return {
+    untrusted: {
+      notice: UNTRUSTED_NOTICE,
+      fields: [
+        "data.message.subject",
+        "data.message.preview",
+        "data.message.from.name",
+        "data.message.to[].name",
+        "data.message.reply_text",
+        "data.message.text_excerpt",
+        "data.links",
+      ],
+    },
+    inbox: { id: inbox.id, address: inbox.address },
+    message: {
+      ...messageSummary({ ...row, seq: 0 }),
+      reply_text: capText(replyText, EVENT_TEXT_BYTES).text,
+      text_excerpt: capText(row.text_body ?? "", EVENT_TEXT_BYTES).text,
+    },
+    links: links.filter((l) => l.kind !== "other").slice(0, 10),
+    auth,
+    url: `/v1/messages/${row.id}`,
+  };
+}
+
+/** What reply_text stores: NULL when the reply is the whole (stored) text, else the reply capped like text. */
+export function replyColumn(reply: string, storedText: string, maxBytes = MAX_TEXT_BYTES): string | null {
+  const r = capText(reply, maxBytes).text;
+  return r === storedText ? null : r;
+}
+
+/** Authentication of an internal delivery: the platform itself vouches for the sender. */
+export function internalAuth(): AuthResults {
+  return { spf: null, dkim: null, dmarc: "pass", arc: null, dkim_domains: [], authserv_id: "internal", trusted: true, verdict: "pass" };
 }
 
 /** The SMTP reason a suspended account's mail gets: polite, and says nothing about why. */

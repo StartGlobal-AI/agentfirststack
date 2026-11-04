@@ -1,9 +1,9 @@
 import { badRequest, notFound } from "@afs/shared";
 import PostalMime from "postal-mime";
-import type { AppEnv } from "../env";
+import { type AppEnv, cap, standingOf } from "../env";
 import { headerSafe } from "../lib/headers";
-import { rateLimit } from "./budgets";
-import { type AttachmentRow, type MessageRow, type ThreadRow, messageDetail, messageSummary, threadJson } from "./format";
+import { assertActive, dailyLimitError, rateLimit, refundDaily, reserveDaily } from "./budgets";
+import { type AttachmentRow, type MessageRow, type ThreadRow, labelsOf, messageDetail, messageSummary, threadJson } from "./format";
 import { getInboxRow } from "./inboxes";
 
 /** Search words shorter than this are ignored (they would match nearly everything). */
@@ -35,13 +35,110 @@ export function parseCursor(before: string | number | undefined | null): { at: n
 
 const cursorOf = (r: MessageRow) => `${r.received_at}.${r.seq}`;
 
+/** has= values: an extracted code, an action link, attachments. */
+export const HAS_VALUES = ["code", "link", "attachments"] as const;
+
 export interface ListOptions {
   unread?: boolean;
   q?: string;
+  /** Substring of the sender address or name. */
   from?: string;
+  /** Substring of a To/Cc address or name, or of the envelope recipient. */
+  to?: string;
+  /** Substring of the subject. */
+  subject?: string;
   direction?: "in" | "out";
+  /** Plus-address tag, exact (`me+github@` -> "github"). */
+  tag?: string;
+  /** Comma-separated: code, link, attachments (all must hold). */
+  has?: string;
+  /** Sender authentication verdict: pass | fail | unknown. */
+  auth?: "pass" | "fail" | "unknown";
   limit?: number;
+  /** Newest first (default) or oldest first. */
+  order?: "asc" | "desc";
+  /** Cursor or unix ms: only messages before it (desc paging: next_before). */
   before?: string | number;
+  /** Cursor or unix ms: only messages after it (asc paging: next_after). */
+  after?: string | number;
+  /** Comma-separated labels, all must be on the message (custom or system labels). */
+  labels?: string;
+  /** Outbound status: sent | failed | scheduled. */
+  status?: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Labels
+
+export const LABEL_RE = /^[a-z0-9:_-]{1,64}$/;
+export const MAX_LABELS = 20;
+/**
+ * Read-only labels that describe a message: usable in labels= filters, never added or removed.
+ * They mirror fields (read, direction, automated, auth_verdict, code, verify_link, attachments).
+ */
+export const SYSTEM_LABELS: Record<string, string> = {
+  unread: "m.read = 0 AND m.direction = 'in'",
+  read: "m.read = 1",
+  received: "m.direction = 'in'",
+  sent: "m.direction = 'out'",
+  automated: "m.automated = 1",
+  unauthenticated: "m.direction = 'in' AND COALESCE(json_extract(m.auth_json, '$.verdict'), 'unknown') != 'pass'",
+  "has-code": "m.code IS NOT NULL",
+  "has-link": "m.verify_link IS NOT NULL",
+  "has-attachments": "(m.attachment_count > 0 OR m.attachments_omitted > 0)",
+};
+
+/** Labels from input: lowercase, valid, not a system label, deduplicated. Pure. */
+export function parseLabels(list: string[] | undefined, field: string): string[] {
+  const out = [...new Set((list ?? []).map((l) => l.trim().toLowerCase()).filter(Boolean))];
+  for (const l of out) {
+    if (!LABEL_RE.test(l))
+      throw badRequest(
+        `${field}: "${l}" is not a valid label.`,
+        "Labels are 1-64 characters of a-z 0-9 : _ - (e.g. handled, needs-human, project:acme).",
+      );
+    if (l in SYSTEM_LABELS)
+      throw badRequest(
+        `${field}: "${l}" is a system label.`,
+        `System labels (${Object.keys(SYSTEM_LABELS).join(", ")}) follow the message and can't be set; filter with labels=${l}.`,
+      );
+  }
+  return out;
+}
+
+/** Current labels plus `add` minus `remove`, at most MAX_LABELS. Pure. */
+export function applyLabels(current: string[], add: string[], remove: string[]): string[] {
+  const next = [...current.filter((l) => !remove.includes(l)), ...add.filter((l) => !current.includes(l) && !remove.includes(l))];
+  if (next.length > MAX_LABELS)
+    throw badRequest(`At most ${MAX_LABELS} labels per message or thread.`, "Remove labels you no longer need (remove_labels) first.");
+  return next;
+}
+
+/** labels= filter -> SQL on `alias` (m for messages, t for threads; threads have no system labels). */
+function labelConditions(labels: string | undefined, alias: "m" | "t", where: string[], binds: unknown[]) {
+  for (const l of (labels ?? "")
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean)) {
+    if (alias === "m" && l in SYSTEM_LABELS) where.push(SYSTEM_LABELS[l]!);
+    else if (LABEL_RE.test(l)) {
+      where.push(`EXISTS (SELECT 1 FROM json_each(${alias}.labels_json) j WHERE j.value = ?)`);
+      binds.push(l);
+    } else throw badRequest(`labels: "${l}" is not a valid label.`, "Labels are 1-64 characters of a-z 0-9 : _ -.");
+  }
+}
+
+/** has= -> its list of conditions; 400 for unknown values. Pure. */
+export function parseHas(has: string | undefined): (typeof HAS_VALUES)[number][] {
+  if (!has) return [];
+  const out = has
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  for (const h of out)
+    if (!(HAS_VALUES as readonly string[]).includes(h))
+      throw badRequest(`Unknown has=${h}.`, `Use one or more of ${HAS_VALUES.join(", ")} (comma-separated, all must hold).`);
+  return out as (typeof HAS_VALUES)[number][];
 }
 
 function buildFilters(opts: ListOptions, where: string[], binds: unknown[]) {
@@ -50,17 +147,67 @@ function buildFilters(opts: ListOptions, where: string[], binds: unknown[]) {
     where.push("m.direction = ?");
     binds.push(opts.direction);
   }
+  // instr(), not LIKE: D1 refuses LIKE patterns over 50 bytes.
   if (opts.from) {
-    // instr(), not LIKE: D1 refuses LIKE patterns over 50 bytes.
     where.push("(instr(lower(m.from_address), ?) > 0 OR instr(lower(m.from_name), ?) > 0)");
     const p = opts.from.toLowerCase();
     binds.push(p, p);
+  }
+  if (opts.to) {
+    where.push("(instr(lower(m.to_json), ?) > 0 OR instr(lower(m.cc_json), ?) > 0 OR instr(lower(m.envelope_to), ?) > 0)");
+    const p = opts.to.toLowerCase();
+    binds.push(p, p, p);
+  }
+  if (opts.subject) {
+    where.push("instr(lower(m.subject), ?) > 0");
+    binds.push(opts.subject.toLowerCase());
+  }
+  if (opts.tag) {
+    where.push("m.tag = ?");
+    binds.push(opts.tag.toLowerCase());
+  }
+  for (const h of parseHas(opts.has)) {
+    if (h === "code") where.push("m.code IS NOT NULL");
+    if (h === "link") where.push("m.verify_link IS NOT NULL");
+    if (h === "attachments") where.push("(m.attachment_count > 0 OR m.attachments_omitted > 0)");
+  }
+  if (opts.auth) {
+    if (opts.auth === "unknown")
+      where.push("(m.auth_json IS NULL OR COALESCE(json_extract(m.auth_json, '$.verdict'), 'unknown') = 'unknown')");
+    else {
+      where.push("json_extract(m.auth_json, '$.verdict') = ?");
+      binds.push(opts.auth);
+    }
+  }
+  labelConditions(opts.labels, "m", where, binds);
+  if (opts.status) {
+    where.push("m.status = ?");
+    binds.push(opts.status);
   }
   const cur = parseCursor(opts.before);
   if (cur) {
     where.push("(m.received_at < ? OR (m.received_at = ? AND m.seq < ?))");
     binds.push(cur.at, cur.at, cur.seq);
   }
+  const aft = parseAfterCursor(opts.after);
+  if (aft) {
+    where.push("(m.received_at > ? OR (m.received_at = ? AND m.seq > ?))");
+    binds.push(aft.at, aft.at, aft.seq);
+  }
+}
+
+/** `after`: "<received_at>.<seq>" (next_after), unix ms, or an ISO date; seq 0 for a bare time. */
+export function parseAfterCursor(after: string | number | undefined | null): { at: number; seq: number } | null {
+  if (after === undefined || after === null || after === "") return null;
+  const s = String(after);
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(s);
+  if (m) return { at: Number(m[1]), seq: m[2] ? Number(m[2]) : Number.MAX_SAFE_INTEGER };
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) return { at: t, seq: Number.MAX_SAFE_INTEGER };
+  throw badRequest(
+    "Invalid `after` cursor.",
+    "Pass the `next_after` value from the previous page (order=asc), a unix-ms timestamp or an ISO date.",
+  );
 }
 
 async function runList(
@@ -71,6 +218,7 @@ async function runList(
   scope?: { column: "account_id" | "inbox_id"; value: string },
 ) {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const asc = opts.order === "asc";
   if (opts.q !== undefined) {
     const terms = searchTerms(opts.q);
     if (!terms.length)
@@ -93,12 +241,19 @@ async function runList(
       binds.push(scope.value, ...(cur ? [cur.at, cur.at, cur.seq] : []));
     }
   }
-  const sql = `SELECT m.* FROM messages m WHERE ${where.join(" AND ")} ORDER BY m.received_at DESC, m.seq DESC LIMIT ?`;
+  const dir = asc ? "ASC" : "DESC";
+  const sql = `SELECT m.* FROM messages m WHERE ${where.join(" AND ")} ORDER BY m.received_at ${dir}, m.seq ${dir} LIMIT ?`;
   const { results } = await env.DB.prepare(sql)
     .bind(...binds, limit + 1)
     .all<MessageRow>();
   const page = results.slice(0, limit);
-  return { messages: page.map(messageSummary), next_before: results.length > limit ? cursorOf(page[page.length - 1]!) : null };
+  const more = results.length > limit;
+  const last = page[page.length - 1];
+  return {
+    messages: page.map(messageSummary),
+    next_before: !asc && more && last ? cursorOf(last) : null,
+    ...(asc ? { next_after: more && last ? cursorOf(last) : null } : {}),
+  };
 }
 
 const searchHint =
@@ -145,7 +300,10 @@ export async function getMessage(env: AppEnv, accountId: string, id: string, opt
     env.DB.prepare("SELECT * FROM attachments WHERE message_id = ? ORDER BY rowid").bind(id).all<AttachmentRow>(),
     opts.include_html === false || !row.html_key ? Promise.resolve(null) : env.BLOBS.get(row.html_key).then((o) => (o ? o.text() : null)),
   ]);
-  return { message: messageDetail(row, { html, attachments: atts }) };
+  const detail = messageDetail(row, { html, attachments: atts });
+  if (row.direction !== "out") return { message: detail };
+  const { deliveryOf } = await import("./delivery"); // delivery.ts imports this module
+  return { message: { ...detail, delivery: await deliveryOf(env, row) } };
 }
 
 export async function getRawMessage(env: AppEnv, accountId: string, id: string): Promise<{ row: MessageRow; body: R2ObjectBody }> {
@@ -213,10 +371,71 @@ export async function markRead(env: AppEnv, accountId: string, id: string, read:
   return { message: messageSummary({ ...row, read: read ? 1 : 0 }) };
 }
 
+export interface MessageUpdate {
+  read?: boolean;
+  add_labels?: string[];
+  remove_labels?: string[];
+}
+
+/** PATCH /v1/messages/:id: read state and labels. */
+export async function updateMessage(env: AppEnv, accountId: string, id: string, input: MessageUpdate) {
+  const row = await getMessageRow(env, accountId, id);
+  const add = parseLabels(input.add_labels, "add_labels");
+  const remove = parseLabels(input.remove_labels, "remove_labels");
+  const labels = add.length || remove.length ? applyLabels(labelsOf(row), add, remove) : labelsOf(row);
+  const read = input.read === undefined ? row.read : input.read ? 1 : 0;
+  const labels_json = labels.length ? JSON.stringify(labels) : null;
+  await env.DB.prepare("UPDATE messages SET read = ?, labels_json = ? WHERE id = ?").bind(read, labels_json, id).run();
+  return { message: messageSummary({ ...row, read, labels_json }) };
+}
+
+/** POST /v1/messages/batch: one change for up to 100 messages (read, labels, or delete). */
+export async function batchUpdateMessages(env: AppEnv, accountId: string, input: MessageUpdate & { ids: string[]; delete?: boolean }) {
+  const ids = [...new Set(input.ids)];
+  if (!ids.length || ids.length > 100)
+    throw badRequest("Pass 1 to 100 ids.", "Split larger batches; list ids with GET /v1/inboxes/:id/messages.");
+  const { results } = await env.DB.prepare("SELECT * FROM messages WHERE account_id = ? AND id IN (SELECT value FROM json_each(?))")
+    .bind(accountId, JSON.stringify(ids))
+    .all<MessageRow>();
+  const found = new Set(results.map((r) => r.id));
+  const missing = ids.filter((i) => !found.has(i));
+  if (input.delete) {
+    if (input.read !== undefined || input.add_labels?.length || input.remove_labels?.length)
+      throw badRequest("delete can't be combined with read or labels.", "Send two batches: one to change, one to delete.");
+    await deleteMessageRows(env, results);
+    return { deleted: results.map((r) => r.id), not_found: missing };
+  }
+  const add = parseLabels(input.add_labels, "add_labels");
+  const remove = parseLabels(input.remove_labels, "remove_labels");
+  if (input.read === undefined && !add.length && !remove.length)
+    throw badRequest(
+      "Nothing to change.",
+      'Pass read, add_labels, remove_labels or delete: true, e.g. {"ids":[...],"add_labels":["handled"]}.',
+    );
+  const next = results.map((r) => {
+    const labels = applyLabels(labelsOf(r), add, remove);
+    return {
+      ...r,
+      read: input.read === undefined ? r.read : input.read ? 1 : 0,
+      labels_json: labels.length ? JSON.stringify(labels) : null,
+    };
+  });
+  for (let i = 0; i < next.length; i += 50)
+    await env.DB.batch(
+      next
+        .slice(i, i + 50)
+        .map((r) => env.DB.prepare("UPDATE messages SET read = ?, labels_json = ? WHERE id = ?").bind(r.read, r.labels_json, r.id)),
+    );
+  return { updated: next.map(messageSummary), not_found: missing };
+}
+
+/** Delete a message; a scheduled one is canceled (it never goes out). */
 export async function deleteMessage(env: AppEnv, accountId: string, id: string) {
   const row = await getMessageRow(env, accountId, id);
+  if (row.status === "sending")
+    throw badRequest("This scheduled message is being sent right now.", `GET /v1/messages/${id} in a few seconds shows the result.`);
   await deleteMessageRows(env, [row]);
-  return { deleted: id };
+  return { deleted: id, ...(row.status === "scheduled" ? { canceled: true } : {}) };
 }
 
 /**
@@ -250,23 +469,141 @@ export async function deleteMessageRows(
   return rows.length;
 }
 
-export async function getThread(env: AppEnv, accountId: string, threadId: string) {
+async function getThreadRow(env: AppEnv, accountId: string, threadId: string): Promise<ThreadRow> {
   const t = await env.DB.prepare("SELECT * FROM threads WHERE id = ? AND account_id = ?").bind(threadId, accountId).first<ThreadRow>();
-  if (!t) throw notFound("Thread", "Every message has a thread_id; GET /v1/inboxes/:id/threads lists threads.");
+  if (!t) throw notFound("Thread", "Every message has a thread_id; GET /v1/threads lists threads.");
+  return t;
+}
+
+export async function getThread(env: AppEnv, accountId: string, threadId: string) {
+  const t = await getThreadRow(env, accountId, threadId);
   const { results } = await env.DB.prepare("SELECT * FROM messages WHERE thread_id = ? ORDER BY received_at ASC, seq ASC LIMIT 500")
     .bind(threadId)
     .all<MessageRow>();
   return { thread: { ...threadJson(t), messages: results.map(messageSummary) } };
 }
 
-export async function listThreads(env: AppEnv, accountId: string, inboxId: string, opts: { limit?: number; before?: number } = {}) {
-  await getInboxRow(env, accountId, inboxId);
+export interface ThreadListOptions {
+  inbox_id?: string;
+  /** Substring of the subject. */
+  q?: string;
+  labels?: string;
+  limit?: number;
+  /** last_message_at (unix ms): threads active before / after it. */
+  before?: number;
+  after?: number;
+}
+
+/** Threads of one inbox, or of the whole account (no inbox_id), most recent activity first. */
+export async function listThreads(env: AppEnv, accountId: string, inboxId: string | null, opts: ThreadListOptions = {}) {
+  const inbox = inboxId ?? opts.inbox_id ?? null;
+  if (inbox) await getInboxRow(env, accountId, inbox);
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM threads WHERE inbox_id = ? ${opts.before ? "AND last_message_at < ?" : ""} ORDER BY last_message_at DESC LIMIT ?`,
-  )
-    .bind(...(opts.before ? [inboxId, opts.before, limit + 1] : [inboxId, limit + 1]))
+  const where = inbox ? ["t.inbox_id = ?"] : ["t.account_id = ?"];
+  const binds: unknown[] = [inbox ?? accountId];
+  if (opts.before) {
+    where.push("t.last_message_at < ?");
+    binds.push(opts.before);
+  }
+  if (opts.after) {
+    where.push("t.last_message_at > ?");
+    binds.push(opts.after);
+  }
+  if (opts.q) {
+    where.push("instr(lower(t.subject), ?) > 0");
+    binds.push(opts.q.toLowerCase());
+  }
+  labelConditions(opts.labels, "t", where, binds);
+  const { results } = await env.DB.prepare(`SELECT t.* FROM threads t WHERE ${where.join(" AND ")} ORDER BY t.last_message_at DESC LIMIT ?`)
+    .bind(...binds, limit + 1)
     .all<ThreadRow>();
   const page = results.slice(0, limit);
   return { threads: page.map(threadJson), next_before: results.length > limit ? page[page.length - 1]!.last_message_at : null };
+}
+
+/** PATCH /v1/threads/:id: labels on the thread; read applies to every inbound message in it. */
+export async function updateThread(env: AppEnv, accountId: string, threadId: string, input: MessageUpdate) {
+  const t = await getThreadRow(env, accountId, threadId);
+  const add = parseLabels(input.add_labels, "add_labels");
+  const remove = parseLabels(input.remove_labels, "remove_labels");
+  const labels = applyLabels(labelsOf(t), add, remove);
+  const labels_json = labels.length ? JSON.stringify(labels) : null;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE threads SET labels_json = ? WHERE id = ?").bind(labels_json, threadId),
+    ...(input.read === undefined
+      ? []
+      : [env.DB.prepare("UPDATE messages SET read = ? WHERE thread_id = ? AND direction = 'in'").bind(input.read ? 1 : 0, threadId)]),
+  ]);
+  return { thread: threadJson({ ...t, labels_json }) };
+}
+
+/** DELETE /v1/threads/:id: every message in it (and their blobs), then the thread. */
+export async function deleteThread(env: AppEnv, accountId: string, threadId: string) {
+  await getThreadRow(env, accountId, threadId);
+  let deleted = 0;
+  for (;;) {
+    const { results } = await env.DB.prepare("SELECT id, thread_id, raw_key, html_key FROM messages WHERE thread_id = ? LIMIT 500")
+      .bind(threadId)
+      .all<Pick<MessageRow, "id" | "thread_id" | "raw_key" | "html_key">>();
+    deleted += await deleteMessageRows(env, results);
+    if (results.length < 500) break;
+  }
+  await env.DB.prepare("DELETE FROM threads WHERE id = ? AND account_id = ?").bind(threadId, accountId).run();
+  return { deleted: threadId, messages_deleted: deleted };
+}
+
+/** Wall time one clear may spend; the rest is left for the next call (`more: true`). */
+const CLEAR_BUDGET_MS = 15_000;
+
+/**
+ * DELETE /v1/inboxes/:id/messages?before=: delete an inbox's messages (all, or those received
+ * before `before`), in and out, with their blobs; the inbox and its address stay. Counts toward
+ * MAX_INBOX_CLEARS_PER_DAY. A very full inbox may need a second call (`more: true`).
+ */
+export async function clearInbox(
+  env: AppEnv,
+  accountId: string,
+  inboxId: string,
+  opts: { before?: string | number } = {},
+  now = Date.now(),
+) {
+  await getInboxRow(env, accountId, inboxId);
+  const standing = await standingOf(env, accountId);
+  assertActive(standing);
+  const cur = parseCursor(opts.before);
+  const limit = cap(env, standing, "MAX_INBOX_CLEARS_PER_DAY");
+  const budget = await reserveDaily(env, accountId, "inbox_clear", limit, now);
+  if (!budget.ok)
+    throw dailyLimitError(
+      `this account cleared inboxes ${limit} times today`,
+      limit,
+      "Delete single messages (DELETE /v1/messages/:id) or let retention and ttl_days remove old mail.",
+    );
+  const stop = Date.now() + CLEAR_BUDGET_MS;
+  let deleted = 0;
+  let more = false;
+  try {
+    for (;;) {
+      const { results } = await env.DB.prepare(
+        `SELECT id, thread_id, raw_key, html_key FROM messages WHERE inbox_id = ?${cur ? " AND (received_at < ? OR (received_at = ? AND seq < ?))" : ""} LIMIT 200`,
+      )
+        .bind(inboxId, ...(cur ? [cur.at, cur.at, cur.seq] : []))
+        .all<Pick<MessageRow, "id" | "thread_id" | "raw_key" | "html_key">>();
+      deleted += await deleteMessageRows(env, results);
+      if (results.length < 200) break;
+      if (Date.now() >= stop) {
+        more = true;
+        break;
+      }
+    }
+  } catch (e) {
+    if (!deleted) await refundDaily(env, accountId, "inbox_clear", budget.day);
+    throw e;
+  }
+  return {
+    inbox_id: inboxId,
+    deleted,
+    more,
+    next_steps: more ? [`More is left: call DELETE /v1/inboxes/${inboxId}/messages again.`] : [],
+  };
 }

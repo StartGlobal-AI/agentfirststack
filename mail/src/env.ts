@@ -71,6 +71,15 @@ export type AppEnv = Omit<
    *   MAX_CONCURRENT_WAITS_PER_INBOX   parked waits per inbox (default 2).
    *   MAX_WEBHOOKS_PER_ACCOUNT webhooks per account (default 10).
    *   MAX_WEBHOOK_TESTS_PER_DAY        POST /webhooks/:id/test calls per account per UTC day.
+   *   MAX_FEED_EVENTS_PER_DAY       events kept in the feed (GET /v1/events) per account per UTC day
+   *                            (default 5000, 1000 unclaimed); webhooks still fire beyond it.
+   *   MAX_LIST_ENTRIES_PER_ACCOUNT     allow / block list entries per account (default 100).
+   *   MAX_INBOX_CLEARS_PER_DAY DELETE /v1/inboxes/:id/messages calls per account per UTC day.
+   *   MAX_SCHEDULED_PER_ACCOUNT        scheduled sends waiting at once (default 20, 5 unclaimed).
+   *   MAX_ATTACHMENT_TEXT_PER_DAY      attachment-to-text conversions per account per UTC day
+   *                            (default 20, 5 unclaimed; needs the AI binding).
+   *   DELIVERY_EVENTS_QUEUE    name of the queue the Email Sending event subscriptions publish to
+   *                            (this Worker consumes it). Set = delivery tracking is on. See README.
    */
   SHARED_SEND_POLICY?: string;
   SHARED_RETENTION_DAYS?: string;
@@ -88,6 +97,14 @@ export type AppEnv = Omit<
   MAX_CONCURRENT_WAITS_PER_INBOX?: string;
   MAX_WEBHOOKS_PER_ACCOUNT?: string;
   MAX_WEBHOOK_TESTS_PER_DAY?: string;
+  MAX_FEED_EVENTS_PER_DAY?: string;
+  MAX_LIST_ENTRIES_PER_ACCOUNT?: string;
+  MAX_INBOX_CLEARS_PER_DAY?: string;
+  MAX_SCHEDULED_PER_ACCOUNT?: string;
+  MAX_ATTACHMENT_TEXT_PER_DAY?: string;
+  DELIVERY_EVENTS_QUEUE?: string;
+  /** Optional Workers AI binding (not in the template): attachment text via toMarkdown. Without it that route answers 501. */
+  AI?: Ai;
 } & { [K in CapName as `UNCLAIMED_${K}`]?: string };
 
 /** A positive integer var, or `fallback` when unset, empty, zero or not a number. */
@@ -110,7 +127,12 @@ export type CapName =
   | "MAX_CONCURRENT_WAITS"
   | "MAX_CONCURRENT_WAITS_PER_INBOX"
   | "MAX_WEBHOOKS_PER_ACCOUNT"
-  | "MAX_WEBHOOK_TESTS_PER_DAY";
+  | "MAX_WEBHOOK_TESTS_PER_DAY"
+  | "MAX_FEED_EVENTS_PER_DAY"
+  | "MAX_LIST_ENTRIES_PER_ACCOUNT"
+  | "MAX_INBOX_CLEARS_PER_DAY"
+  | "MAX_SCHEDULED_PER_ACCOUNT"
+  | "MAX_ATTACHMENT_TEXT_PER_DAY";
 
 /**
  * A per-account cap for an account of this standing: `UNCLAIMED_<name>` for unclaimed accounts
@@ -137,9 +159,19 @@ export interface WebhookJob {
   event: WebhookEvent;
 }
 
+export type WebhookEventType =
+  | "message.received"
+  | "message.sent"
+  | "message.delivered"
+  | "message.bounced"
+  | "message.complained"
+  | "message.failed"
+  | "domain.verified"
+  | "webhook.test";
+
 export interface WebhookEvent {
   id: string;
-  type: "message.received" | "webhook.test";
+  type: WebhookEventType;
   created_at: number;
   data: Record<string, unknown>;
 }

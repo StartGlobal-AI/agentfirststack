@@ -1,6 +1,7 @@
 import { type AuthResults, type HeaderLike, extractAuth } from "./auth";
 import { extractCodes } from "./codes";
 import { type ExtractedLink, extractLinks, primaryActionLink } from "./links";
+import { extractReply } from "./reply";
 import { htmlToText, makePreview, tidyText } from "./text";
 
 export type { AuthResults } from "./auth";
@@ -17,6 +18,8 @@ export interface Extracted {
   code: string | null;
   /** First verify / magic_login / password_reset link. */
   verify_link: string | null;
+  /** `text` without the quoted history (src/extract/reply.ts). */
+  reply_text: string;
 }
 
 export interface ExtractInput {
@@ -62,5 +65,6 @@ export function extractAll(input: ExtractInput): Extracted {
     auth,
     code: codes[0] ?? null,
     verify_link: primaryActionLink(links)?.url ?? null,
+    reply_text: extractReply(text),
   };
 }

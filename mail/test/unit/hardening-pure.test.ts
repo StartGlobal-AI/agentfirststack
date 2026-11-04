@@ -4,6 +4,8 @@ import { MAX_EXTRACT_CHARS, extractAll } from "../../src/extract";
 import { extractAuth } from "../../src/extract/auth";
 import { emphasisSet, extractCodes } from "../../src/extract/codes";
 import { MAX_RAW_LINKS, extractLinks } from "../../src/extract/links";
+import { parseIcs } from "../../src/extract/calendar";
+import { extractReply } from "../../src/extract/reply";
 import { htmlToText, makePreview, stripTags, tidyText } from "../../src/extract/text";
 import { UNAUTHENTICATED_SENDER, senderKeyFor } from "../../src/lib/sender";
 import { DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES, headerBlock, maxBlobBytes } from "../../src/service/ingest";
@@ -40,6 +42,20 @@ const HOSTILE: Record<string, string> = {
   "long line above codes": rep(`${rep("verification ", 5000)}\n123456\n`),
   "letter-spaced codes": rep("1 2 3 4 5 6\n"),
   "email-ish": `${rep("a.")}@${rep("b.")}`,
+  // Reply extraction: quote headers, near-misses and look-ahead triggers, repeated.
+  "attribution near-misses": rep("On 3 Nov 2026 someone <a@b> said:\n"),
+  "wrapped attribution starts": rep("On 3 Nov 2026 at 10:00, Jane <\n"),
+  "outlook From: lines": rep("From: a@b.example\n"),
+  "quoted lines": rep("> > > quoted\n"),
+  "one long attribution line": `On 1 ${rep("x ")} wrote:`,
+  dashes: rep("-----"),
+  "separator near-misses": rep("----- not the original message -----\n"),
+  // Calendar parsing: nesting, folding, quoted parameters, attendee floods, one huge line.
+  "ics nested components": `BEGIN:VEVENT\n${rep("BEGIN:VALARM\n")}`,
+  "ics folded continuation": `BEGIN:VEVENT\nDESCRIPTION:${rep("x\r\n ")}`,
+  "ics unterminated quotes": `BEGIN:VEVENT\n${rep('ATTENDEE;CN="')}`,
+  "ics attendee flood": `BEGIN:VEVENT\n${rep("ATTENDEE;CN=a;ROLE=b:mailto:a@b.example\n")}`,
+  "ics escapes": `BEGIN:VEVENT\nSUMMARY:${rep("\\n\\,")}`,
 };
 const BUDGET_MS = 500; // measured 10-60 ms; the old code took minutes on these
 
@@ -61,6 +77,8 @@ describe("1. extraction is linear on hostile input", () => {
         "links (List-Unsubscribe)": () => extractLinks({ listUnsubscribe: input }),
         auth: () => extractAuth([ar(`mx.cloudflare.net; dkim=pass ${input}`), { key: "from", value: input }], "a@b.example"),
         "text + preview": () => makePreview(tidyText(input)),
+        reply: () => extractReply(input),
+        ics: () => parseIcs(input.includes("BEGIN:VEVENT") ? input : `BEGIN:VEVENT\n${input}`),
       };
       for (const [what, f] of Object.entries(runs)) expect(ms(f), what).toBeLessThan(BUDGET_MS);
     });

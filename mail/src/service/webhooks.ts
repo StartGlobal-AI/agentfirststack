@@ -1,12 +1,39 @@
 import { ApiError, badRequest, decryptSecret, encryptSecret, newId, notFound } from "@afs/shared";
 import { type AppEnv, type Standing, type WebhookEvent, type WebhookJob, cap, isDevMode, standingOf } from "../env";
+import { hasControlChars } from "../lib/headers";
 import { registrableDomain } from "../lib/sender";
-import { newWebhookSecret, signPayload } from "../lib/signing";
+import { newWebhookSecret, signPayload, standardSignature } from "../lib/signing";
 import { assertActive, dailyLimitError, rateLimit, refundDaily, reserveDaily } from "./budgets";
+import { FEED_EVENT_TYPES, recordEvent } from "./feed";
 import { getInboxRow } from "./inboxes";
 
-export const WEBHOOK_EVENTS = ["message.received"] as const;
+/** Events a webhook can subscribe to (the feed's types). */
+export const WEBHOOK_EVENTS = FEED_EVENT_TYPES;
 export type WebhookEventType = (typeof WEBHOOK_EVENTS)[number];
+/** Custom headers per webhook, and the names a webhook may not set (ours, and transport headers). */
+export const MAX_WEBHOOK_HEADERS = 5;
+const RESERVED_HEADERS = new Set([
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "transfer-encoding",
+  "connection",
+  "host",
+  "user-agent",
+  "x-signature",
+  "x-webhook-id",
+  "x-event-id",
+  "x-event-type",
+  "x-delivery-attempt",
+  "webhook-id",
+  "webhook-timestamp",
+  "webhook-signature",
+  "upgrade",
+  "te",
+  "trailer",
+  "keep-alive",
+  "proxy-authorization",
+]);
 
 /** Retry schedule (seconds) after attempt n fails. The 8th failure is final. */
 export const BACKOFF_SECONDS = [10, 30, 60, 300, 900, 1800, 3600];
@@ -34,6 +61,13 @@ interface WebhookRow {
   secret_sealed: string;
   enabled: number;
   created_at: number;
+  /** Several inboxes: sorted JSON array (inbox_id is then NULL). */
+  inbox_ids_json?: string | null;
+  /** Custom headers, sealed: encryptSecret(JSON {name: value}). */
+  headers_sealed?: string | null;
+  /** Their names, space-separated (values are write-only). */
+  header_names?: string | null;
+  updated_at?: number | null;
 }
 
 interface DeliveryRow {
@@ -162,15 +196,23 @@ async function unseal(env: AppEnv, sealed: string): Promise<string> {
   return decryptSecret(env.ENCRYPTION_KEY, sealed);
 }
 
+/** The inboxes a webhook is for: [] = every inbox of the account. */
+const inboxIdsOf = (w: Pick<WebhookRow, "inbox_id" | "inbox_ids_json">): string[] =>
+  w.inbox_ids_json ? (JSON.parse(w.inbox_ids_json) as string[]) : w.inbox_id ? [w.inbox_id] : [];
+
 function webhookJson(w: WebhookRow, last?: DeliveryRow | null) {
+  const ids = inboxIdsOf(w);
   return {
     id: w.id,
     url: w.url,
     events: w.events.split(" ").filter(Boolean),
-    inbox_id: w.inbox_id,
+    inbox_id: ids.length === 1 ? ids[0] : null,
+    inbox_ids: ids,
     enabled: !!w.enabled,
     created_at: w.created_at,
+    updated_at: w.updated_at ?? null,
     secret_configured: true,
+    headers: (w.header_names ?? "").split(" ").filter(Boolean),
     last_delivery: last
       ? {
           event_type: last.event_type,
@@ -198,31 +240,96 @@ function deliveryJson(d: DeliveryRow) {
   };
 }
 
+function parseEvents(events: string[] | undefined): string[] {
+  const list = [...new Set(events?.length ? events : ["message.received"])];
+  for (const e of list) {
+    if (!(WEBHOOK_EVENTS as readonly string[]).includes(e))
+      throw badRequest(`Unknown event "${e}".`, `Supported events: ${WEBHOOK_EVENTS.join(", ")}.`);
+  }
+  return list;
+}
+
+/** One inbox -> inbox_id; several -> sorted inbox_ids_json; none -> every inbox. Each must be the account's. */
+async function inboxScope(env: AppEnv, accountId: string, ids: string[]) {
+  const list = [...new Set(ids)].sort();
+  if (list.length > 50) throw badRequest("At most 50 inbox_ids per webhook.", "Leave inbox_ids out to get events for every inbox.");
+  for (const id of list) await getInboxRow(env, accountId, id);
+  return list.length === 0
+    ? { inbox_id: null, inbox_ids_json: null }
+    : list.length === 1
+      ? { inbox_id: list[0]!, inbox_ids_json: null }
+      : { inbox_id: null, inbox_ids_json: JSON.stringify(list) };
+}
+
+/** Validate custom headers (at most 5, no reserved names, no line breaks) and seal them. null = none. */
+export async function sealHeaders(env: AppEnv, headers: Record<string, string> | null | undefined) {
+  const entries = Object.entries(headers ?? {});
+  if (!entries.length) return { headers_sealed: null, header_names: null };
+  if (entries.length > MAX_WEBHOOK_HEADERS)
+    throw badRequest(
+      `At most ${MAX_WEBHOOK_HEADERS} custom headers per webhook.`,
+      "Keep the ones your receiver checks, e.g. an Authorization token.",
+    );
+  const seen = new Set<string>();
+  for (const [k, v] of entries) {
+    const name = k.toLowerCase();
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(k) || RESERVED_HEADERS.has(name) || seen.has(name))
+      throw badRequest(
+        `Header "${k}" can't be set on a webhook.`,
+        "Use names of letters, digits and '-' (e.g. Authorization or X-Api-Key); content-type, user-agent, host, the x-signature / x-event-* / webhook-* headers we sign with and hop-by-hop headers are reserved, and each name once.",
+      );
+    if (typeof v !== "string" || v.length > 1024 || hasControlChars(v))
+      throw badRequest(`Header "${k}" has an invalid value.`, "At most 1024 characters, no line breaks or other control characters.");
+    seen.add(name);
+  }
+  return { headers_sealed: await seal(env, JSON.stringify(Object.fromEntries(entries))), header_names: entries.map(([k]) => k).join(" ") };
+}
+
+async function unsealHeaders(env: AppEnv, w: WebhookRow): Promise<Record<string, string>> {
+  if (!w.headers_sealed) return {};
+  try {
+    return JSON.parse(await unseal(env, w.headers_sealed)) as Record<string, string>;
+  } catch (e) {
+    console.error("webhook headers could not be unsealed", e);
+    return {};
+  }
+}
+
 export async function createWebhook(
   env: AppEnv,
   accountId: string,
-  input: { url: string; events?: string[]; inbox_id?: string | null },
+  input: { url: string; events?: string[]; inbox_id?: string | null; inbox_ids?: string[]; headers?: Record<string, string> },
   now = Date.now(),
 ) {
   const standing = await standingOf(env, accountId);
   assertActive(standing);
   const url = validateWebhookUrl(input.url, env);
-  const events = [...new Set(input.events?.length ? input.events : ["message.received"])];
-  for (const e of events) {
-    if (!(WEBHOOK_EVENTS as readonly string[]).includes(e))
-      throw badRequest(`Unknown event "${e}".`, `Supported events: ${WEBHOOK_EVENTS.join(", ")}.`);
-  }
-  if (input.inbox_id) await getInboxRow(env, accountId, input.inbox_id);
+  const events = parseEvents(input.events);
+  const scope = await inboxScope(env, accountId, [...(input.inbox_ids ?? []), ...(input.inbox_id ? [input.inbox_id] : [])]);
+  const sealedHeaders = await sealHeaders(env, input.headers);
 
-  const existing = await env.DB.prepare("SELECT * FROM webhooks WHERE account_id = ? AND url = ? AND COALESCE(inbox_id, '') = ?")
-    .bind(accountId, url, input.inbox_id ?? "")
+  const existing = await env.DB.prepare(
+    "SELECT * FROM webhooks WHERE account_id = ? AND url = ? AND COALESCE(inbox_id, '') = ? AND COALESCE(inbox_ids_json, '') = ?",
+  )
+    .bind(accountId, url, scope.inbox_id ?? "", scope.inbox_ids_json ?? "")
     .first<WebhookRow>();
   if (existing) {
-    await env.DB.prepare("UPDATE webhooks SET events = ?, enabled = 1 WHERE id = ?").bind(events.join(" "), existing.id).run();
+    const headersChanged = input.headers !== undefined;
+    await env.DB.prepare(
+      `UPDATE webhooks SET events = ?, enabled = 1, updated_at = ?${headersChanged ? ", headers_sealed = ?, header_names = ?" : ""} WHERE id = ?`,
+    )
+      .bind(events.join(" "), now, ...(headersChanged ? [sealedHeaders.headers_sealed, sealedHeaders.header_names] : []), existing.id)
+      .run();
     return {
-      webhook: webhookJson({ ...existing, events: events.join(" "), enabled: 1 }),
+      webhook: webhookJson({
+        ...existing,
+        events: events.join(" "),
+        enabled: 1,
+        updated_at: now,
+        ...(headersChanged ? sealedHeaders : {}),
+      }),
       existing: true,
-      note: "A webhook for this URL already exists; its secret was shown when it was created and is not shown again. DELETE it and create it again to get a new secret.",
+      note: `A webhook for this URL already exists; its secret was shown when it was created and is not shown again. POST /v1/webhooks/${existing.id}/rotate-secret issues a new one.`,
       next_steps: [`POST /v1/webhooks/${existing.id}/test sends a signed test event.`],
     };
   }
@@ -243,25 +350,97 @@ export async function createWebhook(
     account_id: accountId,
     url,
     events: events.join(" "),
-    inbox_id: input.inbox_id ?? null,
+    inbox_id: scope.inbox_id,
+    inbox_ids_json: scope.inbox_ids_json,
     secret_sealed: await seal(env, secret),
     enabled: 1,
     created_at: now,
+    updated_at: now,
+    ...sealedHeaders,
   };
   await env.DB.prepare(
-    "INSERT INTO webhooks (id, account_id, url, events, inbox_id, secret_sealed, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+    "INSERT INTO webhooks (id, account_id, url, events, inbox_id, inbox_ids_json, secret_sealed, headers_sealed, header_names, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
   )
-    .bind(row.id, row.account_id, row.url, row.events, row.inbox_id, row.secret_sealed, row.created_at)
+    .bind(
+      row.id,
+      row.account_id,
+      row.url,
+      row.events,
+      row.inbox_id,
+      row.inbox_ids_json,
+      row.secret_sealed,
+      row.headers_sealed,
+      row.header_names,
+      row.created_at,
+      now,
+    )
     .run();
   return {
     webhook: webhookJson(row),
     secret,
     existing: false,
-    note: 'Store `secret` now; it is not shown again. Verify each delivery: x-signature is t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>.',
+    note: 'Store `secret` now; it is not shown again. Verify each delivery: x-signature is t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>; Standard Webhooks headers (webhook-id, webhook-timestamp, webhook-signature) are sent too, so stock verifiers work.',
     next_steps: [
       `POST /v1/webhooks/${row.id}/test sends a signed test event so you can check your receiver.`,
       "GET /v1/webhooks/" + row.id + " shows recent deliveries.",
     ],
+  };
+}
+
+export interface UpdateWebhookInput {
+  url?: string;
+  events?: string[];
+  inbox_id?: string | null;
+  inbox_ids?: string[] | null;
+  enabled?: boolean;
+  /** Replaces all custom headers; null or {} removes them. */
+  headers?: Record<string, string> | null;
+}
+
+/** True when an update only turns the webhook off (allowed for an OAuth access token). */
+export const onlyDisables = (i: UpdateWebhookInput) =>
+  i.enabled === false && Object.entries(i).every(([k, v]) => k === "enabled" || v === undefined);
+
+/** PATCH /v1/webhooks/:id: change URL, events, inboxes, enabled, custom headers. */
+export async function updateWebhook(env: AppEnv, accountId: string, id: string, input: UpdateWebhookInput, now = Date.now()) {
+  const w = await getWebhookRow(env, accountId, id);
+  if (input.enabled !== false) assertActive(await standingOf(env, accountId));
+  const url = input.url !== undefined ? validateWebhookUrl(input.url, env) : w.url;
+  const events = input.events !== undefined ? parseEvents(input.events).join(" ") : w.events;
+  const scope =
+    input.inbox_ids !== undefined || input.inbox_id !== undefined
+      ? await inboxScope(env, accountId, [...(input.inbox_ids ?? []), ...(input.inbox_id ? [input.inbox_id] : [])])
+      : { inbox_id: w.inbox_id, inbox_ids_json: w.inbox_ids_json ?? null };
+  const headers =
+    input.headers !== undefined
+      ? await sealHeaders(env, input.headers)
+      : { headers_sealed: w.headers_sealed ?? null, header_names: w.header_names ?? null };
+  const enabled = input.enabled === undefined ? w.enabled : input.enabled ? 1 : 0;
+  await env.DB.prepare(
+    "UPDATE webhooks SET url = ?, events = ?, inbox_id = ?, inbox_ids_json = ?, headers_sealed = ?, header_names = ?, enabled = ?, updated_at = ? WHERE id = ?",
+  )
+    .bind(url, events, scope.inbox_id, scope.inbox_ids_json, headers.headers_sealed, headers.header_names, enabled, now, id)
+    .run();
+  const next = { ...w, url, events, ...scope, ...headers, enabled, updated_at: now };
+  return {
+    webhook: webhookJson(next),
+    next_steps: [`POST /v1/webhooks/${id}/test sends a signed test event to ${url}.`],
+  };
+}
+
+/** POST /v1/webhooks/:id/rotate-secret: a new signing secret, shown once; the old one stops at once. */
+export async function rotateWebhookSecret(env: AppEnv, accountId: string, id: string, now = Date.now()) {
+  const w = await getWebhookRow(env, accountId, id);
+  assertActive(await standingOf(env, accountId));
+  const secret = newWebhookSecret();
+  await env.DB.prepare("UPDATE webhooks SET secret_sealed = ?, updated_at = ? WHERE id = ?")
+    .bind(await seal(env, secret), now, id)
+    .run();
+  return {
+    webhook: webhookJson({ ...w, updated_at: now }),
+    secret,
+    note: "Store `secret` now; it is not shown again. Deliveries are signed with it from now on (retries of earlier events too).",
+    next_steps: [`POST /v1/webhooks/${id}/test checks your receiver with the new secret.`],
   };
 }
 
@@ -347,7 +526,11 @@ async function enqueue(env: AppEnv, hooks: WebhookRow[], event: WebhookEvent, no
   return jobs.length;
 }
 
-/** Fan an event out to the account's matching webhooks. */
+/**
+ * An event happened: keep it in the account's event feed (GET /v1/events) and fan it out to the
+ * matching webhooks: the type is subscribed, and the webhook is for every inbox, or for this one.
+ * Account-level events (inboxId null, e.g. domain.verified) go to webhooks for every inbox only.
+ */
 export async function emitEvent(
   env: AppEnv,
   accountId: string,
@@ -356,13 +539,21 @@ export async function emitEvent(
   data: Record<string, unknown>,
   now = Date.now(),
 ) {
-  if ((await standingOf(env, accountId)).suspended) return 0; // suspended accounts get no webhooks
+  const standing = await standingOf(env, accountId);
+  if (standing.suspended) return 0; // suspended accounts get no webhooks or events
+  const event: WebhookEvent = { id: newId("evt"), type, created_at: now, data };
+  try {
+    await recordEvent(env, accountId, inboxId, event, standing);
+  } catch (e) {
+    console.error("event feed write failed", e);
+  }
   const { results } = await env.DB.prepare(
-    "SELECT * FROM webhooks WHERE account_id = ? AND enabled = 1 AND (inbox_id IS NULL OR inbox_id = ?) AND (' ' || events || ' ') LIKE ?",
+    `SELECT * FROM webhooks WHERE account_id = ?1 AND enabled = 1 AND (' ' || events || ' ') LIKE ?3
+       AND ((inbox_id IS NULL AND inbox_ids_json IS NULL) OR inbox_id = ?2
+            OR EXISTS (SELECT 1 FROM json_each(webhooks.inbox_ids_json) j WHERE j.value = ?2))`,
   )
     .bind(accountId, inboxId ?? "", `% ${type} %`)
     .all<WebhookRow>();
-  const event: WebhookEvent = { id: newId("evt"), type, created_at: now, data };
   return enqueue(env, results, event, now);
 }
 
@@ -431,12 +622,24 @@ export async function purgeWebhookDeliveries(env: AppEnv, now = Date.now(), budg
 
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
-/** The exact HTTP request a delivery sends (pure apart from the HMAC). */
-export async function buildDeliveryRequest(secret: string, job: WebhookJob, attempt: number, nowSec: number) {
+/**
+ * The exact HTTP request a delivery sends (pure apart from the HMACs). Two signatures over the
+ * same body: ours (x-signature) and Standard Webhooks (webhook-id / webhook-timestamp /
+ * webhook-signature, standardwebhooks.com, so stock verifiers such as Svix's work). Custom headers
+ * go first; ours always win.
+ */
+export async function buildDeliveryRequest(
+  secret: string,
+  job: WebhookJob,
+  attempt: number,
+  nowSec: number,
+  custom: Record<string, string> = {},
+) {
   const body = JSON.stringify(job.event);
   return {
     body,
     headers: {
+      ...custom,
       "content-type": "application/json",
       "user-agent": "afs-mail-webhooks/1",
       "x-signature": await signPayload(secret, body, nowSec),
@@ -444,6 +647,9 @@ export async function buildDeliveryRequest(secret: string, job: WebhookJob, atte
       "x-event-id": job.event.id,
       "x-event-type": job.event.type,
       "x-delivery-attempt": String(attempt),
+      "webhook-id": job.event.id,
+      "webhook-timestamp": String(nowSec),
+      "webhook-signature": await standardSignature(secret, job.event.id, nowSec, body),
     },
   };
 }
@@ -474,7 +680,7 @@ export async function readCapped(body: ReadableStream<Uint8Array> | null, max = 
   return new TextDecoder().decode(all);
 }
 
-export async function deliverBatch(batch: MessageBatch<WebhookJob>, env: AppEnv, fetcher: Fetcher = fetch) {
+export async function deliverBatch(batch: Pick<MessageBatch<WebhookJob>, "messages">, env: AppEnv, fetcher: Fetcher = fetch) {
   for (const msg of batch.messages) {
     const job = msg.body;
     const now = Date.now();
@@ -504,7 +710,13 @@ export async function deliverBatch(batch: MessageBatch<WebhookJob>, env: AppEnv,
     let status: number | null = null;
     let error: string | null = null;
     try {
-      const req = await buildDeliveryRequest(await unseal(env, w.secret_sealed), job, attempt, Math.floor(now / 1000));
+      const req = await buildDeliveryRequest(
+        await unseal(env, w.secret_sealed),
+        job,
+        attempt,
+        Math.floor(now / 1000),
+        await unsealHeaders(env, w),
+      );
       // Redirects are not followed: a 3xx is a failed delivery (the receiver must answer at its URL).
       const res = await fetcher(w.url, {
         method: "POST",

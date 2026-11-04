@@ -122,6 +122,15 @@ export function normalizeRecipient(input: string): { address: string; tag: strin
   return { address: `${base}@${parts.domain}`, tag: tag || null };
 }
 
+/** Plus-address tags we record and filter on: a-z 0-9 . _ - = (lowercase), 1-64 characters. */
+export const TAG_RE = /^[a-z0-9._=-]{1,64}$/;
+
+/** The tag of a recipient as stored on a message (`me+github@` -> "github"), or null if absent or unusual. Pure. */
+export function cleanTag(tag: string | null | undefined): string | null {
+  const t = (tag ?? "").trim().toLowerCase();
+  return TAG_RE.test(t) ? t : null;
+}
+
 /** Validation for outgoing recipients: a conservative subset of RFC 5321 mailboxes. */
 const OUT_LOCAL_RE = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
 
