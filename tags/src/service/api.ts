@@ -1,4 +1,4 @@
-import { type AuthContext, assertPermanentKey, badRequest } from "@afs/shared";
+import { type AuthContext, assertPermanentKey, badRequest, notFound, sha256Hex } from "@afs/shared";
 import { z } from "zod";
 import { schemaDocument } from "../config/catalog";
 import type { EventFilter } from "../do/container-do";
@@ -6,12 +6,15 @@ import type { Bindings } from "../env";
 import {
   containerNextSteps,
   containerStats,
+  containerStub,
   createContainer,
   deleteContainer,
   draftConfig,
+  draftValidation,
   getContainerRow,
   installInstructions,
   listContainers,
+  liveConfig,
   publicContainer,
   snippet,
   updateContainer,
@@ -35,7 +38,44 @@ import type { ServerEvent } from "./ingest-schema";
 import type { RecipeInput } from "./recipe";
 import { scanSite } from "./scan";
 import { applyRecipe } from "./setup";
-import { createPreview, getDraft, getVersion, listVersions, patchDraft, publish, putDraft, rollback, validateDraft } from "./versions";
+import {
+  createPreview,
+  createVersion,
+  getDraft,
+  getVersion,
+  listVersions,
+  patchDraft,
+  publish,
+  putDraft,
+  rollback,
+  validateDraft,
+} from "./versions";
+import {
+  createEnvironment,
+  deleteEnvironment,
+  environmentInput,
+  environmentPatch,
+  getEnvironment,
+  listEnvironments,
+  presentEnvironment,
+  reauthorizeEnvironment,
+  updateEnvironment,
+} from "./environments";
+import { shownCap, utcDay } from "./limits";
+import { deleteLookup, getLookup, listLookups, lookupInput, putLookup } from "./lookups";
+import {
+  changesVsLive,
+  type DraftEditResult,
+  diffVersions,
+  getDraftItem,
+  parseKind,
+  parseRef,
+  removeDraftItem,
+  revertDraftItem,
+  upsertDraftItem,
+} from "./draft-items";
+import { KEY_FIELD, type ItemKind } from "../config/diff";
+import { type ImportInput, importDraft } from "./import";
 
 /**
  * Every operation, shaped for agents (the thing needed next + next_steps). REST routes and MCP
@@ -64,7 +104,7 @@ export const containerPatch = z.strictObject({
   allowed_hostnames: z.array(z.string().max(253)).max(50).optional(),
 });
 export const destinationInput = z.strictObject({
-  type: z.string().describe("ga4 | meta | google_ads | tiktok | analytics | webhook"),
+  type: z.string().describe("ga4 | meta | google_ads | tiktok | linkedin | pinterest | reddit | snap | x | analytics | webhook"),
   name: z.string().max(200).optional(),
   credentials: z.record(z.string(), z.unknown()).describe("Per type; GET /v1/schema -> destinations.<type>.credentials_schema."),
   settings: destinationSettings.optional(),
@@ -75,6 +115,17 @@ export const destinationPatch = z.strictObject({
   credentials: z.record(z.string(), z.unknown()).optional().describe("Only the fields to change; null removes an optional field."),
   settings: destinationSettings.optional(),
   enabled: z.boolean().optional(),
+});
+export const testInput = z.strictObject({
+  event_name: z.string().max(40).optional(),
+  test_event_code: z.string().max(60).optional().describe("Meta/TikTok test_event_code, or Reddit test_id (Events Manager)."),
+  send_to: z
+    .strictObject({
+      linkedin: z.strictObject({ conversion_id: z.string().regex(/^\d{3,15}$/) }).optional(),
+      x: z.strictObject({ event_id: z.string().regex(/^tw-[a-z0-9]+-[a-z0-9]+$/) }).optional(),
+    })
+    .optional()
+    .describe("LinkedIn and X tests: the conversion rule id / event id to send to."),
 });
 export const scanInput = z.strictObject({
   url: z.string().max(2048).optional().describe("https page to scan (on the container's domain, default port). Default https://<domain>/."),
@@ -246,6 +297,104 @@ export const ops = {
       updated_at: r.row.draft_updated_at,
       config: r.config,
       validation: r.validation,
+      changes_vs_live: await changesVsLive(o.env, r.row, r.config),
+    };
+  },
+
+  async getDraftItem(o: OpCtx, id: string, kind: string, key: string) {
+    const k = parseKind(kind);
+    const r = await getDraftItem(o.env, o.auth.accountId, id, k, key);
+    return {
+      container_id: id,
+      kind: k,
+      key,
+      revision: r.row.draft_revision,
+      item: r.item,
+      in_live: r.in_live,
+      differs_from_live: r.differs_from_live,
+    };
+  },
+
+  async upsertDraftItem(o: OpCtx, id: string, kind: string, key: string | undefined, item: unknown, revision?: number) {
+    const k = parseKind(kind);
+    const field = KEY_FIELD[k];
+    const name = key ?? (item && typeof item === "object" ? (item as Record<string, unknown>)[field] : undefined);
+    if (typeof name !== "string" || !name)
+      throw badRequest(`Which ${k} item? Pass key, or set ${field} in the item.`, `e.g. { "kind": "${k}", "item": { "${field}": "..." } }`);
+    const r = await upsertDraftItem(o.env, o.auth.accountId, id, k, name, item, revision);
+    return itemResponse(o, id, k, name, r, { created: r.result.created, unchanged: !r.written });
+  },
+
+  async removeDraftItem(o: OpCtx, id: string, kind: string, key: string, revision?: number) {
+    const k = parseKind(kind);
+    const r = await removeDraftItem(o.env, o.auth.accountId, id, k, key, revision);
+    return itemResponse(o, id, k, key, r, {
+      removed: r.result.removed,
+      ...(r.result.removed ? {} : { note: `No ${k} item "${key}" was in the draft; nothing changed.` }),
+    });
+  },
+
+  async revertDraftItem(o: OpCtx, id: string, kind: string, key: string, revision?: number) {
+    const k = parseKind(kind);
+    const r = await revertDraftItem(o.env, o.auth.accountId, id, k, key, revision);
+    const how = {
+      restored: `Copied from live version ${r.result.live_version}.`,
+      removed:
+        r.result.live_version == null
+          ? "Nothing is published, so the item was removed from the draft."
+          : `The live version (${r.result.live_version}) has no ${k} item "${key}", so it was removed from the draft.`,
+      unchanged: "The draft item already matches the live version.",
+    }[r.result.reverted];
+    return itemResponse(o, id, k, key, r, { reverted: r.result.reverted, note: how });
+  },
+
+  async importDraft(o: OpCtx, id: string, input: ImportInput, revision?: number) {
+    const r = await importDraft(o.env, o.auth.accountId, id, input, revision);
+    const report = r.report
+      ? { ...r.report, totals: { mapped: r.report.mapped.length, adapted: r.report.adapted.length, unmapped: r.report.unmapped.length } }
+      : undefined;
+    return {
+      container_id: id,
+      dry_run: r.dry_run,
+      written: r.written,
+      revision: r.row.draft_revision,
+      format: r.format,
+      mode: r.mode,
+      on_conflict: r.on_conflict,
+      summary: r.changes.summary,
+      counts: r.counts,
+      ...(report ? { report } : {}),
+      changes: r.changes.changes,
+      validation: r.validation,
+      ...(r.dry_run ? { config: r.config } : {}),
+      next_steps: [
+        ...(r.dry_run ? [`Looks right? Send the same body without dry_run to save it (POST /v1/containers/${id}/draft/import).`] : []),
+        ...(report?.unmapped.length ? ["report.unmapped lists what wasn't imported, each with the reason and what to use instead."] : []),
+        ...(r.format === "gtm"
+          ? [
+              "GTM has no conversions: add conversions[] (PUT /draft/conversions/:name) for purchases and leads so pixels and conversion APIs share one event_id.",
+            ]
+          : []),
+        r.validation.valid
+          ? `POST /v1/containers/${id}/preview to try it on the site, then POST /v1/containers/${id}/publish.`
+          : "Fix validation.errors (each has a hint) before publishing.",
+      ],
+    };
+  },
+
+  async diff(o: OpCtx, id: string, q: { from?: string; to?: string }) {
+    const r = await diffVersions(o.env, o.auth.accountId, id, parseRef(q.from, "live"), parseRef(q.to, "draft"));
+    return {
+      container_id: id,
+      from: r.from,
+      to: r.to,
+      ...(r.nothing_published && (r.from.ref === "live" || r.to.ref === "live")
+        ? { note: "Nothing is published yet, so live is an empty config." }
+        : {}),
+      ...r.diff,
+      next_steps: r.diff.identical
+        ? ["Nothing to publish: the two configs are the same."]
+        : [`POST /v1/containers/${id}/publish publishes the draft; POST /v1/containers/${id}/draft/:kind/:key/revert undoes one item.`],
     };
   },
 
@@ -270,26 +419,231 @@ export const ops = {
     };
   },
 
-  async preview(o: OpCtx, id: string, input: { ttl_minutes?: number; path?: string }) {
+  async preview(o: OpCtx, id: string, input: { ttl_minutes?: number; path?: string; version?: number }) {
     const r = await createPreview(o.env, o.auth.accountId, id, input);
     const sep = r.path.includes("?") ? "&" : "?";
     return {
       token: r.token,
       expires_at: r.expires_at,
+      shows: r.version ? `version ${r.version}` : "the draft",
+      log_url: `${o.base}/v1/containers/${id}/preview/${r.token}/log`,
       preview_url: `https://${r.row.domain}${r.path}${sep}afst_preview=${r.token}`,
       script_url: `${o.base}/c/${id}.js?preview=${r.token}`,
       how_it_works:
         "Open preview_url in a browser: the installed live snippet sees afst_preview, remembers it for the tab (sessionStorage) and loads the DRAFT with console debug logging. Preview conversions go to /collect marked preview and destinations use their test modes. Add ?afst_preview=off to leave.",
       next_steps: [
         "Open preview_url (or drive it with a headless browser) and trigger each conversion.",
+        `GET /v1/containers/${id}/preview/${r.token}/log (MCP get_preview_log) shows, per event, which triggers matched and which tags fired, waited for consent or didn't fire, and why.`,
         `GET /v1/containers/${id}/events?since=15m shows the preview events (preview: true) with per-destination results.`,
         `POST /v1/containers/${id}/publish when it looks right.`,
       ],
     };
   },
 
-  async publish(o: OpCtx, id: string, note?: string) {
-    const r = await publish(o.env, o.auth.accountId, id, { note, keyId: o.auth.keyId, origins: o.origins });
+  async previewLog(o: OpCtx, id: string, token: string, q: { after?: number; limit?: number }) {
+    await getContainerRow(o.env, o.auth.accountId, id);
+    if (!/^prv_[a-z0-9]{24}$/.test(token))
+      throw badRequest("That isn't a preview token.", "Use the token from POST /v1/containers/:id/preview (prv_...).");
+    const known = await o.env.DB.prepare("SELECT expires_at, version FROM preview_tokens WHERE token_hash = ? AND container_id = ?")
+      .bind(await sha256Hex(token), id)
+      .first<{ expires_at: number; version: number | null }>();
+    if (!known)
+      throw notFound(
+        "Preview token",
+        `It belongs to another container or was cleaned up after expiring; POST /v1/containers/${id}/preview makes a new one.`,
+      );
+    const r = (await containerStub(o.env, id).readPreviewLog(await sha256Hex(token), q.after ?? 0, q.limit ?? 200)) as {
+      entries: Record<string, unknown>[];
+      next_after: number | null;
+      full: boolean;
+    };
+    return {
+      container_id: id,
+      expires_at: known.expires_at,
+      shows: known.version ? `version ${known.version}` : "the draft",
+      count: r.entries.length,
+      next_after: r.next_after,
+      ...(r.full ? { note: "This token's log is full (500 entries); create a new preview to keep logging." } : {}),
+      // Posted by the preview build in a browser: anyone holding the preview link can post entries.
+      untrusted: { events: r.entries },
+      next_steps: r.entries.length
+        ? [
+            "Each event lists triggers (matched, or why not) and tags (fired, blocked = waiting for consent, not_fired / skipped / excluded with the reason).",
+          ]
+        : [
+            `Nothing logged yet: open the preview_url from POST /v1/containers/${id}/preview in a browser (the snippet must be on the page).`,
+          ],
+    };
+  },
+
+  async createVersion(o: OpCtx, id: string, note?: string) {
+    const r = await createVersion(o.env, o.auth.accountId, id, { note, keyId: o.auth.keyId });
+    return {
+      status: r.existing ? 200 : 201,
+      body: {
+        container_id: id,
+        version: r.version,
+        existing: r.existing,
+        live: r.version === r.row.live_version,
+        warnings: r.validation.warnings,
+        next_steps: [
+          `POST /v1/containers/${id}/publish { "version": ${r.version} } makes it live.`,
+          `POST /v1/containers/${id}/environments { "name": "staging", "version": ${r.version} } serves it to a staging site; POST /v1/containers/${id}/preview { "version": ${r.version} } previews it.`,
+        ],
+      },
+    };
+  },
+
+  async environments(o: OpCtx, id: string) {
+    const r = await listEnvironments(o.env, o.auth.accountId, id);
+    return {
+      container_id: id,
+      max_environments: shownCap(r.max),
+      environments: await Promise.all(r.rows.map((e) => presentEnvironment(o.env, o.base, e, r.container.domain))),
+    };
+  },
+
+  async createEnvironment(o: OpCtx, id: string, input: z.infer<typeof environmentInput>) {
+    const r = await createEnvironment(o.env, o.auth.accountId, id, input);
+    const e = await presentEnvironment(o.env, o.base, r.row, r.container.domain);
+    return {
+      status: r.existing ? 200 : 201,
+      body: {
+        environment: e,
+        existing: r.existing,
+        ...(r.existing && (r.row.version ?? "draft") !== input.version
+          ? {
+              note: `It already exists and serves ${r.row.version ? `version ${r.row.version}` : "the draft"}; PATCH it with { "version": ${JSON.stringify(input.version)} } to change that.`,
+            }
+          : {}),
+        next_steps: [
+          `Install ${e.snippet} on the ${e.name} site instead of the live snippet.`,
+          `PATCH /v1/containers/${id}/environments/${e.id} { "version": <n> } publishes another version to it.`,
+        ],
+      },
+    };
+  },
+
+  async getEnvironment(o: OpCtx, id: string, eid: string) {
+    const r = await getEnvironment(o.env, o.auth.accountId, id, eid);
+    return { environment: await presentEnvironment(o.env, o.base, r.row, r.container.domain) };
+  },
+
+  async updateEnvironment(o: OpCtx, id: string, eid: string, input: z.infer<typeof environmentPatch>) {
+    const r = await updateEnvironment(o.env, o.auth.accountId, id, eid, input);
+    return {
+      environment: await presentEnvironment(o.env, o.base, r.row, r.container.domain),
+      note: "Browsers pick up the change within a minute (the environment script is cached for 60 s).",
+    };
+  },
+
+  async reauthorizeEnvironment(o: OpCtx, id: string, eid: string) {
+    const r = await reauthorizeEnvironment(o.env, o.auth.accountId, id, eid);
+    return {
+      environment: await presentEnvironment(o.env, o.base, r.row, r.container.domain),
+      note: "The old snippet now loads the live container. Install the new snippet on the environment's site.",
+    };
+  },
+
+  async deleteEnvironment(o: OpCtx, id: string, eid: string) {
+    await deleteEnvironment(o.env, o.auth.accountId, id, eid);
+    return { deleted: eid, note: "Its snippet now loads the live container; its pinned version may be pruned by a later publish." };
+  },
+
+  async putLookup(o: OpCtx, id: string, name: string, input: z.infer<typeof lookupInput>) {
+    const r = await putLookup(o.env, o.auth.accountId, id, name, input);
+    return {
+      status: r.existing ? 200 : 201,
+      body: {
+        container_id: id,
+        lookup: r,
+        next_steps: [
+          `Use it from a destination: PATCH /v1/containers/${id}/destinations/:did { "settings": { "params": { "set": { "value": { "lookup": "${name}", "key": "items[].item_id" } } } } } (the sum of each item's value times quantity), or { "lookup": "${name}", "key": "params.sku" } for one value.`,
+          "POST /v1/containers/:id/destinations/:did/test shows the transformed request.",
+        ],
+      },
+    };
+  },
+
+  async lookups(o: OpCtx, id: string) {
+    return { container_id: id, ...(await listLookups(o.env, o.auth.accountId, id)) };
+  },
+
+  async getLookup(o: OpCtx, id: string, name: string) {
+    return { container_id: id, ...(await getLookup(o.env, o.auth.accountId, id, name)) };
+  },
+
+  async deleteLookup(o: OpCtx, id: string, name: string) {
+    return { container_id: id, ...(await deleteLookup(o.env, o.auth.accountId, id, name)) };
+  },
+
+  async tagStats(o: OpCtx, id: string, since?: string) {
+    const row = await getContainerRow(o.env, o.auth.accountId, id);
+    const from = parseSince(since ?? "7d") ?? Date.now() - 7 * 86_400_000;
+    const rows = (await containerStub(o.env, id).tagStats(utcDay(from))) as {
+      tag_id: string;
+      status: string;
+      n: number;
+      last_at: number;
+    }[];
+    const live = (await liveConfig(o.env, row)) ?? {};
+    const tags = (live.tags ?? []).map((t) => {
+      const mine = rows.filter((r) => r.tag_id === t.id);
+      const n = (s: string) => mine.find((r) => r.status === s)?.n ?? 0;
+      return {
+        tag_id: t.id,
+        type: t.type,
+        enabled: t.enabled !== false,
+        fired: n("fired"),
+        blocked: n("blocked"),
+        error: n("error"),
+        skipped: n("skipped"),
+        excluded: n("excluded"),
+        last_at: mine.reduce<number | null>((a, r) => (a === null || r.last_at > a ? r.last_at : a), null),
+      };
+    });
+    const reporting = !!live.settings?.report_tag_fires;
+    return {
+      container_id: id,
+      since: from,
+      reporting,
+      tags,
+      never_fired: tags.filter((t) => t.enabled && !t.fired).map((t) => t.tag_id),
+      failing: tags.filter((t) => t.error > 0).map((t) => t.tag_id),
+      note: "Counts come from browsers (blocked = waited for consent; skipped = schedule, live_only, once_per_page or a page blocklist). Kept 30 days.",
+      next_steps: reporting
+        ? ["never_fired and failing list tags to look at; GET /coverage shows which pages sent hits."]
+        : [
+            `Turn it on: PATCH /v1/containers/${id}/draft { "settings": { "report_tag_fires": true } }, then publish. Each page then sends one telemetry hit (it counts as a browser event).`,
+          ],
+    };
+  },
+
+  async coverage(o: OpCtx, id: string, since?: string) {
+    await getContainerRow(o.env, o.auth.accountId, id);
+    const from = parseSince(since ?? "7d") ?? Date.now() - 7 * 86_400_000;
+    const r = (await containerStub(o.env, id).coverage(from)) as {
+      pages: { host: string; path: string; hits: number; first_seen: number; last_seen: number }[];
+      capped: boolean;
+    };
+    const hosts = [...new Set(r.pages.map((p) => p.host))];
+    return {
+      container_id: id,
+      since: from,
+      hosts: hosts.length,
+      pages: r.pages.length,
+      ...(r.capped ? { note: "Past 1000 distinct pages, the rest are counted under path (other)." } : {}),
+      // Host and path come from the hit's page URL, which browsers (anyone) send.
+      untrusted: { pages: r.pages },
+      next_steps: [
+        "Pages appear once they send a hit: a visit, a conversion, or (settings.report_tag_fires) one telemetry hit per page.",
+        `POST /v1/containers/${id}/scan { "paths": [...] } checks specific pages for the snippet (pages[].snippet).`,
+      ],
+    };
+  },
+
+  async publish(o: OpCtx, id: string, note?: string, version?: number) {
+    const r = await publish(o.env, o.auth.accountId, id, { note, keyId: o.auth.keyId, origins: o.origins, version });
     return {
       container_id: id,
       version: r.version,
@@ -359,7 +713,7 @@ export const ops = {
     return { deleted: did };
   },
 
-  async testDestination(o: OpCtx, id: string, did: string, input: { event_name?: string; test_event_code?: string }) {
+  async testDestination(o: OpCtx, id: string, did: string, input: z.infer<typeof testInput>) {
     return testDestination(o.env, o.auth.accountId, id, did, input);
   },
 
@@ -393,6 +747,31 @@ export const ops = {
     return draftConfig(await getContainerRow(o.env, o.auth.accountId, id));
   },
 };
+
+async function itemResponse(
+  o: OpCtx,
+  id: string,
+  kind: ItemKind,
+  key: string,
+  r: DraftEditResult<unknown>,
+  extra: Record<string, unknown>,
+) {
+  const validation = await draftValidation(o.env, r.row, r.config);
+  const item = ((r.config[kind] as unknown as Record<string, unknown>[] | undefined) ?? []).find((i) => i[KEY_FIELD[kind]] === key) ?? null;
+  return {
+    container_id: id,
+    kind,
+    key,
+    revision: r.row.draft_revision,
+    ...extra,
+    item,
+    validation,
+    changes_vs_live: await changesVsLive(o.env, r.row, r.config),
+    next_steps: validation.valid
+      ? [`GET /v1/containers/${id}/diff shows everything that will change; POST /v1/containers/${id}/publish when ready.`]
+      : ["Saved, but the draft can't be published until validation.errors are fixed (each has a hint)."],
+  };
+}
 
 function draftResponse(
   id: string,

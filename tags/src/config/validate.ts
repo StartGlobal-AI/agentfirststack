@@ -42,6 +42,8 @@ export interface ValidationContext {
     consecutive_failures?: number;
   }[];
   domain?: string;
+  /** The container's extra allowed hostnames (cross_domain hosts must be among them or on the domain). */
+  allowed_hostnames?: string[];
   /** Whether the config's custom code may be published here (src/service/verify.ts); an issue blocks publish. */
   customCode?: (config: ContainerConfig) => Issue | null;
   now?: number;
@@ -58,11 +60,23 @@ export const PLATFORM_TAG: Record<SendToPlatform, Tag["type"]> = {
   reddit: "reddit_pixel",
   x: "x_pixel",
   pinterest: "pinterest_tag",
+  snap: "snap_pixel",
   analytics: "analytics",
 };
 
 /** send_to platforms with a server-side destination connector. */
-export const SERVER_PLATFORMS = ["ga4", "google_ads", "meta", "tiktok", "analytics"] as const;
+export const SERVER_PLATFORMS = [
+  "ga4",
+  "google_ads",
+  "meta",
+  "tiktok",
+  "linkedin",
+  "pinterest",
+  "reddit",
+  "snap",
+  "x",
+  "analytics",
+] as const;
 
 const VALUE_EXPECTED = /purchase|order|checkout|payment|subscri|sale|revenue|transaction|book|deposit/i;
 const PLACEHOLDER = /^(G-X+|AW-X+|AW-0+|X+|123)$/i;
@@ -75,7 +89,24 @@ const AD_TAGS = new Set([
   "reddit_pixel",
   "x_pixel",
   "pinterest_tag",
+  "snap_pixel",
+  "image_pixel",
 ]);
+/** Element built-ins (for matches_css_selector). */
+const ELEMENT_VARS = new Set(["click_element", "form_element", "event_element"]);
+/** Tag types that belong on a consent_init trigger (a consent platform's loader). */
+const CMP_TAGS = new Set(["custom_html", "custom_js", "image_pixel"]);
+
+const toMs = (v: number | string | undefined) => (v === undefined ? undefined : typeof v === "number" ? v : Date.parse(v));
+
+/** Variables a variable reads (lookup/regex_table input, url source, param_set templates). */
+function variableRefs(v: NonNullable<ContainerConfig["variables"]>[number]): string[] {
+  const out = new Set<string>();
+  if (v.type === "lookup" || v.type === "regex_table") out.add(v.input);
+  if (v.type === "url" && v.source) out.add(v.source);
+  if (v.type === "param_set") templateRefs(v.params, out);
+  return [...out];
+}
 
 function zodHint(path: string): string {
   if (path.startsWith("tags"))
@@ -167,6 +198,60 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
   const triggerIds = new Set(triggers.map((t) => t.id));
   const usedTriggers = new Set<string>();
   const usedVars = new Set<string>();
+  const varByName = new Map(variables.map((v) => [v.name, v]));
+
+  // ---- variables: references, regexes, cycles
+  for (const [i, v] of variables.entries()) {
+    for (const r of variableRefs(v)) {
+      usedVars.add(r);
+      if (!isVar(r))
+        err(
+          `variables.${i}`,
+          "undefined_variable",
+          `Variable "${v.name}" reads undefined variable "${r}".`,
+          `Define "${r}" in variables[] or use a built-in (page_path, click_url, referrer...).`,
+        );
+    }
+    if (v.type === "regex_table")
+      for (const [j, row] of v.rows.entries())
+        if (!compileRegex(v.full_match === false ? row.pattern : `^(?:${row.pattern})$`, v.ignore_case))
+          err(
+            `variables.${i}.rows.${j}.pattern`,
+            "invalid_regex",
+            `"${row.pattern}" is not a valid regular expression.`,
+            "Use JavaScript regex syntax without slashes, e.g. ^/blog/(.*).",
+          );
+    if (v.type === "url" && v.component === "param" && !v.param)
+      err(
+        `variables.${i}.param`,
+        "missing_param",
+        `Variable "${v.name}" reads a query parameter but doesn't say which.`,
+        'Add "param": "<name>".',
+      );
+  }
+  const visiting = new Set<string>();
+  const done = new Set<string>();
+  const cyclic = (n: string): boolean => {
+    if (done.has(n)) return false;
+    if (visiting.has(n)) return true;
+    visiting.add(n);
+    const v = varByName.get(n);
+    const hit = !!v && variableRefs(v).some(cyclic);
+    visiting.delete(n);
+    done.add(n);
+    return hit;
+  };
+  for (const [i, v] of variables.entries()) {
+    done.clear();
+    visiting.clear();
+    if (variableRefs(v).some((r) => r === v.name || cyclic(r)))
+      err(
+        `variables.${i}`,
+        "variable_cycle",
+        `Variable "${v.name}" depends on itself (through lookup/regex_table input, url source or param_set templates).`,
+        "Break the cycle: point the input at a source variable (data_layer, url_param, a built-in...).",
+      );
+  }
 
   // ---- triggers
   for (const [i, t] of triggers.entries()) {
@@ -188,15 +273,79 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
           "Use JavaScript regex syntax without slashes, e.g. ^/thank-?you.",
         );
       }
+      if ((c.op === "matches_css_selector" || c.op === "not_matches_css_selector") && !ELEMENT_VARS.has(c.var) && !varNames.has(c.var))
+        warn(
+          `triggers.${i}.conditions.${j}.var`,
+          "css_selector_needs_element",
+          `matches_css_selector compares an element, but "${c.var}" is a text value.`,
+          'Use "var": "click_element", "form_element" or "event_element".',
+        );
+      if (["lt", "lte", "gt", "gte"].includes(c.op) && !Number.isFinite(Number(c.value)))
+        err(
+          `triggers.${i}.conditions.${j}.value`,
+          "not_a_number",
+          `${c.op} needs a number, not "${c.value}".`,
+          'e.g. { "op": "gt", "value": 100 }.',
+        );
     }
-    if (t.type === "custom_event" && /^gtm\./.test(t.event)) {
-      warn(
-        `triggers.${i}.event`,
-        "gtm_internal_event",
-        `"${t.event}" is a GTM-internal event; this runtime doesn't emit gtm.* events.`,
-        "Use page_view, dom_ready or a custom dataLayer event instead.",
+    if (t.type === "custom_event") {
+      if ((t.event === undefined) === (t.event_regex === undefined))
+        err(
+          `triggers.${i}`,
+          "custom_event_name",
+          `Custom event trigger "${t.id}" needs exactly one of event or event_regex.`,
+          'e.g. "event": "purchase", or "event_regex": "^(purchase|refund)$".',
+        );
+      if (t.event_regex && !compileRegex(t.event_regex, t.ignore_case))
+        err(
+          `triggers.${i}.event_regex`,
+          "invalid_regex",
+          `"${t.event_regex}" is not a valid regular expression.`,
+          "Use JavaScript regex syntax.",
+        );
+      if (t.event && /^gtm\./.test(t.event)) {
+        warn(
+          `triggers.${i}.event`,
+          "gtm_internal_event",
+          `"${t.event}" is a GTM-internal event; this runtime doesn't emit gtm.* events.`,
+          "Use page_view, dom_ready, window_loaded or a custom dataLayer event instead.",
+        );
+      }
+    }
+    if (t.type === "scroll_depth" && !t.percentages && !t.pixels)
+      err(
+        `triggers.${i}`,
+        "scroll_thresholds",
+        `Scroll trigger "${t.id}" has no thresholds.`,
+        'Add "percentages": [50, 90] and/or "pixels": [1000].',
       );
+    if (t.type === "trigger_group") {
+      for (const [j, m] of t.triggers.entries()) {
+        usedTriggers.add(m);
+        const member = triggers.find((x) => x.id === m);
+        if (!member)
+          err(
+            `triggers.${i}.triggers.${j}`,
+            "undefined_trigger",
+            `Trigger group "${t.id}" includes undefined trigger "${m}".`,
+            "Define it or remove it.",
+          );
+        else if (member.type === "trigger_group")
+          err(
+            `triggers.${i}.triggers.${j}`,
+            "nested_trigger_group",
+            `Trigger group "${t.id}" includes another group ("${m}").`,
+            "List that group's triggers instead.",
+          );
+      }
     }
+    if ((t.type === "click" || t.type === "form_submit") && t.wait_for_tags_ms && t.type === "click" && !t.links_only)
+      warn(
+        `triggers.${i}.wait_for_tags_ms`,
+        "wait_for_tags_links",
+        `wait_for_tags_ms on click trigger "${t.id}" only holds clicks on links (<a href>).`,
+        'Add "links_only": true to make that explicit, or remove wait_for_tags_ms.',
+      );
   }
 
   // ---- tags
@@ -250,6 +399,63 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
         );
       }
     }
+    const tp = tag.params as { event_params_from?: string; config_params_from?: string };
+    for (const k of ["event_params_from", "config_params_from"] as const) {
+      const ref = tp[k];
+      if (!ref) continue;
+      usedVars.add(ref);
+      if (varByName.get(ref)?.type !== "param_set")
+        err(
+          `tags.${i}.params.${k}`,
+          "not_a_param_set",
+          `Tag "${tag.id}" ${k} "${ref}" isn't a param_set variable.`,
+          `Define { "name": "${ref}", "type": "param_set", "params": {...} } in variables[].`,
+        );
+    }
+    if (tag.after) {
+      if (tag.after.tag === tag.id || !tags.some((x) => x.id === tag.after!.tag))
+        err(
+          `tags.${i}.after.tag`,
+          "undefined_tag",
+          `Tag "${tag.id}" waits for setup tag "${tag.after.tag}", which ${tag.after.tag === tag.id ? "is itself" : "isn't defined"}.`,
+          "Point after.tag at another tag's id.",
+        );
+      else {
+        const seen = new Set([tag.id]);
+        let cur = tags.find((x) => x.id === tag.after!.tag);
+        while (cur?.after && !seen.has(cur.id)) {
+          seen.add(cur.id);
+          cur = tags.find((x) => x.id === cur!.after!.tag);
+        }
+        if (cur && seen.has(cur.id))
+          err(
+            `tags.${i}.after`,
+            "sequence_cycle",
+            `Tag sequencing from "${tag.id}" loops back on itself.`,
+            "Remove one of the after links.",
+          );
+      }
+    }
+    if (tag.schedule) {
+      const start = toMs(tag.schedule.start);
+      const end = toMs(tag.schedule.end);
+      if (start !== undefined && end !== undefined && end <= start)
+        err(`tags.${i}.schedule`, "schedule_invalid", `Tag "${tag.id}" ends before it starts.`, "Set end after start.");
+      else if (end !== undefined && end < (ctx.now ?? Date.now()))
+        warn(
+          `tags.${i}.schedule.end`,
+          "schedule_expired",
+          `Tag "${tag.id}"'s schedule ended ${new Date(end).toISOString()}; it never fires.`,
+          "Move the end date, or remove the tag.",
+        );
+    }
+    if (!CMP_TAGS.has(tag.type) && tag.triggers.some((id) => triggers.find((x) => x.id === id)?.type === "consent_init"))
+      warn(
+        `tags.${i}.triggers`,
+        "consent_init_non_cmp",
+        `Tag "${tag.id}" (${tag.type}) fires on consent_init, which is meant for consent platform loaders.`,
+        "Use page_view or init for measurement tags; consent_init runs before consent is known.",
+      );
     if (consent.mode === "opt_in" && tag.consent && tag.consent.length === 0 && AD_TAGS.has(tag.type)) {
       warn(
         `tags.${i}.consent`,
@@ -279,7 +485,9 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
       ["currency.var", typeof c.currency === "object" ? c.currency.var : undefined],
       ["transaction_id", c.transaction_id],
       ["items", c.items],
-      ...Object.entries(c.user_data ?? {}).map(([k, v]) => [`user_data.${k}`, v] as [string, string]),
+      ...Object.entries(c.user_data && c.user_data !== "auto" ? c.user_data : {}).map(
+        ([k, v]) => [`user_data.${k}`, v] as [string, string],
+      ),
     ];
     for (const [k, v] of refs) {
       if (!v) continue;
@@ -333,7 +541,7 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
         'Set "value" and "currency" on the conversion.',
       );
     }
-    if (c.user_data?.phone && !cfg.settings?.phone_country_code) {
+    if (c.user_data && (c.user_data === "auto" || c.user_data.phone) && !cfg.settings?.phone_country_code) {
       warn(
         `${at}.user_data.phone`,
         "phone_country_code",
@@ -465,6 +673,21 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
     );
   }
 
+  // ---- cross-domain hosts must be allowed to send hits
+  for (const [j, h] of (cfg.settings?.cross_domain ?? []).entries()) {
+    const host = h.replace(/^\*\./, "");
+    const d = ctx.domain;
+    const onDomain = !!d && (host === d || host.endsWith(`.${d}`));
+    const listed = (ctx.allowed_hostnames ?? []).some((a) => a === h || a === host || (a.startsWith("*.") && host.endsWith(a.slice(1))));
+    if (ctx.domain !== undefined && !onDomain && !listed)
+      warn(
+        `settings.cross_domain.${j}`,
+        "cross_domain_not_allowed",
+        `${h} is a cross-domain host, but hits from it aren't accepted by this container.`,
+        `PATCH /v1/containers/:id { "allowed_hostnames": [..., "${h}"] } and install the snippet there too.`,
+      );
+  }
+
   // ---- custom code: account standing, domain verification, size
   const custom = ctx.customCode?.(cfg);
   if (custom) err(custom.path, custom.code, custom.message, custom.hint);
@@ -544,7 +767,14 @@ function checkConversionTriggerFit(
       'Add a condition, e.g. { "var": "page_path", "op": "starts_with", "value": "/thank-you" }.',
     );
   }
-  if (t.type === "form_submit" && c.user_data?.email === undefined) {
+  if (c.user_data === "auto" && t.type !== "form_submit")
+    warn(
+      `${at}.user_data`,
+      "auto_user_data_page",
+      `Conversion "${c.name}" detects user data automatically but its trigger isn't a form submit, so the whole page is searched.`,
+      "Fine on a page with one form; otherwise map variables explicitly (user_data: { email: <dom_value variable> }).",
+    );
+  if (t.type === "form_submit" && c.user_data !== "auto" && c.user_data?.email === undefined) {
     // Fine, but lead forms usually carry an email worth hashing.
     warn(
       `${at}.user_data`,

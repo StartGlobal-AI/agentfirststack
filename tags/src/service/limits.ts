@@ -17,6 +17,12 @@ export const DEFAULT_MAX_CONTAINER_DB_BYTES = 1024 * 1024 * 1024;
 /** Consecutive failed delivery attempts that open a destination's circuit, and for how long. */
 export const DEFAULT_CIRCUIT_BREAKER_FAILURES = 20;
 export const DEFAULT_CIRCUIT_BREAKER_MINUTES = 60;
+/** Environment snippets per container. */
+export const DEFAULT_MAX_ENVIRONMENTS_PER_CONTAINER = 5;
+/** Enrichment lookup tables per container, rows per table, and bytes per table (serialised JSON). */
+export const DEFAULT_MAX_LOOKUPS_PER_CONTAINER = 10;
+export const DEFAULT_MAX_LOOKUP_ROWS = 10_000;
+export const DEFAULT_MAX_LOOKUP_BYTES = 1024 * 1024;
 
 /** A claimed account (or a deployment without the people tables): the plain caps apply. */
 export const CLAIMED: Standing = { suspended: false, claimed: true };
@@ -67,6 +73,11 @@ export function limits(env: object, standing: Standing = CLAIMED) {
     maxContainers: cap("MAX_CONTAINERS_PER_ACCOUNT", Number.POSITIVE_INFINITY),
     maxAccountBytes: cap("MAX_TAGS_BYTES_PER_ACCOUNT", DEFAULT_MAX_TAGS_BYTES_PER_ACCOUNT),
     maxCustomCodeBytes: cap("MAX_CUSTOM_CODE_BYTES", Number.POSITIVE_INFINITY),
+    maxEnvironments: cap("MAX_ENVIRONMENTS_PER_CONTAINER", DEFAULT_MAX_ENVIRONMENTS_PER_CONTAINER),
+    maxLookups: cap("MAX_LOOKUPS_PER_CONTAINER", DEFAULT_MAX_LOOKUPS_PER_CONTAINER),
+    maxLookupRows: cap("MAX_LOOKUP_ROWS", DEFAULT_MAX_LOOKUP_ROWS),
+    // A lookup is one D1 row (D1 rows max out at 2 MB), so this cap never goes past 1.5 MB.
+    maxLookupBytes: Math.min(cap("MAX_LOOKUP_BYTES", DEFAULT_MAX_LOOKUP_BYTES), 1_500_000),
   };
 }
 

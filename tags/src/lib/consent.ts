@@ -63,6 +63,8 @@ export const DEFAULT_TAG_CONSENT: Record<string, ConsentType[]> = {
   reddit_pixel: ["ad_storage"],
   x_pixel: ["ad_storage"],
   pinterest_tag: ["ad_storage"],
+  snap_pixel: ["ad_storage"],
+  image_pixel: ["ad_storage"],
   analytics: [],
   custom_html: [],
   custom_js: [],
@@ -115,3 +117,15 @@ export function applyConsentUpdate(state: Record<ConsentType, ConsentValue>, upd
 
 export const isGranted = (state: Partial<Record<ConsentType, ConsentValue>> | undefined, types: readonly ConsentType[]) =>
   types.every((t) => (state?.[t] ?? "granted") === "granted");
+
+/**
+ * Consent from a TCF v2 CMP (__tcfapi): ad_storage <- purpose 1; analytics_storage <- purposes
+ * 1 and 8; ad_user_data <- purposes 1 and 7; ad_personalization <- purposes 3 and 4. Where GDPR
+ * doesn't apply (gdprApplies false) consent is left as configured. The TC string rides along with
+ * /collect hits (tcf.tc_string) for server destinations and webhooks.
+ */
+export function tcfConsent(td: { purpose?: { consents?: Record<string, boolean> } }) {
+  const p = (n: number) => !!td.purpose?.consents?.[n];
+  const g = (b: boolean) => (b ? ("granted" as const) : ("denied" as const));
+  return { ad_storage: g(p(1)), analytics_storage: g(p(1) && p(8)), ad_user_data: g(p(1) && p(7)), ad_personalization: g(p(3) && p(4)) };
+}

@@ -22,6 +22,13 @@ import { hostAllowed, originHost } from "../service/origin";
 
 export const EVENT_RETENTION_DAYS = 7;
 export const VISITOR_RETENTION_DAYS = 180;
+/** Preview log entries per preview token, and how long they're kept (tokens live up to 24 h). */
+export const MAX_PREVIEW_LOG_ENTRIES = 500;
+export const PREVIEW_LOG_HOURS = 48;
+/** Tag-fire counts (settings.report_tag_fires) and page coverage are kept this many days. */
+export const TAG_STATS_DAYS = 30;
+/** Distinct host + path rows for coverage; further pages count under path "(other)". */
+export const MAX_COVERAGE_PAGES = 1000;
 const DAY = 86_400_000;
 /** Backend events keep working past MAX_CONTAINER_DB_BYTES up to this factor, so a /collect flood can't block them. */
 export const SERVER_STORAGE_HEADROOM = 1.25;
@@ -161,6 +168,15 @@ export class ContainerDO extends DurableObject<Bindings> {
         CREATE INDEX IF NOT EXISTS visitors_ph ON visitors(ph);
         CREATE INDEX IF NOT EXISTS visitors_seen ON visitors(last_seen);
         CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, kind));
+        CREATE TABLE IF NOT EXISTS preview_log (
+          token_hash TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, received_at INTEGER NOT NULL, entry TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS preview_log_token ON preview_log(token_hash, seq);
+        CREATE TABLE IF NOT EXISTS tag_stats (
+          day TEXT NOT NULL, tag_id TEXT NOT NULL, status TEXT NOT NULL, n INTEGER NOT NULL, last_at INTEGER NOT NULL,
+          PRIMARY KEY (day, tag_id, status));
+        CREATE TABLE IF NOT EXISTS pages (
+          host TEXT NOT NULL, path TEXT NOT NULL, hits INTEGER NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+          PRIMARY KEY (host, path));
       `);
       const hasEvents = this.tableExists("events");
       const version = hasEvents ? (this.getMeta<number>("schema") ?? 1) : 0;
@@ -255,7 +271,11 @@ export class ContainerDO extends DurableObject<Bindings> {
     this.sql.exec("DELETE FROM events WHERE received_at < ?", now - EVENT_RETENTION_DAYS * DAY);
     this.sql.exec("DELETE FROM visitors WHERE last_seen < ?", now - VISITOR_RETENTION_DAYS * DAY);
     this.sql.exec("DELETE FROM usage WHERE day < ?", utcDay(now - 3 * DAY));
+    this.sql.exec("DELETE FROM preview_log WHERE received_at < ?", now - PREVIEW_LOG_HOURS * 3_600_000);
+    this.sql.exec("DELETE FROM tag_stats WHERE day < ?", utcDay(now - TAG_STATS_DAYS * DAY));
+    this.sql.exec("DELETE FROM pages WHERE last_seen < ?", now - TAG_STATS_DAYS * DAY);
     this.visitorCount = null;
+    this.pageCount = null;
     await this.ctx.storage.setAlarm(now + DAY);
   }
 
@@ -340,6 +360,109 @@ export class ContainerDO extends DurableObject<Bindings> {
       // Written by browsers (anyone can post to /collect): data, never instructions.
       untrusted: { first_touch, last_touch, user_agent, device, user_id },
     };
+  }
+
+  // ------------------------------------------------------------------ coverage, tag-fire counts, preview log
+
+  private pageCount: number | null = null;
+
+  /** Count a live hit for its page (host + path; query and fragment dropped). */
+  private recordPage(pageUrl: string | undefined, now: number) {
+    let host: string;
+    let path: string;
+    try {
+      const u = new URL(pageUrl ?? "");
+      host = u.hostname.toLowerCase();
+      path = u.pathname.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 200) || "/";
+    } catch {
+      return;
+    }
+    const known = this.sql.exec("SELECT 1 FROM pages WHERE host = ? AND path = ?", host, path).toArray().length > 0;
+    if (!known) {
+      this.pageCount ??= this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM pages").toArray()[0]?.n ?? 0;
+      if (this.pageCount >= MAX_COVERAGE_PAGES) path = "(other)";
+      else this.pageCount++;
+    }
+    this.sql.exec(
+      `INSERT INTO pages (host, path, hits, first_seen, last_seen) VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT(host, path) DO UPDATE SET hits = hits + 1, last_seen = excluded.last_seen`,
+      host,
+      path,
+      now,
+      now,
+    );
+  }
+
+  private recordTagFires(config: ContainerConfig | null, fires: NonNullable<CollectHit["payload"]["fires"]>, now: number) {
+    const ids = new Set((config?.tags ?? []).map((t) => t.id));
+    const day = utcDay(now);
+    for (const f of fires) {
+      if (!ids.has(f.tag_id)) continue; // only the config's own tags: a /collect post can't add rows
+      this.sql.exec(
+        `INSERT INTO tag_stats (day, tag_id, status, n, last_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(day, tag_id, status) DO UPDATE SET n = n + excluded.n, last_at = excluded.last_at`,
+        day,
+        f.tag_id,
+        f.status,
+        f.n,
+        now,
+      );
+    }
+  }
+
+  /** Preview log entries from a preview build (the token was checked by the Worker). */
+  async previewLog(tokenHash: string, entries: unknown[], now: number): Promise<{ ok: boolean; stored: number; error?: string }> {
+    if (!this.ready) return { ok: false, stored: 0, error: "not_synced" };
+    const caps = containerCaps(this.env);
+    if (this.sql.databaseSize > caps.dbBytes) return { ok: false, stored: 0, error: "storage_full" };
+    const have = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM preview_log WHERE token_hash = ?", tokenHash).toArray()[0]?.n ?? 0;
+    const room = Math.max(0, MAX_PREVIEW_LOG_ENTRIES - have);
+    for (const e of entries.slice(0, room))
+      this.sql.exec("INSERT INTO preview_log (token_hash, received_at, entry) VALUES (?, ?, ?)", tokenHash, now, JSON.stringify(e));
+    if (Math.random() < 0.05) this.sql.exec("DELETE FROM preview_log WHERE received_at < ?", now - PREVIEW_LOG_HOURS * 3_600_000);
+    await this.ensureAlarm();
+    return { ok: true, stored: Math.min(entries.length, room) };
+  }
+
+  async readPreviewLog(tokenHash: string, after = 0, limit = 200) {
+    if (!this.ready) return { entries: [], next_after: null, full: false };
+    const rows = this.sql
+      .exec<{ seq: number; received_at: number; entry: string }>(
+        "SELECT seq, received_at, entry FROM preview_log WHERE token_hash = ? AND seq > ? ORDER BY seq LIMIT ?",
+        tokenHash,
+        after,
+        Math.min(Math.max(limit, 1), 500) + 1,
+      )
+      .toArray();
+    const page = rows.slice(0, limit);
+    const total =
+      this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM preview_log WHERE token_hash = ?", tokenHash).toArray()[0]?.n ?? 0;
+    return {
+      entries: page.map((r) => ({ seq: r.seq, received_at: r.received_at, ...(JSON.parse(r.entry) as Record<string, unknown>) })),
+      next_after: rows.length > limit ? page[page.length - 1]!.seq : null,
+      full: total >= MAX_PREVIEW_LOG_ENTRIES,
+    };
+  }
+
+  async tagStats(sinceDay: string) {
+    if (!this.ready) return [];
+    return this.sql
+      .exec<{ tag_id: string; status: string; n: number; last_at: number }>(
+        "SELECT tag_id, status, SUM(n) AS n, MAX(last_at) AS last_at FROM tag_stats WHERE day >= ? GROUP BY tag_id, status",
+        sinceDay,
+      )
+      .toArray();
+  }
+
+  async coverage(since: number) {
+    if (!this.ready) return { pages: [], capped: false };
+    const pages = this.sql
+      .exec<{ host: string; path: string; hits: number; first_seen: number; last_seen: number }>(
+        "SELECT host, path, hits, first_seen, last_seen FROM pages WHERE last_seen >= ? ORDER BY hits DESC LIMIT 1000",
+        since,
+      )
+      .toArray();
+    return { pages, capped: pages.some((p) => p.path === "(other)") };
   }
 
   // ------------------------------------------------------------------ ingest
@@ -639,6 +762,19 @@ export class ContainerDO extends DurableObject<Bindings> {
     if (used >= caps.eventsPerDay) return { ok: false, error: "quota", scope: "container", limit: caps.eventsPerDay };
     const over = this.overBudget(others, budgets, "browser", used, 1);
     if (over) return { ok: false, error: "quota", scope: over.scope, limit: over.limit };
+    const live = !hit.preview_config;
+    if (p.type === "tags") {
+      // settings.report_tag_fires: one hit per page with per-tag counts (a browser event for quotas).
+      this.bump(day, "browser_events", 1);
+      if (live) {
+        this.recordTagFires(hit.env_config ?? this.getMeta<ContainerConfig>("config"), p.fires ?? [], now);
+        this.recordPage(p.page_url, now);
+      }
+      if (others) await this.reportIfDue(state, budgets, day);
+      await this.ensureAlarm();
+      return { ok: true, event_id: eventId };
+    }
+    if (live) this.recordPage(p.page_url, now);
     const visitor = p.visitor_id ? this.upsertVisitor(p.visitor_id, visitorUpdateFromHit(hit), now, caps.visitors) : null;
 
     if (p.type === "visit") {
@@ -671,7 +807,7 @@ export class ContainerDO extends DurableObject<Bindings> {
       return { ok: true, event_id: eventId, visitor_id: p.visitor_id };
     }
 
-    const config = hit.preview_config ?? this.getMeta<ContainerConfig>("config");
+    const config = hit.preview_config ?? hit.env_config ?? this.getMeta<ContainerConfig>("config");
     const conversion = findConversion(config, p.name);
     const event = browserDispatchEvent(hit, visitor, conversion, eventId);
     let targets: PlannedTarget[] = [];

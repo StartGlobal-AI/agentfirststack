@@ -7,6 +7,7 @@ import { getContainerRow, syncToDO } from "./containers";
 import { limits } from "./limits";
 import { assertRate } from "./ratelimit";
 import { summarizeResponse } from "./sanitize";
+import { applyParamRules, type Lookups, lookupsUsed, paramRules, routingCondition, webhookTemplate } from "./transform";
 
 export interface DestinationRow {
   id: string;
@@ -40,7 +41,41 @@ export const destinationSettings = z.strictObject({
     .describe(
       "webhook only: also receive backend events whose name matches no conversion in the config (default false: only matched conversions).",
     ),
+  params: paramRules
+    .optional()
+    .describe("Per-destination parameter control: allow, exclude, set (literal, field or lookup), redact_query."),
+  conditions: z
+    .array(routingCondition)
+    .max(10)
+    .optional()
+    .describe(
+      'Routing: deliver only events matching all of these, e.g. [{ "var": "country", "op": "equals", "value": "US" }, { "var": "value", "op": "gt", "value": 0 }].',
+    ),
+  template: webhookTemplate
+    .optional()
+    .describe("webhook only: method, static headers and a JSON body template ({{event.*}}); signing is kept."),
 });
+
+function assertSettingsFor(type: string, settings: z.infer<typeof destinationSettings> | undefined) {
+  if (settings?.template && type !== "webhook")
+    throw badRequest(
+      "settings.template is for webhook destinations only.",
+      "Platform connectors send the platform's own format; use settings.params to shape what they get.",
+    );
+}
+
+/** Lookup tables a destination's settings.params uses, from D1 (never sent to browsers). */
+export async function loadLookups(env: Bindings, containerId: string, names: string[]): Promise<Lookups> {
+  const out: Lookups = new Map();
+  if (!names.length) return out;
+  const { results } = await env.DB.prepare(
+    `SELECT name, rows FROM lookups WHERE container_id = ? AND name IN (${names.map(() => "?").join(",")})`,
+  )
+    .bind(containerId, ...names)
+    .all<{ name: string; rows: string }>();
+  for (const r of results) out.set(r.name, JSON.parse(r.rows) as Record<string, unknown>);
+  return out;
+}
 
 function encryptionKey(env: Bindings): string {
   const k = env.ENCRYPTION_KEY;
@@ -148,6 +183,7 @@ export async function createDestination(
 ) {
   await getContainerRow(env, accountId, containerId);
   const connector = connectorOr400(input.type);
+  assertSettingsFor(input.type, input.settings);
   const creds = parseCredentials(env, connector, input.credentials, origins);
   const natural = connector.naturalKey(creds as never);
   const found = await env.DB.prepare("SELECT * FROM destinations WHERE container_id = ? AND type = ? AND natural_key = ?")
@@ -218,6 +254,7 @@ export async function updateDestination(
 ) {
   const row = await getRow(env, accountId, containerId, id);
   const connector = connectorOr400(row.type);
+  assertSettingsFor(row.type, input.settings);
   let { credentials, public: pub, natural_key } = row;
   if (input.credentials) {
     const current = JSON.parse(await decryptSecret(encryptionKey(env), row.credentials)) as Record<string, unknown>;
@@ -301,6 +338,9 @@ export function sampleEvent(name: string, containerId: string, domain: string): 
       tiktok: { event_name: name === "purchase" ? "CompletePayment" : name },
       google_ads: {},
       analytics: { event_name: name },
+      pinterest: { event_name: name === "purchase" ? "checkout" : name },
+      reddit: { event_name: name === "purchase" ? "Purchase" : name },
+      snap: { event_name: name === "purchase" ? "PURCHASE" : name.toUpperCase() },
     },
   };
 }
@@ -310,7 +350,7 @@ export async function testDestination(
   accountId: string,
   containerId: string,
   id: string,
-  opts: { event_name?: string; test_event_code?: string },
+  opts: { event_name?: string; test_event_code?: string; send_to?: { linkedin?: { conversion_id: string }; x?: { event_id: string } } },
 ): Promise<{ destination: ReturnType<typeof presentDestination>; test_mode: string; result: DeliveryResult; next_steps: string[] }> {
   const container = await getContainerRow(env, accountId, containerId);
   const row = await getRow(env, accountId, containerId, id);
@@ -322,7 +362,18 @@ export async function testDestination(
     "Wait a minute before testing again (tests are rate limited per account).",
   );
   const creds = await loadCredentials(env, row);
-  if (opts.test_event_code) creds.test_event_code = opts.test_event_code;
+  // Reddit calls its test code test_id (Events Manager > Event Testing).
+  if (opts.test_event_code) creds[row.type === "reddit" ? "test_id" : "test_event_code"] = opts.test_event_code;
+  // LinkedIn and X map events to ids from the account (a conversion rule, an Events Manager event).
+  const needs = {
+    linkedin: ["conversion_id", "a conversion rule id (Campaign Manager > Measurement > Conversion tracking)"],
+    x: ["event_id", "an event id like tw-o1abc-o2def (Events Manager)"],
+  }[row.type as "x"];
+  if (needs && !(opts.send_to as Record<string, Record<string, string>> | undefined)?.[row.type]?.[needs[0]!])
+    throw badRequest(
+      `Testing ${row.type} needs ${needs[1]}.`,
+      `Pass { "send_to": { "${row.type}": { "${needs[0]}": "..." } } } in this request (the id your conversions' send_to.${row.type} uses).`,
+    );
   if ((row.type === "meta" || row.type === "tiktok") && !creds.test_event_code) {
     throw new ApiError(
       400,
@@ -331,13 +382,18 @@ export async function testDestination(
       `Copy the code from ${row.type === "meta" ? "Meta Events Manager > (pixel) > Test events" : "TikTok Events Manager > (pixel) > Test events"} and pass { "test_event_code": "TEST..." } in this request, or PATCH it into credentials.`,
     );
   }
-  const event = sampleEvent(opts.event_name ?? "purchase", containerId, container.domain);
+  const sample = sampleEvent(opts.event_name ?? "purchase", containerId, container.domain);
+  if (opts.send_to) Object.assign(sample.send_to, opts.send_to);
+  // The destination's own transformations apply to the test too (its request shows them).
+  const settings = JSON.parse(row.settings) as z.infer<typeof destinationSettings>;
+  const event = applyParamRules(sample, settings.params, await loadLookups(env, containerId, lookupsUsed(settings.params)));
   const result = await connector.send(event, creds as never, {
     test: true,
     fetch: (...a) => fetch(...a),
     env,
     destinationId: id,
     containerId,
+    settings,
   });
   if (USER_URL_TYPES.has(row.type)) {
     // The URL is the account's choice: report the status and a short summary, not the body.

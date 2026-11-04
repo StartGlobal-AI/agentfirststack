@@ -30,14 +30,65 @@ export const BUILTIN_VARIABLES = {
   form_id: "id attribute of the submitted form (form_submit triggers).",
   form_action: "action attribute of the submitted form.",
   form_classes: "class attribute of the submitted form.",
-  scroll_depth: "Scroll depth percentage that fired (scroll_depth triggers).",
+  scroll_depth: "Scroll depth threshold that fired (scroll_depth triggers): a percentage, or pixels (see scroll_units).",
+  scroll_units: 'Units of scroll_depth: "percent" or "pixels".',
+  scroll_direction: 'Direction of the scroll_depth trigger: "vertical" or "horizontal".',
+  click_target: "target attribute of the clicked link.",
+  click_element: "The clicked element (for matches_css_selector conditions).",
+  form_target: "target attribute of the submitted form.",
+  form_text: "Visible text of the submitted form (200 chars).",
+  form_element: "The submitted form element (for matches_css_selector conditions).",
+  event_element: "The element of the current event: clicked, submitted or seen (for matches_css_selector conditions).",
+  percent_visible: "Percent of the element visible when an element_visible trigger fired.",
+  visible_ms: "How long the element had been on screen (element_visible with min_duration_ms).",
+  history_source: "What changed the URL: pushState, replaceState, popstate or hashchange (history_change triggers).",
+  history_old_url: "URL before the history change.",
+  history_new_url: "URL after the history change.",
+  error_message: "Message of the uncaught error (js_error triggers).",
+  error_url: "Script URL of the error.",
+  error_line: "Line number of the error.",
+  container_id: "This container's id.",
+  container_version: 'Published version number, or "draft" in preview.',
+  environment: 'Environment name: "live", "preview", or the name of the environment snippet that loaded the container.',
+  debug_mode: "true in preview or with debug logging on.",
+  visitor_id: "This runtime's visitor id (the _afst_vid cookie).",
+  ga_client_id: "GA4 client id from the _ga cookie.",
+  ga_session_id: "GA4 session id from the _ga_<stream> cookie of the first ga4 tag.",
+  video_provider: '"youtube" or "html5" (video triggers).',
+  video_status: "start, progress, pause, seek or complete.",
+  video_url: "URL of the video.",
+  video_title: "Title of the video (YouTube; HTML5: the title attribute).",
+  video_duration: "Length in seconds.",
+  video_current_time: "Playback position in seconds.",
+  video_percent: "Progress threshold that fired, or the current percentage.",
+  video_visible: "Whether the player was on screen.",
 } as const;
 export type BuiltinVariable = keyof typeof BUILTIN_VARIABLES;
+
+const maxKeys = (n: number) => (o: Record<string, unknown>) => Object.keys(o).length <= n;
+const varRefField = ident.describe("A variable name (or built-in).");
+
+export const formatSchema = z
+  .strictObject({
+    lowercase: z.boolean().optional(),
+    uppercase: z.boolean().optional(),
+    trim: z.boolean().optional(),
+    number: z.boolean().optional().describe("Convert to a number (1,234.50 -> 1234.5); non-numbers become undefined."),
+    map_undefined: scalar.optional(),
+    map_null: scalar.optional(),
+    map_true: scalar.optional(),
+    map_false: scalar.optional(),
+  })
+  .describe("Value formatting, applied after the value is read and before default.");
 
 const varBase = {
   name: ident.describe("Name used to reference this variable from conditions, conversions and {{templates}}."),
   default: scalar.optional().describe("Value when the source is empty."),
+  format: formatSchema.optional(),
+  description: z.string().max(500).optional(),
 };
+
+export const URL_COMPONENTS = ["href", "protocol", "host", "port", "path", "query", "fragment", "param"] as const;
 
 export const variableSchema = z.discriminatedUnion("type", [
   z.strictObject({
@@ -64,6 +115,61 @@ export const variableSchema = z.discriminatedUnion("type", [
       .describe("Global variable path, e.g. Shopify.checkout.total_price. Read only, never evaluated as code."),
   }),
   z.strictObject({ ...varBase, type: z.literal("constant"), value: scalar }),
+  z.strictObject({
+    ...varBase,
+    type: z.literal("lookup"),
+    input: varRefField.describe("Variable whose value is looked up."),
+    map: z
+      .record(z.string().max(200), scalar)
+      .refine(maxKeys(500), "At most 500 entries.")
+      .describe('Exact matches: { "<input value>": <output> }. No match: default.'),
+    ignore_case: z.boolean().optional(),
+  }),
+  z.strictObject({
+    ...varBase,
+    type: z.literal("regex_table"),
+    input: varRefField,
+    rows: z
+      .array(z.strictObject({ pattern: z.string().min(1).max(500), output: scalar }))
+      .min(1)
+      .max(100)
+      .describe("First matching row wins; output may use $1..$9 (capture groups)."),
+    ignore_case: z.boolean().optional(),
+    full_match: z.boolean().optional().describe("Default true: the pattern must match the whole value."),
+    extract: z.boolean().optional().describe("Default true: $1..$9 in output are replaced by capture groups."),
+  }),
+  z.strictObject({
+    ...varBase,
+    type: z.literal("url"),
+    component: z.enum(URL_COMPONENTS),
+    param: z.string().min(1).max(100).optional().describe("Query parameter (component: param)."),
+    source: varRefField.optional().describe("Variable holding the URL to parse (default page_url), e.g. click_url or referrer."),
+    strip_www: z.boolean().optional().describe("host without a leading www."),
+  }),
+  z.strictObject({
+    ...varBase,
+    type: z.literal("event_attr"),
+    attr: z.string().min(1).max(100).describe("Attribute of the clicked, submitted or seen element, e.g. data-product-id."),
+  }),
+  z.strictObject({
+    ...varBase,
+    type: z.literal("param_set"),
+    params: z
+      .record(z.string().max(40), scalar)
+      .refine(maxKeys(50), "At most 50 parameters.")
+      .describe(
+        "Shared parameters; strings may use {{variable}} templates. Reference from tags as event_params_from / config_params_from.",
+      ),
+  }),
+  z.strictObject({
+    ...varBase,
+    type: z.literal("custom_js"),
+    code: z
+      .string()
+      .min(1)
+      .max(10_000)
+      .describe("Custom code: a function body run as (event) => { return ... }. Publishing needs a verified domain and a claimed account."),
+  }),
   ...(["page_url", "page_path", "page_hostname", "referrer", "click_text", "click_url", "form_id"] as const).map((t) =>
     z.strictObject({ ...varBase, type: z.literal(t) }),
   ),
@@ -85,6 +191,12 @@ export const VARIABLE_TYPES = [
   "click_text",
   "click_url",
   "form_id",
+  "lookup",
+  "regex_table",
+  "url",
+  "event_attr",
+  "param_set",
+  "custom_js",
 ] as const;
 
 // ---------------------------------------------------------------- triggers
@@ -103,35 +215,87 @@ const trigBase = {
   description: z.string().max(500).optional(),
 };
 
+const waitAndCheck = {
+  check_validation: z
+    .boolean()
+    .optional()
+    .describe("Only fire when the site didn't cancel the event (its own validation called preventDefault)."),
+  wait_for_tags_ms: z
+    .number()
+    .int()
+    .min(0)
+    .max(2000)
+    .optional()
+    .describe("Hold the navigation/submit until tags' scripts have loaded, at most this long, then continue."),
+};
+
+export const VIDEO_STATUSES = ["start", "progress", "pause", "seek", "complete"] as const;
+
 export const triggerSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...trigBase, type: z.literal("page_view") }),
   z.strictObject({ ...trigBase, type: z.literal("dom_ready") }),
+  z.strictObject({ ...trigBase, type: z.literal("window_loaded") }),
+  z.strictObject({ ...trigBase, type: z.literal("consent_init") }),
+  z.strictObject({ ...trigBase, type: z.literal("init") }),
   z.strictObject({ ...trigBase, type: z.literal("history_change") }),
+  z.strictObject({ ...trigBase, type: z.literal("js_error") }),
   z.strictObject({
     ...trigBase,
     type: z.literal("click"),
     selector: selector.optional().describe("Match the click target or its closest ancestor matching this selector."),
     links_only: z.boolean().optional().describe("Only clicks on <a href> elements."),
+    ...waitAndCheck,
   }),
   z.strictObject({
     ...trigBase,
     type: z.literal("form_submit"),
     selector: selector.optional().describe("Only forms matching this selector."),
+    ...waitAndCheck,
   }),
   z.strictObject({
     ...trigBase,
     type: z.literal("custom_event"),
-    event: z.string().min(1).max(100).describe("dataLayer event name, e.g. purchase."),
+    event: z.string().min(1).max(100).optional().describe("dataLayer event name, e.g. purchase (or event_regex)."),
+    event_regex: z.string().min(1).max(500).optional().describe("Match event names by JavaScript regex (instead of event)."),
+    ignore_case: z.boolean().optional().describe("event_regex ignores case."),
   }),
   z.strictObject({
     ...trigBase,
     type: z.literal("element_visible"),
     selector,
     threshold: z.number().min(0).max(1).optional().describe("Fraction visible, default 0.5."),
-    once: z.boolean().optional().describe("Fire once per element per page (default true)."),
+    once: z
+      .union([z.boolean(), z.enum(["element", "page"])])
+      .optional()
+      .describe('Default "element" (true): once per element per page; "page": once per page; false: every time it comes into view.'),
+    min_duration_ms: z.number().int().min(0).max(60_000).optional().describe("Only after it stayed visible this long."),
     observe_dom: z.boolean().optional().describe("Also watch elements added later (MutationObserver)."),
   }),
-  z.strictObject({ ...trigBase, type: z.literal("scroll_depth"), percentages: z.array(z.number().int().min(1).max(100)).min(1).max(10) }),
+  z.strictObject({
+    ...trigBase,
+    type: z.literal("scroll_depth"),
+    percentages: z.array(z.number().int().min(1).max(100)).min(1).max(10).optional(),
+    pixels: z.array(z.number().int().min(1).max(1_000_000)).min(1).max(10).optional(),
+    direction: z.enum(["vertical", "horizontal"]).optional().describe("Default vertical."),
+  }),
+  z.strictObject({
+    ...trigBase,
+    type: z.literal("trigger_group"),
+    triggers: z.array(ident).min(2).max(20).describe("Fires once per page after every one of these triggers has fired."),
+  }),
+  z.strictObject({
+    ...trigBase,
+    type: z.literal("video"),
+    providers: z
+      .array(z.enum(["youtube", "html5"]))
+      .min(1)
+      .max(2)
+      .optional()
+      .describe("Default both."),
+    statuses: z.array(z.enum(VIDEO_STATUSES)).min(1).max(5),
+    percentages: z.array(z.number().int().min(1).max(99)).max(10).optional().describe("Progress thresholds (status progress)."),
+    selector: selector.optional().describe("Only players matching this selector (iframe or video element)."),
+  }),
   z.strictObject({
     ...trigBase,
     type: z.literal("timer"),
@@ -143,13 +307,19 @@ export type Trigger = z.infer<typeof triggerSchema>;
 export const TRIGGER_TYPES = [
   "page_view",
   "dom_ready",
+  "window_loaded",
+  "consent_init",
+  "init",
   "history_change",
+  "js_error",
   "click",
   "form_submit",
   "custom_event",
   "element_visible",
   "scroll_depth",
   "timer",
+  "trigger_group",
+  "video",
 ] as const;
 
 // ---------------------------------------------------------------- tags
@@ -173,7 +343,35 @@ const tagBase = {
   once_per_page: z.boolean().optional().describe("Fire at most once per page (a history_change starts a new page)."),
   enabled: z.boolean().optional().describe("false keeps the tag in the config without firing it."),
   description: z.string().max(500).optional(),
+  priority: z
+    .number()
+    .int()
+    .min(-1000)
+    .max(1000)
+    .optional()
+    .describe("Higher fires first for the same event (default 0; ties keep array order)."),
+  schedule: z
+    .strictObject({
+      start: z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).optional(),
+      end: z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).optional(),
+    })
+    .optional()
+    .describe("Fire only between start and end (unix ms or ISO 8601), checked in the browser."),
+  live_only: z.boolean().optional().describe("Skip in preview (e.g. tags that would record real data)."),
+  after: z
+    .strictObject({
+      tag: ident.describe("Setup tag id: it fires first (even if its own triggers didn't), and this tag waits for its scripts."),
+      require_success: z.boolean().optional().describe("Don't fire if the setup tag threw or its script failed to load."),
+    })
+    .optional(),
 };
+
+const configParams = z
+  .record(z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), scalar)
+  .refine(maxKeys(30), "At most 30 parameters.")
+  .optional()
+  .describe("Extra gtag('config') parameters, e.g. cookie_prefix, cookie_flags, user_id; strings may use {{variable}} templates.");
+const paramsFrom = varRefField.optional().describe("A param_set variable whose params are merged in (the tag's own win).");
 
 export const tagSchema = z.discriminatedUnion("type", [
   z.strictObject({
@@ -187,7 +385,10 @@ export const tagSchema = z.discriminatedUnion("type", [
         .optional()
         .describe("Omit for the config/page_view tag; set to send an event instead."),
       event_params: eventParams,
+      event_params_from: paramsFrom,
       send_page_view: z.boolean().optional().describe("Default true: the first fire sends page_view via gtag config."),
+      config_params: configParams,
+      config_params_from: paramsFrom,
     }),
   }),
   z.strictObject({
@@ -205,6 +406,8 @@ export const tagSchema = z.discriminatedUnion("type", [
         .string()
         .regex(/^[A-Z]{3}$/)
         .optional(),
+      config_params: configParams,
+      config_params_from: paramsFrom,
     }),
   }),
   z.strictObject({
@@ -214,6 +417,7 @@ export const tagSchema = z.discriminatedUnion("type", [
       pixel_id: z.string().regex(/^\d{8,20}$/, "Meta pixel (dataset) ids are 15-16 digits (Events Manager > Data sources)."),
       event_name: z.string().min(1).max(50).optional().describe("Default PageView."),
       event_params: eventParams,
+      event_params_from: paramsFrom,
       advanced_matching: z.boolean().optional().describe("Default true: pass hashed em/ph from conversions and afst('identify')."),
     }),
   }),
@@ -224,6 +428,7 @@ export const tagSchema = z.discriminatedUnion("type", [
       pixel_id: z.string().regex(/^[A-Z0-9]{15,25}$/, "TikTok pixel codes are ~20 uppercase letters/digits (Events Manager > Web events)."),
       event_name: z.string().min(1).max(50).optional().describe("Default: ttq.page()."),
       event_params: eventParams,
+      event_params_from: paramsFrom,
     }),
   }),
   z.strictObject({
@@ -245,6 +450,7 @@ export const tagSchema = z.discriminatedUnion("type", [
       tag_id: z.string().regex(/^\d{4,15}$/, "UET tag ids are numeric (Microsoft Ads > Tools > UET tag)."),
       event_action: z.string().min(1).max(100).optional(),
       event_params: eventParams,
+      event_params_from: paramsFrom,
     }),
   }),
   z.strictObject({
@@ -277,6 +483,39 @@ export const tagSchema = z.discriminatedUnion("type", [
   }),
   z.strictObject({
     ...tagBase,
+    type: z.literal("snap_pixel"),
+    params: z.strictObject({
+      pixel_id: z
+        .string()
+        .regex(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+          "Snap pixel ids are UUIDs (Ads Manager > Events Manager).",
+        ),
+      event_name: z
+        .string()
+        .regex(/^[A-Z][A-Z0-9_]{0,49}$/, "Snap event names are upper case, e.g. PAGE_VIEW, PURCHASE, SIGN_UP.")
+        .optional()
+        .describe("Default PAGE_VIEW."),
+      event_params: eventParams,
+    }),
+  }),
+  z.strictObject({
+    ...tagBase,
+    type: z.literal("image_pixel"),
+    params: z.strictObject({
+      url: z
+        .string()
+        .max(2000)
+        .regex(
+          /^https:\/\/[^/\s"'<>{}?#]+(?:[/?#][^\s"'<>]*)?$/,
+          "An https URL with a fixed host ({{variable}} templates only in the path or query, where values are URL-encoded).",
+        )
+        .describe("Requested as an image (GTM's Custom Image tag); {{variable}} values are URL-encoded."),
+      cache_bust: z.boolean().optional().describe("Add afst_cb=<random> so browsers don't cache it (default true)."),
+    }),
+  }),
+  z.strictObject({
+    ...tagBase,
     type: z.literal("analytics"),
     params: z.strictObject({
       site_id: z.string().regex(/^site_[a-z0-9]+$/, "Use the site id from the analytics app (POST /v1/sites)."),
@@ -302,6 +541,8 @@ export const TAG_TYPES = [
   "reddit_pixel",
   "x_pixel",
   "pinterest_tag",
+  "snap_pixel",
+  "image_pixel",
   "analytics",
   "custom_html",
   "custom_js",
@@ -325,6 +566,14 @@ export const sendToSchema = z.strictObject({
         .regex(/^\d{3,20}$/)
         .optional()
         .describe("Server-side: overrides the google_ads destination's conversion_action_id for this conversion."),
+      remarketing: z
+        .boolean()
+        .optional()
+        .describe("Also send a dynamic remarketing event (value + items with google_business_vertical) to the google_ads tag."),
+      vertical: z
+        .enum(["retail", "education", "flights", "hotel_rental", "jobs", "local", "real_estate", "travel", "custom"])
+        .optional()
+        .describe("google_business_vertical for remarketing items (default retail)."),
     })
     .optional(),
   meta: z.strictObject({ event_name: z.string().min(1).max(50), custom_data: eventParams }).optional(),
@@ -334,6 +583,7 @@ export const sendToSchema = z.strictObject({
   reddit: z.strictObject({ event_name: z.string().min(1).max(50) }).optional(),
   x: z.strictObject({ event_id: z.string().regex(/^tw-[a-z0-9]+-[a-z0-9]+$/) }).optional(),
   pinterest: z.strictObject({ event_name: z.string().min(1).max(50) }).optional(),
+  snap: z.strictObject({ event_name: z.string().regex(/^[A-Z][A-Z0-9_]{0,49}$/, "e.g. PURCHASE, SIGN_UP, ADD_CART.") }).optional(),
   analytics: z.strictObject({ event_name: z.string().min(1).max(64).optional() }).optional(),
 });
 export type SendTo = z.infer<typeof sendToSchema>;
@@ -347,6 +597,7 @@ export const SEND_TO_PLATFORMS = [
   "reddit",
   "x",
   "pinterest",
+  "snap",
   "analytics",
 ] as const;
 export type SendToPlatform = (typeof SEND_TO_PLATFORMS)[number];
@@ -373,7 +624,12 @@ export const conversionSchema = z.strictObject({
     .describe('ISO 4217 code ("USD"), or { "var": "<variable>" }.'),
   transaction_id: varRef.optional().describe("Variable holding the order id (dedupe key for GA4 and Google Ads)."),
   items: varRef.optional().describe("Variable holding a GA4-style items array."),
-  user_data: userDataMapSchema.optional().describe("Variables holding PII; normalised and SHA-256 hashed in the browser."),
+  user_data: z
+    .union([userDataMapSchema, z.literal("auto")])
+    .optional()
+    .describe(
+      'Variables holding PII, normalised and SHA-256 hashed in the browser. "auto" (opt-in): the first email and phone field of the submitted form (or the page) are used.',
+    ),
   params: eventParams,
   send_to: sendToSchema,
   server: z.boolean().optional().describe("Also deliver server-side (conversion APIs) with the same event_id. Default false."),
@@ -412,6 +668,12 @@ export const consentSchema = z.strictObject({
       "basic (default): Google tags wait for consent. advanced: Google tags load immediately and gtag's Consent Mode v2 sends cookieless pings while denied.",
     ),
   wait_for_update_ms: z.number().int().min(0).max(10_000).optional().describe("Passed to gtag('consent','default') as wait_for_update."),
+  tcf: z
+    .boolean()
+    .optional()
+    .describe(
+      "Follow an IAB TCF v2 CMP (__tcfapi): purposes map to consent types (see llms.txt) and the TC string is forwarded with conversions.",
+    ),
 });
 export type ConsentConfig = z.infer<typeof consentSchema>;
 
@@ -433,6 +695,16 @@ export const settingsSchema = z.strictObject({
       "Default true: send a light identity hit to /collect on landing (click ids, UTMs) so later server conversions can be attributed.",
     ),
   debug: z.boolean().optional().describe("Log runtime decisions to the console on the live site."),
+  cross_domain: z
+    .array(z.string().regex(/^(\*\.)?[a-z0-9.-]{1,253}$/, "Hostnames like shop.example.net or *.example.net."))
+    .max(20)
+    .optional()
+    .describe("Hosts whose links (and forms, with cross_domain_forms) carry the visitor and click ids along (_afst param)."),
+  cross_domain_forms: z.boolean().optional().describe("Also decorate forms posting to cross_domain hosts."),
+  report_tag_fires: z
+    .boolean()
+    .optional()
+    .describe("Send one telemetry hit per page with which tags fired, were blocked or failed (GET /tag-stats, /coverage)."),
 });
 
 export const containerConfigSchema = z.strictObject({

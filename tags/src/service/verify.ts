@@ -7,7 +7,7 @@ import { fetchPage, hasSnippet, homepageProof, isHomepage } from "./scan";
 export { hasSnippet };
 
 /**
- * Custom code (custom_html, custom_js, and analytics tags that load a script from a host other
+ * Custom code (custom_html, custom_js tags, custom_js variables, and analytics tags that load a script from a host other
  * than this platform's analytics app) is served from this deployment's domain to every visitor of
  * the site. So a version containing it is published only when:
  *   - the account may publish custom code: ALLOW_CUSTOM_CODE (default true) for claimed accounts,
@@ -50,14 +50,26 @@ export function customCodeIn(config: ContainerConfig | null | undefined, env: { 
       out.paths.push(`tags.${i}.params.base_url`);
     }
   });
+  (config?.variables ?? []).forEach((v, i) => {
+    if (v.type !== "custom_js") return;
+    out.paths.push(`variables.${i}`);
+    out.bytes += enc.encode(v.code).byteLength;
+  });
   return out;
 }
 
 /** The config without its custom code (for preview links of a container that may not run it). */
 export function stripCustomCode(config: ContainerConfig, env: { ANALYTICS_BASE_URL?: string }): ContainerConfig {
-  const paths = new Set(customCodeIn(config, env).paths.map((p) => Number(p.split(".")[1])));
-  if (!paths.size) return config;
-  return { ...config, tags: (config.tags ?? []).filter((_, i) => !paths.has(i)) };
+  const paths = customCodeIn(config, env).paths;
+  if (!paths.length) return config;
+  const drop = (kind: string) => new Set(paths.filter((p) => p.startsWith(`${kind}.`)).map((p) => Number(p.split(".")[1])));
+  const tags = drop("tags");
+  const vars = drop("variables");
+  return {
+    ...config,
+    tags: (config.tags ?? []).filter((_, i) => !tags.has(i)),
+    variables: (config.variables ?? []).filter((_, i) => !vars.has(i)),
+  };
 }
 
 export interface CustomCodeIssue {
@@ -81,14 +93,15 @@ export function customCodeProblem(
       ? {
           path,
           code: "custom_code_not_allowed",
-          message: "This deployment doesn't allow custom code (custom_html, custom_js, analytics tags loading another host's script).",
+          message:
+            "This deployment doesn't allow custom code (custom_html, custom_js tags and variables, analytics tags loading another host's script).",
           hint: "Use the built-in tag types, or load your script from your own site.",
         }
       : {
           path,
           code: "custom_code_not_allowed",
           message:
-            "Agent-only (unclaimed) accounts can't publish custom code (custom_html, custom_js, analytics tags loading another host's script).",
+            "Agent-only (unclaimed) accounts can't publish custom code (custom_html, custom_js tags and variables, analytics tags loading another host's script).",
           hint: "Ask a person to claim the project (a claim link from the platform's POST /v1/claim-link, opened while signed in), or remove those tags and use the built-in tag types.",
         };
   }
@@ -121,7 +134,7 @@ export function assertCustomCodeSize(env: object & { ANALYTICS_BASE_URL?: string
     throw new ApiError(
       413,
       "custom_code_too_large",
-      `The draft has ${bytes} bytes of custom_html/custom_js; the most allowed here is ${max}.`,
+      `The draft has ${bytes} bytes of custom_html/custom_js (tags and variables); the most allowed here is ${max}.`,
       "Load large code from your own site (<script src=...>) instead of inlining it.",
     );
 }

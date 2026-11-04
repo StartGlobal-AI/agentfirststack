@@ -3,6 +3,7 @@ import { z } from "zod";
 import { fetchableHost } from "../lib/domain";
 import { readTextBounded, targetsPlatform } from "../lib/http";
 import { summarizeResponse } from "../service/sanitize";
+import { renderTemplate } from "../service/transform";
 import { type Connector, type DispatchEvent, type SendContext } from "./types";
 
 /**
@@ -83,9 +84,18 @@ export const webhook: Connector<WebhookCredentials> = {
   },
   async send(e, c, ctx) {
     const test = ctx.test || !!e.test;
-    const body = JSON.stringify(webhookPayload(e, { containerId: ctx.containerId, destinationId: ctx.destinationId, test }));
+    const tpl = ctx.settings?.template;
+    // settings.template: the account's body shape ({{event.*}}); the URL, its checks and signing stay as they are.
+    const body = JSON.stringify(
+      tpl?.body !== undefined
+        ? renderTemplate(tpl.body, { event: e, container_id: ctx.containerId, destination_id: ctx.destinationId, test })
+        : webhookPayload(e, { containerId: ctx.containerId, destinationId: ctx.destinationId, test }),
+    );
+    if (body.length > 65_536)
+      return { ok: false, retryable: false, error: "The rendered webhook body is over 64 KB; trim settings.template.body." };
     const ts = Math.floor(Date.now() / 1000);
     const headers = {
+      ...(tpl?.headers ?? {}),
       "content-type": "application/json",
       "user-agent": "afs-tags-webhook/1",
       "x-signature": await signWebhook(c.secret, ts, body),
@@ -97,7 +107,13 @@ export const webhook: Connector<WebhookCredentials> = {
     const problem = webhookUrlProblem(c.url, ctx.env);
     if (problem) return { ok: false, retryable: false, error: problem, request: { url } };
     try {
-      const res = await ctx.fetch(c.url, { method: "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      const res = await ctx.fetch(c.url, {
+        method: tpl?.method ?? "POST",
+        headers,
+        body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(15_000),
+      });
       const read = await readTextBounded(res, WEBHOOK_READ_BYTES);
       let parsed: unknown = read.text;
       try {

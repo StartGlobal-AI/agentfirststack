@@ -317,6 +317,8 @@ export async function deleteContainer(env: Bindings, accountId: string, id: stri
     env.DB.prepare("DELETE FROM destinations WHERE container_id = ?").bind(id),
     env.DB.prepare("DELETE FROM container_versions WHERE container_id = ?").bind(id),
     env.DB.prepare("DELETE FROM preview_tokens WHERE container_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM environments WHERE container_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM lookups WHERE container_id = ?").bind(id),
     env.DB.prepare("DELETE FROM containers WHERE id = ?").bind(id),
   ]);
   await containerStub(env, id).destroy();
@@ -344,7 +346,12 @@ export async function draftValidation(env: Bindings, row: ContainerRow, config?:
   const candidate = config ?? draftConfig(row);
   const standing = await accountStanding(env, row.account_id);
   const custom = (cfg: ContainerConfig) => customCodeProblem(env, row, cfg, standing);
-  return validateConfig(candidate, { destinations: dest, domain: row.domain, customCode: custom });
+  return validateConfig(candidate, {
+    destinations: dest,
+    domain: row.domain,
+    allowed_hostnames: JSON.parse(row.allowed_hostnames) as string[],
+    customCode: custom,
+  });
 }
 
 export { verificationInfo };

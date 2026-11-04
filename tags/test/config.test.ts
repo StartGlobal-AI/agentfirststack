@@ -42,7 +42,19 @@ describe("catalog", () => {
     const doc = schemaDocument();
     const props = (doc.json_schema as { properties: Record<string, unknown> }).properties;
     expect(Object.keys(props).sort()).toEqual(["consent", "conversions", "settings", "tags", "triggers", "variables"]);
-    expect(Object.keys(doc.destinations).sort()).toEqual(["analytics", "ga4", "google_ads", "meta", "tiktok", "webhook"]);
+    expect(Object.keys(doc.destinations).sort()).toEqual([
+      "analytics",
+      "ga4",
+      "google_ads",
+      "linkedin",
+      "meta",
+      "pinterest",
+      "reddit",
+      "snap",
+      "tiktok",
+      "webhook",
+      "x",
+    ]);
     expect(JSON.stringify(doc)).toContain("measurement_id");
   });
 });

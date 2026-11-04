@@ -37,6 +37,42 @@ export const VARIABLE_EXAMPLES: Record<Variable["type"], { description: string; 
   click_text: { description: "Alias of the click_text built-in.", example: { name: "button_text", type: "click_text" } },
   click_url: { description: "Alias of the click_url built-in.", example: { name: "link_url", type: "click_url" } },
   form_id: { description: "Alias of the form_id built-in.", example: { name: "submitted_form", type: "form_id" } },
+  lookup: {
+    description: "Lookup table: maps another variable's exact value to an output (GTM Lookup Table). No match: default.",
+    example: { name: "plan_value", type: "lookup", input: "page_path", map: { "/thanks/pro": 99, "/thanks/basic": 19 }, default: 0 },
+  },
+  regex_table: {
+    description: "RegEx table: first matching pattern wins; output may use $1..$9 (GTM RegEx Table).",
+    example: {
+      name: "page_group",
+      type: "regex_table",
+      input: "page_path",
+      rows: [
+        { pattern: "^/blog/(.*)", output: "blog:$1" },
+        { pattern: "^/(pricing|plans)", output: "pricing" },
+      ],
+      default: "other",
+    },
+  },
+  url: {
+    description:
+      "A part of a URL: href, protocol, host, port, path, query, fragment or one param; source defaults to page_url (also click_url, referrer, any variable).",
+    example: { name: "link_host", type: "url", component: "host", source: "click_url", strip_www: true },
+  },
+  event_attr: {
+    description: "Any attribute of the clicked, submitted or seen element (GTM auto-event variable).",
+    example: { name: "product_id", type: "event_attr", attr: "data-product-id" },
+  },
+  param_set: {
+    description:
+      "Shared parameters (GTM Google tag event/configuration settings variable); tags merge them with event_params_from / config_params_from.",
+    example: { name: "common_params", type: "param_set", params: { site_section: "{{page_group}}", logged_in: false } },
+  },
+  custom_js: {
+    description:
+      "Custom code, gated like custom_html/custom_js tags (a verified domain and a claimed account to publish): a function body run as (event) => { return value }. Prefer lookup, regex_table, url and format.",
+    example: { name: "cart_size", type: "custom_js", code: "return (window.cart && window.cart.items.length) || 0;" },
+  },
 };
 
 export const TRIGGER_EXAMPLES: Record<Trigger["type"], { description: string; example: Trigger }> = {
@@ -45,6 +81,28 @@ export const TRIGGER_EXAMPLES: Record<Trigger["type"], { description: string; ex
     example: { id: "thank_you", type: "page_view", conditions: [{ var: "page_path", op: "starts_with", value: "/thank-you" }] },
   },
   dom_ready: { description: "When the DOM is parsed (DOMContentLoaded).", example: { id: "dom_ready", type: "dom_ready" } },
+  window_loaded: {
+    description: "When the page has fully loaded (window load); right away if it already has.",
+    example: { id: "loaded", type: "window_loaded" },
+  },
+  consent_init: {
+    description: "Before everything else, for consent platform (CMP) loader tags (custom_html). Other tags warn.",
+    example: { id: "consent_init", type: "consent_init" },
+  },
+  init: { description: "Before page_view (after consent_init).", example: { id: "init", type: "init" } },
+  js_error: {
+    description: "Uncaught JavaScript errors and unhandled promise rejections (at most 10 per page); error_message/error_url/error_line.",
+    example: { id: "js_errors", type: "js_error" },
+  },
+  trigger_group: {
+    description: "Fires once per page after every listed trigger has fired (in any order).",
+    example: { id: "engaged", type: "trigger_group", triggers: ["scroll", "engaged_30s"] },
+  },
+  video: {
+    description:
+      "YouTube embeds (adds enablejsapi=1) and HTML5 <video>: start, progress (percentages), pause, seek, complete; video_* built-ins.",
+    example: { id: "video", type: "video", statuses: ["start", "progress", "complete"], percentages: [25, 50, 75] },
+  },
   history_change: {
     description: "SPA navigation: pushState, replaceState, popstate, hashchange.",
     example: { id: "spa_nav", type: "history_change" },
@@ -58,7 +116,7 @@ export const TRIGGER_EXAMPLES: Record<Trigger["type"], { description: string; ex
     example: { id: "lead_form", type: "form_submit", selector: "form#contact" },
   },
   custom_event: {
-    description: "dataLayer.push({ event: '<name>' }) or afst('event', '<name>').",
+    description: "dataLayer.push({ event: '<name>' }) or afst('event', '<name>'). event_regex matches names by regex instead.",
     example: { id: "purchase_dl", type: "custom_event", event: "purchase" },
   },
   element_visible: {
@@ -66,7 +124,7 @@ export const TRIGGER_EXAMPLES: Record<Trigger["type"], { description: string; ex
     example: { id: "pricing_seen", type: "element_visible", selector: "#pricing", threshold: 0.5 },
   },
   scroll_depth: {
-    description: "Vertical scroll depth thresholds (percent).",
+    description: "Scroll depth thresholds: percentages and/or pixels, vertical (default) or horizontal.",
     example: { id: "scroll", type: "scroll_depth", percentages: [50, 90] },
   },
   timer: {
@@ -111,6 +169,20 @@ export const TAG_EXAMPLES: Record<Tag["type"], { description: string; example: T
   pinterest_tag: {
     description: "Pinterest tag. Default pagevisit.",
     example: { id: "pinterest", type: "pinterest_tag", params: { tag_id: "2612345678901" }, triggers: ["all_pages"] },
+  },
+  snap_pixel: {
+    description: "Snap Pixel. Default PAGE_VIEW; conversions via send_to.snap.",
+    example: { id: "snap", type: "snap_pixel", params: { pixel_id: "6f5c0b3e-4a2d-4c1b-9e8f-1a2b3c4d5e6f" }, triggers: ["all_pages"] },
+  },
+  image_pixel: {
+    description:
+      "An image request to a URL (GTM Custom Image tag), e.g. an affiliate pixel; {{variable}} values are URL-encoded; cache_bust (default true) adds afst_cb. Not custom code (no script runs).",
+    example: {
+      id: "affiliate",
+      type: "image_pixel",
+      params: { url: "https://track.example.net/pixel?order={{order_id}}&value={{order_value}}" },
+      triggers: ["purchase_dl"],
+    },
   },
   analytics: {
     description:
@@ -316,7 +388,7 @@ export function schemaDocument() {
       },
       consent: { description: "Consent state with Google Consent Mode v2 passthrough.", types: CONSENT_TYPES, example: CONSENT_EXAMPLE },
       settings: {
-        example: { phone_country_code: "1", send_page_views: true },
+        example: { phone_country_code: "1", send_page_views: true, cross_domain: ["checkout.example.net"], report_tag_fires: true },
       },
       click_ids: CLICK_IDS,
       full_example: FULL_EXAMPLE,

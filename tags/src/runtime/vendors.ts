@@ -22,6 +22,10 @@ export interface VendorHost {
   interpolate(v: unknown, ctx: EventCtx): unknown;
   /** custom_html templating: every interpolated value HTML-encoded (see util.interpolateHtml). */
   interpolateHtml(template: string, ctx: EventCtx): string;
+  /** image_pixel templating: values URL-encoded. */
+  interpolateUrl(template: string, ctx: EventCtx): string;
+  /** A param_set variable's params (event_params_from / config_params_from). */
+  paramSet(name: string | undefined, ctx: EventCtx): Record<string, unknown>;
   log(kind: string, msg: string, data?: unknown): void;
   userHashes(): HashedUserData;
   userId(): string | undefined;
@@ -290,15 +294,53 @@ function obj(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 }
 
+/** A tag's event params: its param_set (event_params_from) under its own event_params. */
+function eventParams(h: VendorHost, p: { event_params?: unknown; event_params_from?: string }, ctx: EventCtx) {
+  return { ...h.paramSet(p.event_params_from, ctx), ...obj(h.interpolate(p.event_params ?? {}, ctx)) };
+}
+
+/** gtag('config') params: config_params_from, then config_params. */
+function configParams(h: VendorHost, p: { config_params?: unknown; config_params_from?: string }, ctx: EventCtx) {
+  return { ...h.paramSet(p.config_params_from, ctx), ...obj(h.interpolate(p.config_params ?? {}, ctx)) };
+}
+
+function ensureSnap(h: VendorHost, pixelId: string): AnyFn {
+  const w = h.w;
+  if (typeof w.snaptr !== "function") {
+    // Snap's snippet: calls queue until scevent.min.js sets handleRequest.
+    const a = function () {
+      const self = a as unknown as { handleRequest?: AnyFn; queue: unknown[] };
+      // eslint-disable-next-line prefer-rest-params
+      if (self.handleRequest) self.handleRequest.apply(self, arguments as unknown as unknown[]);
+      // eslint-disable-next-line prefer-rest-params
+      else self.queue.push(arguments);
+    } as unknown as AnyFn & { queue: unknown[] };
+    a.queue = [];
+    w.snaptr = a;
+    h.loadScript("https://sc-static.net/scevent.min.js");
+  }
+  const snaptr = w.snaptr as AnyFn;
+  const key = `snap:${pixelId}`;
+  if (!h.state.inited[key]) {
+    h.state.inited[key] = true;
+    const u = h.userHashes();
+    snaptr("init", pixelId, u.em ? { user_hashed_email: u.em } : {});
+  }
+  return snaptr;
+}
+
 /** Fire a tag on a trigger (base tag / page view / standalone event). */
 export function fireTag(h: VendorHost, tag: Tag, ctx: EventCtx) {
   switch (tag.type) {
     case "ga4": {
       const p = tag.params;
       const debug = h.debug ? { debug_mode: true } : {};
-      const firstConfig = gtagConfig(h, p.measurement_id, { send_page_view: p.send_page_view !== false, ...debug });
-      if (p.event_name)
-        h.gtag("event", p.event_name, { ...obj(h.interpolate(p.event_params ?? {}, ctx)), send_to: p.measurement_id, ...debug });
+      const firstConfig = gtagConfig(h, p.measurement_id, {
+        ...configParams(h, p, ctx),
+        send_page_view: p.send_page_view !== false,
+        ...debug,
+      });
+      if (p.event_name) h.gtag("event", p.event_name, { ...eventParams(h, p, ctx), send_to: p.measurement_id, ...debug });
       else if (!firstConfig && p.send_page_view !== false) {
         h.gtag("event", "page_view", { send_to: p.measurement_id, page_location: h.w.location.href, page_title: h.d.title, ...debug });
       }
@@ -306,7 +348,7 @@ export function fireTag(h: VendorHost, tag: Tag, ctx: EventCtx) {
     }
     case "google_ads": {
       const p = tag.params;
-      gtagConfig(h, p.conversion_id, { allow_enhanced_conversions: true });
+      gtagConfig(h, p.conversion_id, { ...configParams(h, p, ctx), allow_enhanced_conversions: true });
       if (p.conversion_label) {
         h.gtag("event", "conversion", {
           send_to: `${p.conversion_id}/${p.conversion_label}`,
@@ -320,14 +362,13 @@ export function fireTag(h: VendorHost, tag: Tag, ctx: EventCtx) {
       const p = tag.params;
       const fbq = metaInit(h, p.pixel_id, p.advanced_matching !== false);
       const name = p.event_name ?? "PageView";
-      const params = obj(h.interpolate(p.event_params ?? {}, ctx));
-      fbq(META_STANDARD.test(name) ? "trackSingle" : "trackSingleCustom", p.pixel_id, name, params);
+      fbq(META_STANDARD.test(name) ? "trackSingle" : "trackSingleCustom", p.pixel_id, name, eventParams(h, p, ctx));
       return;
     }
     case "tiktok_pixel": {
       const p = tag.params;
       const inst = ensureTtq(h, p.pixel_id);
-      if (p.event_name) inst.track!(p.event_name, obj(h.interpolate(p.event_params ?? {}, ctx)));
+      if (p.event_name) inst.track!(p.event_name, eventParams(h, p, ctx));
       else inst.page!();
       return;
     }
@@ -338,7 +379,7 @@ export function fireTag(h: VendorHost, tag: Tag, ctx: EventCtx) {
     }
     case "microsoft_uet": {
       const q = ensureUet(h, tag.params.tag_id);
-      if (tag.params.event_action) q.push("event", tag.params.event_action, obj(h.interpolate(tag.params.event_params ?? {}, ctx)));
+      if (tag.params.event_action) q.push("event", tag.params.event_action, eventParams(h, tag.params, ctx));
       return;
     }
     case "reddit_pixel": {
@@ -370,6 +411,23 @@ export function fireTag(h: VendorHost, tag: Tag, ctx: EventCtx) {
       const n = tag.params.event_name ?? "pagevisit";
       if (n === "pagevisit") pintrk("page");
       else pintrk("track", n, {});
+      return;
+    }
+    case "snap_pixel":
+      ensureSnap(h, tag.params.pixel_id)(
+        "track",
+        tag.params.event_name ?? "PAGE_VIEW",
+        obj(h.interpolate(tag.params.event_params ?? {}, ctx)),
+      );
+      return;
+    case "image_pixel": {
+      // GTM's Custom Image tag: an image request; page data is URL-encoded into the owner's URL.
+      let url = h.interpolateUrl(tag.params.url, ctx);
+      if (tag.params.cache_bust !== false)
+        url += `${url.indexOf("?") === -1 ? "?" : "&"}afst_cb=${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const img = h.d.createElement("img");
+      img.src = url;
+      h.log("fire", `image pixel ${tag.id}`, { url });
       return;
     }
     case "analytics":
@@ -426,12 +484,23 @@ export function fireConversionOn(h: VendorHost, platform: string, tag: Tag, conv
       return h.scriptStatus(GTAG_SRC + encodeURIComponent(firstGtagId(h, tag.params.measurement_id))) !== "error";
     }
     case "google_ads": {
-      const sendTo = conv.send_to.google_ads?.send_to;
-      if (tag.type !== "google_ads" || !sendTo) return false;
+      const ga = conv.send_to.google_ads;
+      if (tag.type !== "google_ads" || !ga || !(ga.send_to || ga.remarketing)) return false;
       gtagConfig(h, tag.params.conversion_id, { allow_enhanced_conversions: true });
-      const ud = googleUserData(c.user);
-      if (Object.keys(ud).length) h.gtag("set", "user_data", ud);
-      h.gtag("event", "conversion", { send_to: sendTo, ...common, transaction_id: c.transaction_id ?? c.event_id });
+      if (ga.send_to) {
+        const ud = googleUserData(c.user);
+        if (Object.keys(ud).length) h.gtag("set", "user_data", ud);
+        h.gtag("event", "conversion", { send_to: ga.send_to, ...common, transaction_id: c.transaction_id ?? c.event_id });
+      }
+      if (ga.remarketing) {
+        // Dynamic remarketing: the event with value and items carrying the business vertical.
+        const vertical = ga.vertical ?? "retail";
+        h.gtag("event", conv.send_to.ga4?.event_name ?? conv.name, {
+          send_to: tag.params.conversion_id,
+          value: c.value,
+          items: (c.items ?? []).map((i) => ({ id: i.item_id, google_business_vertical: vertical })),
+        });
+      }
       return true;
     }
     case "meta": {
@@ -520,6 +589,18 @@ export function fireConversionOn(h: VendorHost, platform: string, tag: Tag, conv
         f.version = "3.0";
       });
       pintrk("track", conv.send_to.pinterest.event_name, { ...common, order_id: c.transaction_id, event_id: c.event_id });
+      return true;
+    }
+    case "snap": {
+      if (tag.type !== "snap_pixel" || !conv.send_to.snap) return false;
+      const items = c.items ?? [];
+      ensureSnap(h, tag.params.pixel_id)("track", conv.send_to.snap.event_name, {
+        price: c.value,
+        currency: c.currency,
+        transaction_id: c.transaction_id,
+        client_dedup_id: c.event_id,
+        ...(items.length ? { item_ids: items.map((i) => i.item_id).filter(Boolean), number_items: items.length } : {}),
+      });
       return true;
     }
     case "analytics": {

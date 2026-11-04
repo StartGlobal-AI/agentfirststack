@@ -3,13 +3,17 @@ import { readFileSync } from "node:fs";
 import { defineConfig, type Plugin } from "vitest/config";
 import { bundleRuntime } from "./scripts/build-runtime.mjs";
 
-/** Text modules (wrangler `rules`) for Vite: dist/runtime.txt is bundled on the fly. */
+/** Text modules (wrangler `rules`) for Vite: dist/runtime*.txt are bundled on the fly. */
 const textModules: Plugin = {
   name: "afs-text-modules",
   enforce: "pre",
   async load(id) {
     if (!id.endsWith(".txt")) return null;
-    const text = id.endsWith("dist/runtime.txt") ? await bundleRuntime() : readFileSync(id, "utf8");
+    const text = id.endsWith("dist/runtime.txt")
+      ? await bundleRuntime()
+      : id.endsWith("dist/runtime-ext.txt")
+        ? await bundleRuntime({ ext: true })
+        : readFileSync(id, "utf8");
     return `export default ${JSON.stringify(text)};`;
   },
 };

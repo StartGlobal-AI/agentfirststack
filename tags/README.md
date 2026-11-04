@@ -39,21 +39,27 @@ backend ── POST /v1/containers/:id/events ───────────�
                                                                      Queue `tags-dispatch`
                                                                              ▼
                                    destinations: GA4 MP · Meta CAPI · Google Ads ·
-                                   TikTok Events API · analytics app · webhook   (retries)
+                                   TikTok · LinkedIn · Pinterest · Reddit · Snap · X ·
+                                   analytics app · webhook   (retries)
 D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
-    destinations (sealed creds)
+    environments, lookup tables, destinations (sealed creds)
 ```
 
 - **Container script** `GET /c/:container_id.js` = the static runtime (TypeScript in
   `src/runtime/`, own `tsconfig` with the DOM lib, bundled and minified by esbuild into
-  `dist/runtime.txt` by wrangler's `build.command`, imported by the Worker as a Text module) +
+  `dist/runtime.txt` by wrangler's `build.command`, imported by the Worker as a Text module;
+  containers whose config uses video or js_error triggers, `wait_for_tags_ms`, cross-domain
+  linking, TCF or `user_data: "auto"` get `dist/runtime-ext.txt` instead, which adds
+  `src/runtime/ext.ts`, so most sites load less code; a test keeps both under a size budget) +
   the live version's config inlined + the visitor's country/region (from Cloudflare's edge, for
   consent regions). The live config is cached per container in the edge Cache API
   (`caches.default`, 60 s); the response has an ETag (304 on match) and `max-age=300`.
   Publish/rollback delete the cache entry; the Cache API is per data center, so other colos
   pick up the new version within 60 s. Before the first publish the script serves the runtime
-  with an empty config (so preview works). `?preview=<token>` serves the draft with debug
-  logging and `no-store`; an expired token falls back to the live script and clears the flag.
+  with an empty config (so preview works). `?preview=<token>` serves the draft (or the version
+  the preview was made for) with debug logging and `no-store`; an expired token falls back to the
+  live script and clears the flag. `?env=<token>` serves an environment's pinned version (or
+  the draft), cached 60 s in the browser; an invalid token falls back to live.
 - **ContainerDO** (one per container, SQLite): `meta` (copy of the container, live config and
   destination list, pushed by the control plane on create/publish/rollback/destination
   changes, so `/collect` never reads D1), `visitors` (click IDs with timestamps, fbp/fbc,
@@ -70,6 +76,10 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
   "Abuse and cost controls"); visitor rows are capped
   (`MAX_VISITORS_PER_CONTAINER`, least recently seen evicted) and `/collect` stops writing when
   the database passes `MAX_CONTAINER_DB_BYTES` (see "Abuse and cost controls").
+  Also `preview_log` (what preview builds post: per event, triggers matched and tags fired or
+  not, with reasons; 500 entries per token, 48 h), `tag_stats` (per-tag fired/blocked/error/
+  skipped counts per day from `settings.report_tag_fires`, only the live config's tag ids, 30
+  days) and `pages` (host + path coverage of live hits, at most 1000 rows, 30 days).
   Storage is created only when the control plane syncs a container (create, publish,
   rollback, destination change, or a resync of an id that exists in D1): `/collect` for an id
   nobody created answers 404 and writes nothing.
@@ -88,30 +98,45 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
     { "name": "order_value", "type": "data_layer", "key": "ecommerce.value" },
     { "name": "email", "type": "dom_value", "selector": "input[type=email]" }
     // types: data_layer, url_param, cookie, dom_text, dom_value, dom_attr, js (global path,
-    //        read only), constant, page_url, page_path, page_hostname, referrer, click_text,
-    //        click_url, form_id. Every variable may have a `default`.
+    //        read only), constant, lookup {input, map}, regex_table {input, rows: [{pattern,
+    //        output ($1)}]}, url {component, param?, source?, strip_www?}, event_attr {attr},
+    //        param_set {params}, custom_js {code} (custom code), page_url, page_path,
+    //        page_hostname, referrer, click_text, click_url, form_id. Every variable may have
+    //        `default`, `format` {lowercase, uppercase, trim, number, map_undefined, map_null,
+    //        map_true, map_false} and `description`.
     // Built-ins usable without defining: page_url, page_path, page_hostname, page_title,
-    //        referrer, event, click_text, click_url, click_id, click_classes, form_id,
-    //        form_action, form_classes, scroll_depth
+    //        referrer, event, click_* (text, url, id, classes, target, element), form_* (id,
+    //        action, classes, target, text, element), event_element, scroll_depth/units/
+    //        direction, percent_visible, visible_ms, history_source/old_url/new_url,
+    //        error_message/url/line, container_id, container_version, environment, debug_mode,
+    //        visitor_id, ga_client_id, ga_session_id, video_* (8)
   ],
   "triggers": [
     { "id": "all_pages", "type": "page_view" },
     { "id": "thank_you", "type": "page_view", "conditions": [{ "var": "page_path", "op": "starts_with", "value": "/thank-you" }] },
     { "id": "lead_form", "type": "form_submit", "selector": "form#contact" },
     { "id": "purchase_dl", "type": "custom_event", "event": "purchase" }
-    // types: page_view, dom_ready, history_change, click {selector?, links_only?},
-    //        form_submit {selector?}, custom_event {event}, element_visible {selector,
-    //        threshold?, once?, observe_dom?}, scroll_depth {percentages}, timer {interval_ms,
-    //        limit?}. ops: equals, contains, starts_with, ends_with, matches_regex, and not_*
-    //        of each; conditions AND together; optional ignore_case
+    // types: consent_init, init, page_view, dom_ready, window_loaded, history_change,
+    //        js_error, click {selector?, links_only?, check_validation?, wait_for_tags_ms?},
+    //        form_submit {selector?, check_validation?, wait_for_tags_ms?}, custom_event
+    //        {event | event_regex}, element_visible {selector, threshold?, once? element|page|
+    //        false, min_duration_ms?, observe_dom?}, scroll_depth {percentages?, pixels?,
+    //        direction?}, timer {interval_ms, limit?}, trigger_group {triggers}, video
+    //        {statuses, percentages?, providers?}. ops: equals, contains, starts_with,
+    //        ends_with, matches_regex, matches_css_selector, and not_* of each, plus lt, lte,
+    //        gt, gte; conditions AND together; optional ignore_case
   ],
   "tags": [
     { "id": "ga4", "type": "ga4", "params": { "measurement_id": "G-XXXX" }, "triggers": ["all_pages"], "consent": ["analytics_storage"] },
     { "id": "meta", "type": "meta_pixel", "params": { "pixel_id": "123" }, "triggers": ["all_pages"], "consent": ["ad_storage"] }
-    // types: ga4, google_ads, meta_pixel, tiktok_pixel, linkedin_insight, microsoft_uet,
-    //        reddit_pixel, x_pixel, pinterest_tag, analytics (our analytics app: loads
-    //        <base_url>/s.js with data-site), custom_html, custom_js
-    // also: exclude_triggers, once_per_page, enabled, description. When `consent` is omitted
+    // types: ga4, google_ads (both with config_params / config_params_from), meta_pixel,
+    //        tiktok_pixel, linkedin_insight, microsoft_uet, reddit_pixel, x_pixel,
+    //        pinterest_tag, snap_pixel, image_pixel {url, cache_bust?}, analytics (our
+    //        analytics app: loads <base_url>/s.js with data-site), custom_html, custom_js
+    // also: exclude_triggers, once_per_page, enabled, description, priority (higher first),
+    // schedule {start?, end?}, live_only, after {tag, require_success?} (sequencing: the setup
+    // tag fires first, once per page, and this tag waits for its scripts),
+    // event_params_from (a param_set variable). When `consent` is omitted
     // the type's default applies: ad pixels ["ad_storage"], ga4 ["analytics_storage"],
     // analytics/custom_html/custom_js []. custom_html { html }: its <script>s run; {{var}}
     // values are HTML-encoded (all but letters, digits and _ . , : @ - become &#N;) and
@@ -134,19 +159,23 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
       "server": true
     }
     // value: number or variable; currency: "USD" or { "var": "..." }; also items (variable
-    // holding GA4 items), params, once_per_page. send_to also takes linkedin {conversion_id},
+    // holding GA4 items), params, once_per_page; user_data may be "auto" (the first email and
+    // phone field of the submitted form). send_to also takes linkedin {conversion_id},
     // microsoft_uet {event_action}, reddit {event_name}, x {event_id}, pinterest {event_name},
-    // analytics {event_name?}; google_ads {conversion_action_id} overrides the server
-    // destination's conversion action for this conversion.
+    // snap {event_name}, analytics {event_name?}; google_ads {conversion_action_id} overrides
+    // the server destination's conversion action, {remarketing: true, vertical?} adds a
+    // dynamic remarketing event.
   ],
   "consent": {
     "mode": "none",               // none | opt_in | opt_out
     "default": { "analytics_storage": "granted", "ad_storage": "granted", "ad_user_data": "granted", "ad_personalization": "granted" },
     "regions": { "EEA": { "ad_storage": "denied", "ad_user_data": "denied", "ad_personalization": "denied", "analytics_storage": "denied" } },
     "google_consent_mode": "basic", // basic: Google tags wait for consent; advanced: they load and gtag sends cookieless pings
-    "wait_for_update_ms": 500       // passed to gtag('consent','default')
+    "wait_for_update_ms": 500,      // passed to gtag('consent','default')
+    "tcf": false                    // follow an IAB TCF v2 CMP (__tcfapi); see llms.txt for the purpose mapping
   },
-  "settings": { "phone_country_code": "1", "cookie_domain": "example.com", "listen_to_gtag_events": false, "send_page_views": true, "debug": false }
+  "settings": { "phone_country_code": "1", "cookie_domain": "example.com", "listen_to_gtag_events": false, "send_page_views": true, "debug": false,
+                "cross_domain": ["checkout.example.net"], "cross_domain_forms": false, "report_tag_fires": false }
 }
 ```
 
@@ -179,7 +208,18 @@ container's snippet in a real `<script src>` tag on `https://<domain>/` itself (
 `https://www.<domain>/` after a redirect; answered 2xx; no query string or other page), found by
 `verify` or `scan`. Text a page only echoes (comments, attribute values, JSON in an inline script,
 textarea/title/noscript/template content) never counts.
-Preview links of a draft that may not run custom code are served without those tags.
+Preview links and environments of a draft that may not run custom code are served without those
+tags. `custom_js` variables count as custom code too.
+
+**Editing and migrating.** Items can be edited one at a time (`PUT|DELETE /draft/:kind/:key`,
+`POST /draft/:kind/:key/revert`), each write guarded by the draft revision it read: without
+`?revision=` a change is re-applied on top of a newer draft, with it a stale revision is a 409.
+`GET /diff` compares any two of live, draft and a version, in plain words and JSON paths, and
+`GET /draft` includes `changes_vs_live`. `POST /draft/import` takes a GTM container export
+(mapped to this config, every GTM tag, trigger and variable reported as mapped, adapted with a
+note, or unmapped with the reason; at most 2 MB; custom HTML/JS stays custom code) or this
+platform's own JSON, merged by key (`on_conflict` overwrite, rename or skip) or replacing the
+draft, with `dry_run`; re-running an import changes nothing.
 
 A **conversion** is defined once. When its trigger fires the runtime creates one `event_id`,
 fires the matching client tags with it (gtag `transaction_id` when there's no order id, fbq
@@ -207,11 +247,17 @@ line in `src/destinations/index.ts`.
 | `meta` | Conversions API (Graph v26.0) | pixel_id, access_token, test_event_code? | `test_event_code` (required for `test`) |
 | `google_ads` | offline click conversions: Data Manager API `events:ingest` (default) or Google Ads API v26 `uploadClickConversions` (`api: "google_ads_api"`); gclid/gbraid/wbraid + hashed email/phone | customer_id, conversion_action_id (an "Import from clicks" action), oauth client_id/client_secret/refresh_token, login_customer_id?, developer_token? (google_ads_api only), api? | `validateOnly: true` |
 | `tiktok` | Events API 2.0 | pixel_code, access_token, test_event_code? | `test_event_code` (required for `test`) |
+| `linkedin` | Conversions API (REST, LinkedIn-Version 202610) | ad_account_id, access_token? and/or refresh_token? + client_id? + client_secret?, conversion_rules? (Insight Tag id -> CAPI rule id) | none: sends one real event (pass `send_to.linkedin.conversion_id`) |
+| `pinterest` | Conversions API v5 `ad_accounts/{id}/events` | ad_account_id, access_token | `?test=true` |
+| `reddit` | Conversions API v3 `pixels/{pixel_id}/conversion_events` | pixel_id, access_token, test_id? | `data.test_id` (else one real event) |
+| `snap` | Conversions API v3 (tr.snapchat.com) | pixel_id, access_token | `/events/validate` |
+| `x` | Ads API v12 `measurement/conversions/{pixel_id}` (OAuth 1.0a) | pixel_id, consumer_key, consumer_secret, access_token, access_token_secret | none: sends one real event (pass `send_to.x.event_id`) |
 | `analytics` | our analytics app server ingest | site_id, api_key, base_url? (default `ANALYTICS_BASE_URL`; https, same host as `ANALYTICS_BASE_URL` when set, no query string, no IP literal, not this deployment; re-checked when sent) | none: sends one `tags_test` event |
 | `webhook` | POST JSON, `x-signature` HMAC-SHA256 | url (https on a public host name, no IP literal or local name; http://localhost only with `DEV_MODE=true`; never this platform's domain or a subdomain of it), secret | `"test": true` in the payload |
 
-- Platform destinations (`ga4`, `meta`, `google_ads`, `tiktok`) receive server conversions
-  whose `send_to` has their type; `analytics` receives every server conversion and backend
+- Platform destinations (`ga4`, `meta`, `google_ads`, `tiktok`, `linkedin`, `pinterest`,
+  `reddit`, `snap`, `x`) receive server conversions whose `send_to` has their type, deduped with
+  the browser pixel by the conversion's `event_id`; `analytics` receives every server conversion and backend
   event; `webhook` receives every server conversion and backend events whose name matches a
   conversion in the live config (`settings.all_events: true` for every backend event).
   `settings.conversions` restricts a destination to named conversions. A container has at most
@@ -252,8 +298,20 @@ line in `src/destinations/index.ts`.
   `props` (event_id, transaction_id, params) and `revenue`; `visitor_id` only when the browser
   exposed the analytics app's own id (`afsa.visitorId()`).
 
-(v2: LinkedIn CAPI, Reddit CAPI, Pinterest CAPI, Snap CAPI, Microsoft offline conversions.
-LinkedIn, UET, Reddit, X and Pinterest conversions are browser-only for now.)
+- Settings (all optional): `conditions` routes by event field (value, currency, name, source,
+  country, region, city, transaction_id, page_url, referrer, user_id, event_id, visitor_id,
+  `params.<key>`; failing events are logged as `skipped` with the condition); `params` allows or
+  excludes custom params (and excludes standard fields such as `ip`, `user_agent`, `user` = all
+  hashed PII), sets params, `value` or `currency` from a literal, another field or a lookup table
+  (`{ lookup, key: "items[].item_id" }` sums per-item values times quantity), and
+  `redact_query` drops query strings from page_url and referrer; `template` (webhook only) sets
+  the method, static non-secret headers and a JSON body with `{{event.*}}` placeholders, signed
+  as before. Transformations run in the queue consumer right before sending; tests show them.
+- Lookup tables (`PUT /v1/containers/:id/lookups/:name { rows }`) live in D1, are read by the
+  queue consumer and never reach browsers.
+
+(Microsoft Advertising server-side conversions aren't built yet: its UET Conversions API is
+documented but still rolling out. UET conversions are browser-only for now.)
 
 Credentials are sealed with AES-GCM (`ENCRYPTION_KEY`) and never returned (responses show
 `"configured": true` plus non-secret ids). Creating a destination with the same platform id
@@ -316,11 +374,20 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | POST | `/containers/:id/scan` | `{ url?, paths?, follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; at most 6 pages, 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics), consent platforms, CMS, forms, CTAs, thank-you pages; suggested config |
 | POST | `/containers/:id/verify` | `{ method?: "auto"\|"dns"\|"snippet" }`: domain verification (needed to publish custom code), rate limited with scan |
 | POST | `/containers/:id/setup` | the `setup_conversion_tracking` recipe over REST |
-| GET, PUT, PATCH | `/containers/:id/draft` | full replace (PUT) or JSON merge patch (PATCH); optional `?revision=` guards concurrent edits; `413 draft_too_large` over `MAX_DRAFT_BYTES` |
+| GET, PUT, PATCH | `/containers/:id/draft` | full replace (PUT) or JSON merge patch (PATCH); optional `?revision=` guards concurrent edits; `413 draft_too_large` over `MAX_DRAFT_BYTES`; GET has `changes_vs_live` |
+| GET, PUT, DELETE | `/containers/:id/draft/:kind/:key` | one tag, trigger, variable or conversion (`?revision=` optional; without it the edit is re-applied on a newer draft) |
+| POST | `/containers/:id/draft/:kind/:key/revert` | copy the item back from the live version (or remove it) |
+| GET | `/containers/:id/diff` | `?from=live&to=draft` (or version numbers): summary, per-item changes with JSON paths |
+| POST | `/containers/:id/draft/import` | `{ format: "gtm"\|"afst", data\|config, mode?, on_conflict?, dry_run? }`: GTM container import or own JSON, with a mapped/adapted/unmapped report; 2 MB max |
 | POST | `/containers/:id/draft/validate` | errors and warnings with hints; optional `{ config }` validates without saving |
-| POST | `/containers/:id/preview` | `{ ttl_minutes?, path? }` -> preview token + URL to open (`?afst_preview=`) |
-| POST | `/containers/:id/publish` | new immutable version, goes live (422 with the errors if invalid) |
-| GET | `/containers/:id/versions`, `/versions/:n` | newest `max_versions` kept |
+| POST | `/containers/:id/preview` | `{ ttl_minutes?, path?, version? }` -> preview token + URL to open (`?afst_preview=`) |
+| GET | `/containers/:id/preview/:token/log` | the preview log: per event, triggers matched or why not, tags fired / waiting for consent / not fired and why (untrusted) |
+| POST | `/containers/:id/publish` | `{ note?, version? }`: new immutable version from the draft (or a saved version), goes live (422 with the errors if invalid) |
+| POST | `/containers/:id/versions` | save the draft as a version without publishing |
+| GET | `/containers/:id/versions`, `/versions/:n` | newest `max_versions` kept (plus live and environment-pinned ones) |
+| POST, GET, PATCH, DELETE | `/containers/:id/environments[/:eid]` | `{ name, version: n\|"draft" }`: a named snippet pinned to a version; PATCH version = publish to it; `POST .../:eid/reauthorize` rotates its token |
+| PUT, GET, DELETE | `/containers/:id/lookups[/:name]` | lookup tables for destinations' `settings.params.set` |
+| GET | `/containers/:id/tag-stats`, `/coverage` | per-tag fire counts (`settings.report_tag_fires`) and pages that sent hits, `?since=7d` |
 | POST | `/containers/:id/rollback` | `{ version }`: moves the live pointer to that version; the draft is unchanged |
 | POST, GET, PATCH, DELETE | `/containers/:id/destinations[/:did]` | POST: `403 quota_exceeded` past `MAX_DESTINATIONS_PER_CONTAINER` |
 | POST | `/containers/:id/destinations/:did/test` | `{ event_name?, test_event_code? }`: sends a test event, returns the platform's answer (webhook/analytics: status + short summary); `TEST_LIMITER` per account; a pass closes an open circuit |
@@ -342,10 +409,14 @@ domain, a subdomain or an `allowed_hostnames` entry (no wildcards over public su
 
 `create_container`, `list_containers`, `get_container`, `update_container`,
 `delete_container`, `get_install_instructions`, `scan_site` (write scope, like REST; its page
-content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`, `update_draft`, `patch_draft`, `validate_draft`,
-`create_preview`, `publish`, `list_versions`, `rollback`, `add_destination`,
-`list_destinations`, `update_destination`, `remove_destination`, `test_destination`,
-`send_server_events`, `get_event_log`, `get_visitor`, `setup_conversion_tracking` (recipe: given
+content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`, `get_draft_item`,
+`upsert_draft_item`, `remove_draft_item`, `revert_draft_item`, `update_draft`, `patch_draft`,
+`import_draft`, `diff_versions`, `validate_draft`, `create_preview`, `get_preview_log`, `publish`,
+`create_version`, `list_versions`, `rollback`, `create_environment`, `list_environments`,
+`update_environment`, `reauthorize_environment`, `delete_environment`, `add_destination`,
+`list_destinations`, `update_destination`, `remove_destination`, `test_destination`, `put_lookup`,
+`list_lookups`, `get_lookup`, `delete_lookup`, `send_server_events`, `get_event_log`,
+`get_visitor`, `get_tag_stats`, `get_coverage`, `setup_conversion_tracking` (recipe: given
 platforms + conversions in plain terms, writes a complete draft, creates destinations for
 platforms with credentials, validates it, and returns what's left to do, e.g. which IDs are
 missing and where to find them). Read-only keys only see the read tools. `get_event_log`,
@@ -387,7 +458,15 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   (backend events keep working up to 25% past it); bounded maps and strings in everything
   `/collect` stores (known click ids, utm_* and consent keys only, 25 scalar params, bounded
   first touch, id-shaped fbp/fbc/GA ids, 512-character user agent).
-- **Custom code** needs a verified domain and a claimed account (above).
+- **Custom code** needs a verified domain and a claimed account (above), for tags and
+  `custom_js` variables, imported or not; environments and `publish { version }` apply the same
+  rule, and a page can block types itself (`data-afst-block`).
+- **New stored things are capped**: environments (`MAX_ENVIRONMENTS_PER_CONTAINER`, default 5),
+  lookup tables (`MAX_LOOKUPS_PER_CONTAINER` 10, `MAX_LOOKUP_ROWS` 10000, `MAX_LOOKUP_BYTES`
+  1 MB, counted in `MAX_TAGS_BYTES_PER_ACCOUNT`), imports (2 MB, depth-checked, validated), the
+  preview log (500 entries per preview token, only with a valid token, 48 h), tag stats (only the
+  live config's tag ids; each telemetry hit counts as a browser event) and coverage (1000 pages,
+  30 days). Each cap reads `UNCLAIMED_<NAME>` too.
 - **Outbound fetches** (scan, verify, destinations) go only to https public host names (scan
   and verify on the default port), never IP literals, local names or this platform (webhooks:
   not its domain or any subdomain); analytics destinations only to the analytics app's host.
@@ -419,6 +498,8 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
 | `MAX_VISITORS_PER_CONTAINER` | optional var; visitor rows kept per container, least recently seen evicted, default `250000` |
 | `MAX_CONTAINER_DB_BYTES` | optional var; ContainerDO database size above which `/collect` stops writing (backend events up to 25% more), default `1073741824` (1 GiB) |
 | `CIRCUIT_BREAKER_FAILURES`, `CIRCUIT_BREAKER_MINUTES` | optional vars; consecutive failed attempts that open a destination's circuit (default `20`, `0` = off) and minutes it stays open (default `60`) |
+| `MAX_ENVIRONMENTS_PER_CONTAINER` | optional var; environment snippets per container, default `5` |
+| `MAX_LOOKUPS_PER_CONTAINER`, `MAX_LOOKUP_ROWS`, `MAX_LOOKUP_BYTES` | optional vars; lookup tables per container (default `10`), rows per table (default `10000`) and bytes per table (default `1048576`, never above 1.5 MB) |
 
 Every cap above (and `MAX_CONTAINERS_PER_ACCOUNT`, `MAX_DESTINATIONS_PER_CONTAINER`,
 `MAX_VERSIONS_PER_CONTAINER`, `MAX_DRAFT_BYTES`) also reads `UNCLAIMED_<NAME>` for accounts no
@@ -436,7 +517,9 @@ browser; integration tests in workerd via `@cloudflare/vitest-plugin`), `pnpm sm
 
 ## Not yet (v2)
 
-Built-in consent banner UI, more CAPI connectors, A/B testing, Google Ads conversion
+Built-in consent banner UI, Microsoft Ads server-side conversions, custom domains (Cloudflare for
+SaaS), the Google tag gateway and a GA4 `/g/collect` client, Measurement Protocol-compatible
+ingest, a `draft` key scope (edit but not publish), A/B testing, Google Ads conversion
 adjustments / enhanced conversions for web (`uploadConversionAdjustments`; click uploads already
 carry hashed email/phone), offline conversion CSV import, per-tag sampling, signed browser `identify` (so a browser can
 link a user id without the backend), a global (all-colo) cache purge on publish.

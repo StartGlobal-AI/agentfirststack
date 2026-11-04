@@ -27,7 +27,23 @@ describe("storage and fan-out caps", () => {
       maxContainers: Number.POSITIVE_INFINITY,
       maxAccountBytes: 20 * 1024 * 1024,
       maxCustomCodeBytes: Number.POSITIVE_INFINITY,
+      maxEnvironments: 5,
+      maxLookups: 10,
+      maxLookupRows: 10_000,
+      maxLookupBytes: 1024 * 1024,
     });
+    // New caps read UNCLAIMED_<NAME> like the others; a lookup never passes 1.5 MB (one D1 row).
+    expect(
+      limits(
+        {
+          MAX_ENVIRONMENTS_PER_CONTAINER: "8",
+          UNCLAIMED_MAX_ENVIRONMENTS_PER_CONTAINER: "1",
+          UNCLAIMED_MAX_LOOKUP_ROWS: "100",
+          MAX_LOOKUP_BYTES: "0",
+        },
+        { suspended: false, claimed: false },
+      ),
+    ).toMatchObject({ maxEnvironments: 1, maxLookupRows: 100, maxLookupBytes: 1_500_000 });
     expect(limits({ MAX_VERSIONS_PER_CONTAINER: "5", MAX_DRAFT_BYTES: "1000", MAX_DESTINATIONS_PER_CONTAINER: "3" })).toMatchObject({
       maxVersions: 5,
       maxDraftBytes: 1000,

@@ -340,7 +340,7 @@ export function interestingLinks(html: string, base: string): string[] {
 
 export interface ScanResult {
   url: string;
-  pages: { url: string; status: number | null; bytes: number; error?: string }[];
+  pages: { url: string; status: number | null; bytes: number; snippet: boolean; error?: string }[];
   detected: DetectedTags;
   container_installed: boolean;
   /** This container's <script src> is on https://<domain>/ (that verifies the domain). */
@@ -704,7 +704,14 @@ export async function scanSite(
   const homepage = first.toString() === `https://${domain}/`;
   return {
     url: first.toString(),
-    pages: fetched.map((p) => ({ url: p.url, status: p.status, bytes: p.html.length, ...(p.error ? { error: p.error } : {}) })),
+    // snippet: this container's <script src> is on that page (tag coverage per scanned page).
+    pages: fetched.map((p) => ({
+      url: p.url,
+      status: p.status,
+      bytes: p.html.length,
+      snippet: !!p.html && hasSnippet(p.html, containerId),
+      ...(p.error ? { error: p.error } : {}),
+    })),
     snippet_on_homepage: homepage && homepageProof(home, domain, containerId),
     ...analyze(ok, containerId),
   };

@@ -1,1 +1,1 @@
-export function bundleRuntime(opts?: { minify?: boolean }): Promise<string>;
+export function bundleRuntime(opts?: { minify?: boolean; ext?: boolean }): Promise<string>;

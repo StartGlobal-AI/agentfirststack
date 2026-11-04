@@ -4,10 +4,11 @@ import type { DeliveryResult } from "../destinations/types";
 import type { DispatchMessage } from "../do/container-do";
 import type { Bindings } from "../env";
 import { containerStub, getContainerRow, syncToDO } from "./containers";
-import { type DestinationRow, loadCredentials } from "./destinations";
+import { type DestinationRow, loadCredentials, loadLookups } from "./destinations";
 import { circuitReason } from "./dispatch-plan";
 import { circuitBreaker } from "./limits";
 import { sanitizeText } from "./sanitize";
+import { applyParamRules, type Lookups, lookupsUsed, type ParamRules } from "./transform";
 
 /** Attempts before a delivery is marked failed; kept within max_retries (6) + 1 in wrangler.jsonc so the last attempt is recorded here, not dropped. Webhooks use fewer (their connector's maxAttempts). */
 export const MAX_ATTEMPTS = 6;
@@ -95,6 +96,7 @@ export async function handleDispatchBatch(batch: MessageBatch<DispatchMessage>, 
     for (const r of results) rows.set(r.id, r);
   }
   const creds = new Map<string, Record<string, unknown>>();
+  const lookups = new Map<string, Promise<Lookups>>();
   const outcomes: Outcomes = new Map();
   const now = Date.now();
 
@@ -118,12 +120,18 @@ export async function handleDispatchBatch(batch: MessageBatch<DispatchMessage>, 
       let result: DeliveryResult;
       try {
         if (!creds.has(row.id)) creds.set(row.id, await loadCredentials(env, row));
-        result = await connector.send(m.event, creds.get(row.id) as never, {
+        // settings.params (allow/exclude/set/redact_query, lookups) shape what this destination gets.
+        const settings = JSON.parse(row.settings) as { params?: ParamRules; template?: never };
+        const used = lookupsUsed(settings.params);
+        if (used.length && !lookups.has(row.id)) lookups.set(row.id, loadLookups(env, m.container_id, used));
+        const event = applyParamRules(m.event, settings.params, used.length ? await lookups.get(row.id)! : undefined);
+        result = await connector.send(event, creds.get(row.id) as never, {
           test: m.test,
           fetch: (...a) => fetch(...a),
           env,
           destinationId: row.id,
           containerId: m.container_id,
+          settings,
         });
       } catch (e) {
         result = { ok: false, retryable: false, error: e instanceof Error ? e.message : String(e) };

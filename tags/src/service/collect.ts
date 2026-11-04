@@ -12,7 +12,9 @@ import { originHost } from "./origin";
 import { fromTrustedProxy } from "./proxy";
 import { overLimit, rateLimited } from "./ratelimit";
 import { MAX_USER_AGENT } from "./sanitize";
-import { previewContainer } from "./versions";
+import { environmentByToken } from "./environments";
+import { previewConfig, previewToken } from "./versions";
+import { sha256Hex } from "@afs/shared";
 
 const BOT =
   /bot|crawl|spider|slurp|headless|lighthouse|pingdom|uptime|facebookexternalhit|preview|prerender|python-requests|go-http-client|scrapy|httpclient/i;
@@ -156,14 +158,29 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
     const limited = await collectRateLimited(env, networkKey(ip ?? null), payload.container_id, payload.type === "conversion");
     if (limited) throw rateLimited(limited, RATE_HINT);
     const host = originHost(req.headers.get("origin") ?? undefined, payload.page_url);
-    let previewConfig: ContainerConfig | undefined;
-    if (payload.preview) {
-      const owner = await previewContainer(env, payload.preview);
-      if (owner === payload.container_id) {
-        const row = await env.DB.prepare("SELECT draft FROM containers WHERE id = ?").bind(owner).first<{ draft: string }>();
-        if (row) previewConfig = JSON.parse(row.draft) as ContainerConfig;
-      }
+    let preview: ContainerConfig | undefined;
+    let envConfig: ContainerConfig | undefined;
+    const tok = payload.preview ? await previewToken(env, payload.preview) : null;
+    if (tok?.container_id === payload.container_id) preview = (await previewConfig(env, tok.container_id, tok.version)) ?? undefined;
+    if (payload.type === "debug") {
+      // The preview log: only from a preview build of this container (a valid, unexpired token).
+      if (!preview || !payload.preview)
+        throw new ApiError(
+          403,
+          "preview_required",
+          "Debug entries are accepted only from a preview link.",
+          "POST /v1/containers/:id/preview creates one.",
+        );
+      const r = await containerStub(env, payload.container_id).previewLog(
+        await sha256Hex(payload.preview),
+        payload.entries ?? [],
+        Date.now(),
+      );
+      if (!r.ok && r.error === "storage_full")
+        throw new ApiError(507, "storage_full", "This container's event store is full.", "GET /v1/containers/:id shows stats.storage.");
+      return json({ ok: true, stored: r.stored });
     }
+    if (payload.env && !preview) envConfig = (await environmentByToken(env, payload.container_id, payload.env))?.config;
     const hit: CollectHit = {
       payload,
       enrich: {
@@ -174,7 +191,8 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
         origin_host: host ?? undefined,
         received_at: Date.now(),
       },
-      preview_config: previewConfig,
+      preview_config: preview,
+      env_config: envConfig,
     };
     const stub = containerStub(env, payload.container_id);
     let result: CollectResult = await stub.collect(hit);

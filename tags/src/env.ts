@@ -38,6 +38,12 @@ export type Bindings = Env & {
   MAX_VISITORS_PER_CONTAINER?: string;
   /** A container's Durable Object database size above which /collect stops writing. Default 1 GiB. */
   MAX_CONTAINER_DB_BYTES?: string;
+  /** Environment snippets per container. Default 5. */
+  MAX_ENVIRONMENTS_PER_CONTAINER?: string;
+  /** Enrichment lookup tables per container (default 10), rows per table (default 10000), bytes per table (default 1048576, at most 1.5 MB). */
+  MAX_LOOKUPS_PER_CONTAINER?: string;
+  MAX_LOOKUP_ROWS?: string;
+  MAX_LOOKUP_BYTES?: string;
   /** Consecutive failed attempts that open a destination's circuit (default 20, "0" = off), and minutes it stays open (default 60). */
   CIRCUIT_BREAKER_FAILURES?: string;
   CIRCUIT_BREAKER_MINUTES?: string;

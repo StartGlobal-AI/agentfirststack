@@ -120,3 +120,42 @@ export function matches(el: Element | null | undefined, sel: string): boolean {
     return false;
   }
 }
+
+export interface Format {
+  lowercase?: boolean;
+  uppercase?: boolean;
+  trim?: boolean;
+  number?: boolean;
+  map_undefined?: unknown;
+  map_null?: unknown;
+  map_true?: unknown;
+  map_false?: unknown;
+}
+
+/** A variable's `format` (GTM "Format value"): mappings first, then case/trim, then number. */
+export function formatValue(v: unknown, f: Format): unknown {
+  if (v === undefined && f.map_undefined !== undefined) return f.map_undefined;
+  if (v === null && f.map_null !== undefined) return f.map_null;
+  if (v === true && f.map_true !== undefined) return f.map_true;
+  if (v === false && f.map_false !== undefined) return f.map_false;
+  let out = v;
+  if (typeof v === "string") {
+    let s = v;
+    if (f.trim) s = s.trim();
+    if (f.lowercase) s = s.toLowerCase();
+    if (f.uppercase) s = s.toUpperCase();
+    out = s;
+  }
+  return f.number ? toNumber(out) : out;
+}
+
+/** {{var}} templating for URLs (image_pixel): every value is URL-encoded. */
+export function interpolateUrl(template: string, get: (name: string) => unknown): string {
+  return template.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}/g, (_, n: string) => {
+    const x = get(n);
+    return x == null ? "" : encodeURIComponent(String(x));
+  });
+}
+
+/** unix ms from a number or an ISO string (tag schedules). */
+export const toMs = (v: unknown): number | undefined => (typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) : undefined);

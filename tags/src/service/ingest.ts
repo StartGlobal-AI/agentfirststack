@@ -20,8 +20,10 @@ export interface Enrichment {
 export interface CollectHit {
   payload: CollectPayload;
   enrich: Enrichment;
-  /** Preview traffic: the draft config to use instead of the live one. */
+  /** Preview traffic: the draft (or previewed version's) config to use instead of the live one. */
   preview_config?: ContainerConfig;
+  /** Environment snippet traffic (real, not test): that environment's config instead of the live one. */
+  env_config?: ContainerConfig;
 }
 
 const CLICK_ID_SET = new Set<string>(CLICK_IDS);
@@ -53,6 +55,15 @@ export function cleanCollectPayload(p: CollectPayload): CollectPayload {
     fbp: cleanId(p.fbp),
     fbc: cleanId(p.fbc, 600),
     ttp: cleanId(p.ttp),
+    scid: cleanId(p.scid),
+    rdt_uuid: cleanId(p.rdt_uuid),
+    tcf: p.tcf
+      ? {
+          gdpr_applies: p.tcf.gdpr_applies,
+          // TC strings are base64url segments joined by dots.
+          tc_string: p.tcf.tc_string && /^[A-Za-z0-9_.-]{1,2000}$/.test(p.tcf.tc_string) ? p.tcf.tc_string : undefined,
+        }
+      : undefined,
     ga_client_id: cleanId(p.ga_client_id, 100),
     ga_session_id: cleanId(p.ga_session_id, 40),
     analytics_visitor_id: cleanId(p.analytics_visitor_id, 100),
@@ -113,6 +124,8 @@ export function visitorUpdateFromHit(hit: CollectHit): VisitorUpdate {
     fbp: p.fbp,
     fbc: p.fbc,
     ttp: p.ttp,
+    scid: p.scid,
+    rdt_uuid: p.rdt_uuid,
     ga_client_id: p.ga_client_id,
     ga_session_id: p.ga_session_id,
     analytics_visitor_id: p.analytics_visitor_id,
@@ -168,6 +181,9 @@ export function browserDispatchEvent(
     fbp: p.fbp ?? visitor?.fbp,
     fbc: p.fbc ?? visitor?.fbc,
     ttp: p.ttp ?? visitor?.ttp,
+    scid: p.scid ?? visitor?.scid,
+    rdt_uuid: p.rdt_uuid ?? visitor?.rdt_uuid,
+    ...(p.tcf ? { tcf: p.tcf } : {}),
     user: { ...(visitor?.user ?? {}), ...((p.user_data as HashedUserData) ?? {}) },
     consent: consentOf(p.consent ?? visitor?.consent),
     send_to: sendToForEvent(conversion),
@@ -255,6 +271,8 @@ export function serverDispatchEvent(
     fbp: ev.fbp ?? v?.fbp,
     fbc: ev.fbc ?? (inherit ? v?.fbc : undefined),
     ttp: v?.ttp,
+    scid: inherit ? v?.scid : undefined,
+    rdt_uuid: inherit ? v?.rdt_uuid : undefined,
     user: { ...(v?.user ?? {}), ...ctx.user },
     consent: consentOf(ev.consent ?? (inherit ? v?.consent : undefined)),
     send_to: sendToForEvent(ctx.conversion, ev.send_to),

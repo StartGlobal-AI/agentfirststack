@@ -1,6 +1,6 @@
 import type { ContainerConfig, Conversion, Tag, Trigger, Variable } from "../config/schema";
 import { CLICK_ID_DAYS, CLICK_IDS, CONSENT_COOKIE, clickCookieName, FIRST_TOUCH_COOKIE, UTM_KEYS, VISITOR_COOKIE } from "../lib/clickids";
-import { matchCondition } from "../lib/conditions";
+import { compileRegex, matchCondition, toComparable } from "../lib/conditions";
 import {
   applyConsentUpdate,
   CONSENT_TYPES,
@@ -11,14 +11,16 @@ import {
   initialConsent,
   isGranted,
 } from "../lib/consent";
-import { type HashedUserData, hashUserData, type RawUserData } from "../lib/pii";
-import type { BootConfig, EventCtx } from "./types";
 import { interpolateHtml } from "../lib/html";
+import { type HashedUserData, hashUserData, type RawUserData } from "../lib/pii";
+import type { BootConfig, EventCtx, TraceEntry } from "./types";
 import {
   closest,
   deepMerge,
+  formatValue,
   getPath,
   interpolate,
+  interpolateUrl,
   isArgs,
   isObj,
   matches,
@@ -26,6 +28,7 @@ import {
   rnd,
   snapshot,
   textOf,
+  toMs,
   toNumber,
   writeCookie,
 } from "./util";
@@ -43,6 +46,7 @@ const PLATFORM_TAG: Record<string, Tag["type"]> = {
   reddit: "reddit_pixel",
   x: "x_pixel",
   pinterest: "pinterest_tag",
+  snap: "snap_pixel",
   analytics: "analytics",
 };
 const GOOGLE_TAGS = { ga4: true, google_ads: true } as Record<string, boolean>;
@@ -53,6 +57,21 @@ interface Pending {
   run: () => void;
   label: string;
 }
+
+/**
+ * Optional features in the extension bundle (src/runtime/ext.ts): the Worker serves it only to
+ * containers whose config uses them (service/script.ts needsExt), so most sites load less code.
+ */
+export interface Ext {
+  identity?(rt: Runtime): void;
+  listeners?(rt: Runtime): void;
+  emitted?(rt: Runtime, ctx: EventCtx, fired: Record<string, EventCtx>): void;
+  /** conversions[].user_data "auto": email/phone fields found in the form (or page). */
+  autoUserData?(root: ParentNode): RawUserData;
+}
+export const EXT: { x?: Ext } = {};
+
+type Trace = Pick<TraceEntry, "triggers" | "tags" | "conversions">;
 
 export class Runtime implements VendorHost {
   readonly w: W;
@@ -77,27 +96,42 @@ export class Runtime implements VendorHost {
   fbc?: string;
   fbp?: string;
   firstTouch?: Record<string, unknown>;
+  /** IAB TCF v2 signals (consent.tcf, set by the extension bundle). */
+  tcf?: { gdpr_applies: boolean; tc_string?: string };
   identity: { userId?: string; raw: RawUserData } = { raw: {} };
   pending: Pending[] = [];
+  /** Per-page flags (once_per_page, trigger groups, visibility): reset by a history change. */
   once: Record<string, boolean> = {};
   scripts: Record<string, "pending" | "loaded" | "error"> = {};
   vars: Record<string, Variable> = {};
   started = false;
+  /** Tag types the page disallows (`data-afst-block` on the snippet's <script>). */
+  blocked: Record<string, boolean> = {};
+  private scriptEl: Element | null = null;
   private scrollFired: Record<string, boolean> = {};
   private lastUrl = "";
+  /** Scripts each tag requested when it fired, and whether it threw (tag sequencing). */
+  private seq: Record<string, { srcs: string[]; ok: boolean }> = {};
+  /** Tags fired for the event being processed (a setup tag fires once per event). */
+  private emitFired: Record<string, boolean> = {};
+  /** Preview log entries waiting to be posted, and tag-fire counts for settings.report_tag_fires. */
+  private traceBuf: TraceEntry[] = [];
+  private traceTimer = false;
+  private fires: Record<string, Record<string, number>> = {};
+  private firesTimer = false;
 
   constructor(w: Window, d: Document, boot: BootConfig) {
     this.w = w as W;
     this.d = d;
     this.boot = boot;
     const c = boot.cfg || {};
-    this.cfg = {
-      ...c,
-      variables: c.variables ?? [],
-      triggers: c.triggers ?? [],
-      tags: (c.tags ?? []).filter((t) => t.enabled !== false),
-      conversions: c.conversions ?? [],
-    };
+    // Higher priority first; ties keep array order (stable).
+    const tags = (c.tags ?? [])
+      .filter((t) => t.enabled !== false)
+      .map((t, i) => [t, i] as const)
+      .sort((a, b) => (b[0].priority ?? 0) - (a[0].priority ?? 0) || a[1] - b[1])
+      .map((x) => x[0]);
+    this.cfg = { ...c, variables: c.variables ?? [], triggers: c.triggers ?? [], tags, conversions: c.conversions ?? [] };
     for (const v of this.cfg.variables) this.vars[v.name] = v;
     this.consent = initialConsent(c.consent, boot.geo?.country, boot.geo?.region);
     this.analyticsBase = boot.ab;
@@ -127,9 +161,17 @@ export class Runtime implements VendorHost {
     } catch {
       this.firstParty = false;
     }
+    for (const t of (this.scriptEl?.getAttribute?.("data-afst-block") ?? "").split(/[\s,]+/)) {
+      if (t === "custom") this.blocked.custom_html = this.blocked.custom_js = true;
+      else if (t) this.blocked[t] = true;
+    }
     if (this.boot.preview)
-      this.log("info", `PREVIEW of container ${id} (draft config). Add ?afst_preview=off to the URL to leave preview.`);
-    this.log("info", `container ${id} v${this.boot.v} loaded`, { consent: this.consent, geo: this.boot.geo });
+      this.log("info", `PREVIEW of container ${id} (v${this.boot.v}). Add ?afst_preview=off to the URL to leave preview.`);
+    this.log("info", `container ${id} v${this.boot.v} loaded`, {
+      consent: this.consent,
+      geo: this.boot.geo,
+      blocked: Object.keys(this.blocked),
+    });
 
     // Stored consent choice beats defaults.
     const stored = readCookie(this.d, CONSENT_COOKIE);
@@ -157,12 +199,18 @@ export class Runtime implements VendorHost {
     const id = this.boot.id;
     let src = "";
     const cs = this.d.currentScript as HTMLScriptElement | null;
-    if (cs && cs.src && cs.src.indexOf(`/c/${id}.js`) !== -1) src = cs.src;
+    if (cs && cs.src && cs.src.indexOf(`/c/${id}.js`) !== -1) {
+      src = cs.src;
+      this.scriptEl = cs;
+    }
     if (!src && this.d.querySelectorAll) {
       const all = this.d.querySelectorAll("script[src]");
       for (let i = 0; i < all.length; i++) {
         const s = (all[i] as HTMLScriptElement).src;
-        if (s && s.indexOf(`/c/${id}.js`) !== -1) src = s;
+        if (s && s.indexOf(`/c/${id}.js`) !== -1) {
+          src = s;
+          this.scriptEl = all[i]!;
+        }
       }
     }
     if (src) return src.replace(/\/c\/[^/?#]+\.js([?#].*)?$/, "");
@@ -261,6 +309,16 @@ export class Runtime implements VendorHost {
     return interpolateHtml(template, (n) => this.getVar(n, ctx));
   }
 
+  interpolateUrl(template: string, ctx: EventCtx) {
+    return interpolateUrl(template, (n) => this.getVar(n, ctx));
+  }
+
+  /** A param_set variable's params (templates resolved), for event_params_from / config_params_from. */
+  paramSet(name: string | undefined, ctx: EventCtx): Record<string, unknown> {
+    const v = name ? this.getVar(name, ctx) : undefined;
+    return isObj(v) ? v : {};
+  }
+
   userHashes(): HashedUserData {
     return hashUserData(this.identity.raw, { phoneCountryCode: this.cfg.settings?.phone_country_code });
   }
@@ -271,7 +329,7 @@ export class Runtime implements VendorHost {
 
   // ------------------------------------------------------------------ identity
 
-  private canStore() {
+  canStore() {
     return this.consent.analytics_storage === "granted" || this.consent.ad_storage === "granted";
   }
 
@@ -322,6 +380,8 @@ export class Runtime implements VendorHost {
         this.firstTouch = undefined;
       }
     }
+    // Cross-domain linking (extension): a visitor/click ids carried over from a linked site.
+    EXT.x?.identity?.(this);
     const utm = this.utm();
     if (!this.firstTouch && (Object.keys(utm).length || Object.keys(this.clickIds).length || this.externalReferrer())) {
       this.firstTouch = { ...utm, landing_page: w.location.href.slice(0, 500), referrer: d.referrer.slice(0, 300), ts: Date.now() };
@@ -470,8 +530,12 @@ export class Runtime implements VendorHost {
       return true;
     }
     if (this.pending.length < 100) this.pending.push({ required, run, label });
-    this.log("blocked", `${label} waits for consent: ${required.filter((r) => this.consent[r] !== "granted").join(", ")}`);
+    this.log("blocked", `${label} waits for consent: ${this.missing(required)}`);
     return false;
+  }
+
+  private missing(required: ConsentType[]) {
+    return required.filter((r) => this.consent[r] !== "granted").join(", ");
   }
 
   // ------------------------------------------------------------------ dataLayer
@@ -501,6 +565,9 @@ export class Runtime implements VendorHost {
       return r;
     };
     this.lastUrl = w.location.href;
+    // Consent initialization (CMP loaders), then initialization, then the page view.
+    this.emit(this.ctx("consent_init", "consent_init"));
+    this.emit(this.ctx("init", "init"));
     this.emit(this.ctx("page_view", "page_view"));
     for (const c of queued) this.emit(c);
     const rs = this.d.readyState;
@@ -547,43 +614,38 @@ export class Runtime implements VendorHost {
     return ctx;
   }
 
-  private ctx(type: string, name: string, extra?: Partial<EventCtx>): EventCtx {
+  ctx(type: string, name: string, extra?: Partial<EventCtx>): EventCtx {
     return { type, name, model: snapshot(this.model), ts: Date.now(), ...extra };
   }
 
   // ------------------------------------------------------------------ listeners
 
-  private has(type: Trigger["type"]) {
+  has(type: Trigger["type"]) {
     return this.cfg.triggers.some((t) => t.type === type);
   }
 
+  /** Click/submit listeners: capture phase, plus window bubble phase for check_validation / wait_for_tags. */
+  private domListener(type: "click" | "submit", trig: "click" | "form_submit") {
+    const ts = this.cfg.triggers.filter((t) => t.type === trig);
+    if (!ts.length) return;
+    const make = (e: Event, phase?: "b") => {
+      const target = e.target as Element | null;
+      if (!target || !target.nodeType) return;
+      if (trig === "form_submit") this.emit(this.ctx("form_submit", "form_submit", { form: target, el: target, ev: e, phase }));
+      else {
+        const el = closest(target, "a,button,[role=button],input[type=submit],input[type=button]") || target;
+        this.emit(this.ctx("click", "click", { el, ev: e, phase }));
+      }
+    };
+    if (ts.some((t) => !bubbles(t))) this.d.addEventListener(type, (e) => make(e), true);
+    if (ts.some(bubbles)) this.w.addEventListener(type, (e) => !e.defaultPrevented && make(e, "b"));
+  }
+
   private installListeners() {
-    const d = this.d;
     const w = this.w;
-    if (this.has("click")) {
-      d.addEventListener(
-        "click",
-        (e) => {
-          const target = e.target as Element | null;
-          if (!target || !(target as Element).nodeType) return;
-          const el = closest(target, "a,button,[role=button],input[type=submit],input[type=button]") || target;
-          this.emit(this.ctx("click", "click", { el }));
-        },
-        true,
-      );
-    }
-    if (this.has("form_submit")) {
-      d.addEventListener(
-        "submit",
-        (e) => {
-          const form = e.target as Element | null;
-          if (!form) return;
-          this.emit(this.ctx("form_submit", "form_submit", { form, el: form }));
-        },
-        true,
-      );
-    }
-    if (this.has("history_change") || this.cfg.tags.some((t) => t.type === "microsoft_uet")) {
+    this.domListener("click", "click");
+    this.domListener("submit", "form_submit");
+    if (this.has("history_change") || this.cfg.tags.some((t) => t.type === "microsoft_uet") || this.cfg.settings?.report_tag_fires) {
       const h = w.history;
       const self = this;
       for (const m of ["pushState", "replaceState"] as const) {
@@ -622,24 +684,63 @@ export class Runtime implements VendorHost {
         if (n >= limit) w.clearInterval(h);
       }, trig.interval_ms);
     }
+    if (this.boot.preview || this.cfg.settings?.report_tag_fires) {
+      const flush = () => {
+        this.flushTrace();
+        this.flushFires();
+      };
+      this.d.addEventListener("visibilitychange", () => this.d.visibilityState === "hidden" && flush());
+      w.addEventListener("pagehide", flush);
+    }
+    EXT.x?.listeners?.(this);
   }
 
   private domReady() {
+    const w = this.w;
     this.emit(this.ctx("dom_ready", "dom_ready"));
-    const IO = (this.w as unknown as { IntersectionObserver?: typeof IntersectionObserver }).IntersectionObserver;
+    const IO = (w as unknown as { IntersectionObserver?: typeof IntersectionObserver }).IntersectionObserver;
     for (const trig of this.cfg.triggers) {
       if (trig.type !== "element_visible" || !IO) continue;
+      const mode = trig.once === undefined || trig.once === true ? "element" : trig.once;
       const seen = new WeakSet<Element>();
+      const timers = new Map<Element, number>();
+      const fire = (el: Element, ratio: number, ms: number) => {
+        const key = `vis:${trig.id}`;
+        if (mode === "page") {
+          if (this.once[key]) return;
+          this.once[key] = true;
+        } else if (mode === "element") {
+          if (seen.has(el)) return;
+          seen.add(el);
+          io.unobserve(el);
+        }
+        this.emit(
+          this.ctx("element_visible", "element_visible", {
+            triggerId: trig.id,
+            el,
+            vars: { percent_visible: Math.round(ratio * 100), visible_ms: ms },
+          }),
+        );
+      };
       const io = new IO(
         (entries) => {
           for (const en of entries) {
-            if (!en.isIntersecting) continue;
-            if (trig.once !== false) {
-              if (seen.has(en.target)) continue;
-              seen.add(en.target);
-              io.unobserve(en.target);
+            const el = en.target;
+            if (!en.isIntersecting) {
+              w.clearTimeout(timers.get(el));
+              timers.delete(el);
+              continue;
             }
-            this.emit(this.ctx("element_visible", "element_visible", { triggerId: trig.id, el: en.target }));
+            const min = trig.min_duration_ms ?? 0;
+            if (!min) fire(el, en.intersectionRatio, 0);
+            else if (!timers.has(el))
+              timers.set(
+                el,
+                w.setTimeout(() => {
+                  timers.delete(el);
+                  fire(el, en.intersectionRatio, min);
+                }, min),
+              );
           }
         },
         { threshold: trig.threshold ?? 0.5 },
@@ -653,57 +754,73 @@ export class Runtime implements VendorHost {
         }
       };
       observe();
-      const MO = (this.w as unknown as { MutationObserver?: typeof MutationObserver }).MutationObserver;
+      const MO = (w as unknown as { MutationObserver?: typeof MutationObserver }).MutationObserver;
       if (trig.observe_dom && MO && this.d.body) {
         let pending = false;
         new MO(() => {
           if (pending) return;
           pending = true;
-          this.w.setTimeout(() => {
+          w.setTimeout(() => {
             pending = false;
             observe();
           }, 300);
         }).observe(this.d.body, { childList: true, subtree: true });
       }
     }
+    if (this.has("window_loaded")) {
+      const loaded = () => this.emit(this.ctx("window_loaded", "window_loaded"));
+      if (this.d.readyState === "complete") loaded();
+      else w.addEventListener("load", loaded);
+    }
   }
 
   private onHistory(source: string) {
     const href = this.w.location.href;
     if (href === this.lastUrl) return;
+    const old = this.lastUrl;
+    this.flushFires();
     this.lastUrl = href;
     this.once = {};
     this.scrollFired = {};
     this.log("info", `history change (${source}) -> ${href}`);
-    this.emit(this.ctx("history_change", "history_change"));
+    this.emit(
+      this.ctx("history_change", "history_change", { vars: { history_source: source, history_old_url: old, history_new_url: href } }),
+    );
   }
 
   private checkScroll() {
-    const d = this.d.documentElement;
+    const de = this.d.documentElement;
     const w = this.w;
-    const h = Math.max(d.scrollHeight - w.innerHeight, 1);
-    const pct = Math.min(100, Math.round(((w.scrollY || d.scrollTop) / h) * 100));
     for (const trig of this.cfg.triggers) {
       if (trig.type !== "scroll_depth") continue;
-      for (const p of trig.percentages) {
-        const key = `${trig.id}:${p}`;
-        if (pct >= p && !this.scrollFired[key]) {
-          this.scrollFired[key] = true;
-          this.emit(this.ctx("scroll_depth", "scroll_depth", { triggerId: trig.id, scroll: p }));
-        }
-      }
+      const hz = trig.direction === "horizontal";
+      const pos = (hz ? w.scrollX || de.scrollLeft : w.scrollY || de.scrollTop) || 0;
+      const pct = Math.min(
+        100,
+        Math.round((pos / Math.max(hz ? de.scrollWidth - w.innerWidth : de.scrollHeight - w.innerHeight, 1)) * 100),
+      );
+      const dir = hz ? "horizontal" : "vertical";
+      const hit = (n: number, units: string, reached: boolean) => {
+        const key = `${trig.id}:${units}${n}`;
+        if (!reached || this.scrollFired[key]) return;
+        this.scrollFired[key] = true;
+        this.emit(
+          this.ctx("scroll_depth", "scroll_depth", { triggerId: trig.id, scroll: n, vars: { scroll_units: units, scroll_direction: dir } }),
+        );
+      };
+      for (const p of trig.percentages ?? []) hit(p, "percent", pct >= p);
+      for (const px of trig.pixels ?? []) hit(px, "pixels", pos >= px);
     }
   }
 
   // ------------------------------------------------------------------ variables
 
-  getVar(name: string, ctx: EventCtx): unknown {
+  getVar(name: string, ctx: EventCtx, depth = 0): unknown {
     const v = this.vars[name];
-    if (v) {
-      const val = this.resolveVar(v, ctx);
-      return val === undefined || val === null || val === "" ? v.default : val;
-    }
-    return this.builtin(name, ctx);
+    if (!v) return this.builtin(name, ctx);
+    let val = depth > 8 ? undefined : this.resolveVar(v, ctx, depth);
+    if (v.format) val = formatValue(val, v.format);
+    return val === undefined || val === null || val === "" ? v.default : val;
   }
 
   private scopeQuery(sel: string, ctx: EventCtx): Element | null {
@@ -715,7 +832,8 @@ export class Runtime implements VendorHost {
     }
   }
 
-  private resolveVar(v: Variable, ctx: EventCtx): unknown {
+  private resolveVar(v: Variable, ctx: EventCtx, depth: number): unknown {
+    const input = (n: string) => this.getVar(n, ctx, depth + 1);
     switch (v.type) {
       case "data_layer":
         return getPath(ctx.model ?? this.model, v.key);
@@ -739,6 +857,66 @@ export class Runtime implements VendorHost {
         return getPath(this.w, v.path);
       case "constant":
         return v.value;
+      case "lookup": {
+        const k = toComparable(input(v.input));
+        if (Object.prototype.hasOwnProperty.call(v.map, k)) return v.map[k];
+        if (v.ignore_case) for (const m of Object.keys(v.map)) if (m.toLowerCase() === k.toLowerCase()) return v.map[m];
+        return undefined;
+      }
+      case "regex_table": {
+        const s = toComparable(input(v.input));
+        for (const row of v.rows) {
+          const m = compileRegex(v.full_match === false ? row.pattern : `^(?:${row.pattern})$`, v.ignore_case)?.exec(s);
+          if (!m) continue;
+          return typeof row.output === "string" && v.extract !== false
+            ? row.output.replace(/\$(\d)/g, (_, n: string) => m[+n] ?? "")
+            : row.output;
+        }
+        return undefined;
+      }
+      case "url": {
+        const src = v.source ? input(v.source) : this.w.location.href;
+        if (src == null || src === "") return undefined;
+        let u: URL;
+        try {
+          u = new URL(String(src), this.w.location.href);
+        } catch {
+          return undefined;
+        }
+        switch (v.component) {
+          case "href":
+            return u.href;
+          case "protocol":
+            return u.protocol.replace(":", "");
+          case "host":
+            return v.strip_www ? u.hostname.replace(/^www\./, "") : u.hostname;
+          case "port":
+            return u.port || (u.protocol === "https:" ? "443" : u.protocol === "http:" ? "80" : "");
+          case "path":
+            return u.pathname;
+          case "query":
+            return u.search.slice(1);
+          case "fragment":
+            return u.hash.slice(1);
+          default:
+            return v.param ? (u.searchParams.get(v.param) ?? undefined) : undefined;
+        }
+      }
+      case "event_attr":
+        return (ctx.el ?? ctx.form)?.getAttribute?.(v.attr) ?? undefined;
+      case "param_set":
+        // Templates resolve with the depth carried along, so a cycle (refused by validation, but
+        // possible in a previewed draft) ends instead of overflowing the stack.
+        return interpolate(v.params, (n) => this.getVar(n, ctx, depth + 1));
+      case "custom_js":
+        if (this.blocked.custom_js) return undefined;
+        try {
+          // eslint-disable-next-line no-new-func
+          return new Function("event", v.code)({ type: ctx.type, name: ctx.name, data: ctx.data, model: ctx.model });
+        } catch (e) {
+          this.log("error", `variable ${v.name} failed`, String(e));
+          return undefined;
+        }
       default:
         return this.builtin(v.type, ctx);
     }
@@ -748,6 +926,7 @@ export class Runtime implements VendorHost {
     const loc = this.w.location;
     const el = ctx.el as (Element & { href?: string }) | null | undefined;
     const form = ctx.form as Element | null | undefined;
+    const click = ctx.type === "click";
     switch (name) {
       case "page_url":
         return loc.href;
@@ -762,12 +941,16 @@ export class Runtime implements VendorHost {
       case "event":
         return ctx.name;
       case "click_text":
-        return ctx.type === "click" ? textOf(el) : undefined;
+        return click ? textOf(el) : undefined;
       case "click_url": {
-        if (ctx.type !== "click") return undefined;
+        if (!click) return undefined;
         const a = closest(el, "a[href]") as HTMLAnchorElement | null;
         return a ? a.href || a.getAttribute("href") || "" : "";
       }
+      case "click_target":
+        return click ? (closest(el, "a[href]")?.getAttribute("target") ?? "") : undefined;
+      case "click_element":
+        return click ? el : undefined;
       case "click_id":
         return el?.getAttribute?.("id") ?? "";
       case "click_classes":
@@ -778,71 +961,136 @@ export class Runtime implements VendorHost {
         return form?.getAttribute?.("action") ?? "";
       case "form_classes":
         return form?.getAttribute?.("class") ?? "";
+      case "form_target":
+        return form?.getAttribute?.("target") ?? "";
+      case "form_text":
+        return form ? textOf(form) : undefined;
+      case "form_element":
+        return form ?? undefined;
+      case "event_element":
+        return el ?? form ?? undefined;
       case "scroll_depth":
         return ctx.scroll;
+      case "container_id":
+        return this.boot.id;
+      case "container_version":
+        return this.boot.v;
+      case "environment":
+        return this.boot.env?.name ?? (this.boot.preview ? "preview" : "live");
+      case "debug_mode":
+        return this.debug;
+      case "visitor_id":
+        return this.visitorId;
+      case "ga_client_id":
+        return this.gaIds().client;
+      case "ga_session_id":
+        return this.gaIds().session;
       default:
-        return undefined;
+        return ctx.vars?.[name];
     }
   }
 
   // ------------------------------------------------------------------ triggers + firing
 
-  private matchTrigger(t: Trigger, ctx: EventCtx): EventCtx | null {
-    if (t.type !== ctx.type) return null;
+  /** Why a trigger's conditions fail (null: they all pass). */
+  private conds(t: Trigger, c: EventCtx): string | null {
+    for (const cond of t.conditions ?? []) {
+      const v = this.getVar(cond.var, c);
+      if (!matchCondition(v, cond.op, cond.value, cond.ignore_case)) {
+        const shown = typeof v === "object" && v ? "(element)" : JSON.stringify(typeof v === "string" ? v.slice(0, 100) : v);
+        return `${cond.var} ${shown} fails ${cond.op} ${JSON.stringify(cond.value)}`;
+      }
+    }
+    return null;
+  }
+
+  /** The matched context, or why not ("" = this event isn't the trigger's kind). */
+  private matchTrigger(t: Trigger, ctx: EventCtx): EventCtx | string {
+    if (t.type !== ctx.type) return "";
     let c = ctx;
     switch (t.type) {
       case "custom_event":
-        if (t.event !== ctx.name) return null;
+        if (t.event_regex ? !compileRegex(t.event_regex, t.ignore_case)?.test(ctx.name) : t.event !== ctx.name) return "";
         break;
       case "click": {
+        if ((bubbles(t) ? "b" : undefined) !== ctx.phase) return "";
         let el: Element | null | undefined = ctx.el;
         if (t.selector) el = closest(el, t.selector);
         if (t.links_only) el = closest(el, "a[href]");
-        if (!el) return null;
+        if (!el) return t.links_only ? "not a link click" : `click not on ${t.selector}`;
         c = { ...ctx, el };
         break;
       }
       case "form_submit":
-        if (t.selector && !matches(ctx.form, t.selector)) return null;
+        if ((bubbles(t) ? "b" : undefined) !== ctx.phase) return "";
+        if (t.selector && !matches(ctx.form, t.selector)) return `form doesn't match ${t.selector}`;
         break;
       case "element_visible":
       case "scroll_depth":
       case "timer":
-        if (ctx.triggerId !== t.id) return null;
+      case "video":
+        if (ctx.triggerId !== t.id) return "";
         break;
     }
-    for (const cond of t.conditions ?? []) {
-      if (!matchCondition(this.getVar(cond.var, c), cond.op, cond.value, cond.ignore_case)) return null;
-    }
-    return c;
+    return this.conds(t, c) ?? c;
   }
 
   emit(ctx: EventCtx) {
     const fired: Record<string, EventCtx> = {};
+    const tr: Trace | null = this.boot.preview ? { triggers: [], tags: [], conversions: [] } : null;
+    const why: Record<string, string> = {};
     for (const t of this.cfg.triggers) {
       const m = this.matchTrigger(t, ctx);
-      if (m) fired[t.id] = m;
+      if (typeof m !== "string") fired[t.id] = m;
+      else if (m) why[t.id] = m;
+    }
+    // Trigger groups: once per page, after every member has fired (on this page).
+    for (const g of this.cfg.triggers) {
+      if (g.type !== "trigger_group" || this.once[`grp:${g.id}`]) continue;
+      for (const id of g.triggers) if (fired[id]) this.once[`grp:${g.id}:${id}`] = true;
+      if (!g.triggers.every((id) => this.once[`grp:${g.id}:${id}`])) continue;
+      const no = this.conds(g, ctx);
+      if (no) why[g.id] = no;
+      else {
+        this.once[`grp:${g.id}`] = true;
+        fired[g.id] = ctx;
+      }
     }
     const ids = Object.keys(fired);
+    if (tr) {
+      for (const id of ids) tr.triggers.push({ id, matched: true });
+      for (const id of Object.keys(why)) tr.triggers.push({ id, matched: false, reason: why[id] });
+    }
     if (!ids.length) {
       if (ctx.type === "custom_event") this.log("event", `${ctx.name} (no trigger)`);
-      if (ctx.type === "page_view") this.maybeVisit();
-      return;
-    }
-    this.log("trigger", `${ctx.type}${ctx.type === "custom_event" ? ` "${ctx.name}"` : ""} -> ${ids.join(", ")}`);
-    for (const tag of this.cfg.tags) {
-      const hit = tag.triggers.find((id) => fired[id]);
-      if (!hit) continue;
-      if ((tag.exclude_triggers ?? []).some((id) => fired[id])) {
-        this.log("skip", `tag ${tag.id}: excluded by trigger`);
-        continue;
+    } else {
+      this.log("trigger", `${ctx.type}${ctx.type === "custom_event" ? ` "${ctx.name}"` : ""} -> ${ids.join(", ")}`);
+      this.emitFired = {};
+      for (const tag of this.cfg.tags) {
+        const hit = tag.triggers.find((id) => fired[id]);
+        if (!hit) {
+          const miss = tr && tag.triggers.find((id) => why[id]);
+          if (miss) this.note(tr, tag, "not_fired", `trigger ${miss}: ${why[miss]}`);
+          continue;
+        }
+        const ex = (tag.exclude_triggers ?? []).find((id) => fired[id]);
+        if (ex) {
+          this.log("skip", `tag ${tag.id}: excluded by trigger`);
+          this.note(tr, tag, "excluded", `exclude_triggers: ${ex} fired`, hit);
+          continue;
+        }
+        this.runTag(tag, fired[hit]!, tr, hit);
       }
-      this.runTag(tag, fired[hit]!);
+      for (const conv of this.cfg.conversions) {
+        const c = fired[conv.trigger];
+        if (c) this.runConversion(conv, c, tr);
+        else if (tr && why[conv.trigger])
+          tr.conversions.push({ name: conv.name, status: "not_fired", reason: `trigger ${conv.trigger}: ${why[conv.trigger]}` });
+      }
+      EXT.x?.emitted?.(this, ctx, fired);
     }
-    for (const conv of this.cfg.conversions) {
-      const c = fired[conv.trigger];
-      if (c) this.runConversion(conv, c);
-    }
+    if (tr && (tr.triggers.length || tr.tags.length))
+      this.trace({ ts: ctx.ts, event: ctx.type === "custom_event" ? ctx.name : ctx.type, page: this.w.location.pathname, ...tr });
     if (ctx.type === "page_view") this.maybeVisit();
   }
 
@@ -854,24 +1102,98 @@ export class Runtime implements VendorHost {
     return this.cfg.consent?.google_consent_mode === "advanced" && !!GOOGLE_TAGS[tag.type];
   }
 
-  private runTag(tag: Tag, ctx: EventCtx) {
+  /** Record a tag's outcome: the preview trace and the report_tag_fires counts. */
+  private note(tr: Trace | null, tag: Tag, status: string, reason?: string, trigger?: string) {
+    if (tr) tr.tags.push({ id: tag.id, type: tag.type, status, ...(reason ? { reason } : {}), ...(trigger ? { trigger } : {}) });
+    // fired and error are counted where they happen (fireNow), also for tags released later by consent.
+    if (status === "skipped" || status === "blocked" || status === "excluded") this.count(tag.id, status);
+  }
+
+  /** Fire a tag now. Remembers the scripts it requested (for tags sequenced after it). */
+  private fireNow(tag: Tag, ctx: EventCtx): boolean {
+    const n = Object.keys(this.scripts).length;
+    let ok = true;
+    this.emitFired[tag.id] = true;
+    this.log("fire", `tag ${tag.id} (${tag.type})`);
+    try {
+      fireTag(this, tag, ctx);
+      this.count(tag.id, "fired");
+    } catch (e) {
+      ok = false;
+      this.log("error", `tag ${tag.id} failed`, String(e));
+      this.count(tag.id, "error");
+    }
+    this.seq[tag.id] = { srcs: Object.keys(this.scripts).slice(n), ok };
+    return ok;
+  }
+
+  private runTag(tag: Tag, ctx: EventCtx, tr: Trace | null, trigger?: string) {
+    const skip = (reason: string) => {
+      this.log("skip", `tag ${tag.id}: ${reason}`);
+      this.note(tr, tag, "skipped", reason, trigger);
+    };
+    if (this.emitFired[tag.id]) return skip("already fired for this event (as a setup tag)");
+    if (this.blocked[tag.type]) return skip(`${tag.type} is blocked on this page (data-afst-block)`);
+    if (tag.live_only && this.boot.preview) return skip("live_only: not fired in preview");
+    if (tag.schedule) {
+      const now = Date.now();
+      const s = toMs(tag.schedule.start);
+      const e = toMs(tag.schedule.end);
+      if ((s && now < s) || (e && now > e)) return skip("outside its schedule");
+    }
     if (tag.once_per_page) {
-      if (this.once[`tag:${tag.id}`]) return;
+      if (this.once[`tag:${tag.id}`]) return skip("once_per_page: already fired on this page");
       this.once[`tag:${tag.id}`] = true;
     }
+    let status = "blocked";
+    const required = this.requiredConsent(tag);
     this.gate(
-      this.requiredConsent(tag),
+      required,
       `tag ${tag.id} (${tag.type})`,
       () => {
-        this.log("fire", `tag ${tag.id} (${tag.type})`);
-        try {
-          fireTag(this, tag, ctx);
-        } catch (e) {
-          this.log("error", `tag ${tag.id} failed`, String(e));
-        }
+        if (tag.after) {
+          status = "fired";
+          this.sequence(tag, ctx);
+        } else status = this.fireNow(tag, ctx) ? "fired" : "error";
       },
       this.googleAdvanced(tag),
     );
+    this.note(
+      tr,
+      tag,
+      status,
+      status === "blocked" ? `waits for consent: ${this.missing(required)}` : tag.after ? `after setup tag ${tag.after.tag}` : undefined,
+      trigger,
+    );
+  }
+
+  /** Tag sequencing: fire the setup tag first (once per page), wait for its scripts, then this tag. */
+  private sequence(tag: Tag, ctx: EventCtx) {
+    const after = tag.after!;
+    const setup = this.cfg.tags.find((t) => t.id === after.tag);
+    if (setup && !this.seq[setup.id]) {
+      const ok = this.gate(
+        this.requiredConsent(setup),
+        `setup tag ${setup.id}`,
+        () => this.fireNow(setup, ctx),
+        this.googleAdvanced(setup),
+      );
+      if (!ok) return this.log("skip", `tag ${tag.id}: setup tag ${setup.id} waits for consent`);
+    }
+    const st = setup ? this.seq[setup.id] : undefined;
+    const wait = (n: number) => {
+      if (st && n < 50 && st.srcs.some((s) => this.scripts[s] === "pending")) {
+        this.w.setTimeout(() => wait(n + 1), 100);
+        return;
+      }
+      if (after.require_success && (!st || !st.ok || st.srcs.some((s) => this.scripts[s] === "error"))) {
+        this.log("skip", `tag ${tag.id}: setup tag ${after.tag} failed`);
+        this.count(tag.id, "skipped");
+        return;
+      }
+      this.fireNow(tag, ctx);
+    };
+    wait(0);
   }
 
   private conversionData(conv: Conversion, ctx: EventCtx): ConversionData {
@@ -882,10 +1204,13 @@ export class Runtime implements VendorHost {
     const txn = conv.transaction_id ? get(conv.transaction_id) : undefined;
     const items = conv.items ? get(conv.items) : undefined;
     const raw: RawUserData = { ...this.identity.raw };
-    for (const [k, vname] of Object.entries(conv.user_data ?? {})) {
-      const v = get(vname as string);
-      if (v != null && v !== "") (raw as Record<string, unknown>)[k] = v;
-    }
+    const map = conv.user_data;
+    if (map === "auto") Object.assign(raw, EXT.x?.autoUserData?.((ctx.form as Element | null) ?? this.d));
+    else
+      for (const [k, vname] of Object.entries(map ?? {})) {
+        const v = get(vname as string);
+        if (v != null && v !== "") (raw as Record<string, unknown>)[k] = v;
+      }
     if (this.identity.userId && raw.external_id == null) raw.external_id = this.identity.userId;
     const user =
       this.consent.ad_user_data === "granted" ? hashUserData(raw, { phoneCountryCode: this.cfg.settings?.phone_country_code }) : {};
@@ -901,17 +1226,21 @@ export class Runtime implements VendorHost {
     };
   }
 
-  private runConversion(conv: Conversion, ctx: EventCtx) {
+  private runConversion(conv: Conversion, ctx: EventCtx, tr: Trace | null) {
     if (conv.once_per_page) {
-      if (this.once[`conv:${conv.name}`]) return;
+      if (this.once[`conv:${conv.name}`]) {
+        tr?.conversions.push({ name: conv.name, status: "skipped", reason: "once_per_page: already fired on this page" });
+        return;
+      }
       this.once[`conv:${conv.name}`] = true;
     }
     const data = this.conversionData(conv, ctx);
     this.lastEventId = data.event_id;
     const fired: string[] = [];
+    const waiting: string[] = [];
     for (const platform of Object.keys(conv.send_to)) {
       const tagType = PLATFORM_TAG[platform];
-      const tags = this.cfg.tags.filter((t) => t.type === tagType);
+      const tags = this.cfg.tags.filter((t) => t.type === tagType && !this.blocked[t.type]);
       if (!tags.length) {
         this.log("skip", `conversion ${conv.name}: no ${tagType} tag for ${platform}${conv.server ? " (server-side only)" : ""}`);
         continue;
@@ -931,9 +1260,18 @@ export class Runtime implements VendorHost {
           },
           this.googleAdvanced(tag),
         );
-        if (!ok) this.log("blocked", `conversion ${conv.name} -> ${platform} waits for consent`);
+        if (!ok) {
+          waiting.push(platform);
+          this.log("blocked", `conversion ${conv.name} -> ${platform} waits for consent`);
+        }
       }
     }
+    tr?.conversions.push({
+      name: conv.name,
+      status: "fired",
+      platforms: fired,
+      ...(waiting.length ? { reason: `waits for consent: ${waiting.join(", ")}` } : {}),
+    });
     this.send({
       type: "conversion",
       event_id: data.event_id,
@@ -952,6 +1290,44 @@ export class Runtime implements VendorHost {
       `conversion ${conv.name} sent to ${this.base}/collect${conv.server ? " (server delivery on)" : " (log only; server: false)"}`,
       { event_id: data.event_id, fired },
     );
+  }
+
+  // ------------------------------------------------------------------ preview log + tag telemetry
+
+  private trace(e: TraceEntry) {
+    if (this.traceBuf.length >= 200) return;
+    this.traceBuf.push(e);
+    if (this.traceBuf.length >= 20) this.flushTrace();
+    else if (!this.traceTimer) {
+      this.traceTimer = true;
+      this.w.setTimeout(() => this.flushTrace(), 1000);
+    }
+  }
+
+  private flushTrace() {
+    this.traceTimer = false;
+    if (!this.traceBuf.length) return;
+    const entries = this.traceBuf.splice(0, 50);
+    this.send({ type: "debug", entries });
+  }
+
+  private count(tagId: string, status: string) {
+    if (!this.cfg.settings?.report_tag_fires || this.boot.preview) return;
+    const c = (this.fires[tagId] ??= {});
+    c[status] = (c[status] ?? 0) + 1;
+    if (!this.firesTimer) {
+      this.firesTimer = true;
+      this.w.setTimeout(() => this.flushFires(), 15_000);
+    }
+  }
+
+  private flushFires() {
+    this.firesTimer = false;
+    const fires: { tag_id: string; status: string; n: number }[] = [];
+    for (const id of Object.keys(this.fires))
+      for (const s of Object.keys(this.fires[id]!)) fires.push({ tag_id: id, status: s, n: this.fires[id]![s]! });
+    this.fires = {};
+    if (fires.length) this.send({ type: "tags", fires: fires.slice(0, 200) });
   }
 
   private maybeVisit() {
@@ -979,6 +1355,7 @@ export class Runtime implements VendorHost {
 
   send(body: Record<string, unknown>) {
     const w = this.w;
+    const d = this.d;
     const store = this.canStore();
     const ads = this.consent.ad_storage === "granted";
     const ga = this.gaIds();
@@ -997,8 +1374,8 @@ export class Runtime implements VendorHost {
       version: this.boot.v,
       ts: Date.now(),
       page_url: w.location.href.slice(0, 2048),
-      page_title: (this.d.title || "").slice(0, 300),
-      referrer: (this.d.referrer || "").slice(0, 2048),
+      page_title: (d.title || "").slice(0, 300),
+      referrer: (d.referrer || "").slice(0, 2048),
       consent,
       first_party: this.firstParty,
       ...body,
@@ -1016,12 +1393,15 @@ export class Runtime implements VendorHost {
       if (Object.keys(this.clickIds).length) payload.click_ids = this.clickIds;
       if (this.fbc) payload.fbc = this.fbc;
       if (this.fbp) payload.fbp = this.fbp;
-      const ttp = readCookie(this.d, "_ttp");
-      if (ttp) payload.ttp = ttp;
+      payload.ttp = readCookie(d, "_ttp");
+      payload.scid = readCookie(d, "_scid");
+      payload.rdt_uuid = readCookie(d, "_rdt_uuid");
     }
+    if (this.tcf) payload.tcf = this.tcf;
     const dom = this.cookieDomain();
     if (this.firstParty && dom) payload.cookie_domain = dom;
     if (this.boot.preview) payload.preview = this.boot.preview;
+    if (this.boot.env) payload.env = this.boot.env.token;
     for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
     const json = JSON.stringify(payload);
     const url = `${this.base}/collect`;
@@ -1048,3 +1428,6 @@ export class Runtime implements VendorHost {
     }
   }
 }
+
+/** click/form_submit triggers that listen in the bubble phase (after the site's own handlers). */
+const bubbles = (t: Trigger) => (t.type === "click" || t.type === "form_submit") && !!(t.check_validation || t.wait_for_tags_ms);

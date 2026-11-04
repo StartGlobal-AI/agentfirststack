@@ -9,7 +9,8 @@
   "compatibility_flags": ["nodejs_compat"],
 
   // The browser runtime (src/runtime, TypeScript + DOM) is bundled and minified by esbuild into
-  // dist/runtime.txt, which the Worker imports as a Text module (see `rules`).
+  // dist/runtime.txt (and dist/runtime-ext.txt with the optional features), which the Worker
+  // imports as Text modules (see `rules`).
   "build": {
     "command": "node scripts/build-runtime.mjs",
     "watch_dir": ["src/runtime", "src/lib", "src/config"]
@@ -40,7 +41,9 @@
   //   MAX_EVENTS_PER_CONTAINER_PER_DAY, MAX_EVENTS_PER_ACCOUNT_PER_DAY, MAX_EVENTS_PER_DAY,
   //   MAX_VISITORS_PER_CONTAINER (default 250000),
   //   MAX_CONTAINER_DB_BYTES (default 1073741824), CIRCUIT_BREAKER_FAILURES (default 20),
-  //   CIRCUIT_BREAKER_MINUTES (default 60). See README.md "Config".
+  //   CIRCUIT_BREAKER_MINUTES (default 60), MAX_ENVIRONMENTS_PER_CONTAINER (default 5),
+  //   MAX_LOOKUPS_PER_CONTAINER (default 10), MAX_LOOKUP_ROWS (default 10000),
+  //   MAX_LOOKUP_BYTES (default 1048576). See README.md "Config".
   // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN.
 
   // SIGNUP_LIMITER is shared by every app (the deploy tool sets its namespace); the others are this

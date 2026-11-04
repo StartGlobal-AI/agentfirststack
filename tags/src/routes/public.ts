@@ -1,6 +1,6 @@
 import { publicBaseUrl } from "@afs/shared";
 import type { Context, Next } from "hono";
-import RUNTIME from "../runtime-bundle";
+import RUNTIME, { RUNTIME_EXT } from "../runtime-bundle";
 import type { AppEnv } from "../env";
 import { handleCollect } from "../service/collect";
 import { serveScript } from "../service/script";
@@ -21,10 +21,11 @@ export async function dataPlane(c: Context<AppEnv>, next: Next) {
     const base = publicBaseUrl(c);
     return serveScript(
       c.env,
-      RUNTIME,
+      { core: RUNTIME, ext: RUNTIME_EXT },
       {
         id: m[1]!,
         preview: c.req.query("preview") ?? null,
+        env: c.req.query("env") ?? null,
         origin: base,
         cacheOrigin: base,
         geo: { country: cf?.country, region: cf?.regionCode },

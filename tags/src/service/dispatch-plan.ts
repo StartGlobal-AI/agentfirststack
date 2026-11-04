@@ -2,12 +2,13 @@ import type { Conversion, SendTo } from "../config/schema";
 import { getConnector } from "../destinations";
 import type { DispatchEvent } from "../destinations/types";
 import { isGranted } from "../lib/consent";
+import { type RoutingCondition, routingProblem } from "./transform";
 
 export interface DestinationInfo {
   id: string;
   type: string;
   enabled: boolean;
-  settings: { conversions?: string[]; all_events?: boolean };
+  settings: { conversions?: string[]; all_events?: boolean; conditions?: RoutingCondition[] };
   /** Circuit breaker (see dispatch.ts): open until this unix ms after too many consecutive failures. */
   circuit_open_until?: number | null;
   consecutive_failures?: number;
@@ -37,6 +38,11 @@ export function sendToForEvent(conversion: Conversion | undefined, override?: Se
   if (s.tiktok) out.tiktok = { event_name: s.tiktok.event_name };
   if (s.google_ads) out.google_ads = { conversion_action_id: s.google_ads.conversion_action_id };
   if (s.analytics) out.analytics = { event_name: s.analytics.event_name };
+  if (s.linkedin) out.linkedin = { conversion_id: s.linkedin.conversion_id };
+  if (s.pinterest) out.pinterest = { event_name: s.pinterest.event_name };
+  if (s.reddit) out.reddit = { event_name: s.reddit.event_name };
+  if (s.snap) out.snap = { event_name: s.snap.event_name };
+  if (s.x) out.x = { event_id: s.x.event_id };
   return out;
 }
 
@@ -66,6 +72,11 @@ export function planDispatch(e: DispatchEvent, destinations: DestinationInfo[], 
     // unauthenticated /collect hit can't block a real server conversion.
     if (connector.skipIfFiredBy && e.source === "browser" && e.fired?.includes(connector.skipIfFiredBy)) {
       skip(`the browser ${connector.skipIfFiredBy} tag already sent this conversion; ${d.type} doesn't dedupe server hits against it`);
+      continue;
+    }
+    const route = routingProblem(e, d.settings.conditions);
+    if (route) {
+      skip(route);
       continue;
     }
     if (!isGranted(e.consent, connector.requiredConsent)) {

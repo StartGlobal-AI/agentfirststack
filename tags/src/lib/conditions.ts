@@ -10,6 +10,12 @@ export const CONDITION_OPS = [
   "not_starts_with",
   "not_ends_with",
   "not_matches_regex",
+  "matches_css_selector",
+  "not_matches_css_selector",
+  "lt",
+  "lte",
+  "gt",
+  "gte",
 ] as const;
 export type ConditionOp = (typeof CONDITION_OPS)[number];
 
@@ -39,9 +45,29 @@ export function toComparable(v: unknown): string {
   }
 }
 
+/** Number for lt/lte/gt/gte, or NaN (then the condition is false). */
+const num = (v: unknown) => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN);
+
 export function matchCondition(actual: unknown, op: ConditionOp, expected: unknown, ignoreCase?: boolean): boolean {
   const negate = op.startsWith("not_");
   const base = (negate ? op.slice(4) : op) as ConditionOp;
+  if (base === "matches_css_selector") {
+    // `actual` is an element (click_element, form_element, event_element built-ins).
+    let r = false;
+    try {
+      const el = actual as { matches?: (s: string) => boolean } | null;
+      r = !!el && typeof el.matches === "function" && el.matches(String(expected));
+    } catch {
+      r = false;
+    }
+    return negate ? !r : r;
+  }
+  if (base === "lt" || base === "lte" || base === "gt" || base === "gte") {
+    const a = num(actual);
+    const e = num(expected);
+    if (Number.isNaN(a) || Number.isNaN(e)) return false;
+    return base === "lt" ? a < e : base === "lte" ? a <= e : base === "gt" ? a > e : a >= e;
+  }
   let a = toComparable(actual);
   let e = toComparable(expected);
   if (ignoreCase && base !== "matches_regex") {

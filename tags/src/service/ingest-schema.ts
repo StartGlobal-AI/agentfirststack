@@ -22,11 +22,47 @@ export const hashedUserDataSchema = z.object({
 });
 
 const consentRecord = z.record(z.string().max(40), z.enum(["granted", "denied"]));
+const short = (n: number) => z.string().max(n);
+
+/** One preview log entry (src/runtime/types.ts TraceEntry), bounded. */
+export const traceEntrySchema = z.object({
+  ts: z.number(),
+  event: short(64),
+  page: short(500).optional(),
+  triggers: z.array(z.object({ id: short(64), matched: z.boolean(), reason: short(300).optional() })).max(100),
+  tags: z
+    .array(z.object({ id: short(64), type: short(40), status: short(20), reason: short(300).optional(), trigger: short(64).optional() }))
+    .max(200),
+  conversions: z
+    .array(
+      z.object({ name: short(64), status: short(20), reason: short(300).optional(), platforms: z.array(short(40)).max(20).optional() }),
+    )
+    .max(100),
+});
+export type TraceEntryPayload = z.infer<typeof traceEntrySchema>;
+
+export const TAG_FIRE_STATUSES = ["fired", "blocked", "error", "skipped", "excluded"] as const;
 
 /** What the browser runtime POSTs to /collect (text/plain JSON, no preflight). */
 export const collectSchema = z.object({
   container_id: z.string().regex(/^ctr_[a-z0-9]{8,32}$/),
-  type: z.enum(["visit", "conversion"]),
+  /** visit / conversion; debug = preview log entries; tags = settings.report_tag_fires counts. */
+  type: z.enum(["visit", "conversion", "debug", "tags"]),
+  entries: z.array(traceEntrySchema).max(50).optional(),
+  fires: z
+    .array(
+      z.object({
+        tag_id: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/),
+        status: z.enum(TAG_FIRE_STATUSES),
+        n: z.number().int().min(1).max(10_000),
+      }),
+    )
+    .max(200)
+    .optional(),
+  tcf: z.object({ gdpr_applies: z.boolean().optional(), tc_string: z.string().max(2000).optional() }).optional(),
+  scid: z.string().max(200).optional(),
+  rdt_uuid: z.string().max(200).optional(),
+  env: z.string().max(100).optional(),
   event_id: z
     .string()
     .regex(/^[A-Za-z0-9_.:-]{6,100}$/)

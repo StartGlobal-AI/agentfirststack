@@ -46,6 +46,12 @@ export interface DispatchEvent {
   fbp?: string;
   fbc?: string;
   ttp?: string;
+  /** Snap's first-party cookie `_scid` (Snap CAPI sc_cookie1). */
+  scid?: string;
+  /** Reddit's first-party cookie `_rdt_uuid` (Reddit CAPI user.uuid). */
+  rdt_uuid?: string;
+  /** IAB TCF v2 signals from the page's CMP (consent.tcf: true), forwarded as-is. */
+  tcf?: { gdpr_applies?: boolean; tc_string?: string };
   user: HashedUserData;
   consent: Partial<Record<ConsentType, ConsentValue>>;
   /** Per-platform mapping from the conversion definition (or the server event body). */
@@ -55,6 +61,13 @@ export interface DispatchEvent {
     meta?: { event_name: string; custom_data?: Record<string, unknown> };
     tiktok?: { event_name: string };
     analytics?: { event_name?: string };
+    /** LinkedIn conversion rule id (numeric), as in the Insight Tag's conversion_id. */
+    linkedin?: { conversion_id: string };
+    pinterest?: { event_name: string };
+    reddit?: { event_name: string };
+    snap?: { event_name: string };
+    /** X event id from Events Manager (tw-<pixel>-<event>). */
+    x?: { event_id: string };
   };
   /** Client tags that already fired this conversion in the browser (for dedupe rules). */
   fired?: string[];
@@ -98,6 +111,8 @@ export interface SendContext {
   /** Destination id + container id, for webhooks and token caching. */
   destinationId: string;
   containerId: string;
+  /** The destination's settings (the webhook body template). */
+  settings?: { template?: { method?: "POST" | "PUT" | "PATCH"; headers?: Record<string, string>; body?: unknown } };
 }
 
 export interface Connector<C extends Record<string, unknown> = Record<string, unknown>> {

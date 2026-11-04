@@ -9,8 +9,10 @@ export interface BootConfig {
   /** Container domain (cookie domain + first-party detection). */
   d: string;
   cfg: ContainerConfig;
-  /** Preview token when this build serves the draft. */
+  /** Preview token when this build serves the draft (or a version, in preview). */
   preview?: string;
+  /** Environment snippet: its name (the `environment` built-in) and token (sent with hits). */
+  env?: { name: string; token: string };
   /** Default analytics app base URL. */
   ab?: string;
   /** Visitor location from Cloudflare's edge, added per request. */
@@ -30,5 +32,21 @@ export interface EventCtx {
   form?: Element | null;
   triggerId?: string;
   scroll?: number;
+  /** The DOM event (click, submit), for wait_for_tags. */
+  ev?: Event;
+  /** "b": seen at window in the bubble phase (check_validation, wait_for_tags); default capture. */
+  phase?: "b";
+  /** Event-scoped built-ins (error_*, history_*, scroll_units, percent_visible, video_*...). */
+  vars?: Record<string, unknown>;
   ts: number;
+}
+
+/** One preview log entry (posted to /collect as type "debug"; GET /v1/containers/:id/preview/:token/log). */
+export interface TraceEntry {
+  ts: number;
+  event: string;
+  page?: string;
+  triggers: { id: string; matched: boolean; reason?: string }[];
+  tags: { id: string; type: string; status: string; reason?: string; trigger?: string }[];
+  conversions: { name: string; status: string; reason?: string; platforms?: string[] }[];
 }

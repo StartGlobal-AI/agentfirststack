@@ -10,6 +10,8 @@ export interface VisitorData {
   fbp?: string;
   fbc?: string;
   ttp?: string;
+  scid?: string;
+  rdt_uuid?: string;
   ga_client_id?: string;
   ga_session_id?: string;
   analytics_visitor_id?: string;
@@ -37,6 +39,8 @@ export interface VisitorUpdate {
   fbp?: string;
   fbc?: string;
   ttp?: string;
+  scid?: string;
+  rdt_uuid?: string;
   ga_client_id?: string;
   ga_session_id?: string;
   analytics_visitor_id?: string;
@@ -68,6 +72,8 @@ export function mergeVisitor(prev: VisitorData | null, u: VisitorUpdate, now = D
   v.fbp = set(u.fbp, v.fbp);
   v.fbc = set(u.fbc, v.fbc);
   v.ttp = set(u.ttp, v.ttp);
+  v.scid = set(u.scid, v.scid);
+  v.rdt_uuid = set(u.rdt_uuid, v.rdt_uuid);
   v.ga_client_id = set(u.ga_client_id, v.ga_client_id);
   v.ga_session_id = set(u.ga_session_id, v.ga_session_id);
   v.analytics_visitor_id = set(u.analytics_visitor_id, v.analytics_visitor_id);
