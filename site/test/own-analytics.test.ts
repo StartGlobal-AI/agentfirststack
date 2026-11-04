@@ -43,6 +43,12 @@ describe("own analytics", () => {
     expect(JSON.parse(sent[0]?.body ?? "{}")).toEqual({
       events: [{ name: "signup", user_id: s.json.account_id, url: "https://afs.test/v1/signup", visit: false }],
     });
+    // The operator's ADMIN_TOKEN signups (the live check) are not conversions either.
+    const m = serviceCalls.length;
+    const adminEnv = { ...env, ADMIN_TOKEN: "admin-token-for-tests" };
+    const op = await call("POST", "/v1/signup", { json: {}, ip: nextIp(), env: adminEnv, key: "admin-token-for-tests" });
+    expect(op.status).toBe(201);
+    expect(sentSince(m)).toHaveLength(0);
     // A refused signup is not a conversion.
     const n = serviceCalls.length;
     const bad = await call("POST", "/v1/signup", { json: { name: 42 }, ip: nextIp(), env });

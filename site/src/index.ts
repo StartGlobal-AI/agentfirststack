@@ -1,4 +1,4 @@
-import { accountRoutes, onError, onNotFound, protectedResourceRoutes } from "@afs/shared";
+import { accountRoutes, extractKey, onError, onNotFound, protectedResourceRoutes, timingSafeEqual } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import { adminApi } from "./admin";
 import { claimLinkApi, claimRoutes } from "./claims";
@@ -119,6 +119,9 @@ app.route("/dashboard", dashboard);
 app.use("/v1/signup", async (c, next) => {
   await next();
   if (c.req.method !== "POST" || c.res.status !== 201 || !ownAnalytics(c.env)) return;
+  // The operator's own signups (ADMIN_TOKEN: `pnpm afs check`, provisioning) aren't conversions.
+  const bearer = extractKey(c.req.raw);
+  if (bearer && c.env.ADMIN_TOKEN && timingSafeEqual(bearer, c.env.ADMIN_TOKEN)) return;
   const body = (await c.res
     .clone()
     .json()
