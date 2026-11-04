@@ -60,6 +60,8 @@ GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} returns the file and
   change still succeeded; \`notes\` say why): PATCH the same analytics_site_id again to retry, it re-asserts the link.
 - Unlinking (analytics_site_id null or another id) or deleting the replay site clears the old analytics site's replay_site_id,
   only if it still names this replay site. One analytics site loads one replay site: linking a second replay site to it moves it.
+- This link is the only way to set an analytics site's replay_site_id: analytics refuses it from API keys (403
+  replay_link_from_replay), so no account can point its tracker at another account's recorder.
 - Keep the direct snippet for pages without the analytics tracker, and for a strict Content-Security-Policy: the tracker
   fetches the loader from ${base} directly (never through an analytics proxy), so such a page needs
   \`script-src ${base}/r/<site>.js ${base}/rec/; connect-src ${base}/i\`, or the direct snippet behind your own replay proxy.
@@ -129,10 +131,13 @@ A new site records a trial quota until its domain is verified: MAX_UNVERIFIED_SE
 (default ${DEFAULTS.UNVERIFIED_SESSIONS_PER_SITE_PER_DAY}) sessions per day, strict masking whatever its settings, no analytics forwarding, no share
 links; an account has at most MAX_UNVERIFIED_SITES_PER_ACCOUNT (default ${DEFAULTS.UNVERIFIED_SITES_PER_ACCOUNT}) unverified sites (403
 verification_required). POST /v1/sites/:id/verify (MCP verify_install) verifies it when either holds:
-- this site's loader (\`/r/<site_id>.js\`) is on the domain's own homepage, \`https://<domain>/\` (redirects only to the
-  domain or www.<domain>); or
-- the analytics tracker of the linked analytics site is on that homepage (\`<script src=".../s.js" data-site="<analytics_site_id>">\`,
-  any attribute order, also a first-party proxy src like \`/_a/s.js\`): method \`homepage_analytics\`. The analytics site
+- this site's loader is in a real \`<script src=".../r/<site_id>.js">\` tag on the domain's own homepage, exactly
+  \`https://<domain>/\`: verify fetches that URL itself (redirects only to the domain or www.<domain>), and a \`url\` you pass
+  with a query string, a fragment or another path never counts (such a page can repeat text the caller chose, like a search
+  box). Tags are parsed as a browser does: the loader URL in inline code (a tag manager), a comment or an attribute is
+  reported by verify ("not in a <script src> tag", \`untrusted.found_scripts[].inline\`) but proves nothing; method \`homepage\`; or
+- the analytics tracker of the linked analytics site is in such a tag on that homepage (\`<script src=".../s.js" data-site="<analytics_site_id>">\`,
+  any attribute order, also a first-party proxy src like \`/_a/s.js\`), same rules: method \`homepage_analytics\`. The analytics site
   belongs to this account (checked when linked), so it proves the domain just as the loader does; or
 - a DNS TXT record \`_afs-verify.<domain>\` has the value \`afs-replay-site=<site_id>\` (looked up over DNS-over-HTTPS).
 Sites show \`verification: {verified, method, verified_at, how, dns_record}\`. Changing a site's domain needs a new
@@ -193,7 +198,7 @@ input into a field), afs.scroll, afs.error, afs.event, afs.hide, afs.idle.
 - PATCH /v1/sites/:id \`{ domain?, ...settings }\`: only given fields change; lists are replaced whole; values over the deployment's caps are clamped and reported in \`notes\`. The loader picks changes up within ~5 minutes.
 - DELETE /v1/sites/:id: the site, its sessions, signals, heatmaps and links; R2 chunks are deleted by the hourly cron. A linked analytics site still naming it stops loading it (\`next_steps\` say so if analytics couldn't be reached).
 - GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} -> \`{ snippet, file, code, loads_with_analytics, nothing_to_paste?, suggested_analytics_site_id?, with_analytics, page_api, html_attributes, testing }\`.
-- POST /v1/sites/:id/verify \`{ url? }\` -> \`{ ok, installed, receiving_sessions, domain_verified, verification, checks: [{id, ok, detail, fix}], fixes, data, untrusted: {found_scripts, drop_samples}, next_steps }\`. Fetches the page (https on the site's domain or a subdomain, port 443, no IPs, 3 redirects; at most MAX_VERIFY_PER_ACCOUNT_PER_HOUR calls, default ${DEFAULTS.VERIFY_PER_ACCOUNT_PER_HOUR}, 429 rate_limited), finds the loader for this site id (or the linked analytics site's tracker, then asks analytics whether it loads this site and refreshes loads_with_analytics), checks it serves the loader, checks the page CSP (script-src, connect-src; suggests path-scoped sources), verifies the domain (homepage loader, linked analytics tracker, or DNS TXT), sessions received, refused chunks by reason, and whether labels are all masked.
+- POST /v1/sites/:id/verify \`{ url? }\` -> \`{ ok, installed, receiving_sessions, domain_verified, verification, checks: [{id, ok, detail, fix}], fixes, data, untrusted: {found_scripts, drop_samples}, next_steps }\`. Fetches the page (https on the site's domain or a subdomain, port 443, no IPs, 3 redirects; at most MAX_VERIFY_PER_ACCOUNT_PER_HOUR calls, default ${DEFAULTS.VERIFY_PER_ACCOUNT_PER_HOUR}, 429 rate_limited), finds the loader for this site id in a real <script src> tag (or the linked analytics site's tracker, then asks analytics whether it loads this site and refreshes loads_with_analytics; a loader URL only in inline code or text is reported, not counted), checks it serves the loader, checks the page CSP (script-src, connect-src; suggests path-scoped sources), verifies the domain (homepage loader, linked analytics tracker, or DNS TXT), sessions received, refused chunks by reason, and whether labels are all masked.
 
 Settings:
 - \`name\` string | null
@@ -238,7 +243,7 @@ Every recorded value is one JSON-quoted string (labels as recorded, masked shows
 - GET /v1/sites/:id/funnel \`?steps=/pricing,/signup*,event:signup_done\` (2-8; path globs or \`page:\`, \`event:<afsr event name>\`; \`goal:\` is analytics-only) or \`analytics_funnel_id=fnl_...\` (a saved funnel of the linked analytics site) \`&drop_step=1..n-1&limit=\` + filters (default period 30d) -> \`{ sessions_considered, untrusted: { steps: [{step, match, sessions, dropped, conversion_from_previous}] }, dropped: { step, total, sessions, common, untrusted: {findings, top_rage_targets, top_dead_clicks, top_errors, quick_back_pages, exit_pages} } }\`. Steps match in order within one recorded session.
 
 ### Share links (human player)
-- POST /v1/sites/:id/links \`{ session_id, expires_in? }\` (seconds, 60..${LIMITS.LINK_SECONDS_MAX}, default ${DEFAULTS.LINK_SECONDS}) -> 201 \`{ link: { id, url, expires_at, ... } }\`. The URL is shown once (only its SHA-256 is stored); anyone with it can watch that one session until it expires or is revoked. 403 domain_not_verified for unverified sites, 403 quota_exceeded past MAX_LINKS_PER_SITE active links. A link serves at most MAX_LINK_BYTES_PER_DAY (default ${DEFAULTS.LINK_BYTES_PER_DAY}) recorded bytes per UTC day (429 after), only chunks ingest accepted with rrweb events.
+- POST /v1/sites/:id/links \`{ session_id, expires_in? }\` (seconds, 60..${LIMITS.LINK_SECONDS_MAX}, default ${DEFAULTS.LINK_SECONDS}) -> 201 \`{ link: { id, url, expires_at, ... } }\`. The URL is shown once (only its SHA-256 is stored); anyone with it can watch that one session until it expires or is revoked. 403 domain_not_verified for unverified sites, 403 quota_exceeded past MAX_LINKS_PER_SITE active links, 403 temporary_credential for a connected app's OAuth access token (a link can outlive it by 30 days: use the project's own API key; revoking works with either). A link serves at most MAX_LINK_BYTES_PER_DAY (default ${DEFAULTS.LINK_BYTES_PER_DAY}) recorded bytes per UTC day (429 after), only chunks ingest accepted with rrweb events.
 - GET /v1/sites/:id/links \`?session_id=\` -> \`{ links: [{id, session_id, created_at, expires_at, revoked_at, active, views, last_viewed_at}] }\`
 - DELETE /v1/sites/:id/links/:link_id -> \`{ revoked }\`
 - Public: GET /play/<token> (rrweb-player: skip inactivity, speed, event timeline with signals and errors, click to seek; CSP script-src 'self', images and styles only from the site's own hosts, no inline script, frame-ancestors 'none', noindex), /play/<token>/data, /play/<token>/chunks/<seq>. A site that is no longer verified shows an "unverified site" banner, no domain and no replay. Links of suspended accounts stop working.

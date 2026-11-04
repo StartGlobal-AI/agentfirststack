@@ -1,4 +1,4 @@
-import { accountStanding, badRequest, parse } from "@afs/shared";
+import { accountStanding, badRequest, parse, scriptStartTags } from "@afs/shared";
 import { z } from "zod";
 import { isDev } from "../env";
 import { readTextCapped } from "../lib/body";
@@ -6,10 +6,10 @@ import { enforce } from "../lib/limits";
 import { isDevHost, isIpLiteral, onSiteDomain } from "../lib/url";
 import { EXCLUSION_REASONS } from "../lib/exclusions";
 import { UNTRUSTED_NOTICE } from "../do/engine";
-import { type Ctx, type PaymentsSummary, type SiteRow, type SiteSummary, loadSite, siteStub } from "./context";
+import { type Ctx, type PaymentsSummary, type SiteRow, type SiteSummary, isVerified, loadSite, siteStub } from "./context";
 import { linkingInstructions } from "./payments";
 import { PROXY_PATH, scriptSnippet } from "./install";
-import { budgetStatus, siteLimits } from "./sites";
+import { budgetStatus, siteLimits, verificationJson, verifyRecord } from "./sites";
 
 export const verifyInput = z.object({
   url: z
@@ -29,28 +29,62 @@ interface Check {
 /** The marker esbuild puts at the top of the tracker bundle. */
 export const TRACKER_MARKER = "afs-analytics";
 
-const attr = (tag: string, name: string) => new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag);
-const attrVal = (tag: string, name: string) => {
-  const m = attr(tag, name);
-  return m ? (m[1] ?? m[2] ?? m[3] ?? "") : null;
-};
-
-/** <script> tags whose src ends in s.js, with the attributes we care about. Pure. */
+/**
+ * Real <script> tags whose src ends in s.js, with the attributes we care about: parsed as a browser
+ * does, so text in comments, attribute values or inline code (a page repeating a query string)
+ * never counts. Pure.
+ */
 export function findTrackerScripts(html: string): { src: string; site: string | null; defer: boolean; async: boolean }[] {
   const out: { src: string; site: string | null; defer: boolean; async: boolean }[] = [];
-  for (const m of html.matchAll(/<script\b[^>]*>/gi)) {
-    const tag = m[0];
-    const src = attrVal(tag, "src");
+  for (const attrs of scriptStartTags(html)) {
+    const src = attrs.get("src")?.trim();
     if (!src || !/(^|\/)s\.js(\?|#|$)/.test(src)) continue;
     out.push({
       src: src.slice(0, 300),
-      site: attrVal(tag, "data-site")?.slice(0, 64) ?? null,
-      defer: /\bdefer\b/i.test(tag),
-      async: /\basync\b/i.test(tag),
+      site: attrs.get("data-site")?.trim().slice(0, 64) ?? null,
+      defer: attrs.has("defer"),
+      async: attrs.has("async"),
     });
     if (out.length >= 10) break;
   }
   return out;
+}
+
+/**
+ * The one URL whose page proves the domain: exactly https://<domain>/. A url with a query string,
+ * a fragment or another path can make the page carry text the caller chose (a search box
+ * repeating ?s=), so it is checked for the install but never counts as the homepage.
+ */
+export const homepageUrl = (domain: string) => `https://${domain}/`;
+const isHomepageUrl = (site: Pick<SiteRow, "domain">, u: URL) => u.href === homepageUrl(site.domain);
+/** Where the homepage's redirects may end for it to count: the domain itself or www.<domain>. */
+const homeHost = (site: Pick<SiteRow, "domain">, u: URL) => u.hostname === site.domain || u.hostname === `www.${site.domain}`;
+
+/** TXT records of `name` over DNS-over-HTTPS (Cloudflare's resolver), joined strings. */
+async function txtRecords(name: string): Promise<string[] | { error: string }> {
+  const u = new URL("https://cloudflare-dns.com/dns-query");
+  u.searchParams.set("name", name);
+  u.searchParams.set("type", "TXT");
+  const r = await fetchCapped(u, { maxBytes: 64 * 1024, allowed: () => false, timeoutMs: 5_000, accept: "application/dns-json" });
+  if ("error" in r) return { error: r.error };
+  if (r.status !== 200) return { error: `DNS lookup answered HTTP ${r.status}` };
+  try {
+    const j = JSON.parse(r.text) as { Answer?: { type: number; data: string }[] };
+    return (j.Answer ?? [])
+      .filter((a) => a.type === 16 && typeof a.data === "string")
+      .map((a) => a.data.replace(/"\s*"/g, "").replace(/^"|"$/g, ""));
+  } catch {
+    return { error: "DNS lookup answered something that isn't JSON" };
+  }
+}
+
+async function markVerified(ctx: Ctx, site: SiteRow, method: string) {
+  const now = Date.now();
+  await ctx.env.DB.prepare("UPDATE sites SET verified_at = ?, verify_method = ? WHERE id = ? AND account_id = ? AND verified_at IS NULL")
+    .bind(now, method, site.id, ctx.accountId)
+    .run();
+  site.verified_at = now;
+  site.verify_method = method;
 }
 
 /**
@@ -103,7 +137,7 @@ type Fetched = { status: number; text: string; headers: Headers; finalUrl: strin
  */
 export async function fetchCapped(
   url: URL,
-  opts: { maxBytes: number; allowed: (u: URL) => boolean; timeoutMs?: number },
+  opts: { maxBytes: number; allowed: (u: URL) => boolean; timeoutMs?: number; accept?: string },
 ): Promise<Fetched> {
   try {
     const signal = AbortSignal.timeout(opts.timeoutMs ?? 10_000);
@@ -111,7 +145,10 @@ export async function fetchCapped(
     for (let hop = 0; ; hop++) {
       const res = await fetch(current.toString(), {
         redirect: "manual",
-        headers: { "user-agent": "Mozilla/5.0 (compatible; afs-analytics-verify/1.0)", accept: "text/html,application/javascript,*/*" },
+        headers: {
+          "user-agent": "Mozilla/5.0 (compatible; afs-analytics-verify/1.0)",
+          accept: opts.accept ?? "text/html,application/javascript,*/*",
+        },
         signal,
       });
       const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
@@ -168,6 +205,8 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
   const snippet = scriptSnippet(ctx.baseUrl, site.id);
   let scripts: ReturnType<typeof findTrackerScripts> = [];
   let finalUrl: string | null = null;
+  /** the final URL of the fetched page, when it has this site's tracker in a <script src> tag */
+  let trackerOn: URL | null = null;
 
   // Fetch only the site's own hosts (every redirect hop included); the tracker script also from here.
   const siteHost = (u: URL) => fetchable(site, u, dev);
@@ -193,6 +232,7 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     scripts = findTrackerScripts(page.text);
     const mine = scripts.filter((s) => s.site === site.id);
     if (mine.length) {
+      trackerOn = new URL(page.finalUrl);
       checks.push({
         id: "snippet_present",
         ok: true,
@@ -273,6 +313,46 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       });
     }
   }
+
+  // Domain ownership (share links need it): this site's tracker in a real <script src> tag on the
+  // domain's own homepage, exactly https://<domain>/ (redirects only to the domain or www.), or the
+  // DNS TXT record. A url passed with a query string, fragment or other path never counts: the
+  // homepage is fetched again as itself. In DEV_MODE a localhost page with the tracker counts.
+  let proof: string | null = null;
+  const before = isVerified(site);
+  if (!before) {
+    if (trackerOn && dev && isDevHost(trackerOn.hostname)) proof = "dev_localhost";
+    else if (isHomepageUrl(site, pageUrl)) {
+      if (trackerOn && trackerOn.protocol === "https:" && homeHost(site, trackerOn)) proof = "homepage";
+    } else {
+      const home = await fetchCapped(new URL(homepageUrl(site.domain)), {
+        maxBytes: MAX_PAGE_BYTES,
+        allowed: (u) => u.protocol === "https:" && (u.port === "" || u.port === "443") && homeHost(site, u),
+      });
+      if (!("error" in home) && home.status < 400 && findTrackerScripts(home.text).some((t) => t.site === site.id)) proof = "homepage";
+    }
+    let dnsDetail = "";
+    if (!proof) {
+      const rec = verifyRecord(site);
+      const txt = await txtRecords(rec.name);
+      if (Array.isArray(txt) && txt.some((t) => t.trim() === rec.value)) proof = "dns_txt";
+      else dnsDetail = Array.isArray(txt) ? ` No TXT record ${rec.name} = "${rec.value}".` : " The DNS lookup failed.";
+    }
+    if (proof) await markVerified(ctx, site, proof);
+    else
+      checks.push({
+        id: "domain_verified",
+        ok: false,
+        detail: `${site.domain} isn't verified: no <script src ... data-site="${site.id}"> tag on https://${site.domain}/ itself (only that exact URL counts, never one with a query string or another path; a tag injected by a tag manager isn't in the HTML).${dnsDetail} Tracking works as usual; share links need a verified domain.`,
+        fix: `Put the snippet in the <head> of https://${site.domain}/, or add DNS TXT ${verifyRecord(site).name} = "${verifyRecord(site).value}", then verify again.`,
+      });
+  }
+  if (isVerified(site))
+    checks.push({
+      id: "domain_verified",
+      ok: true,
+      detail: `${site.domain} is verified (${site.verify_method ?? "earlier"}${before ? "" : ", just now"}): share links can be created.`,
+    });
 
   const [summary, standing] = await Promise.all([
     siteStub(ctx.env, site.id).summary() as Promise<SiteSummary | { error: unknown }>,
@@ -414,8 +494,11 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     installed: snippetOk || eventsOk,
     receiving_events: eventsOk,
     checked_url: pageUrl.toString(),
+    domain_verified: isVerified(site),
+    verification: verificationJson(site),
     checks,
-    fixes: failed.filter((c) => c.fix).map((c) => c.fix!),
+    // Tracking doesn't need a verified domain (share links do): its fix stays in the check and in verification.how.
+    fixes: failed.filter((c) => c.fix && c.id !== "domain_verified").map((c) => c.fix!),
     dropped_last_7d: { ...drops, bots_total: { count: botDrops, last_at: null } },
     warnings_last_7d: warnings,
     limits,

@@ -45,6 +45,7 @@ app.all("/mcp", (c) =>
       registerTools(t, {
         env: c.env,
         accountId: auth.accountId,
+        auth,
         baseUrl: publicBaseUrl(c),
         callerIp: c.req.header("cf-connecting-ip") ?? null,
       }),

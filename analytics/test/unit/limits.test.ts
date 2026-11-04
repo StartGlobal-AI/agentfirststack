@@ -126,12 +126,24 @@ describe("verifyInstall: what it fetches", () => {
       warning_samples: {} as Record<string, string>,
     },
   };
-  const ctx = (sum = summary): Ctx =>
+  /** D1 writes the code under test made (verify marks a proven domain). */
+  let writes: string[] = [];
+  const ctx = (sum = summary, row: SiteRow = site): Ctx =>
     ({
       accountId: "acc_1",
       baseUrl: "https://analytics.example.net",
       env: {
-        DB: { prepare: (q: string) => ({ bind: () => ({ first: async () => (q.includes("FROM sites") ? site : null) }) }) },
+        DB: {
+          prepare: (q: string) => ({
+            bind: () => ({
+              first: async () => (q.includes("FROM sites") ? { ...row } : null),
+              run: async () => {
+                writes.push(q);
+                return { meta: { changes: 1 } };
+              },
+            }),
+          }),
+        },
         SITE: {
           idFromName: () => "id",
           get: () => ({
@@ -175,7 +187,9 @@ describe("verifyInstall: what it fetches", () => {
     const calls = stubFetch(() => redirect("https://elsewhere.test/"));
     const r = await verifyInstall(ctx(), site.id, {});
     expect(r.checks[0]).toMatchObject({ id: "page_reachable", ok: false });
-    expect(calls).toEqual(["https://shop.test/"]);
+    // the page, then the DNS TXT lookup (the domain isn't proven): never elsewhere.test
+    expect(calls.filter((c) => !c.startsWith("https://cloudflare-dns.com/"))).toEqual(["https://shop.test/"]);
+    expect(r.domain_verified).toBe(false);
   });
 
   it("reports proxied events that arrived without a valid proxy key", async () => {
@@ -185,5 +199,79 @@ describe("verifyInstall: what it fetches", () => {
     expect(r.checks.find((c) => c.id === "proxy_key")).toMatchObject({ ok: false, detail: expect.stringContaining("3 events") });
     expect(r.fixes.join(" ")).toContain("x-afs-proxy-key");
     expect(r.warnings_last_7d).toEqual(sum.warnings_last_7d);
+  });
+
+  describe("domain proof (share links need it)", () => {
+    const TAG = `<script defer src="/_a/s.js" data-site="${site.id}"></script>`;
+    const dns = (u: URL, answer: string[] = []) =>
+      u.hostname === "cloudflare-dns.com"
+        ? Response.json({ Status: 0, Answer: answer.map((data) => ({ name: "_afs-verify.shop.test", type: 16, data: `"${data}"` })) })
+        : null;
+    const domainCheck = (r: Awaited<ReturnType<typeof verifyInstall>>) => r.checks.find((c) => c.id === "domain_verified")!;
+    afterEach(() => {
+      writes = [];
+    });
+
+    it("this site's tracker in a <script src> tag on https://<domain>/ verifies it, with no DNS lookup", async () => {
+      const calls = stubFetch((u) => (u.pathname.endsWith("s.js") ? tracker() : html(`<head>${TAG}</head>`)));
+      const r = await verifyInstall(ctx(), site.id, {});
+      expect(r.domain_verified).toBe(true);
+      expect(r.verification).toMatchObject({ verified: true, method: "homepage" });
+      expect(domainCheck(r)).toMatchObject({ ok: true });
+      expect(writes.some((q) => q.startsWith("UPDATE sites SET verified_at"))).toBe(true);
+      expect(calls.some((c) => c.includes("cloudflare-dns.com"))).toBe(false);
+    });
+
+    it("a url with a query string never counts, even when that page repeats the tag: the homepage is fetched as itself", async () => {
+      // the exploit: a search page echoing ?s= into the HTML, raw
+      const calls = stubFetch((u) => {
+        const d = dns(u);
+        if (d) return d;
+        if (u.pathname.endsWith("s.js")) return tracker();
+        return html(`<html><body><form><input name="s"></form>${u.search ? decodeURIComponent(u.search.slice(3)) : ""}</body></html>`);
+      });
+      const r = await verifyInstall(ctx(), site.id, { url: `https://shop.test/?s=${encodeURIComponent(TAG)}` });
+      // the echoed tag is reported for the install (that page has it)...
+      expect(r.checks.find((c) => c.id === "snippet_present")).toMatchObject({ ok: true });
+      // ...but the domain isn't proven: https://shop.test/ itself doesn't have it
+      expect(r.domain_verified).toBe(false);
+      expect(calls).toContain("https://shop.test/");
+      expect(domainCheck(r)).toMatchObject({ ok: false, detail: expect.stringContaining("only that exact URL counts") });
+      expect(domainCheck(r).fix).toContain(`afs-analytics-site=${site.id}`);
+      expect(r.fixes.join(" ")).not.toContain("afs-analytics-site"); // tracking doesn't need it
+      expect(writes).toEqual([]);
+      for (const url of ["https://shop.test/#x", "https://shop.test/index.html", "https://shop.test/?"]) {
+        const again = await verifyInstall(ctx(), site.id, { url });
+        expect(again.domain_verified, url).toBe(false);
+      }
+    });
+
+    it("the homepage counts only for a real tag: not in a comment, an attribute, a textarea or inline code", async () => {
+      for (const body of [
+        `<!-- ${TAG} -->`,
+        `<input value='${TAG}'>`,
+        `<textarea>${TAG}</textarea>`,
+        `<script>window.q = "${TAG.replace(/"/g, "'").replace("</script>", "")}";</script>`,
+        `<script>var s=document.createElement("script");s.src="/_a/s.js";s.dataset.site="${site.id}";</script>`,
+      ]) {
+        stubFetch((u) => dns(u) ?? html(`<html><body>${body}</body></html>`));
+        const r = await verifyInstall(ctx(), site.id, {});
+        expect(r.domain_verified, body).toBe(false);
+        expect(
+          r.checks.find((c) => c.id === "snippet_present"),
+          body,
+        ).toMatchObject({ ok: false });
+      }
+    });
+
+    it("the DNS TXT record verifies too; an already verified site isn't checked again", async () => {
+      stubFetch((u) => dns(u, [`afs-analytics-site=${site.id}`]) ?? html("<html></html>"));
+      const r = await verifyInstall(ctx(), site.id, {});
+      expect(r.verification).toMatchObject({ verified: true, method: "dns_txt" });
+      const calls = stubFetch(() => html("<html></html>"));
+      const v = await verifyInstall(ctx(summary, { ...site, verified_at: 1, verify_method: "dns_txt" }), site.id, {});
+      expect(v.domain_verified).toBe(true);
+      expect(calls).toEqual(["https://shop.test/"]);
+    });
   });
 });

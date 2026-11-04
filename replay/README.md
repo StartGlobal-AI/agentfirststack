@@ -130,7 +130,8 @@ own `src`, so a first-party proxy of `/<prefix>/*` works unchanged.
   `notes` say to PATCH the same `analytics_site_id` again, which re-asserts the link. Unlinking,
   moving the link or deleting the site clears the old analytics site's `replay_site_id`, only while
   it still names this site. One analytics site loads one replay site (linking a second one moves
-  it). The direct snippet stays the alternative for pages without the tracker and for a strict CSP
+  it). Analytics accepts `replay_site_id` only from this link (internal auth), never from an API key.
+  The direct snippet stays the alternative for pages without the tracker and for a strict CSP
   (the tracker fetches the loader from the replay host directly). Unlinked sites on an account with
   analytics get `suggested_analytics_site_id` in install responses instead of a second snippet.
 
@@ -180,7 +181,7 @@ page ended; nothing is sent twice.
 | GET | `/sites`, `/sites/:id` | list; one with a data summary (sessions, last chunk, bytes, today's counters, hostnames, chunks refused by reason), its `limits`, and `untrusted.drop_samples` |
 | PATCH, DELETE | `/sites/:id` | settings (lists replaced whole, caps clamped and reported in `notes`); delete removes everything (R2 by cron) |
 | GET | `/sites/:id/install` | `?framework=html\|nextjs\|react\|astro\|wordpress\|gtm` |
-| POST | `/sites/:id/verify` | `{ url? }`: page fetch (https on the domain or a subdomain, port 443), snippet (or the linked analytics site's tracker, checked live with analytics), script, CSP (path-scoped advice), domain verification (homepage loader, the linked analytics site's tracker on the homepage = `homepage_analytics`, or DNS TXT), sessions received, drops, masking advice; `MAX_VERIFY_PER_ACCOUNT_PER_HOUR` |
+| POST | `/sites/:id/verify` | `{ url? }`: page fetch (https on the domain or a subdomain, port 443), snippet (or the linked analytics site's tracker, checked live with analytics), script, CSP (path-scoped advice), domain verification (homepage loader, the linked analytics site's tracker on the homepage = `homepage_analytics`, or DNS TXT; the homepage is exactly `https://<domain>/`, fetched by verify itself, never a passed `url` with a query string, fragment or other path, and only parsed `<script src>` tags count: a loader URL in inline code, a comment or an attribute is reported as `inline`, never proof), sessions received, drops, masking advice; `MAX_VERIFY_PER_ACCOUNT_PER_HOUR` |
 | GET | `/sites/:id/sessions` | filters (below), `sort=frustration\|recent\|duration`, `limit`, `cursor` |
 | GET | `/sites/:id/sessions/:sid` | facts + pages (dwell, scroll reach, quick back, excessive scroll) |
 | GET | `/sites/:id/sessions/:sid/transcript` | `?format=text\|json&max_events=&kinds=` |
@@ -190,7 +191,7 @@ page ended; nothing is sent twice.
 | GET | `/sites/:id/errors` | `?period=&page=&device=&browser=&fingerprint=&limit=` |
 | GET | `/sites/:id/funnel` | `?steps=/a,/b*,event:x` or `analytics_funnel_id=`, `drop_step=`, filters |
 | POST | `/sites/:id/delete-visitor-data` | `{ user_id? \| analytics_visitor_id? \| session_ids? }` |
-| POST, GET | `/sites/:id/links` | create `{ session_id, expires_in? }` (verified sites only; URL shown once) / list `?session_id=` |
+| POST, GET | `/sites/:id/links` | create `{ session_id, expires_in? }` (verified sites only; not with an OAuth access token; URL shown once) / list `?session_id=` |
 | DELETE | `/sites/:id/links/:link_id` | revoke |
 
 Session filters: `period` (`1h`, `24h`, `today`, `yesterday`, `7d`, `30d`, `90d`, `180d`, `365d`,
@@ -221,7 +222,8 @@ description that it is untrusted.
 
 ## Human player
 
-`create_replay_link` (verified sites only) returns `/play/rpt_<32 chars>` (only the SHA-256 is stored;
+`create_replay_link` (verified sites only; the project's own key, since a connected app's OAuth
+access token gets `403 temporary_credential`) returns `/play/rpt_<32 chars>` (only the SHA-256 is stored;
 default 7 days, max 30; revocable; views counted). The page is a static shell with no inline script,
 served with `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' <site hosts>;
 img-src 'self' data: blob: <site hosts>; font-src data: <site hosts>; connect-src 'self';

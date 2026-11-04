@@ -1,4 +1,4 @@
-import { ApiError, accountSuspended, notFound } from "@afs/shared";
+import { type AuthContext, ApiError, accountSuspended, notFound } from "@afs/shared";
 import type { Bindings } from "../env";
 import type { Breakdown } from "../lib/filters";
 import type {
@@ -16,12 +16,15 @@ import type {
 } from "../lib/types";
 import { isDoError } from "../lib/types";
 import type { Exclusions } from "../lib/exclusions";
+import type { BudgetReason } from "../do/engine";
 import type { IngestPolicy } from "../do/site-do";
 
 /** What every service call needs: bindings, the caller's account, and the public base URL. */
 export interface Ctx {
   env: Bindings;
   accountId: string;
+  /** The caller's credential (an API key, an OAuth access token, or internal auth from another Worker). */
+  auth: AuthContext;
   baseUrl: string;
   /** cf-connecting-ip of the API request (get_exclusions shows it as your_ip); never stored */
   callerIp?: string | null;
@@ -46,9 +49,15 @@ export interface SiteRow {
   trust_browser_user_id?: number;
   /** linked replay site, rsite_...; the tracker loads its recorder (migration 0008; NULL = none) */
   replay_site_id?: string | null;
+  /** set when verify proved the domain is the account's (migration 0009; NULL = not verified) */
+  verified_at?: number | null;
+  /** homepage | dns_txt | dev_localhost */
+  verify_method?: string | null;
   created_at: number;
   updated_at: number;
 }
+
+export const isVerified = (s: Pick<SiteRow, "verified_at">) => s.verified_at !== null && s.verified_at !== undefined;
 
 type Obj = Record<string, unknown>;
 
@@ -72,7 +81,7 @@ export interface SiteStub {
   visitor(key: string, limit?: number): Promise<Obj | DoError>;
   session(id: string): Promise<Obj | DoError>;
   journeys(q: Obj): Promise<Obj | DoError>;
-  ingestPayments(records: PaymentInput[], policy?: IngestPolicy): Promise<{ results: PaymentOutcome[] } | DoError>;
+  ingestPayments(records: PaymentInput[], policy?: IngestPolicy): Promise<{ results: PaymentOutcome[]; refused?: BudgetReason } | DoError>;
   listPayments(q: Obj): Promise<Obj | DoError>;
   deletePayment(id: string): Promise<Obj | DoError>;
   paymentsSummary(): Promise<PaymentsSummary | DoError>;

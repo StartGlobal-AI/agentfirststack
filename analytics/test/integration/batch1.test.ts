@@ -2,6 +2,7 @@ import { SELF, createExecutionContext, env, runDurableObjectAlarm, waitOnExecuti
 import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import { stripeSignatureHeader } from "../../src/lib/stripe";
+import { expireStatusThrottle } from "../../src/service/payments";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const B = "http://analytics.test";
@@ -76,6 +77,8 @@ const beacon = (proxyKey: string, payload: Record<string, unknown>, ip: string, 
   });
 
 async function stripePost(site: string, event: Record<string, unknown>, opts: { secret?: string; t?: number } = {}) {
+  // Every delivery writes its status here (as if deliveries came seconds apart); the throttle has its own test.
+  expireStatusThrottle();
   const body = JSON.stringify(event);
   const t = opts.t ?? Math.floor(Date.now() / 1000);
   return call(`/webhooks/stripe/${site}`, {
@@ -743,6 +746,23 @@ describe("scopes, schema and docs", () => {
 
 describe("replay link: the tracker loads a linked replay site's recorder", () => {
   const RSITE = "rsite_0123456789abcdef";
+  const INTERNAL = "integration-internal-token";
+  /** PATCH a site as the replay service does: over a service binding (an .internal host) with internal auth. */
+  async function internalPatch(key: string, site: string, json: unknown, over: Record<string, unknown> = {}) {
+    const me = (await call("/v1/me", { key })).body;
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`https://analytics.internal/v1/sites/${site}`, {
+        method: "PATCH",
+        headers: { "x-afs-internal": INTERNAL, "x-afs-account": me.account.id, "content-type": "application/json" },
+        body: JSON.stringify(json),
+      }),
+      { ...env, INTERNAL_TOKEN: INTERNAL, ...over } as typeof env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return parsed(res);
+  }
   const REPLAY = { REPLAY_BASE_URL: "https://replay.example.net/" };
   const loader = `https://replay.example.net/r/${RSITE}.js`;
   /** A beacon through the proxy with some vars changed (REPLAY_BASE_URL, caps). */
@@ -753,27 +773,51 @@ describe("replay link: the tracker loads a linked replay site's recorder", () =>
       headers: { "user-agent": ua, "content-type": "text/plain", "x-forwarded-for": "198.51.100.7", "x-afs-proxy-key": proxyKey },
     });
 
-  it("PATCH replay_site_id: validated with a hint, returned by every site response, null (or empty) clears it", async () => {
+  it("replay_site_id: only the replay service (internal auth) sets it; API keys and MCP get 403 with a hint", async () => {
     const { key, site, created } = await newSite("replaylink.test");
     expect(created.body.site.replay_site_id).toBeNull();
+    // An API key can't point its tracker at a recorder (someone else's, say): REST and MCP.
+    for (const v of [RSITE, "nope", "rsite_SHORT"]) {
+      const r = await callWith(REPLAY, `/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: v } });
+      expect(r.status).toBe(403);
+      expect(r.body.error.code).toBe("replay_link_from_replay");
+      expect(r.body.error.hint).toContain(`{"analytics_site_id": "${site}"}`);
+    }
+    const mcpDenied = await tool(key, "update_site", { site_id: site, replay_site_id: RSITE });
+    expect(mcpDenied).toMatchObject({ isError: true, data: { error: { code: "replay_link_from_replay" } } });
+    expect((await call(`/v1/sites/${site}`, { key })).body.site.replay_site_id).toBeNull();
+    // null on an unlinked site changes nothing, so it's fine
+    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: null } })).status).toBe(200);
+    // the replay service: validated with a hint, returned by every site response
     for (const bad of ["site_0123456789abcdef", "rsite_SHORT", `${RSITE}x`]) {
-      const r = await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: bad } });
+      const r = await internalPatch(key, site, { replay_site_id: bad });
       expect(r.status).toBe(400);
       expect(r.body.error.hint).toContain("rsite_");
     }
-    const linked = await callWith(REPLAY, `/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: RSITE } });
+    const linked = await internalPatch(key, site, { replay_site_id: RSITE }, REPLAY);
     expect(linked.status).toBe(200);
     expect(linked.body.site.replay_site_id).toBe(RSITE);
     expect(linked.body.note).toContain("replay.example.net");
     expect((await call(`/v1/sites/${site}`, { key })).body.site.replay_site_id).toBe(RSITE);
     expect((await call("/v1/sites", { key })).body.sites.find((s: { id: string }) => s.id === site).replay_site_id).toBe(RSITE);
-    // another setting leaves it alone
+    // another setting leaves it alone; echoing the current value back (a whole site object) is fine
     expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { name: "x" } })).body.site.replay_site_id).toBe(RSITE);
-    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: null } })).body.site.replay_site_id).toBeNull();
-    const mcpLinked = await tool(key, "update_site", { site_id: site, replay_site_id: RSITE });
-    expect(mcpLinked.data.site.replay_site_id).toBe(RSITE);
-    expect((await tool(key, "update_site", { site_id: site, replay_site_id: "nope" })).isError).toBe(true);
-    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: "" } })).body.site.replay_site_id).toBeNull();
+    const echoed = await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { name: "y", replay_site_id: RSITE } });
+    expect(echoed.status).toBe(200);
+    expect(echoed.body.site).toMatchObject({ name: "y", replay_site_id: RSITE });
+    // unlinking is the replay service's too (null or empty clears it)
+    expect((await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: null } })).status).toBe(403);
+    expect((await internalPatch(key, site, { replay_site_id: null })).body.site.replay_site_id).toBeNull();
+    await internalPatch(key, site, { replay_site_id: RSITE });
+    expect((await internalPatch(key, site, { replay_site_id: "" })).body.site.replay_site_id).toBeNull();
+    // internal auth only counts over a service binding: the same headers from the internet don't
+    const me = (await call("/v1/me", { key })).body;
+    const outside = await callWith({ INTERNAL_TOKEN: INTERNAL }, `/v1/sites/${site}`, {
+      method: "PATCH",
+      headers: { "x-afs-internal": INTERNAL, "x-afs-account": me.account.id },
+      json: { replay_site_id: RSITE },
+    });
+    expect(outside.status).toBe(401);
   });
 
   it("POST /e answers carry r only for a linked site with REPLAY_BASE_URL set, dropped and refused events included", async () => {
@@ -781,7 +825,7 @@ describe("replay link: the tracker loads a linked replay site's recorder", () =>
     const u = "https://replayload.test/";
     // not linked: nothing, with or without REPLAY_BASE_URL
     expect((await beaconWith(REPLAY, proxyKey, { s: site, u })).body).not.toHaveProperty("r");
-    await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: RSITE } });
+    await internalPatch(key, site, { replay_site_id: RSITE });
     // linked, but the deployment has no REPLAY_BASE_URL: the feature is off
     const off = await beaconWith({}, proxyKey, { s: site, u });
     expect(off.body.ok).toBe(true);
@@ -817,7 +861,7 @@ describe("replay link: the tracker loads a linked replay site's recorder", () =>
     expect(unknown.status).toBe(404);
     expect(unknown.body).not.toHaveProperty("r");
     // unlinked again: gone from the next answer
-    await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_site_id: null } });
+    await internalPatch(key, site, { replay_site_id: null });
     expect((await beaconWith(REPLAY, proxyKey, { s: site, u })).body).not.toHaveProperty("r");
   });
 });

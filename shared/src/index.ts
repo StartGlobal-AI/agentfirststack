@@ -1,6 +1,7 @@
 export * from "./auth";
 export * from "./crypto";
 export * from "./errors";
+export * from "./html";
 export * from "./http";
 export * from "./ids";
 export * from "./resource";

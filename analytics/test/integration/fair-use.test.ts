@@ -1,7 +1,9 @@
-import { forgetStanding } from "@afs/shared";
+import { createApiKey, forgetStanding } from "@afs/shared";
 import { SELF, createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
+import { stripeSignatureHeader } from "../../src/lib/stripe";
+import { expireStatusThrottle } from "../../src/service/payments";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const B = "http://analytics.test";
@@ -51,6 +53,10 @@ async function newSite(domain: string, json: Record<string, unknown> = {}, key?:
   return { key: k, site: created.body.site.id as string, proxyKey: created.body.install.first_party_proxy.proxy_key as string };
 }
 
+/** Mark a site's domain verified directly in D1 (what verify does when it finds the tracker on the homepage). */
+const markVerified = (site: string) =>
+  env.DB.prepare("UPDATE sites SET verified_at = ?, verify_method = 'homepage' WHERE id = ?").bind(Date.now(), site).run();
+
 /** A browser beacon through the first-party proxy, with the bindings / vars in `over`. */
 const beacon = (over: Over, proxyKey: string, payload: Record<string, unknown>, ip = "10.0.0.1", ua = UA) =>
   callWith(over, "/_a/e", {
@@ -96,6 +102,7 @@ describe("edge rate limits (findings 1, 2, 4)", () => {
       expect(r.status, name).toBe(429);
       expect(r.body.error.code, name).toBe("rate_limited");
     }
+    await markVerified(site);
     const share = (await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} })).body.token as string;
     expect((await callWith({ SHARE_LIMITER: deny }, `/share/${share}/data`)).status).toBe(429);
     const m = await tool({ SQL_LIMITER: deny }, key, "query_sql", { site_id: site, q: "SELECT 1" });
@@ -224,6 +231,7 @@ describe("suspended accounts", () => {
     const key = await newAccount();
     const { site, proxyKey } = await newSite("suspend.test", {}, key);
     expect((await beacon({}, proxyKey, { s: site, u: "https://suspend.test/" })).body.ok).toBe(true);
+    await markVerified(site);
     const token = (await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} })).body.token as string;
     expect((await call(`/share/${token}/data`)).status).toBe(200);
     const me = (await call("/v1/me", { key })).body;
@@ -251,6 +259,7 @@ describe("goals and share links are capped (finding 3)", () => {
     expect(third.status).toBe(403);
     expect(third.body.error.code).toBe("quota_exceeded");
     expect((await goal("a")).body.existing).toBe(true); // idempotent retries still work at the cap
+    await markVerified(site);
     const share = (json: Record<string, unknown>) => callWith(v, `/v1/sites/${site}/share`, { method: "POST", key, json });
     expect((await share({})).status).toBe(201);
     expect((await share({})).body.existing).toBe(true);
@@ -389,6 +398,202 @@ describe("SQL (finding 2)", () => {
     expect(spent.body.error.code).toBe("sql_budget_exhausted");
     // SQL_TIME_BUDGET_MS=0 turns the budget off
     expect((await sqlWith({ SQL_TIME_BUDGET_MS: "0" }, key, site, "SELECT 1 AS x")).body.rows).toEqual([{ x: 1 }]);
+  });
+});
+
+describe("share pages need a proven domain (finding: share pages)", () => {
+  it("unverified: 403 with the TXT record to add (REST and MCP); verified: the page names the domain, never the site's name", async () => {
+    const { key, site } = await newSite("share.test", { name: "Totally Official Bank" }, await newAccount());
+    const info = await call(`/v1/sites/${site}`, { key });
+    expect(info.body.site.verification).toMatchObject({
+      verified: false,
+      dns_record: { name: "_afs-verify.share.test", type: "TXT", value: `afs-analytics-site=${site}` },
+    });
+    const denied = await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} });
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe("domain_not_verified");
+    expect(denied.body.error.hint).toContain(`afs-analytics-site=${site}`);
+    expect(await tool({}, key, "create_share_link", { site_id: site })).toMatchObject({
+      isError: true,
+      data: { error: { code: "domain_not_verified" } },
+    });
+
+    await markVerified(site);
+    const created = await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} });
+    expect(created.status).toBe(201);
+    const token = created.body.token as string;
+    const page = await call(`/share/${token}`);
+    expect(page.headers.get("x-robots-tag")).toContain("noindex");
+    expect(page.body).toContain('<meta name="robots" content="noindex, nofollow">');
+    expect(page.body).toContain("<title>share.test · analytics</title>");
+    expect(page.body).toContain("<h1>share.test</h1>");
+    expect(page.body).toContain("The numbers come from the analytics tracker on share.test");
+    expect(page.body).not.toContain("Totally Official Bank");
+    const data = await call(`/share/${token}/data`);
+    expect(data.headers.get("x-robots-tag")).toContain("noindex");
+    expect(data.body.site).toMatchObject({ domain: "share.test", verified: true });
+
+    // A new domain has to be proven again: the page stops naming any domain meanwhile.
+    const moved = await call(`/v1/sites/${site}`, { method: "PATCH", key, json: { domain: "other-share.test" } });
+    expect(moved.body.site.verification.verified).toBe(false);
+    expect(moved.body.notes.join(" ")).toContain("verified again");
+    const after = await call(`/share/${token}`);
+    expect(after.body).toContain("<h1>Unverified site</h1>");
+    expect(after.body).toContain("<title>Shared analytics (unverified site)</title>");
+    expect(after.body).not.toContain("other-share.test");
+    expect((await call(`/share/${token}/data`)).body.site).toMatchObject({ domain: null, name: null, verified: false });
+    expect((await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} })).status).toBe(403);
+  });
+});
+
+describe("OAuth access tokens can't leave durable access behind (finding: temporary credentials)", () => {
+  it("share links and Stripe connections need the project's own key; reading and revoking work with a token", async () => {
+    const key = await newAccount();
+    const { site } = await newSite("oauth.test", {}, key);
+    await markVerified(site);
+    const me = (await call("/v1/me", { key })).body;
+    // what the platform's OAuth server issues: an API key that expires
+    const token = (await createApiKey(env.AUTH_DB ?? env.DB, me.account.id, { keyPrefix: "afs", expiresAt: Date.now() + 3_600_000 })).key;
+    expect((await call(`/v1/sites/${site}/stats?period=7d`, { key: token })).status).toBe(200);
+    const share = await call(`/v1/sites/${site}/share`, { method: "POST", key: token, json: {} });
+    expect(share.status).toBe(403);
+    expect(share.body.error.code).toBe("temporary_credential");
+    const stripe = await call(`/v1/sites/${site}/integrations/stripe`, {
+      method: "POST",
+      key: token,
+      json: { webhook_secret: "whsec_oauth_test_secret_0123" },
+    });
+    expect(stripe.status).toBe(403);
+    expect(stripe.body.error.code).toBe("temporary_credential");
+    for (const [name, args] of [
+      ["create_share_link", { site_id: site }],
+      ["connect_stripe", { site_id: site, webhook_secret: "whsec_oauth_test_secret_0123" }],
+    ] as const)
+      expect(await tool({}, token, name, args), name).toMatchObject({ isError: true, data: { error: { code: "temporary_credential" } } });
+    // an existing link isn't handed to a token either (it never expires)
+    expect((await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} })).status).toBe(201);
+    expect((await call(`/v1/sites/${site}/share`, { method: "POST", key: token, json: {} })).status).toBe(403);
+    // taking access away is fine
+    expect((await call(`/v1/sites/${site}/share`, { method: "DELETE", key: token })).body.revoked).toBe(1);
+    expect((await call(`/v1/sites/${site}/integrations/stripe`, { method: "DELETE", key: token })).status).toBe(404);
+  });
+});
+
+describe("payments count against the daily budgets, signed or not (finding: self-signed webhooks)", () => {
+  const SECRET = "whsec_fair_use_budget_secret_0123";
+  let n = 0;
+  const event = (type = "checkout.session.completed") => {
+    const id = `${++n}_${Math.random().toString(36).slice(2, 8)}`;
+    return {
+      id: `evt_${id}`,
+      type,
+      created: Math.floor(Date.now() / 1000),
+      livemode: true,
+      data: { object: { id: `cs_${id}`, mode: "payment", payment_status: "paid", amount_total: 1000, currency: "usd" } },
+    };
+  };
+  async function deliver(over: Over, site: string, ev: Record<string, unknown> = event()) {
+    const body = JSON.stringify(ev);
+    return callWith(over, `/webhooks/stripe/${site}`, {
+      method: "POST",
+      body,
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": await stripeSignatureHeader(body, SECRET, Math.floor(Date.now() / 1000)),
+      },
+    });
+  }
+  async function stripeSite(domain: string, key: string) {
+    const s = await newSite(domain, {}, key);
+    expect((await call(`/v1/sites/${s.site}/integrations/stripe`, { method: "POST", key, json: { webhook_secret: SECRET } })).status).toBe(
+      201,
+    );
+    return s;
+  }
+  const payments = async (key: string, site: string) => (await call(`/v1/sites/${site}/payments?period=24h`, { key })).body.payments.length;
+
+  it("per site: a signed delivery past the cap gets 429 (Stripe retries) and records nothing", async () => {
+    const key = await newAccount();
+    const { site } = await stripeSite("paysite.test", key);
+    const v = { MAX_EVENTS_PER_SITE_PER_DAY: "1" };
+    expect((await deliver(v, site)).status).toBe(200);
+    const over = await deliver(v, site);
+    expect(over.status).toBe(429);
+    expect(over.body.error).toMatchObject({ code: "daily_limit", message: expect.stringContaining("daily event limit") });
+    expect(await payments(key, site)).toBe(1);
+    // the refusal shows in the delivery status
+    expireStatusThrottle();
+    await deliver(v, site);
+    const status = (await call(`/v1/sites/${site}/integrations/stripe`, { key })).body.integration;
+    expect(status.last_result).toContain("refused: daily_limit");
+  });
+
+  it("per account (other sites' events count) and for the deployment, webhook and API alike", async () => {
+    const key = await newAccount();
+    const a = await newSite("payacct-a.test", {}, key);
+    const b = await stripeSite("payacct-b.test", key);
+    const av = { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "3" };
+    for (let i = 1; i <= 3; i++)
+      expect((await beacon(av, a.proxyKey, { s: a.site, u: `https://payacct-a.test/p${i}` }, `10.8.0.${i}`)).body.ok).toBe(true);
+    const hook = await deliver(av, b.site);
+    expect(hook.status).toBe(429);
+    expect(hook.body.error).toMatchObject({ code: "daily_limit", message: expect.stringContaining("account") });
+    const api = await callWith(av, `/v1/sites/${b.site}/payments`, {
+      method: "POST",
+      key,
+      json: { id: "api_1", amount: 5, currency: "USD" },
+    });
+    expect(api.status).toBe(429);
+    expect(api.body.error.code).toBe("daily_limit");
+    expect(await payments(key, b.site)).toBe(0);
+
+    // the deployment-wide budget
+    const g = await env.DB.prepare("SELECT COALESCE(MAX(events), 0) AS n FROM usage_global WHERE day = ?")
+      .bind(today())
+      .first<{ n: number }>();
+    const pv = { DAILY_EVENT_BUDGET: String((g?.n ?? 0) + 1) };
+    const d = await stripeSite("payplatform.test", key);
+    expect((await deliver(pv, d.site)).status).toBe(200);
+    const full = await deliver(pv, d.site);
+    expect(full.status).toBe(429);
+    expect(full.body.error.code).toBe("over_capacity");
+    const apiFull = await callWith(pv, `/v1/sites/${d.site}/payments`, {
+      method: "POST",
+      key,
+      json: { id: "api_2", amount: 5, currency: "USD" },
+    });
+    expect(apiFull.body.error.code).toBe("over_capacity");
+    expect(await payments(key, d.site)).toBe(1);
+  });
+
+  it("API batches: what fits is recorded, the rest says why; retries of stored payments are free once room returns", async () => {
+    const key = await newAccount();
+    const { site } = await newSite("paybatch.test", {}, key);
+    const v = { MAX_EVENTS_PER_SITE_PER_DAY: "2" };
+    const batch = [1, 2, 3].map((i) => ({ id: `b${i}`, amount: 10, currency: "USD" }));
+    const r = await callWith(v, `/v1/sites/${site}/payments`, { method: "POST", key, json: { payments: batch } });
+    expect(r.status).toBe(202);
+    expect(r.body.results.map((x: { ok: boolean; reason?: string }) => (x.ok ? "ok" : x.reason))).toEqual(["ok", "ok", "daily_limit"]);
+    expect(r.body).toMatchObject({ accepted: 2, rejected: 1 });
+    const again = await callWith(v, `/v1/sites/${site}/payments`, { method: "POST", key, json: { id: "b3", amount: 10, currency: "USD" } });
+    expect(again.status).toBe(429);
+    expect((await callWith(v, `/v1/sites/${site}`, { key })).body.status.refused_today).toBeGreaterThanOrEqual(2);
+    expect(await payments(key, site)).toBe(2);
+  });
+
+  it("delivery status is written at most every few seconds per site; the deliveries in between are counted by the next write", async () => {
+    const key = await newAccount();
+    const { site } = await stripeSite("paythrottle.test", key);
+    const row = () =>
+      env.DB.prepare("SELECT events_received, last_event_type FROM integrations WHERE site_id = ?")
+        .bind(site)
+        .first<{ events_received: number; last_event_type: string }>();
+    expect((await deliver({}, site, event("customer.created"))).body.ignored).toBeTruthy();
+    for (let i = 0; i < 5; i++) expect((await deliver({}, site, event("customer.updated"))).status).toBe(200);
+    expect(await row()).toMatchObject({ events_received: 1, last_event_type: "customer.created" });
+    expireStatusThrottle(); // as if STATUS_EVERY_MS had passed
+    await deliver({}, site, event("charge.dispute.created"));
+    expect(await row()).toMatchObject({ events_received: 7, last_event_type: "charge.dispute.created" });
   });
 });
 

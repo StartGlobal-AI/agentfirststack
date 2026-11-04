@@ -1,10 +1,11 @@
-import { accountStanding, accountSuspended, notFound, parse, randomString } from "@afs/shared";
+import { ApiError, accountStanding, accountSuspended, assertPermanentKey, notFound, parse, randomString } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
 import { DEFAULT_MAX_SHARE_LINKS_PER_SITE, enforce, quotaExceeded, siteCap } from "../lib/limits";
 import { DEFAULT_METRICS } from "../lib/filters";
 import { PERIODS } from "../lib/time";
-import { type Ctx, type SiteRow, callSite, loadSite } from "./context";
+import { type Ctx, type SiteRow, callSite, isVerified, loadSite } from "./context";
+import { verifyRecord } from "./sites";
 
 export const createShareInput = z.object({
   new: z.boolean().optional().describe("Create an additional link even if one exists (default: return the existing one)."),
@@ -13,8 +14,20 @@ export const createShareInput = z.object({
 const shareUrl = (baseUrl: string, token: string) => `${baseUrl}/share/${token}`;
 
 export async function createShareLink(ctx: Ctx, siteId: string, raw: unknown) {
+  // A share URL never expires: a connected app's 8-hour token must not get one (new or existing).
+  assertPermanentKey(ctx.auth, "create share links");
   const input = parse(createShareInput, raw);
   const site = await loadSite(ctx, siteId);
+  // The page is titled with the domain on this service's host: only for a domain the account proved.
+  if (!isVerified(site)) {
+    const rec = verifyRecord(site);
+    throw new ApiError(
+      403,
+      "domain_not_verified",
+      `Share links need a verified domain; ${site.domain} isn't verified yet.`,
+      `Put the snippet on https://${site.domain}/ (the homepage itself), or add DNS TXT ${rec.name} = "${rec.value}", then POST /v1/sites/${site.id}/verify (MCP verify_install).`,
+    );
+  }
   if (!input.new) {
     const existing = await ctx.env.DB.prepare(
       "SELECT token, created_at FROM share_links WHERE site_id = ? AND revoked_at IS NULL ORDER BY created_at LIMIT 1",
@@ -87,8 +100,10 @@ export async function shareData(env: Bindings, token: string, raw: unknown) {
     top("country"),
     top("device"),
   ]);
+  // A site whose domain isn't verified (any more: it changed) shows its numbers, never a name.
+  const verified = isVerified(site);
   return {
-    site: { domain: site.domain, name: site.name, timezone: site.timezone },
+    site: { domain: verified ? site.domain : null, name: verified ? site.name : null, timezone: site.timezone, verified },
     period: (stats as { period: unknown }).period,
     metrics: (stats as { metrics: unknown }).metrics,
     comparison: (stats as { comparison?: unknown }).comparison ?? null,
@@ -101,7 +116,8 @@ export async function shareData(env: Bindings, token: string, raw: unknown) {
   };
 }
 
-export async function shareSiteName(env: Bindings, token: string): Promise<string> {
+/** The domain the share page is titled with: null unless the site proved it. */
+export async function shareSiteDomain(env: Bindings, token: string): Promise<string | null> {
   const s = await siteForToken(env, token);
-  return s.name || s.domain;
+  return isVerified(s) ? s.domain : null;
 }

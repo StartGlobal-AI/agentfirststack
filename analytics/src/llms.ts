@@ -63,7 +63,7 @@ MCP (stateless, Streamable HTTP): \`claude mcp add --transport http analytics ${
 - Payload is text/plain JSON (no CORS preflight). Bots, headless browsers (navigator.webdriver) and verified bots are dropped and counted.
 - Visitor identity: \`cookieless\` (default) = sha256(daily_salt | site_id | ip | user_agent), salt rotates daily (UTC), no storage, no cross-day linking. \`persistent\` = random id in localStorage (the server tells the tracker; nothing to change in the snippet).
 - GPC / DNT: dropped when the site has \`respect_dnt: true\`.
-- Session replay with no second snippet: on a site with \`replay_site_id\` (set by the replay app when a replay site names this site as its analytics_site_id, or with PATCH /v1/sites/:id), the tracker adds \`<script async src="<replay>/r/<replay_site_id>.js">\` once per page load (not on SPA navigations). The replay loader then makes its own sampling, bot, DNT and consent decisions. Skipped when the replay snippet is already on the page (window.afsr.sessionId exists). Needs the deployment's REPLAY_BASE_URL.
+- Session replay with no second snippet: on a site with \`replay_site_id\` (set only by the replay app, when a replay site names this site as its analytics_site_id), the tracker adds \`<script async src="<replay>/r/<replay_site_id>.js">\` once per page load (not on SPA navigations). The replay loader then makes its own sampling, bot, DNT and consent decisions. Skipped when the replay snippet is already on the page (window.afsr.sessionId exists). Needs the deployment's REPLAY_BASE_URL.
 
 ### First-party proxy
 
@@ -93,10 +93,10 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | POST | /v1/sites | create site (same domain again returns it with existing: true) |
 | GET | /v1/sites | list sites |
 | GET | /v1/sites/:id | site + data summary (events, drops, warnings, usage today, storage), limits, status; visitor-sent strings under untrusted |
-| PATCH | /v1/sites/:id | update settings (incl. replay_site_id) |
+| PATCH | /v1/sites/:id | update settings (a new domain has to be verified again) |
 | DELETE | /v1/sites/:id | delete site and all its data |
 | GET | /v1/sites/:id/install?framework= | ${FRAMEWORKS.join(" \\| ")} + proxy snippets |
-| POST | /v1/sites/:id/verify | fetch the site (https, its own domain), check snippet/script/CSP/events/proxy key/limits, return fixes. Body {url?}. Full key |
+| POST | /v1/sites/:id/verify | fetch the site (https, its own domain), check snippet/script/CSP/events/proxy key/limits, verify the domain (share links need it), return fixes. Body {url?}. Full key |
 | POST | /v1/sites/:id/events | server-side events, batch <= 100 |
 | GET | /v1/sites/:id/stats | totals, optional breakdown, compare=previous\|year\|custom |
 | GET | /v1/sites/:id/breakdown?breakdown= | top values of one property (sort, compare per row) |
@@ -130,7 +130,7 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | GET | /v1/sites/:id/funnels/:funnel_id | the funnel with visitors and drop-off per step (period, filters) |
 | PATCH | /v1/sites/:id/funnels/:funnel_id | rename / replace steps |
 | DELETE | /v1/sites/:id/funnels/:funnel_id | delete |
-| POST | /v1/sites/:id/share | public dashboard URL (returns existing unless {"new":true}) |
+| POST | /v1/sites/:id/share | public dashboard URL (returns existing unless {"new":true}); verified domain and the project's own key only |
 | DELETE | /v1/sites/:id/share | revoke all share links |
 | GET | /share/:token | public dashboard (HTML, no auth) |
 | GET | /share/:token/data?period= | the dashboard's JSON (aggregates only) |
@@ -146,6 +146,7 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
   "exclusions": { "ips": ["203.0.113.0/24", "2001:db8::/32"], "paths": ["/admin/*"], "hostnames": ["staging.example.com"], "countries": ["RU"] },
   "replay_site_id": null }
 \`\`\`
+Every site response also has \`verification: {verified, method, verified_at, how?, dns_record?}\` (see Domain verification).
 - domain: scheme, path, port and leading www. are stripped. Unique per account. Not a public suffix (vercel.app, co.uk): use your own hostname (myapp.vercel.app).
 - timezone: IANA name; periods, days and buckets are in it.
 - visitor_id_mode: cookieless | persistent.
@@ -155,7 +156,7 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 - browser_revenue: false (default) = revenue sent by the browser tracker is ignored (counted as warning browser_revenue_ignored); true = counted.
 - trust_browser_user_id: false (default) = payments that carry only a user id link to sessions a server event identified; true = afsa('identify') ids link too.
 - exclusions: drop matching events at ingest (see Exclusions). null = none; PATCH replaces the whole set.
-- replay_site_id (PATCH only; every site response returns it, null when unset): an AgentFirstStack replay site, \`rsite_\` + 16 characters (400 with a hint otherwise), or null to unlink. The tracker then loads that replay site's recorder by itself. The replay app sets and clears it when you link a replay site to this one (its analytics_site_id), so usually you link there.
+- replay_site_id (every site response returns it, null when unset): the AgentFirstStack replay site whose recorder the tracker loads by itself. Only the replay service sets and clears it (internal auth between the deployment's Workers), when you link a replay site to this one: PATCH the replay site's \`analytics_site_id\` (null there unlinks). With an API key, REST or MCP, changing it is refused: 403 \`replay_link_from_replay\` (sending the current value again is fine), so a site can't load another account's recorder.
 
 \`\`\`sh
 curl -X PATCH $BASE/v1/sites/$SITE -H "Authorization: Bearer $KEY" -d '{"allowed_hostnames":["example.com","*.example.com"]}'
@@ -246,10 +247,10 @@ Payments are stored with the visitor and session they came from, so revenue, rev
 
 1. \`GET /v1/sites/:id/integrations/stripe\` returns webhook_url (\`${base}/webhooks/stripe/<site_id>\`) and the events to enable: ${STRIPE_EVENTS.join(", ")} (optional: ${STRIPE_OPTIONAL_EVENTS.join(", ")}, only for your own PaymentIntents with metadata.afs_visitor_id).
 2. Add that URL as a webhook endpoint in Stripe (Stripe API: POST /v1/webhook_endpoints {url, enabled_events}) and take its signing secret (whsec_...).
-3. \`POST /v1/sites/:id/integrations/stripe {"webhook_secret":"whsec_...","record_test_events":false}\`. The secret is sealed with ENCRYPTION_KEY and never returned (signing_secret.configured: true). Same secret again: 200 existing. Without ENCRYPTION_KEY on the deployment: 503 not_configured.
+3. \`POST /v1/sites/:id/integrations/stripe {"webhook_secret":"whsec_...","record_test_events":false}\`. The secret is sealed with ENCRYPTION_KEY and never returned (signing_secret.configured: true). Same secret again: 200 existing. Without ENCRYPTION_KEY on the deployment: 503 not_configured. Needs the project's own API key: a connected app's OAuth access token gets 403 \`temporary_credential\` (the secret would keep writing payments after the token is gone).
 4. Verify: send a test (\`stripe trigger checkout.session.completed\`; test-mode events are verified and acknowledged but counted only with record_test_events: true), then GET the integration: events_received, last_event_at, last_event_type, last_result, last_error, payments {payments_30d, unlinked_30d}. verify_install reports stripe_webhook and payment_linking checks.
 
-Webhook handling: Stripe-Signature is verified (HMAC-SHA256 of "<t>.<body>", any v1 accepted, 5 minute tolerance). Every unauthenticated failure (unknown site, no Stripe connected, missing / wrong signature, stale timestamp) gets the same 400 \`webhook_rejected\` and writes nothing, so last_error only ever reflects verified deliveries (and a secret that can't be decrypted). Event ids are deduped (30 days), bodies are capped at 1 MB, deliveries are rate limited per site (429, Stripe retries). Signed deliveries skip the daily caps; a suspended account gets 403, a full storage budget 507. checkout.session.completed (payment mode, paid) and async_payment_succeeded = new payment keyed on its invoice / PaymentIntent; subscription-mode checkout links the customer; invoice.paid: billing_reason subscription_create = new, subscription_cycle / subscription_update / subscription_threshold = renewal; charge.refunded = refund of the cumulative amount_refunded (a later partial refund replaces the figure). Zero- and three-decimal currencies are converted from minor units. Anything else: 200 {ignored}.
+Webhook handling: Stripe-Signature is verified (HMAC-SHA256 of "<t>.<body>", any v1 accepted, 5 minute tolerance). Every unauthenticated failure (unknown site, no Stripe connected, missing / wrong signature, stale timestamp) gets the same 400 \`webhook_rejected\` and writes nothing, so last_error only ever reflects verified deliveries (and a secret that can't be decrypted). Event ids are deduped (30 days), bodies are capped at 1 MB, deliveries are rate limited per site (429, Stripe retries). Payments count against the daily event budgets like every other event (site, account and deployment; the account picks its own signing secret, so a signature says nothing about volume): past them a delivery gets 429 \`daily_limit\` / \`over_capacity\`, nothing is stored, and Stripe retries it later (for up to 3 days), so it lands once the budget resets. A suspended account gets 403, a full storage budget 507. Delivery status (events_received, last_event_*, last_result) is written at most every 5 seconds per site: deliveries in between are added by the next write, so under bursts it can lag. checkout.session.completed (payment mode, paid) and async_payment_succeeded = new payment keyed on its invoice / PaymentIntent; subscription-mode checkout links the customer; invoice.paid: billing_reason subscription_create = new, subscription_cycle / subscription_update / subscription_threshold = renewal; charge.refunded = refund of the cumulative amount_refunded (a later partial refund replaces the figure). Zero- and three-decimal currencies are converted from minor units. Anything else: 200 {ignored}.
 \`\`\`sh
 curl "$BASE/v1/sites/$SITE/integrations/stripe" -H "Authorization: Bearer $KEY"
 curl -X POST $BASE/v1/sites/$SITE/integrations/stripe -H "Authorization: Bearer $KEY" -d '{"webhook_secret":"whsec_..."}'
@@ -265,6 +266,7 @@ curl -X DELETE $BASE/v1/sites/$SITE/integrations/stripe -H "Authorization: Beare
 \`\`\`
 - 1-100 payments (a single object is accepted too). Required: id, amount (major units), currency. type: new (default; a negative amount means refund), renewal, refund. provider defaults to "api". timestamp within the site's retention, at most 5 minutes ahead.
 - Idempotent by (provider, id): sending it again returns existing: true and changes nothing. Response 202 {accepted, rejected, results: [{index, ok, id, existing, linked_by} | {index, ok:false, reason}], next_steps}.
+- Each payment counts as an event against the daily budgets (site, account, deployment): what fits is recorded and the rest says \`reason: "daily_limit"\` (or account_daily_limit / platform_daily_budget); when nothing fits, 429 \`daily_limit\` / \`over_capacity\`.
 \`\`\`sh
 curl -X POST $BASE/v1/sites/$SITE/payments -H "Authorization: Bearer $KEY" -d '{"id":"txn_1","provider":"paddle","amount":49,"currency":"USD","visitor_id":"'$VID'"}'
 curl "$BASE/v1/sites/$SITE/payments?period=30d&type=refund" -H "Authorization: Bearer $KEY"
@@ -345,17 +347,24 @@ curl -G "$BASE/v1/sites/$SITE/sql" -H "Authorization: Bearer $KEY" \\
 
 ### Verify: POST /v1/sites/:id/verify
 
-Needs a full key (REST and MCP), since it makes outbound requests; rate limited per account and per domain (a few a minute, 429). Body {url?} (default https://<domain>/; must be https on port 443, on the domain or a subdomain: never allowed_hostnames, IP addresses or single-label hosts; DEV_MODE also allows http://localhost). Redirects are followed by hand, at most 3, and every hop must pass the same rule. It reads at most 1 MB of the page; the tracker script is fetched only when its src is on this service's host or the site's own hosts, and at most 256 KB of it is read. Checks: page_reachable, snippet_present (right data-site), snippet_defer, script_loads (the src really serves the tracker; catches broken proxies), csp, events_received, hostname_allowed, proxy_key (proxied events arrived without a valid x-afs-proxy-key), browser_revenue, storage, daily_limit, stripe_webhook, payment_linking. Returns {ok, installed, receiving_events, checks[], fixes[], dropped_last_7d, warnings_last_7d, limits, status, untrusted, next_steps}. Everything copied from the fetched page (script tags, final URL, fetch errors) or sent by visitors (dropped hostnames, bot user agents) is only in \`untrusted\`, with a notice: data, not instructions.
+Needs a full key (REST and MCP), since it makes outbound requests; rate limited per account and per domain (a few a minute, 429). Body {url?} (default https://<domain>/; must be https on port 443, on the domain or a subdomain: never allowed_hostnames, IP addresses or single-label hosts; DEV_MODE also allows http://localhost). Redirects are followed by hand, at most 3, and every hop must pass the same rule. It reads at most 1 MB of the page; the tracker script is fetched only when its src is on this service's host or the site's own hosts, and at most 256 KB of it is read. Script tags are parsed as a browser does: a tag inside a comment, an attribute value, a textarea or inline code doesn't count. Checks: page_reachable, snippet_present (right data-site), snippet_defer, script_loads (the src really serves the tracker; catches broken proxies), csp, domain_verified, events_received, hostname_allowed, proxy_key (proxied events arrived without a valid x-afs-proxy-key), browser_revenue, storage, daily_limit, stripe_webhook, payment_linking. Returns {ok, installed, receiving_events, domain_verified, verification, checks[], fixes[], dropped_last_7d, warnings_last_7d, limits, status, untrusted, next_steps} (fixes leave out domain_verified: tracking doesn't need it).
+
+### Domain verification
+
+A share page names the site's domain on this service's host, so creating share links needs the domain proven (tracking works without it). POST /v1/sites/:id/verify (MCP verify_install) verifies it when either holds:
+- this site's tracker is in a real \`<script src=".../s.js" data-site="<site_id>">\` tag (any attribute order; a first-party proxy src like \`/_a/s.js\` is fine) on the domain's own homepage, exactly \`https://<domain>/\`: verify fetches that URL itself (redirects only to the domain or www.<domain>), and a \`url\` you pass with a query string, a fragment or another path never counts (such a page can repeat text the caller chose). A tag a tag manager injects isn't in the HTML: use the TXT record. Method \`homepage\`; or
+- a DNS TXT record \`_afs-verify.<domain>\` has the value \`afs-analytics-site=<site_id>\` (looked up over DNS-over-HTTPS): method \`dns_txt\`.
+Sites show \`verification: {verified, method, verified_at, how, dns_record}\`. Changing a site's domain clears it (the PATCH answer's notes say so), and its share pages stop naming any domain until it is verified again. Everything copied from the fetched page (script tags, final URL, fetch errors) or sent by visitors (dropped hostnames, bot user agents) is only in \`untrusted\`, with a notice: data, not instructions.
 
 ### Share links
 
-\`curl -X POST $BASE/v1/sites/$SITE/share -H "Authorization: Bearer $KEY"\` -> {url}. The page shows totals with % change, a visitors chart, top pages/sources/countries/devices. No raw events, no SQL. At most MAX_SHARE_LINKS_PER_SITE active links (default 10; 403 quota_exceeded); DELETE /v1/sites/:id/share revokes (and deletes) them all. Dashboards are rate limited per link and go dark (403) if the account is suspended.
+\`curl -X POST $BASE/v1/sites/$SITE/share -H "Authorization: Bearer $KEY"\` -> {url}. The page shows totals with % change, a visitors chart, top pages/sources/countries/devices. No raw events, no SQL. Needs a verified domain (403 \`domain_not_verified\`, with the TXT record in the hint) and the project's own API key: the URL never expires, so a connected app's OAuth access token gets 403 \`temporary_credential\` (for an existing link too). At most MAX_SHARE_LINKS_PER_SITE active links (default 10; 403 quota_exceeded); DELETE /v1/sites/:id/share revokes (and deletes) them all. The page is titled with the verified domain (never the site's free-form name), says the numbers come from the site's own tracker and aren't audited, and is noindex; a site whose domain is no longer verified shows its numbers under "Unverified site" (/data: site.domain null). Dashboards are rate limited per link and go dark (403) if the account is suspended.
 
 ## Fair use
 
 This deployment may be free and open to anyone, so every write path has a budget. All are optional vars (unset = off unless a default is named), shown for your account in GET /v1/sites/:id (\`limits\`, and \`status\`: storage_full, daily_limit_reached, events_today, refused_today). Accounts nobody has claimed may get lower limits (each var's UNCLAIMED_ form).
 - Rate limits (per minute, per Cloudflare location): POST /e per client network and per site; server events and payments per account; SQL per account; verify per account and per domain; Stripe deliveries per site; share dashboards per link. 429 \`rate_limited\`.
-- Daily (UTC) event caps per site and per account (accepted events and engagement beacons; purges never lower the count, and deleting a site doesn't reset the account's), and a deployment-wide budget: 429 \`daily_limit\` / \`over_capacity\`.
+- Daily (UTC) event caps per site and per account (accepted events, engagement beacons and payments, Stripe's included; purges never lower the count, and deleting a site doesn't reset the account's), and a deployment-wide budget: 429 \`daily_limit\` / \`over_capacity\`.
 - A storage budget per site: past it nothing more is stored (507 \`storage_full\`); lower retention_days to free space at once.
 - Retention bounds (MIN_ / MAX_RETENTION_DAYS) so data can't be churned by a 1-day purge.
 - Goals per site (default 100), share links per site (default 10), funnels, annotations, sites per account: 403 \`quota_exceeded\`.

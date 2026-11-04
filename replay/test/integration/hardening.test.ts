@@ -6,12 +6,12 @@
  * tombstones, and a measurement of the DO's rows written.
  */
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { forgetStanding } from "@afs/shared";
+import { createApiKey, forgetStanding } from "@afs/shared";
 import { describe, expect, it } from "vitest";
 import type { Bindings } from "../../src/env";
 import { runPurge } from "../../src/service/purge";
 import { click, error, hide, meta, mousemove, page, snapshot } from "../fixtures/rrweb";
-import { call, E, hosted, markVerified, newSid, newSite, sendChunk, signup } from "./helpers";
+import { call, E, hosted, markVerified, newSid, newSite, sendChunk, signup, tool } from "./helpers";
 
 const DAY = 86_400_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -124,6 +124,97 @@ describe("C1: who may record into a site", () => {
       expect(b.json).toMatchObject({ domain_verified: true, verification: { method: "dns_txt" } });
     } finally {
       restore();
+    }
+  });
+
+  it("a url with a query string never proves the domain, even when the page repeats the loader (the ?s= exploit)", async () => {
+    const { key, site } = await newSite("victim.test", {}, undefined, { verified: false });
+    const tag = `<script defer src="http://replay.test/r/${site}.js"></script>`;
+    let raw = false;
+    const seen: string[] = [];
+    const restore = stubFetch((u) => {
+      seen.push(u);
+      const url = new URL(u);
+      if (url.hostname === "cloudflare-dns.com") return Response.json({ Status: 0, Answer: [] });
+      if (url.hostname !== "victim.test") return null;
+      const q = url.searchParams.get("s") ?? "";
+      const esc = q.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+      // a WordPress-style search page: the query in the search box, an inline script and a comment,
+      // or (worst case) as raw HTML
+      return new Response(
+        `<html><head><script>var search = ${JSON.stringify(q)};</script></head><body><input name="s" value="${esc}">` +
+          `<!-- results for ${q.replace(/-->/g, "")} -->${raw ? q : ""}</body></html>`,
+      );
+    });
+    try {
+      const a = await call("POST", `/v1/sites/${site}/verify`, { key, body: { url: `https://victim.test/?s=/r/${site}.js` } });
+      expect(a.json.domain_verified).toBe(false);
+      expect(a.json.checks.find((c: { id: string }) => c.id === "snippet_present")).toMatchObject({
+        ok: false,
+        detail: expect.stringContaining("not in a <script src> tag"),
+      });
+      expect(a.json.untrusted.found_scripts).toEqual([expect.objectContaining({ site, inline: true })]);
+      expect(a.json.checks.find((c: { id: string }) => c.id === "domain_verified").detail).toContain("only that exact URL counts");
+      // the homepage itself was fetched to decide, without the query
+      expect(seen).toContain("https://victim.test/");
+      // the query echoed as raw HTML is a real tag on that page, but that page isn't the homepage
+      raw = true;
+      for (const url of [`https://victim.test/?s=${encodeURIComponent(tag)}`, `https://victim.test/?s=${encodeURIComponent(tag)}#top`]) {
+        const b = await call("POST", `/v1/sites/${site}/verify`, { key, body: { url } });
+        expect(b.json.checks.find((c: { id: string }) => c.id === "snippet_present").ok, url).toBe(true);
+        expect(b.json.domain_verified, url).toBe(false);
+      }
+    } finally {
+      restore();
+    }
+    // so none of what the exploit was for: no share link, and the loader keeps masking strictly
+    const link = await call("POST", `/v1/sites/${site}/links`, { key, body: { session_id: newSid() } });
+    expect(link.json.error.code).toBe("domain_not_verified");
+    expect((await call("GET", `/v1/sites/${site}`, { key })).json.site.verification.verified).toBe(false);
+  });
+
+  it("on the homepage only a real <script src> tag counts: not inline loader code, a comment or an attribute", async () => {
+    const { key, site } = await newSite("inline.test", {}, undefined, { verified: false });
+    const A = "site_0123456789abcdef";
+    let body = "";
+    const restore = stubFetch((u) => {
+      if (u.startsWith("https://cloudflare-dns.com/")) return Response.json({ Status: 0, Answer: [] });
+      return u === "https://inline.test/" ? new Response(`<html><head>${body}</head></html>`) : null;
+    });
+    try {
+      for (const b of [
+        // a GTM-style loader names the URL only in code
+        `<script>(function(d){var s=d.createElement("script");s.src="http://replay.test/r/${site}.js";d.head.appendChild(s)})(document)</script>`,
+        `<!-- <script src="http://replay.test/r/${site}.js"></script> -->`,
+        `<meta name="x" content='<script src="http://replay.test/r/${site}.js"></script>'>`,
+        `<noscript><script src="http://replay.test/r/${site}.js"></script></noscript>`,
+      ]) {
+        body = b;
+        const r = await call("POST", `/v1/sites/${site}/verify`, { key, body: {} });
+        expect(r.json.domain_verified, b).toBe(false);
+      }
+      body = `<script async src="http://replay.test/r/${site}.js"></script>`;
+      const ok = await call("POST", `/v1/sites/${site}/verify`, { key, body: {} });
+      expect(ok.json.verification).toMatchObject({ verified: true, method: "homepage" });
+    } finally {
+      restore();
+    }
+    // the linked analytics tracker follows the same rule
+    const t = await newSite("inline-a.test", {}, undefined, { verified: false });
+    await E.DB.prepare("UPDATE sites SET analytics_site_id = ? WHERE id = ?").bind(A, t.site).run();
+    const tracker = `<script src="/_a/s.js" data-site="${A}"></script>`;
+    body = `<!-- ${tracker} --><script>var t = '${tracker.replace("</script>", "")}';</script>`;
+    const restore2 = stubFetch((u) => {
+      if (u.startsWith("https://cloudflare-dns.com/")) return Response.json({ Status: 0, Answer: [] });
+      return u === "https://inline-a.test/" ? new Response(`<html><head>${body}</head></html>`) : null;
+    });
+    try {
+      expect((await call("POST", `/v1/sites/${t.site}/verify`, { key: t.key, body: {} })).json.domain_verified).toBe(false);
+      body = tracker;
+      const ok = await call("POST", `/v1/sites/${t.site}/verify`, { key: t.key, body: {} });
+      expect(ok.json.verification).toMatchObject({ verified: true, method: "homepage_analytics" });
+    } finally {
+      restore2();
     }
   });
 
@@ -390,6 +481,25 @@ describe("share links, verify, deletion and storage details (H1, M3, M4, LOW)", 
     expect(after.json.session).toMatchObject({ site_domain: null, site_verified: false });
     expect(after.json.chunks).toEqual([]);
     expect((await call("GET", `${path}/chunks/0`)).status).toBe(404);
+  });
+
+  it("a connected app's OAuth access token can't create share links (REST and MCP); the project's key can", async () => {
+    const { key, account, site } = await newSite("oauth-play.test");
+    const sid = newSid();
+    const T = Date.now() - 60_000;
+    await sendChunk(site, sid, 0, [snapshot(T), page(T, 1, "/", { h: "oauth-play.test" })], { origin: "https://oauth-play.test" });
+    // what the platform's OAuth server issues: an API key that expires
+    const token = (await createApiKey(E.AUTH_DB ?? E.DB, account, { keyPrefix: "afs", expiresAt: Date.now() + 3_600_000 })).key;
+    expect((await call("GET", `/v1/sites/${site}/sessions`, { key: token })).status).toBe(200);
+    const r = await call("POST", `/v1/sites/${site}/links`, { key: token, body: { session_id: sid } });
+    expect(r.status).toBe(403);
+    expect(r.json.error.code).toBe("temporary_credential");
+    const m = await tool(token, "create_replay_link", { site_id: site, session_id: sid });
+    expect(m).toMatchObject({ isError: true, data: { error: { code: "temporary_credential" } } });
+    const made = await call("POST", `/v1/sites/${site}/links`, { key, body: { session_id: sid } });
+    expect(made.status).toBe(201);
+    // revoking is fine with a token
+    expect((await call("DELETE", `/v1/sites/${site}/links/${made.json.link.id}`, { key: token })).json.revoked).toBe(made.json.link.id);
   });
 
   it("verify fetches only https pages on the site's own domain, and is rate-limited per account", async () => {

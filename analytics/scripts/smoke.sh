@@ -162,13 +162,19 @@ check "sql: printf with a literal format still runs" '.rows[0].r != null' "$(sql
 echo "- verify, share, keys"
 VER=$(api POST "/v1/sites/$SITE/verify" "{\"url\":\"$BASE/llms.txt\"}")
 check "verify reports events received + snippet fix" '.receiving_events == true and (.checks | map(.id) | index("snippet_present") != null) and (.fixes | length > 0) and (.untrusted.notice | contains("UNTRUSTED")) and (has("found_scripts_untrusted") | not)' "$VER"
+check "verify reports the domain as not verified (no tracker on its homepage)" '.domain_verified == false and .verification.dns_record.value == "afs-analytics-site=\(.site_id)"' "$VER"
 SH=$(api POST "/v1/sites/$SITE/share" '{}')
-TOKEN=$(printf '%s' "$SH" | jq -r .token)
-check "share link created" '.url | contains("/share/shr_")' "$SH"
-HTML=$(curl -sS "$BASE/share/$TOKEN")
-check "share page is HTML" '. == true' "$(printf '%s' "$HTML" | grep -q '<svg id="chart"' && echo true || echo false)"
-SD=$(curl -sS "$BASE/share/$TOKEN/data?period=7d")
-check "share data: visitors 6, top countries" '.metrics.visitors == 6 and (.top_countries | length) == 5' "$SD"
+if [ "$(printf '%s' "$SH" | jq -r '.error.code // empty')" = "domain_not_verified" ]; then
+  # A local run can't prove a domain (no homepage with the tracker, no DNS): the refusal is the check.
+  check "share links need a verified domain (403 with the TXT record)" '.error.hint | contains("afs-analytics-site=")' "$SH"
+else
+  TOKEN=$(printf '%s' "$SH" | jq -r .token)
+  check "share link created" '.url | contains("/share/shr_")' "$SH"
+  HTML=$(curl -sS "$BASE/share/$TOKEN")
+  check "share page is HTML" '. == true' "$(printf '%s' "$HTML" | grep -q '<svg id="chart"' && echo true || echo false)"
+  SD=$(curl -sS "$BASE/share/$TOKEN/data?period=7d")
+  check "share data: visitors 6, top countries" '.metrics.visitors == 6 and (.top_countries | length) == 5' "$SD"
+fi
 RK=$(api POST /v1/keys '{"name":"ro","scope":"read"}' | jq -r .api_key)
 RO=$(curl -sS -X POST "$BASE/v1/sites" -H "Authorization: Bearer $RK" -d '{"domain":"ro.example.com"}')
 check "read key cannot create sites" '.error.code == "forbidden"' "$RO"
@@ -269,7 +275,8 @@ else
   check "a bad signature is refused" '.error.code == "webhook_rejected"' "$BADSIG"
   check "an unknown site gets the identical answer" ". == $BADSIG" "$(curl -sS -X POST "$BASE/webhooks/stripe/site_0000000000000000" -H "stripe-signature: t=$T,v1=00" -d "$EVT")"
   check "an unauthenticated failure writes no last_error" '.integration.last_error == null' "$(api GET "/v1/sites/$S3/integrations/stripe")"
-  check "stripe status shows deliveries" '.integration.events_received >= 2' "$(api GET "/v1/sites/$S3/integrations/stripe")"
+  # status is written at most every 5 s per site, so the deduped retry right after may not be counted yet
+  check "stripe status shows deliveries" '.integration.events_received >= 1' "$(api GET "/v1/sites/$S3/integrations/stripe")"
   check "disconnect stripe" '.disconnected == true' "$(api DELETE "/v1/sites/$S3/integrations/stripe")"
 fi
 

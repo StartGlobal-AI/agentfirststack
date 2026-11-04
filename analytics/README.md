@@ -134,8 +134,9 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
   (the `Sec-GPC` / `DNT` headers count too)
 - `data-api` overrides the collect URL; `localStorage.afsa_ignore = 1` excludes your own visits
   (no cookies; the only other storage key is `afsa_vid`, in persistent mode)
-- session replay with no second snippet: when the site has `replay_site_id` (the replay app sets
-  it when one of its sites links this one as `analytics_site_id`) and the deployment has
+- session replay with no second snippet: when the site has `replay_site_id` (only the replay app
+  sets it, over internal auth, when one of its sites links this one as `analytics_site_id`; API
+  keys get `403 replay_link_from_replay`) and the deployment has
   `REPLAY_BASE_URL`, every `/e` answer for the site carries `r` (the replay loader URL, also on
   drops and daily-budget refusals) and the tracker adds `<script async src=r>` once per page load,
   not on SPA navigations. Only `https://` URLs (`http://localhost` and `127.0.0.1` for local dev),
@@ -155,10 +156,10 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
 | POST | `/signup` | account + key (no auth); `/me`, `/keys` from `@afs/shared` |
 | POST | `/sites` | `{ domain, name?, timezone?, visitor_id_mode?, retention_days?, allowed_hostnames?, respect_dnt?, browser_revenue?, trust_browser_user_id? }` -> site + install snippets + next_steps. Same domain again returns the existing site (`200`, `existing: true`) |
 | GET | `/sites`, `/sites/:id` | `/sites/:id` adds a data summary (event counts, drops by reason, `warnings_last_7d`, `usage_today`, `database_bytes`; visitor-sent strings such as bot user agents, dropped hostnames and the last event only under `untrusted`), `limits` and `status` |
-| PATCH | `/sites/:id` | settings (any subset, including domain), and `replay_site_id` (`rsite_` + 16 characters, or `null`; 400 with a hint otherwise): the tracker then loads that replay site's recorder. Every site response returns `replay_site_id` (null when unset) |
+| PATCH | `/sites/:id` | settings (any subset, including domain; a new domain clears its verification). `replay_site_id` (`rsite_` + 16 characters, or `null`) is accepted only from the replay service (internal auth): with an API key, REST or MCP, changing it is `403 replay_link_from_replay` (link from the replay site's `analytics_site_id`). Every site response returns `replay_site_id` (null when unset) and `verification` |
 | DELETE | `/sites/:id` | deletes site, goals, share links and the DO's data |
 | GET | `/sites/:id/install?framework=html\|nextjs\|astro\|react\|wordpress\|gtm\|tags` | file + code, tracker API, proxy snippets, server-side curl |
-| POST | `/sites/:id/verify` | `{url?}`: fetches the page, checks the snippet + site id, that the script URL serves the tracker (catches broken proxies), CSP, that events arrived, hostname rejections, proxied events without the proxy key, ignored browser revenue, storage and daily limits; returns `checks`, `fixes`, `limits`, `status`, `untrusted` (page-copied and visitor-sent strings), `next_steps`. Full key only, rate limited per account and per domain. Fetches only https on port 443 on the domain or a subdomain (never `allowed_hostnames`, IP literals or single-label hosts); redirects: at most 3, each hop under the same rule; reads at most 1 MB of the page; fetches the script (at most 256 KB) only from this deployment's host or the site's own hosts |
+| POST | `/sites/:id/verify` | `{url?}`: fetches the page, checks the snippet + site id, that the script URL serves the tracker (catches broken proxies), CSP, that events arrived, hostname rejections, proxied events without the proxy key, ignored browser revenue, storage and daily limits, and verifies the domain (the tracker in a parsed `<script src>` tag on exactly `https://<domain>/`, or DNS TXT `_afs-verify.<domain>` = `afs-analytics-site=<id>`; share links need it); returns `checks`, `fixes`, `domain_verified`, `verification`, `limits`, `status`, `untrusted` (page-copied and visitor-sent strings), `next_steps`. Full key only, rate limited per account and per domain. Fetches only https on port 443 on the domain or a subdomain (never `allowed_hostnames`, IP literals or single-label hosts); redirects: at most 3, each hop under the same rule; reads at most 1 MB of the page; fetches the script (at most 256 KB) only from this deployment's host or the site's own hosts |
 | POST | `/sites/:id/events` | server-side ingestion, batch up to 100 (see below) |
 | GET | `/sites/:id/stats` | aggregate metrics, optional `breakdown`, `compare=previous\|year\|custom` |
 | GET | `/sites/:id/breakdown?breakdown=` | top values of one property; `sort`, comparison per row |
@@ -172,13 +173,13 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
 | GET | `/sites/:id/visitors`, `/sites/:id/visitors/:visitor` | visitor list (generated names, user_id, location, device, source, spent, last seen) and one visitor's timeline |
 | GET | `/sites/:id/sessions/:session_id` | one session and its events |
 | GET | `/sites/:id/journeys` | visitors who completed a goal (or a first purchase): source, time, visits, touchpoints |
-| GET/POST/DELETE | `/sites/:id/integrations/stripe` | webhook URL + status / connect `{webhook_secret}` / disconnect |
+| GET/POST/DELETE | `/sites/:id/integrations/stripe` | webhook URL + status / connect `{webhook_secret}` (the project's own key: an OAuth access token gets `403 temporary_credential`) / disconnect |
 | POST | `/webhooks/stripe/:site_id` | Stripe webhook (public; `Stripe-Signature` verified) |
 | POST/GET/DELETE | `/sites/:id/payments[/:payment_id]` | payments from any provider, idempotent by (provider, id) |
 | GET | `/sites/:id/exclusions` | rules, drops, `your_ip`, dry run `?ip=&url=&country=` |
 | POST/GET/PATCH/DELETE | `/sites/:id/annotations[/:annotation_id]` | dated notes; automatic traffic spikes |
 | POST/GET/PATCH/DELETE | `/sites/:id/funnels[/:funnel_id]` | saved funnels; GET one = drop-off per step |
-| POST | `/sites/:id/share` | public read-only dashboard URL (returns the existing link unless `{"new": true}`; at most `MAX_SHARE_LINKS_PER_SITE` active) |
+| POST | `/sites/:id/share` | public read-only dashboard URL (returns the existing link unless `{"new": true}`; at most `MAX_SHARE_LINKS_PER_SITE` active). Needs a verified domain (`403 domain_not_verified`) and the project's own key (`403 temporary_credential` for an OAuth access token: the URL never expires). The page names the verified domain, never the site's name, says the numbers come from the site's own tracker, and is `noindex`; a site no longer verified shows "Unverified site" |
 | DELETE | `/sites/:id/share` | revoke (and delete) the site's share links |
 
 Public: `GET /s.js`, `POST /e` (both under any prefix), `GET /share/:token`,
@@ -301,7 +302,10 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   counted only with `record_test_events`. Every unauthenticated failure (unknown site, no Stripe
   connected, missing or wrong signature, stale timestamp) gets one identical `400 webhook_rejected`
   and writes nothing, so nobody can tell which sites use Stripe or plant a misleading `last_error`;
-  deliveries are rate limited per site; signed ones skip the daily caps. invoice `subscription_create` = new, `subscription_cycle`
+  deliveries are rate limited per site and, like every payment, count against the daily event
+  budgets (the account picks its own signing secret): past them `429` and Stripe retries later.
+  The delivery status row is written at most every 5 s per site (and isolate); deliveries in
+  between are added by the next write. invoice `subscription_create` = new, `subscription_cycle`
   / `subscription_update` / `subscription_threshold` = renewal; `charge.refunded` sets the
   cumulative refunded amount. Status: `events_received`, `last_result`, `last_error`, unlinked
   payments; verify reports `stripe_webhook` and `payment_linking`.
@@ -359,15 +363,16 @@ that apply (`limits`) and whether the site is refusing events now (`status`). Co
   payments per account; SQL per account; verify per account and per domain; Stripe deliveries per
   site; share dashboards per link. `429 rate_limited`. A missing binding is no limit; a failing one
   fails open.
-- **Daily caps** (UTC): the site's DO counts accepted events and engagement beacons in its
+- **Daily caps** (UTC): the site's DO counts accepted events, engagement beacons and payments in its
   `usage` table (purges and deletes never lower it). `MAX_EVENTS_PER_SITE_PER_DAY` is checked there.
   For `MAX_EVENTS_PER_ACCOUNT_PER_DAY` and `DAILY_EVENT_BUDGET` the DO reports its count to D1
   (`usage_daily`, absolute and idempotent; `usage_global`, by delta) at most once a minute or per 1%
   of the cap (at most 1,000 events) and reads back the account's and the platform's totals in the
   same batch, so the cost is one small D1 batch (2 rows written, about as many rows read as the
   account has sites) per active site per minute at most, and nothing when neither var is set. A
-  deleted site's count stays in the account's total for the day. Signed Stripe deliveries are
-  exempt. `429 daily_limit` / `over_capacity`.
+  deleted site's count stays in the account's total for the day. Payments (the API and signed
+  Stripe deliveries alike) are held to all three; a batch records what fits. `429 daily_limit` /
+  `over_capacity`.
 - **Storage budget**: once the DO's database (`ctx.storage.sql.databaseSize`) passes
   `MAX_SITE_STORAGE_MB`, events and payments are refused (`507 storage_full`) and get_site / verify
   say so. Lowering `retention_days` purges at once and frees it.

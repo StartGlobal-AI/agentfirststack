@@ -1,4 +1,4 @@
-import { ApiError, decryptSecret, encryptSecret, newId, notFound, parse, sha256Hex } from "@afs/shared";
+import { ApiError, assertPermanentKey, decryptSecret, encryptSecret, newId, notFound, parse, sha256Hex } from "@afs/shared";
 import { allow, enforce, limitVars } from "../lib/limits";
 import { z } from "zod";
 import type { Bindings } from "../env";
@@ -8,6 +8,7 @@ import { PERIODS } from "../lib/time";
 import type { PaymentInput } from "../lib/types";
 import { SESSION_ID_RE, VISITOR_ID_RE } from "../lib/visitor";
 import { type Ctx, type PaymentsSummary, type SiteRow, SITE_ID_RE, callSite, loadSite } from "./context";
+import { refusalError } from "./ingest";
 
 /**
  * Revenue attribution. Two ways in, one ledger (the site's Durable Object, do/payments.ts):
@@ -148,6 +149,8 @@ export async function getStripeIntegration(ctx: Ctx, siteId: string) {
 }
 
 export async function connectStripe(ctx: Ctx, siteId: string, raw: unknown) {
+  // The signing secret keeps writing payments into the site after a connected app's token is gone.
+  assertPermanentKey(ctx.auth, "connect Stripe");
   const input = parse(connectStripeInput, raw);
   const key = requireEncryptionKey(ctx.env);
   const site = await loadSite(ctx, siteId);
@@ -201,6 +204,34 @@ export async function disconnectStripe(ctx: Ctx, siteId: string) {
 }
 
 // ------------------------------------------------------------------ webhook (public, signed)
+
+/**
+ * Delivery status (events_received, last_event_*, last_result) is written to the site's
+ * integrations row at most once per STATUS_EVERY_MS per site and isolate: a burst of signed
+ * deliveries costs one D1 write every few seconds, not one each. Deliveries in between are counted
+ * here and added by the next write (counts held by an isolate that goes away are lost, so
+ * events_received is approximate under bursts).
+ */
+export const STATUS_EVERY_MS = 5_000;
+const statusPending = new Map<string, { at: number; count: number }>();
+
+/** How many deliveries to add to events_received now, or null to skip this write. */
+function takeStatusWrite(integrationId: string, now: number): number | null {
+  const cur = statusPending.get(integrationId) ?? { at: 0, count: 0 };
+  cur.count++;
+  if (now - cur.at < STATUS_EVERY_MS) {
+    statusPending.set(integrationId, cur);
+    return null;
+  }
+  if (!statusPending.has(integrationId)) while (statusPending.size >= 10_000) statusPending.delete(statusPending.keys().next().value!);
+  statusPending.set(integrationId, { at: now, count: 0 });
+  return cur.count;
+}
+
+/** Tests: let the next delivery of every site write its status (as if STATUS_EVERY_MS had passed). */
+export function expireStatusThrottle(): void {
+  for (const v of statusPending.values()) v.at = 0;
+}
 
 export interface WebhookResult {
   status: 200 | 400 | 413 | 429 | 503;
@@ -270,15 +301,19 @@ export async function stripeWebhook(
   }
   const action = normalizeStripeEvent(event);
   const ev = event as { type?: string; livemode?: boolean };
-  const mark = (result: string) =>
+  const mark = (result: string) => {
+    const n = takeStatusWrite(row.id, now);
+    if (n === null) return;
     status(
-      "UPDATE integrations SET events_received = events_received + 1, last_event_at = ?, last_event_type = ?, last_event_livemode = ?, last_result = ?, last_error = NULL, updated_at = ? WHERE id = ?",
+      "UPDATE integrations SET events_received = events_received + ?, last_event_at = ?, last_event_type = ?, last_event_livemode = ?, last_result = ?, last_error = NULL, updated_at = ? WHERE id = ?",
+      n,
       now,
       String(ev.type ?? "").slice(0, 100),
       ev.livemode === true ? 1 : 0,
       result.slice(0, 200),
       now,
     );
+  };
   if (action.action === "ignore") {
     mark(`ignored: ${action.reason}`);
     return { status: 200, body: { received: true, ignored: action.reason } };
@@ -289,8 +324,13 @@ export async function stripeWebhook(
     return { status: 200, body: { received: true, ignored: "test_mode" } };
   }
   const record: PaymentInput = { ...rec, customer: rec.customer ? await hashCustomer(site.id, "stripe", rec.customer) : null };
-  // Signed provider events skip the daily caps (revenue matters most); suspension and storage still apply.
-  const res = await callSite(env, site, (s) => s.ingestPayments([record], { vars: limitVars(env), exempt: true }));
+  // Signed or not, a payment counts against the daily event budgets: the account picked the secret.
+  const res = await callSite(env, site, (s) => s.ingestPayments([record], { vars: limitVars(env) }));
+  if (res.refused) {
+    // 429: Stripe retries the delivery for days, so the payment is recorded once the budget resets.
+    mark(`refused: ${res.refused} (Stripe retries the delivery)`);
+    return { status: 429, body: refusalError(env, res.refused).toJSON() };
+  }
   const out = res.results[0]!;
   mark(
     out.duplicate_event
@@ -384,7 +424,11 @@ export async function recordPayments(ctx: Ctx, siteId: string, raw: unknown) {
     }),
   );
   const valid = prepared.filter((x): x is PaymentInput => typeof x !== "string");
-  const res = valid.length ? await callSite(ctx.env, site, (s) => s.ingestPayments(valid, { vars: limitVars(ctx.env) })) : { results: [] };
+  const res = valid.length
+    ? await callSite(ctx.env, site, (s) => s.ingestPayments(valid, { vars: limitVars(ctx.env) }))
+    : { results: [], refused: undefined };
+  // Every payment refused by one daily budget (and none rejected for its own reason): that error.
+  if (res.refused && valid.length === prepared.length) throw refusalError(ctx.env, res.refused);
   let vi = 0;
   const results = prepared.map((p, index) => (typeof p === "string" ? { index, ok: false, reason: p } : { index, ...res.results[vi++]! }));
   const accepted = results.filter((r) => r.ok).length;

@@ -1,4 +1,15 @@
-import { accountStanding, ApiError, badRequest, newId, notFound, parse, randomString, sha256Hex, type Standing } from "@afs/shared";
+import {
+  accountStanding,
+  ApiError,
+  assertPermanentKey,
+  badRequest,
+  newId,
+  notFound,
+  parse,
+  randomString,
+  sha256Hex,
+  type Standing,
+} from "@afs/shared";
 import { chunkKey } from "../do/engine";
 import { type Bindings, isDev } from "../env";
 import { cap, DEFAULTS } from "../lib/limits";
@@ -39,6 +50,8 @@ const linkJson = (l: LinkRow) => ({
 });
 
 export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
+  // A link works for up to 30 days; a connected app's 8-hour token must not leave one behind.
+  assertPermanentKey(ctx.auth, "create share links");
   const q = parse(createLinkInput, raw);
   const site = await loadSite(ctx, siteId);
   if (!SESSION_ID_RE.test(q.session_id)) throw badRequest("session_id must be an rs_... id.", "Take it from search_sessions.");

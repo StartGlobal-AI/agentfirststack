@@ -8,6 +8,7 @@ import type { Ctx } from "../service/context";
 export const ctxOf = (c: Context<AppEnv>): Ctx => ({
   env: c.env,
   accountId: c.var.auth.accountId,
+  auth: c.var.auth,
   baseUrl: publicBaseUrl(c),
   callerIp: c.req.header("cf-connecting-ip") ?? null,
 });

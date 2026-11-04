@@ -162,7 +162,7 @@ export function verificationJson(s: SiteRow) {
           until_verified:
             "Trial quota: a few sessions per day, strict masking whatever the settings, no analytics forwarding, no share links.",
           how: [
-            `Put the snippet${s.analytics_site_id ? ` (or the analytics tracker for ${s.analytics_site_id})` : ""} on https://${s.domain}/ (the homepage, served over https), then POST /v1/sites/${s.id}/verify (MCP verify_install).`,
+            `Put the snippet${s.analytics_site_id ? ` (or the analytics tracker for ${s.analytics_site_id})` : ""} as a <script src> tag on https://${s.domain}/ (the homepage itself, over https; not inline code), then POST /v1/sites/${s.id}/verify (MCP verify_install).`,
             `Or add a DNS TXT record ${verifyRecord(s).name} = "${verifyRecord(s).value}", then POST /v1/sites/${s.id}/verify.`,
           ],
           dns_record: verifyRecord(s),

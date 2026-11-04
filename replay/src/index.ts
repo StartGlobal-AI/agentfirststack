@@ -39,7 +39,7 @@ app.all("/mcp", (c) =>
     version: VERSION,
     instructions: MCP_INSTRUCTIONS,
     register: (t, auth) =>
-      registerTools(t, { env: c.env, accountId: auth.accountId, baseUrl: publicBaseUrl(c), waitUntil: waitUntilOf(c) }),
+      registerTools(t, { env: c.env, accountId: auth.accountId, auth, baseUrl: publicBaseUrl(c), waitUntil: waitUntilOf(c) }),
   }),
 );
 

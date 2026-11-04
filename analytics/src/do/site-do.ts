@@ -12,10 +12,12 @@ import type { SqlValue } from "../lib/query";
 import type { Breakdown } from "../lib/filters";
 import { type IngestCaps, type LimitVars, effectiveRetention, ingestCaps, limitVars, needsAggregate } from "../lib/limits";
 import type {
+  DoError,
   EnrichedEvent,
   FunnelRequest,
   IngestResponse,
   PaymentInput,
+  PaymentOutcome,
   PeriodParams,
   SiteSettings,
   StatsRequest,
@@ -43,8 +45,6 @@ const PAYMENT_BYTES = 256;
 /** How the Worker asks for ingest: the limit vars of its env (so tests can change them per call). */
 export interface IngestPolicy {
   vars?: LimitVars;
-  /** signed provider webhooks (Stripe): not held to the daily caps; storage and suspension still apply */
-  exempt?: boolean;
 }
 
 const CLAIMED: Standing = { suspended: false, claimed: true };
@@ -254,11 +254,11 @@ export class SiteDO extends DurableObject<Bindings> {
       };
     const vars = policy.vars ?? limitVars(this.env);
     const caps = ingestCaps(vars, standing);
-    const aggregate = needsAggregate(caps) && !!accountId && !policy.exempt;
+    const aggregate = needsAggregate(caps) && !!accountId;
     const others = aggregate ? await this.othersToday(s.id, accountId!) : { account: 0, platform: 0 };
     const res = engine.ingest(this.db, events, Date.now(), {
       dev: vars.DEV_MODE === "true",
-      caps: policy.exempt ? undefined : { siteDaily: caps.siteDaily, accountDaily: caps.accountDaily, platformDaily: caps.platformDaily },
+      caps: { siteDaily: caps.siteDaily, accountDaily: caps.accountDaily, platformDaily: caps.platformDaily },
       accountOthers: others.account,
       platformOthers: others.platform,
       storageFull: this.storageFull(caps),
@@ -331,10 +331,20 @@ export class SiteDO extends DurableObject<Bindings> {
 
   // ---------------------------------------------------------------- payments
 
-  async ingestPayments(records: PaymentInput[], policy: IngestPolicy = {}) {
+  /**
+   * Payments, from the API or a signed Stripe webhook, count as events: against the site's daily
+   * cap and the account's and platform's daily totals, like every other write (an account chooses
+   * its own webhook secret, so a signature proves nothing about volume). What fits is recorded, the
+   * rest is refused with the cap's reason; `refused` = every payment was (a 429 for the caller, and
+   * Stripe retries later).
+   */
+  async ingestPayments(
+    records: PaymentInput[],
+    policy: IngestPolicy = {},
+  ): Promise<{ results: PaymentOutcome[]; refused?: engine.BudgetReason } | DoError> {
     const s = this.settingsOrNull();
     if (!s) return NOT_CONFIGURED;
-    const { standing } = await this.standingOf(s);
+    const { accountId, standing } = await this.standingOf(s);
     if (standing.suspended) return err("account_suspended", "This account has been suspended; its data is not recorded.");
     const caps = ingestCaps(policy.vars ?? limitVars(this.env), standing);
     if (this.storageFull(caps))
@@ -343,13 +353,31 @@ export class SiteDO extends DurableObject<Bindings> {
         "This site's storage budget is used up; payments are not recorded.",
         "Lower retention_days or delete data.",
       );
-    const day = utcDay(Date.now());
-    if (!policy.exempt && engine.usageOn(this.db, day).events >= caps.siteDaily)
-      return err("daily_limit", "This site reached its daily event limit; payments are refused until 00:00 UTC.");
-    const results = payments.ingestPayments(this.db, records, Date.now(), { trustBrowserUserId: !!s.trust_browser_user_id });
+    const aggregate = needsAggregate(caps) && !!accountId;
+    const others = aggregate ? await this.othersToday(s.id, accountId!) : { account: 0, platform: 0 };
+    const now = Date.now();
+    const day = utcDay(now);
+    const used = engine.usageOn(this.db, day).events;
+    // Each payment records at most one row: take as many as the tightest cap leaves room for.
+    const room = Math.max(
+      0,
+      Math.min(caps.siteDaily - used, caps.accountDaily - others.account - used, caps.platformDaily - others.platform - used),
+    );
+    const fit = room >= records.length ? records : records.slice(0, room);
+    const reason =
+      fit.length < records.length
+        ? engine.capRefusal({ caps, accountOthers: others.account, platformOthers: others.platform }, used + fit.length)
+        : null;
+    const results: PaymentOutcome[] = fit.length
+      ? payments.ingestPayments(this.db, fit, now, { trustBrowserUserId: !!s.trust_browser_user_id })
+      : [];
+    for (let i = fit.length; i < records.length; i++) results.push({ ok: false, reason: reason ?? "daily_limit" });
     const added = results.filter((r) => r.ok && r.existing === false).length;
     engine.addUsage(this.db, day, { events: added, bytes: added * PAYMENT_BYTES });
-    return { results };
+    this.pendingRefused += records.length - fit.length;
+    this.writeDrops();
+    if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
+    return fit.length ? { results } : { results, refused: reason ?? "daily_limit" };
   }
 
   listPayments(q: PeriodParams & { type?: string; limit: number; offset: number }) {

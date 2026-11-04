@@ -1,4 +1,4 @@
-import { ApiError, notFound } from "@afs/shared";
+import { type AuthContext, ApiError, notFound } from "@afs/shared";
 import type { Bindings } from "../env";
 import { SITE_ID_RE } from "../lib/protocol";
 
@@ -6,6 +6,8 @@ import { SITE_ID_RE } from "../lib/protocol";
 export interface Ctx {
   env: Bindings;
   accountId: string;
+  /** The caller's credential (an API key, an OAuth access token, or internal auth). */
+  auth: AuthContext;
   baseUrl: string;
   /** schedule work after the response (R2 deletes, analytics forwarding) */
   waitUntil: (p: Promise<unknown>) => void;

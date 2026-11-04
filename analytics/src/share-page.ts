@@ -6,14 +6,23 @@
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-export function sharePage(token: string, siteName: string): string {
-  const title = `${esc(siteName)} · analytics`;
+/**
+ * `domain`: the site's domain when it is verified, else null (the page then names no site). The
+ * site's free-form name is never shown: anyone can call a site "Stripe", only the owner of a
+ * domain can verify it.
+ */
+export function sharePage(token: string, domain: string | null): string {
+  const heading = domain ? esc(domain) : "Unverified site";
+  const title = domain ? `${esc(domain)} · analytics` : "Shared analytics (unverified site)";
+  const source = domain
+    ? `The numbers come from the analytics tracker on ${esc(domain)} and its own server, as they reported them; they are not audited.`
+    : "This site's domain isn't verified, so its name isn't shown. The numbers come from the site's own tracker, as it reported them; they are not audited.";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
+<meta name="robots" content="noindex, nofollow">
 <title>${title}</title>
 <style>
 .viz-root{color-scheme:light;--surface-0:#f4f4f2;--surface-1:#fcfcfb;--grid:#e6e5e1;--text-primary:#0b0b0b;--text-secondary:#52514e;--text-muted:#7a7974;--series-1:#2a78d6;--series-1-wash:rgba(42,120,214,.10);--bar-track:#e9eef6}
@@ -54,7 +63,7 @@ details{margin-top:8px;color:var(--text-secondary);font-size:12px}
 <body>
 <div class="viz-root"><div class="wrap">
 <header>
-  <div><h1>${esc(siteName)}</h1><div class="sub" id="range">Loading…</div></div>
+  <div><h1>${heading}</h1><div class="sub" id="range">Loading…</div></div>
   <div class="periods" role="group" aria-label="Period">
     <button data-p="today">Today</button><button data-p="7d">7 days</button><button data-p="30d">30 days</button><button data-p="90d">90 days</button><button data-p="12mo">12 months</button>
   </div>
@@ -72,7 +81,7 @@ details{margin-top:8px;color:var(--text-secondary);font-size:12px}
   <div class="card"><h2>Countries</h2><table id="t-countries"></table></div>
   <div class="card"><h2>Devices</h2><table id="t-devices"></table></div>
 </section>
-<footer>Cookieless analytics. Aggregate numbers only.</footer>
+<footer>${source} Cookieless analytics; aggregate numbers only.</footer>
 </div></div>
 <script>
 (function(){

@@ -385,7 +385,8 @@ export interface IngestOptions {
   drop?: (reason: string, sample: string | null) => void;
 }
 
-function capRefusal(o: IngestOptions, used: number): BudgetReason | null {
+/** The daily cap an event would break with `used` events already counted today, or null. */
+export function capRefusal(o: Pick<IngestOptions, "caps" | "accountOthers" | "platformOthers">, used: number): BudgetReason | null {
   const c = o.caps;
   if (!c) return null;
   if (used >= c.siteDaily) return "daily_limit";

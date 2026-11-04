@@ -1,4 +1,4 @@
-import { type Standing, accountStanding, badRequest, capFor, newId, parse } from "@afs/shared";
+import { ApiError, INTERNAL_KEY_ID, type Standing, accountStanding, badRequest, capFor, newId, parse } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
 import { isPublicSuffix, isPublicSuffixWildcard, normalizeDomain } from "../lib/url";
@@ -23,7 +23,7 @@ import {
   normalizeExclusions,
 } from "../lib/exclusions";
 import { isValidTimezone } from "../lib/time";
-import { type Ctx, type SiteRow, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
+import { type Ctx, type SiteRow, isVerified, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
 import { REPLAY_SITE_RE, proxyKeyFor } from "./ingest";
 import { type Framework, installInstructions, scriptSnippet } from "./install";
 
@@ -106,9 +106,36 @@ export const updateSiteInput = z.object({
     .nullable()
     .optional()
     .describe(
-      "Link an AgentFirstStack replay site (rsite_...): the tracker then loads that site's recorder by itself, so there is no second snippet to paste. null unlinks. The replay app sets this when a replay site names this site as its analytics_site_id.",
+      "Set by the replay service only: when a replay site names this site as its analytics_site_id, the tracker loads that replay site's recorder by itself. With an API key this is refused (403 replay_link_from_replay): link or unlink on the replay site instead (its analytics_site_id).",
     ),
 });
+
+/** The TXT record that verifies a site's domain (the alternative to the tracker on the homepage). */
+export const verifyRecord = (s: Pick<SiteRow, "id" | "domain">) => ({
+  name: `_afs-verify.${s.domain}`,
+  type: "TXT",
+  value: `afs-analytics-site=${s.id}`,
+});
+
+/** Whether (and how) the site proved its domain; share links need it. */
+export function verificationJson(s: SiteRow) {
+  const verified = isVerified(s);
+  return {
+    verified,
+    method: s.verify_method ?? null,
+    verified_at: s.verified_at ?? null,
+    ...(verified
+      ? {}
+      : {
+          until_verified: "No share links (a public dashboard names the domain, so the domain must be yours). Tracking works as usual.",
+          how: [
+            `Put the snippet as a <script src ... data-site="${s.id}"> tag on https://${s.domain}/ (the homepage itself, over https; a tag manager's injected tag doesn't count), then POST /v1/sites/${s.id}/verify (MCP verify_install).`,
+            `Or add a DNS TXT record ${verifyRecord(s).name} = "${verifyRecord(s).value}", then POST /v1/sites/${s.id}/verify.`,
+          ],
+          dns_record: verifyRecord(s),
+        }),
+  };
+}
 
 export function siteJson(s: SiteRow, baseUrl: string) {
   return {
@@ -124,6 +151,7 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     browser_revenue: !!s.browser_revenue,
     trust_browser_user_id: !!s.trust_browser_user_id,
     replay_site_id: s.replay_site_id ?? null,
+    verification: verificationJson(s),
     created_at: s.created_at,
     updated_at: s.updated_at,
     snippet: scriptSnippet(baseUrl, s.id),
@@ -324,6 +352,16 @@ export function budgetStatus(
 export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   const input = parse(updateSiteInput, raw);
   const s = await loadSite(ctx, siteId);
+  // replay_site_id makes the tracker load a replay recorder: only the replay service sets it (after
+  // checking the replay site is this account's). The same value again is a no-op for anyone.
+  const replayChange = input.replay_site_id !== undefined && (input.replay_site_id || null) !== (s.replay_site_id ?? null);
+  if (replayChange && ctx.auth.keyId !== INTERNAL_KEY_ID)
+    throw new ApiError(
+      403,
+      "replay_link_from_replay",
+      "replay_site_id is set by the replay service, not with an API key (it would make this site's tracker load any recorder).",
+      `Link from the replay side: PATCH /v1/sites/<rsite_...> {"analytics_site_id": "${s.id}"} on the replay service (MCP update_replay_site); {"analytics_site_id": null} there unlinks. It links both ways.`,
+    );
   checkTimezone(input.timezone);
   if (input.retention_days !== undefined) checkRetention(input.retention_days, retentionBounds(ctx.env, await standingOf(ctx)));
   const next: SiteRow = { ...s, updated_at: Date.now() };
@@ -346,10 +384,16 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.exclusions !== undefined) next.exclusions = exclusionsColumn(input.exclusions);
   if (input.browser_revenue !== undefined) next.browser_revenue = input.browser_revenue ? 1 : 0;
   if (input.trust_browser_user_id !== undefined) next.trust_browser_user_id = input.trust_browser_user_id ? 1 : 0;
-  if (input.replay_site_id !== undefined) next.replay_site_id = replaySiteColumn(input.replay_site_id);
+  if (replayChange) next.replay_site_id = replaySiteColumn(input.replay_site_id ?? null);
+  // A new domain has to be proven again (share pages show the domain only while it is).
+  const domainChanged = next.domain !== s.domain;
+  if (domainChanged) {
+    next.verified_at = null;
+    next.verify_method = null;
+  }
   await ctx.env.DB.prepare(
     `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, exclusions = ?,
-       browser_revenue = ?, trust_browser_user_id = ?, replay_site_id = ?, updated_at = ?
+       browser_revenue = ?, trust_browser_user_id = ?, replay_site_id = ?, updated_at = ?${domainChanged ? ", verified_at = NULL, verify_method = NULL" : ""}
      WHERE id = ? AND account_id = ?`,
   )
     .bind(
@@ -370,9 +414,12 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
     )
     .run();
   await pushSettings(ctx.env, next);
-  const linked = input.replay_site_id !== undefined && next.replay_site_id;
+  const linked = replayChange && next.replay_site_id;
   return {
     site: siteJson(next, ctx.baseUrl),
+    ...(domainChanged && isVerified(s)
+      ? { notes: [`The domain changed, so it has to be verified again (POST /v1/sites/${s.id}/verify) before share pages show it.`] }
+      : {}),
     ...(linked
       ? {
           note: ctx.env.REPLAY_BASE_URL

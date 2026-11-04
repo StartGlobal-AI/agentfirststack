@@ -1,4 +1,4 @@
-import { ApiError, badRequest } from "@afs/shared";
+import { ApiError, badRequest, scriptStartTags } from "@afs/shared";
 import type { ContainerConfig, Conversion, Tag, Trigger, Variable } from "../config/schema";
 import { fetchableHost } from "../lib/domain";
 import { readTextBounded } from "../lib/http";
@@ -524,83 +524,15 @@ export function onDomain(u: URL, domain: string): boolean {
 }
 
 /** Elements whose content isn't markup, or never runs: a <script> inside one isn't a tag. */
-const RAW_TEXT = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "noscript", "template"]);
-const TAG_NAME = /[a-zA-Z][^\s/>]*/y;
-const ATTR_NAME = /[^\s/>=]+/y;
-const UNQUOTED = /[^\s>]*/y;
-const WS = /\s*/y;
-const WS_OR_SLASH = /[\s/]*/y;
-
 /**
- * The src of each real <script> start tag, in order. Comments, attribute values and the content
- * of raw-text elements (script, style, textarea, title, noscript, template...) are skipped, so
- * text a page only echoes (a JSON blob, a comment, an attribute, a search box) is never a tag.
+ * The src of each real <script> start tag, in order (the shared tokenizer in @afs/shared: text a
+ * page only echoes, in a comment, an attribute, an inline script or a search box, is never a tag).
  */
 export function scriptSrcs(html: string, max = 100): string[] {
-  const out: string[] = [];
-  const lower = html.toLowerCase();
-  const at = (re: RegExp, pos: number) => {
-    re.lastIndex = pos;
-    return re.exec(html)?.[0] ?? "";
-  };
-  let i = 0;
-  while (out.length < max) {
-    const lt = html.indexOf("<", i);
-    if (lt < 0) break;
-    if (html.startsWith("<!--", lt)) {
-      const end = html.indexOf("-->", lt + 4);
-      if (end < 0) break;
-      i = end + 3;
-      continue;
-    }
-    if (html[lt + 1] === "!" || html[lt + 1] === "?" || html[lt + 1] === "/") {
-      const end = html.indexOf(">", lt + 2);
-      if (end < 0) break;
-      i = end + 1;
-      continue;
-    }
-    const name = at(TAG_NAME, lt + 1).toLowerCase();
-    if (!name) {
-      i = lt + 1;
-      continue;
-    }
-    let j = lt + 1 + name.length;
-    let src: string | undefined;
-    for (;;) {
-      j += at(WS_OR_SLASH, j).length;
-      if (j >= html.length || html[j] === ">") break;
-      const attr = at(ATTR_NAME, j) || html[j]!;
-      j += attr.length;
-      j += at(WS, j).length;
-      let value = "";
-      if (html[j] === "=") {
-        j++;
-        j += at(WS, j).length;
-        const q = html[j];
-        if (q === '"' || q === "'") {
-          const end = html.indexOf(q, j + 1);
-          if (end < 0) {
-            j = html.length;
-            break;
-          }
-          value = html.slice(j + 1, end);
-          j = end + 1;
-        } else {
-          value = at(UNQUOTED, j);
-          j += value.length;
-        }
-      }
-      if (src === undefined && attr.toLowerCase() === "src") src = value;
-    }
-    i = j + 1;
-    if (name === "script" && src !== undefined) out.push(src.trim());
-    if (RAW_TEXT.has(name)) {
-      const close = lower.indexOf(`</${name}`, i);
-      if (close < 0) break;
-      i = close;
-    }
-  }
-  return out;
+  return scriptStartTags(html, max).flatMap((t) => {
+    const src = t.get("src");
+    return src === undefined ? [] : [src.trim()];
+  });
 }
 
 /** This container's snippet in a real <script src> (direct or through a first-party proxy prefix). */
