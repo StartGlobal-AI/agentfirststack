@@ -12,3 +12,6 @@ coverage/
 deploy/*.secrets.json
 wrangler.deploy.json
 ops/
+
+# Local agent worktrees
+.claude/worktrees/

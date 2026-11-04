@@ -286,7 +286,7 @@ optional service `ANALYTICS` (`afs-analytics`), rate limits `SIGNUP_LIMITER` (na
 shared), `INGEST_IP_LIMITER` (42031, 600/min per client network, loader + ingest, before any D1 read),
 `INGEST_SITE_IP_LIMITER` (42032, 120/min per site and network), `INGEST_SITE_LIMITER` (42033,
 3,000/min per site), hourly cron `23 * * * *`, DO alarms, observability on. No queues. `compatibility_date` 2026-08-01
-(the workerd bundled with `@cloudflare/vitest-pool-workers` 0.23).
+(the workerd bundled with `@cloudflare/vitest-plugin` 1.5).
 
 ## Develop and test
 

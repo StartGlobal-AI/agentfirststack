@@ -1,8 +1,8 @@
-import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 // Two projects: pure logic + the per-site engine over node:sqlite (fast, Node), and the whole
-// Worker + ReplaySiteDO + D1 + R2 inside workerd via @cloudflare/vitest-pool-workers. `pnpm test`
+// Worker + ReplaySiteDO + D1 + R2 inside workerd via @cloudflare/vitest-plugin. `pnpm test`
 // builds the browser bundles first (dist/*.txt is imported by the Worker and by the bundle tests).
 export default defineConfig({
   test: {

@@ -1,4 +1,4 @@
-import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 /** "" for a var and its UNCLAIMED_ form: capFor reads both as unset. */
@@ -11,7 +11,7 @@ const neutral = (names: string[]) =>
   );
 
 // Two projects: pure logic + the engine over node:sqlite (fast, Node), and the whole Worker +
-// SiteDO + D1 inside workerd via @cloudflare/vitest-pool-workers. `pnpm test` builds the tracker
+// SiteDO + D1 inside workerd via @cloudflare/vitest-plugin. `pnpm test` builds the tracker
 // first (dist/tracker.txt is imported by the Worker and by the tracker DOM test).
 export default defineConfig({
   test: {

@@ -20,7 +20,7 @@
     "mimetext": "^3.0.28"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.23.0",
+    "@cloudflare/vitest-plugin": "^1.5.1",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0",

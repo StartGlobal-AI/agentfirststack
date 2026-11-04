@@ -145,7 +145,7 @@ Routing > Routing rules, add a custom address rule for each one that forwards to
 
 - Dependabot opens weekly update PRs. CI has to pass before merge.
 - Raise `compatibility_date` in a `wrangler.jsonc` deliberately: read the Workers changelog first.
-  The integration-test runtime bundled with `@cloudflare/vitest-pool-workers` caps how far it can
+  The integration-test runtime bundled with `@cloudflare/vitest-plugin` caps how far it can
   go.
 
 ## Releases that sign people out

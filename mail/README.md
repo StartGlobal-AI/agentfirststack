@@ -340,7 +340,7 @@ account), `WEBHOOK_TEST_LIMITER` (42022, 5/min), `SEARCH_LIMITER` (42023, 30/min
 without the binding the check is skipped; the D1 caps are the strict limits), hourly cron (purges
 expired inboxes, old shared-domain mail, delivery logs and counters, sweeps orphan blobs),
 observability on. `compatibility_date` is 2026-08-22, the newest date the
-workerd bundled with `@cloudflare/vitest-pool-workers` 0.23 supports, so tests run on the same
+workerd bundled with `@cloudflare/vitest-plugin` 1.5 supports, so tests run on the same
 runtime semantics as dev and production.
 
 ## What Cloudflare Email Service supports (checked against the docs, 2026-11)
@@ -394,7 +394,7 @@ runtime semantics as dev and production.
 
 ```sh
 pnpm types && pnpm typecheck
-pnpm test                    # unit (Node) + integration (workerd via @cloudflare/vitest-pool-workers)
+pnpm test                    # unit (Node) + integration (workerd via @cloudflare/vitest-plugin)
 pnpm db:migrate:local && pnpm dev   # http://localhost:8789
 pnpm smoke                   # against BASE (default http://localhost:8789); needs curl, jq, node, openssl
 ```

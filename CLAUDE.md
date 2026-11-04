@@ -108,7 +108,7 @@ inbox's waiters), R2 for blobs, Queues for retried delivery. pnpm workspace.
   src/routes/             REST routes (thin: parse -> service -> json)
   src/mcp.ts              MCP tool registrations (thin: same service calls)
   src/llms.ts             the llms.txt text
-  test/                   vitest (@cloudflare/vitest-pool-workers for integration)
+  test/                   vitest (@cloudflare/vitest-plugin for integration)
   scripts/smoke.sh        end-to-end curl run against `wrangler dev`
 ```
 

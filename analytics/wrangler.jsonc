@@ -5,7 +5,7 @@
   // deploy/<profile>.json (account, domain, resource ids, vars). See docs/self-hosting.md.
   "name": "afs-analytics",
   "main": "src/index.ts",
-  // Must stay <= the workerd bundled with @cloudflare/vitest-pool-workers (1.20260815).
+  // Must stay <= the workerd bundled with @cloudflare/vitest-plugin (1.20261103).
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
 

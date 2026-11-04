@@ -60,7 +60,7 @@ docs/                 these documents
 - **Unit tests** (`test/unit`, plain vitest in Node) cover pure logic: classification, parsing,
   extraction, payload builders, guards.
 - **Integration tests** (`test/integration`) run the Worker inside workerd with
-  `@cloudflare/vitest-pool-workers`, with real local D1, Durable Objects and queues. Migrations for
+  `@cloudflare/vitest-plugin`, with real local D1, Durable Objects and queues. Migrations for
   the app DB and `AUTH_DB` are applied in the setup file. Fair-use vars are turned off in
   `vitest.config.ts`; tests for them turn them on per call. `DB` and `AUTH_DB` have different
   placeholder ids in each `wrangler.jsonc`, so they are two local databases, as in production.

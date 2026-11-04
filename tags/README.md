@@ -404,7 +404,7 @@ person has claimed; `0` turns a cap off. Rate-limit bindings: `COLLECT_IP_LIMITE
 
 `pnpm db:migrate:local`, `pnpm dev` (port 8788; builds the runtime first), `pnpm typecheck`
 (Worker + runtime), `pnpm test` (unit tests in Node, including the bundled runtime run in a fake
-browser; integration tests in workerd via `@cloudflare/vitest-pool-workers`), `pnpm smoke`
+browser; integration tests in workerd via `@cloudflare/vitest-plugin`), `pnpm smoke`
 (end-to-end against `pnpm dev`, with a local signed-webhook sink; needs `DEV_MODE=true` in
 `.dev.vars`).
 

@@ -1,4 +1,4 @@
-import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { readFileSync } from "node:fs";
 import { defineConfig, type Plugin } from "vitest/config";
 import { bundleRuntime } from "./scripts/build-runtime.mjs";
