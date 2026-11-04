@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "websiteUrl": "https://agentfirststack.com/mcp",
   "repository": {
     "url": "https://github.com/StartGlobal-AI/agentfirststack",
@@ -10,12 +10,14 @@
     {
       "src": "https://agentfirststack.com/brand/logo-512.png",
       "mimeType": "image/png",
-      "sizes": ["512x512"]
+      "sizes": [
+        "512x512"
+      ]
     }
   ],
   "name": "com.agentfirststack/mcp",
   "title": "AgentFirstStack",
-  "description": "Analytics, tag manager, email inboxes and session replay an AI agent sets up by itself. Free, open source.",
+  "description": "Analytics, tag manager, email inboxes and session replay an AI agent sets up itself. Open source.",
   "remotes": [
     {
       "type": "streamable-http",
