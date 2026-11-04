@@ -112,7 +112,7 @@ mail/        inboxes, sending, domains, webhooks                  mail.agentfirs
 replay/      session replay, signals, heatmaps, share player          replay.agentfirststack.com
 shared/      @afs/shared: auth, signup, errors, MCP handler
 scripts/     pnpm afs: the deployment tool
-deploy/      deployment profiles (deploy/hosted.json is agentfirststack.com)
+deploy/      deployment profiles (yours; the agentfirststack.com one is kept private)
 docs/        architecture, self-hosting, operations, development
 ```
 

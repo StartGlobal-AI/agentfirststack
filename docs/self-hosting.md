@@ -54,7 +54,7 @@ For a private deployment (`token` or `closed`), leave the fair-use vars unset.
 
 ## Fair-use vars for public deployments
 
-These are what agentfirststack.com uses (see `deploy/hosted.json`). All are off when unset.
+agentfirststack.com sets all of these (its profile is kept private). All are off when unset.
 
 | Var | App | Effect |
 |---|---|---|

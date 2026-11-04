@@ -73,7 +73,7 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (`429 signups_paused`) |
 | `MAX_KEYS_PER_ACCOUNT` / `KEYS_HOURLY_LIMIT` (+ `KEY_LIMITER` binding) | all | 25 active (10 unclaimed) / 20 created an hour |
 | `UNCLAIMED_<NAME>` | all | any account cap or daily budget has a lower value for accounts no person has claimed (`capFor()` in `@afs/shared`) |
-| Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows | analytics / tags / replay | per site or container, per account and per deployment, counters never go down; values in `deploy/hosted.json` |
+| Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows | analytics / tags / replay | per site or container, per account and per deployment, counters never go down; values in the hosted profile |
 | `MAX_CONCURRENT_WAITS` / `MAX_INBOUND_PER_SENDER_PER_DAY` / `MAX_TEXT_BYTES_PER_ACCOUNT` | mail | 3 (2 unclaimed) / 20 / 10 MB |
 | `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` / `MAX_CHUNK_BYTES` / `MAX_SESSION_BYTES` | replay | 5 / 200 / 30 / 14 / 5 / 256 KB / 2 MB (`MAX_SAMPLE_RATE` unset: sites choose); R2 lifecycle deletes chunks after 16 days |
 
@@ -85,7 +85,8 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
   `<app>/wrangler.deploy.json` (git-ignored) from template + profile. `pnpm afs deploy <profile>
   [app]` also applies D1 migrations and sets secrets from `deploy/<profile>.secrets.json`
   (git-ignored). `pnpm afs check <profile>` is the live end-to-end check (cleans up after itself).
-- The hosted platform is profile `hosted`: StartGlobal AI Projects account, zone
+- The hosted platform is profile `hosted` (`deploy/hosted.json` is git-ignored: its exact budgets and
+  resource ids stay private; the operator keeps a private backup): StartGlobal AI Projects account, zone
   `agentfirststack.com`, Workers `afs-site|analytics|tags|mail|replay`, D1 `afs-identity|analytics|tags|mail|replay`,
   R2 `afs-mail-blobs`, `afs-replay-chunks`, queues `afs-tags-dispatch`, `afs-mail-webhooks` (+ `-dlq`). Email Routing
   catch-all on the apex goes to `afs-mail`; the apex is onboarded for Email Sending (DKIM
