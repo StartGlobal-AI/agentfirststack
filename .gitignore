@@ -17,3 +17,8 @@ ops/
 
 # Local agent worktrees
 .claude/worktrees/
+
+# Local env files (keys); examples are committed
+.env
+.env.*
+!.env.example
