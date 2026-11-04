@@ -27,6 +27,13 @@ that has to be retried.
            each app also has its own D1 (config) and mirrors account rows into it
 ```
 
+Tags reaches analytics two ways: the browser runtime's `analytics` tag loads the tracker, and its
+`analytics` destination sends server-side copies. Without an API key in the destination, those go
+over the `ANALYTICS` service binding with internal auth as the container's account, so analytics
+refuses a site of another account. The runtime does nothing in a browser that sends Global
+Privacy Control or Do Not Track (`settings.respect_dnt`, on by default), and its event log keeps a
+/24 or /48 network and coarse location instead of raw IPs and user agents.
+
 Replay (`replay.*`) sits beside them: the browser recorder (`/r/:id.js`, masked before anything is
 sent) posts gzip chunks to `/i`; they're stored in R2 (`<site>/<session>/<seq>`) and a
 `ReplaySiteDO` per site keeps the session index, derived events, signals, error groups and heatmap

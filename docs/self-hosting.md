@@ -134,7 +134,8 @@ repository.
 - `INTERNAL_TOKEN` (top level, set on all five Workers): lets the site's dashboard read a
   project's sites, containers and inboxes from the services over service bindings. `init`
   generates it (and adds it to an older secrets file when you re-run it). Without it the dashboard
-  shows those lists as unavailable; nothing else changes.
+  shows those lists as unavailable, and a tag container's analytics destination needs an API key;
+  nothing else changes.
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (site, optional): turn on "Sign in with Google" for
   claim links, the dashboard and OAuth connectors. Put them under `"site"` (or at the top level;
   they only go to the site). See [Sign-in for people](#sign-in-for-people-optional).
@@ -147,6 +148,9 @@ repository.
   for analytics, tags and mail; for replay add `"replay": {"ENCRYPTION_KEY": "<32 random bytes, base64>"}` to the secrets file
   yourself (`openssl rand -base64 32`).
   **If you lose it, those stored values can't be decrypted**; users have to re-enter them.
+- Tags has an optional `ANALYTICS` service binding (to `afs-analytics`, added by `pnpm afs config`).
+  With it, a tag container's analytics destination needs no API key: events go over the binding as
+  the container's account. Without it, pass an `afs_` key in the destination's credentials.
 
 `pnpm afs deploy` sets them on every deploy. To change one, edit the file and deploy again.
 
