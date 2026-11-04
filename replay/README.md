@@ -121,7 +121,8 @@ own `src`, so a first-party proxy of `/<prefix>/*` works unchanged.
   user agents), and with `require_consent` everything before `afsr('consent', true)`.
 - **`?afsr=1`** (or `localStorage.afsr_force`) forces recording of the tab, bypassing sampling
   and bot filtering, so an agent can verify an install from a headless browser. Sessions carry
-  `forced: true` and count against `MAX_FORCED_SESSIONS_PER_SITE_PER_DAY` (default 20) instead.
+  `forced: true` and count against `MAX_FORCED_SESSIONS_PER_SITE_PER_DAY` (default 20) instead;
+  their signals go to analytics and tags as test traffic.
 - **No cookies.** The per-tab session (id, chunk counter, pageview counter, sampling decision,
   identify) is in sessionStorage. It spans page loads in the tab, ends after 30 idle minutes or
   `max_session_minutes`. After 5 minutes without input, recording pauses until the next input.
@@ -247,7 +248,10 @@ present, settled signals (at most `MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY`, defau
 fingerprint per session), `quick_back`, `excessive_scroll`, with `replay_session_id`, selector and
 label props, joined to the visitor by `afsa.visitorId()` or, failing that, IP + user agent (the
 same cookieless hash analytics computes). "Settled" = 1.5 s inside the chunk's coverage, or the
-page ended; nothing is sent twice.
+page ended; nothing is sent twice. Test traffic is sent with `debug: true` (analytics keeps it out of
+reports): every signal of a forced `?afsr=1` session, and those forwarded with a chunk recorded while
+analytics debug was on for the page (envelope `dbg: 1`: `?afsa_debug=1` in the URL, or sessionStorage
+`afsa_debug` = "1", which the analytics tracker keeps for the tab).
 
 With `tags_container_id` set (a tags container on the same account, checked with tags
 `GET /v1/containers/:id`), the domain verified, and the `TAGS` binding + `INTERNAL_TOKEN` present, the
@@ -257,7 +261,8 @@ internal auth): queued in the site's DO (`tags_outbox`, its own bit in `events.f
 `daily.tags_forwarded`, at most `MAX_TAGS_EVENTS_PER_SITE_PER_DAY`, default 500), sent by the DO's
 alarm in batches of up to 100 within 15 s, 429/5xx/binding failures retried (30 s doubling, at most an
 hour; dropped after a day or 8 tries), other 4xx dropped and logged; the last answer shows in
-`data.tags_forwarding`. Events carry a fixed `event_id` (tags dedupes retries), `page_url`, `send_to.ga4`
+`data.tags_forwarding`. Test traffic (forced sessions, analytics debug pages, survey responses in a forced
+session) is queued marked and sent in batches of its own with tags' `test: true`. Events carry a fixed `event_id` (tags dedupes retries), `page_url`, `send_to.ga4`
 (the container's GA4 destination gets them by name; a conversion of the same name in its config wins and is
 needed for ad platforms), `params`
 (ids, selector, error fingerprint/message, method/url/status, NPS and rating scores), and `visitor_id` =

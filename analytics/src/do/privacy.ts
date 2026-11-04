@@ -75,13 +75,21 @@ export function deleteIdentity(db: Db, key: string, o: DeleteIdentityOptions = {
     const payEvents = db.all(`SELECT id FROM events WHERE origin = 'payment' AND ${inList("session_id")}`, [S]).map((r) => Number(r.id));
     const P = JSON.stringify(payEvents);
     const events = num(db.all(`SELECT COUNT(*) AS n FROM events WHERE origin != 'payment' AND ${inList("session_id")}`, [S])[0]?.n);
+    // No-visit events (visit: false, no live session) have no session: they go by user id or visitor id.
+    const nvUsers = [...new Set([...userIdents.map((u) => u.slice(5)), ...(key.startsWith("user:") ? [key.slice(5)] : [])])];
+    const byVisitorKey = !key.startsWith("user:") && !key.startsWith("customer:") && !o.customerHash;
+    const nvVisitors = [...new Set([...visitorIds, ...(byVisitorKey ? [key] : [])])];
+    const nvWhere = `no_visit = 1 AND (${inList("user_id")} OR ${inList("visitor_id")})`;
+    const nvArgs = [JSON.stringify(nvUsers), JSON.stringify(nvVisitors)];
+    const noVisit = num(db.all(`SELECT COUNT(*) AS n FROM events WHERE ${nvWhere}`, nvArgs)[0]?.n);
     // Subscriptions of the person: by session, visitor, user or customer.
     const U = JSON.stringify(userIdents.map((u) => u.slice(5)));
     const subWhere = `${inList("session_id")} OR ${inList("visitor_id")} OR ${inList("user_id")}${o.customerHash ? " OR customer = ?" : ""}`;
     const subArgs = o.customerHash ? [S, V, U, o.customerHash] : [S, V, U];
     const subRefs = db.all(`SELECT ref FROM subscriptions WHERE ${subWhere}`, subArgs).map((r) => String(r.ref));
-    if (!sids.length && !events && !payEvents.length && !subRefs.length) return null;
+    if (!sids.length && !events && !noVisit && !payEvents.length && !subRefs.length) return null;
     db.run(`DELETE FROM events WHERE origin != 'payment' AND ${inList("session_id")}`, [S]);
+    if (noVisit) db.run(`DELETE FROM events WHERE ${nvWhere}`, nvArgs);
     db.run(`DELETE FROM sessions WHERE ${inList("id")}`, [S]);
     // First-touch rows of the person: their visitor ids, and the user ids those sessions carried.
     db.run(`DELETE FROM identities WHERE ${inList("ident")} OR ${inList("canonical")}`, [V, JSON.stringify(userIdents)]);
@@ -115,7 +123,7 @@ export function deleteIdentity(db: Db, key: string, o: DeleteIdentityOptions = {
       db.run(`UPDATE payments SET customer = NULL, updated_at = ? WHERE ${inList("event_rowid")}`, [Date.now(), P]);
     }
     return {
-      events_deleted: events,
+      events_deleted: events + noVisit,
       sessions_deleted: sids.length,
       payments: o.payments === "delete" ? { deleted: payEvents.length } : { unlinked: payEvents.length },
       ...(subRefs.length ? { subscriptions: o.payments === "delete" ? { deleted: subRefs.length } : { unlinked: subRefs.length } } : {}),
@@ -140,7 +148,7 @@ export function purgeEvents(db: Db, settings: SiteSettings, q: PurgeRequest, now
     const ctx = ctxFor(db, r, q);
     const where = whereFrag(ctx);
     const head = all(db, {
-      sql: `SELECT COALESCE(SUM(e.origin != 'payment'), 0) AS n, COUNT(DISTINCT CASE WHEN e.origin != 'payment' THEN e.session_id END) AS s,
+      sql: `SELECT COALESCE(SUM(e.origin != 'payment'), 0) AS n, COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.no_visit = 0 THEN e.session_id END) AS s,
               COALESCE(SUM(e.origin = 'payment'), 0) AS p FROM events e WHERE ${where.sql}`,
       args: where.args,
     })[0];

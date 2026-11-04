@@ -10,6 +10,7 @@ export const ctxOf = (c: Context<AppEnv>): Ctx => ({
   accountId: c.var.auth.accountId,
   auth: c.var.auth,
   baseUrl: publicBaseUrl(c),
+  origin: new URL(c.req.url).origin,
   callerIp: c.req.header("cf-connecting-ip") ?? null,
 });
 

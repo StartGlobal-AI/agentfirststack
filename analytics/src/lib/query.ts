@@ -325,6 +325,14 @@ export const evCte = (ctx: QueryCtx) => sql`ev AS (SELECT e.* FROM events e WHER
  * visits or events (a renewal months later is not a visit).
  */
 export const NOT_PAYMENT = "e.origin != 'payment'";
+/**
+ * Server events sent with visit: false that joined no live session are stored with no visit
+ * (no_visit = 1, a session id of their own with no sessions row): they count as events,
+ * conversions and revenue, never as visitors or visits (nor converted visitors or sessions).
+ */
+export const IN_VISIT = "e.no_visit = 0";
+/** Rows that count as a visitor's activity: not a payment, not a no-visit event. */
+export const VISIT_ACTIVITY = `${NOT_PAYMENT} AND ${IN_VISIT}`;
 /** Revenue that is a new purchase (not a renewal, not a refund). */
 const NEW_PURCHASE = "e.revenue > 0 AND e.revenue_type IS NOT 'renewal' AND e.revenue_type IS NOT 'refund'";
 
@@ -336,19 +344,19 @@ function countCols(ctx: QueryCtx, pv: Frag = raw("e.name = 'pageview'"), pageSco
   const conv = ctx.hasGoals ? conversionCond(ctx) : null;
   const revenue = ctx.hasGoalValues ? sql`COALESCE(e.revenue, ${goalValueFrag(ctx)})` : raw("e.revenue");
   const pvCount = sql`COALESCE(SUM(CASE WHEN ${pv} THEN 1 ELSE 0 END), 0)`;
-  return sql`COUNT(DISTINCT CASE WHEN ${raw(NOT_PAYMENT)} THEN e.visitor_id END) AS visitors,
-    COUNT(DISTINCT CASE WHEN ${raw(NOT_PAYMENT)} THEN e.session_id END) AS visits,
+  return sql`COUNT(DISTINCT CASE WHEN ${raw(VISIT_ACTIVITY)} THEN e.visitor_id END) AS visitors,
+    COUNT(DISTINCT CASE WHEN ${raw(VISIT_ACTIVITY)} THEN e.session_id END) AS visits,
     ${pvCount} AS pageviews,
     ${pageScoped ? pvCount : raw(`COALESCE(SUM(${NOT_PAYMENT}), 0)`)} AS events,
     ${conv ? sql`COALESCE(SUM(CASE WHEN ${conv} THEN 1 ELSE 0 END), 0)` : raw("0")} AS conversions,
-    ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} THEN e.visitor_id END)` : raw("0")} AS converted_visitors,
+    ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} AND ${raw(IN_VISIT)} THEN e.visitor_id END)` : raw("0")} AS converted_visitors,
     COALESCE(SUM(${revenue}), 0) AS revenue,
     COALESCE(SUM(CASE WHEN e.revenue_type = 'renewal' THEN e.revenue END), 0) AS renewal_revenue,
     COALESCE(SUM(CASE WHEN e.revenue_type = 'refund' THEN e.revenue END), 0) AS refund_revenue,
     COALESCE(SUM(CASE WHEN ${raw(NEW_PURCHASE)} THEN 1 ELSE 0 END), 0) AS purchases,
     COUNT(DISTINCT CASE WHEN ${raw(NEW_PURCHASE)} THEN e.visitor_id END) AS customers,
     COALESCE(SUM(CASE WHEN ${raw(NEW_PURCHASE)} THEN e.revenue END), 0) AS purchase_revenue,
-    ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} THEN e.session_id END)` : raw("0")} AS converted_sessions,
+    ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} AND ${raw(IN_VISIT)} THEN e.session_id END)` : raw("0")} AS converted_sessions,
     COALESCE(SUM(CASE WHEN ${pv} THEN e.engagement_ms END), 0) / 1000.0 AS engagement_time,
     AVG(CASE WHEN ${pv} AND e.engagement_ms > 0 THEN e.engagement_ms END) / 1000.0 AS time_on_page,
     AVG(CASE WHEN ${pv} THEN e.scroll_depth END) AS scroll_depth${customCols(ctx)}`;
@@ -583,7 +591,7 @@ export function groupedQuery(ctx: QueryCtx, g: GroupSpec, optsIn: GroupOpts | bo
     // event in this group. Cookieless ids rotate daily, so for anonymous visitors that is same-day only.
     ctes.push(sql`vtg AS (
     SELECT ${key} AS value${extraSel}, e.visitor_id AS vid, MIN(e.ts) AS t, MAX(e.user_id) AS uid
-    ${from}${where([raw(NOT_PAYMENT), inTop])}
+    ${from}${where([raw(VISIT_ACTIVITY), inTop])}
     GROUP BY ${groupBy}, e.visitor_id)`);
     ctes.push(sql`vt AS (
     SELECT g.value${aExtra("g")},
@@ -623,14 +631,14 @@ export function groupedQuery(ctx: QueryCtx, g: GroupSpec, optsIn: GroupOpts | bo
 export function goalBreakdownQuery(ctx: QueryCtx, limit: number): Frag {
   const names = goalFilterNames(ctx.filters);
   return sql`WITH ${evCte(ctx)},
-  gm AS (SELECT g.id AS gid, e.id AS eid, e.visitor_id, COALESCE(e.revenue, g.value) AS rev,
+  gm AS (SELECT g.id AS gid, e.id AS eid, e.visitor_id, e.no_visit, COALESCE(e.revenue, g.value) AS rev,
            ${raw(ctx.hasOnceGoals ? "CASE WHEN g.counting = 'once_per_visit' THEN ROW_NUMBER() OVER (PARTITION BY g.id, e.session_id ORDER BY e.ts, e.id) ELSE 1 END" : "1")} AS rn
          FROM goals g JOIN ev e ON ${raw(GOAL_MATCH)})
   SELECT g.name AS value, g.type AS goal_type, g.match AS goal_match, g.counting AS goal_counting,
-    COUNT(DISTINCT m.visitor_id) AS visitors,
+    COUNT(DISTINCT CASE WHEN m.no_visit = 0 THEN m.visitor_id END) AS visitors,
     COUNT(m.eid) AS conversions,
     COALESCE(SUM(m.rev), 0) AS revenue,
-    (SELECT COUNT(DISTINCT visitor_id) FROM ev WHERE origin != 'payment') AS total_visitors
+    (SELECT COUNT(DISTINCT visitor_id) FROM ev WHERE origin != 'payment' AND no_visit = 0) AS total_visitors
   FROM goals g LEFT JOIN gm m ON m.gid = g.id AND m.rn = 1
   ${names ? sql`WHERE ${valueCond(raw("g.name"), "==", names)}` : EMPTY}
   GROUP BY g.name
@@ -736,7 +744,11 @@ export interface FunnelOptions {
 export function funnelQuery(ctx: QueryCtx, steps: FunnelStep[], o: FunnelOptions = {}): Frag {
   const bySession = !o.window || o.window === "session";
   const w = bySession ? null : WINDOW_MS[o.window as Exclude<FunnelWindow, "session">];
-  const ctes: Frag[] = [evCte(ctx), raw(`eva AS (SELECT e.*, ${bySession ? "e.session_id" : EVENT_PERSON} AS aid FROM ev e)`)];
+  // A no-visit event (visit: false, no live session) is in no session: it takes part only in person funnels.
+  const ctes: Frag[] = [
+    evCte(ctx),
+    raw(`eva AS (SELECT e.*, ${bySession ? "e.session_id" : EVENT_PERSON} AS aid FROM ev e${bySession ? ` WHERE ${IN_VISIT}` : ""})`),
+  ];
   if ((o.mode ?? "ordered") === "any") {
     steps.forEach((step, i) =>
       ctes.push(sql`${raw(`d${i + 1}`)} AS (SELECT DISTINCT e.aid, e.visitor_id AS vid FROM eva e WHERE ${stepCond(step)})`),

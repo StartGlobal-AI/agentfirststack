@@ -4,6 +4,7 @@ import trackerLinker from "../../dist/tracker-linker.txt";
 import type { AppEnv } from "../env";
 import { readCapped } from "../lib/body";
 import { MAX_BODY_BYTES, TOO_LARGE, ingestBrowser } from "../service/ingest";
+import { isReservedPath, isTrackerPath } from "../service/install";
 import { waitUntilOf } from "./util";
 
 const CORS = {
@@ -33,10 +34,10 @@ async function trackerEtag(text: string): Promise<string> {
  */
 export const ingestRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  if (path.startsWith("/v1/") || path.startsWith("/mcp") || path.startsWith("/share/") || path.startsWith("/webhooks/")) return next();
+  if (isReservedPath(path)) return next();
   const method = c.req.method;
 
-  if ((path === "/s.js" || path.endsWith("/s.js")) && (method === "GET" || method === "HEAD")) {
+  if (isTrackerPath(path) && (method === "GET" || method === "HEAD")) {
     // ?linker=1: the build with cross-domain linking (data-cross-domain); otherwise the default one
     const text = new URL(c.req.url).searchParams.get("linker") === "1" ? trackerLinker : tracker;
     const tag = await trackerEtag(text);

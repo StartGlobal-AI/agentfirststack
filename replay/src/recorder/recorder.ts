@@ -209,6 +209,17 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       return undefined;
     }
   };
+  // Analytics test traffic on this page (?afsa_debug=1, or afsa('debug') / an earlier ?afsa_debug=1
+  // that the analytics tracker keeps for the tab in sessionStorage afsa_debug): signals forwarded
+  // with this chunk are marked test traffic.
+  const analyticsDebug = () => {
+    try {
+      const m = /\bafsa_debug=([01])/.exec(location.search);
+      return (m ? m[1] : sessionStorage.getItem("afsa_debug")) === "1";
+    } catch {
+      return false;
+    }
+  };
   // keepalive fetch is a CORS request, so it always carries the page's real Origin (a beacon can
   // send "Origin: null" under a no-referrer policy, and ingest refuses that).
   const KEEPALIVE = typeof Request !== "undefined" && "keepalive" in Request.prototype;
@@ -241,6 +252,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       }
     }
     if (S.f) env.f = 1;
+    if (analyticsDebug()) env.dbg = 1;
     if (S.up) env.up = S.up;
     if (nav.webdriver) env.wd = 1;
     S.last = Date.now();

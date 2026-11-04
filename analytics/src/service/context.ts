@@ -33,6 +33,8 @@ export interface Ctx {
   /** The caller's credential (an API key, an OAuth access token, or internal auth from another Worker). */
   auth: AuthContext;
   baseUrl: string;
+  /** origin of the API request itself (differs from baseUrl when PUBLIC_BASE_URL is set) */
+  origin?: string;
   /** cf-connecting-ip of the API request (get_exclusions shows it as your_ip); never stored */
   callerIp?: string | null;
 }

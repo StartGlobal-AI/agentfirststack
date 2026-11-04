@@ -25,10 +25,10 @@ function perValue(db: Db, ctx: QueryCtx, key: Frag, cond: Frag) {
   return all(
     db,
     sql`WITH ${evCte(ctx)},
-    conv AS (SELECT DISTINCT e.visitor_id FROM ev e WHERE ${cond})
+    conv AS (SELECT DISTINCT e.visitor_id FROM ev e WHERE (${cond}) AND e.no_visit = 0)
     SELECT ${key} AS value,
-      COUNT(DISTINCT CASE WHEN e.origin != 'payment' THEN e.visitor_id END) AS visitors,
-      COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.visitor_id IN (SELECT visitor_id FROM conv) THEN e.visitor_id END) AS converters,
+      COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.no_visit = 0 THEN e.visitor_id END) AS visitors,
+      COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.no_visit = 0 AND e.visitor_id IN (SELECT visitor_id FROM conv) THEN e.visitor_id END) AS converters,
       COALESCE(SUM(e.revenue), 0) AS revenue
     FROM ev e GROUP BY value`,
   ).map((r) => {
@@ -48,8 +48,8 @@ function headline(db: Db, ctx: QueryCtx, cond: Frag) {
   const r = all(
     db,
     sql`WITH ${evCte(ctx)},
-    conv AS (SELECT DISTINCT e.visitor_id FROM ev e WHERE ${cond})
-    SELECT COUNT(DISTINCT CASE WHEN e.origin != 'payment' THEN e.visitor_id END) AS visitors,
+    conv AS (SELECT DISTINCT e.visitor_id FROM ev e WHERE (${cond}) AND e.no_visit = 0)
+    SELECT COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.no_visit = 0 THEN e.visitor_id END) AS visitors,
       (SELECT COUNT(*) FROM conv) AS converters,
       COALESCE(SUM(e.revenue), 0) AS revenue
     FROM ev e`,
@@ -84,7 +84,7 @@ export function insights(db: Db, settings: SiteSettings, q: InsightsRequest, now
     const daily = all(
       db,
       sql`WITH ${evCte(ctx)} SELECT strftime('%Y-%m-%d', ${local} / 1000, 'unixepoch') AS d, COUNT(DISTINCT e.visitor_id) AS v
-      FROM ev e WHERE e.origin != 'payment' GROUP BY d`,
+      FROM ev e WHERE e.origin != 'payment' AND e.no_visit = 0 GROUP BY d`,
     );
     const share = (dim: "device" | "os" | "browser") =>
       withShares(
@@ -126,10 +126,10 @@ export function insights(db: Db, settings: SiteSettings, q: InsightsRequest, now
     const events = all(
       db,
       sql`WITH ${evCte(ctx)},
-      conv AS (SELECT DISTINCT e.visitor_id FROM ev e WHERE ${cond})
+      conv AS (SELECT DISTINCT e.visitor_id FROM ev e WHERE (${cond}) AND e.no_visit = 0)
       SELECT e.name AS event, COUNT(DISTINCT e.visitor_id) AS visitors,
         COUNT(DISTINCT CASE WHEN e.visitor_id IN (SELECT visitor_id FROM conv) THEN e.visitor_id END) AS converted
-      FROM ev e WHERE e.origin != 'payment' AND e.name != 'pageview' ${excludeTarget}
+      FROM ev e WHERE e.origin != 'payment' AND e.no_visit = 0 AND e.name != 'pageview' ${excludeTarget}
       GROUP BY e.name HAVING COUNT(DISTINCT e.visitor_id) >= 3`,
     )
       .map((x) => {
@@ -146,7 +146,7 @@ export function insights(db: Db, settings: SiteSettings, q: InsightsRequest, now
       db,
       sql`WITH ${evCte(ctx)} SELECT CAST(strftime('%w', ${local} / 1000, 'unixepoch') AS INTEGER) AS dow,
         CAST(strftime('%H', ${local} / 1000, 'unixepoch') AS INTEGER) AS hour, COUNT(DISTINCT e.visitor_id) AS visitors
-      FROM ev e WHERE e.origin != 'payment' GROUP BY dow, hour`,
+      FROM ev e WHERE e.origin != 'payment' AND e.no_visit = 0 GROUP BY dow, hour`,
     );
     const grid = WEEKDAYS.map(() => Array<number>(24).fill(0));
     let peak: { day: string; hour: number; visitors: number } | null = null;

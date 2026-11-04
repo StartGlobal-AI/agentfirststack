@@ -260,7 +260,7 @@ export type EnvelopeResult = { ok: true; env: Envelope } | { ok: false; error: s
 export const TAGS_VISITOR_RE = /^[A-Za-z0-9_.-]{6,64}$/;
 
 /** The fields an envelope may have; anything else is refused (chunks are stored as received). */
-const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd", "up", "tvid"]);
+const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd", "up", "tvid", "dbg"]);
 
 /** Check a decoded body against the query string (?sid=&q=) it was sent with. */
 export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): EnvelopeResult {
@@ -290,6 +290,7 @@ export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): En
   if (up) env.up = up;
   const tvid = str(raw.tvid, 64);
   if (tvid && TAGS_VISITOR_RE.test(tvid)) env.tvid = tvid;
+  if (raw.dbg === 1) env.dbg = 1;
   return { ok: true, env };
 }
 

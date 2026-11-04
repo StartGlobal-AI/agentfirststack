@@ -6,15 +6,18 @@
  * Posts text/plain JSON (no CORS preflight) to the same origin + path prefix it was loaded from
  * (/_a/s.js -> /_a/e), so a first-party proxy needs no extra config. data-api overrides it.
  * Global: window.afsa (afsa('event', ...), afsa.visitorId()). No cookies. localStorage holds
- * afsa_vid only when the server says the site is in persistent mode; afsa_ignore opts out.
+ * afsa_vid only when the server says the site is in persistent mode; afsa_ignore opts out;
+ * sessionStorage afsa_debug is the tab's test-traffic flag.
  *
  * The engagement beacon also carries the page's max scroll depth (sd) and, for the page that was
  * loaded (not SPA navigations), Core Web Vitals v = [LCP ms, INP ms, CLS x 1000]. Opt-in:
  * data-404="true" sends a "404" event on pages served with status 404 (or with
  * <meta name="afsa-404">), and data-forms="true" sends "form_submit" {form} on every form submit.
  *
- * Test traffic: afsa('debug') (or data-debug="true") marks every following event dbg: 1; the
- * server stores it but leaves it out of reports unless asked for (realtime?debug=only).
+ * Test traffic: afsa('debug') (or data-debug="true", or ?afsa_debug=1 in the page URL, which covers
+ * the page load's own pageview) marks every following event dbg: 1; the server stores it but leaves
+ * it out of reports unless asked for (realtime?debug=only). ?afsa_debug=1 and afsa('debug') last for
+ * the rest of the tab (sessionStorage afsa_debug = "1") until ?afsa_debug=0 or afsa('debug', false).
  *
  * Collection extras (all opt-in through attributes on the script tag or on page elements):
  *   data-hash="true"            hash routing: #/route changes are pageviews (h: 1)
@@ -105,7 +108,17 @@ type IO = typeof IntersectionObserver;
   let vt: number[] = [];
   let hard = 1;
   let rl = 0; // replay loader added (once per page load)
-  let dbg = on("debug"); // test traffic: stored, left out of reports (afsa('debug'), data-debug="true")
+  // Test traffic for the rest of the tab (sessionStorage afsa_debug): ?afsa_debug=1 or afsa('debug')
+  // turn it on, ?afsa_debug=0 or afsa('debug', false) off; data-debug="true" marks this page only.
+  const tab = (v?: string | number) => {
+    try {
+      if (v != null) sessionStorage.afsa_debug = v; // stored as "1" / "0"
+      return sessionStorage.afsa_debug == 1;
+    } catch {
+      return v == 1; // no sessionStorage: the flag counts for this page only
+    }
+  };
+  let dbg = tab((/\bafsa_debug=([01])/.exec(loc.search) || [])[1]) || on("debug"); // stored, left out of reports
   const hashed = on("hash");
   let pu: string | null = null; // the current page's URL from afsa('pageview', {url})
   let gp: Payload = {}; // props sent with every event
@@ -225,7 +238,7 @@ type IO = typeof IntersectionObserver;
     else if (cmd === "404") notFound();
     else if (cmd === "revenue") send(String(a[0]), { $: [a[1], a[2]], p: a[3] });
     else if (cmd === "identify") (uid = a[0] == null ? null : String(a[0])), (up = a[1]);
-    else if (cmd === "debug") dbg = a[0] !== false;
+    else if (cmd === "debug") tab(+(dbg = a[0] !== false));
     else if (cmd === "props") gp = { ...gp, ...(a[0] as Payload) };
     else if (cmd === "consent")
       // old < new only on the change to granted: then the page's pageview goes (once); withdrawn:

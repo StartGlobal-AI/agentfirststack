@@ -52,6 +52,7 @@ app.all("/mcp", (c) =>
         accountId: auth.accountId,
         auth,
         baseUrl: publicBaseUrl(c),
+        origin: new URL(c.req.url).origin,
         callerIp: c.req.header("cf-connecting-ip") ?? null,
       }),
   }),

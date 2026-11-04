@@ -437,6 +437,8 @@ export interface SessionMeta {
   forced: boolean;
   /** afsr('upgrade', reason) */
   upgraded?: string | null;
+  /** this chunk's page had analytics test traffic on (envelope dbg: ?afsa_debug=1, afsa('debug')) */
+  debug?: boolean;
 }
 
 export interface IngestLimits {
@@ -511,7 +513,18 @@ export interface NewError {
 }
 
 export type IngestResult =
-  | { status: "accepted"; new_session: boolean; forward: ForwardItem[]; new_errors?: NewError[]; tags_queued?: number }
+  | {
+      status: "accepted";
+      new_session: boolean;
+      forward: ForwardItem[];
+      /**
+       * Test traffic: the session was forced (?afsr=1) or this chunk's page had analytics debug on.
+       * Its forwarded signals go to analytics with debug: true and to tags in test batches.
+       */
+      test: boolean;
+      new_errors?: NewError[];
+      tags_queued?: number;
+    }
   | { status: "duplicate" }
   | { status: "rejected"; reason: string; stop: boolean; counter?: Counter };
 
@@ -1043,11 +1056,13 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       day,
       req.net,
     ]);
-  const tagsQueuedNow = req.tags ? queueSessionSignals(db, sid, Math.max(c.cover_end, lastTs) - 1500, req.end, req.tags, req.now) : 0;
+  const test = !!session.forced || !!meta.debug;
+  const tagsQueuedNow = req.tags ? queueSessionSignals(db, sid, Math.max(c.cover_end, lastTs) - 1500, req.end, req.tags, req.now, test) : 0;
   return {
     status: "accepted",
     new_session: !existing,
     forward,
+    test,
     ...(newErrors.length ? { new_errors: newErrors } : {}),
     ...(tagsQueuedNow ? { tags_queued: tagsQueuedNow } : {}),
   };

@@ -132,6 +132,19 @@ export function hashRoute(raw: string | null | undefined): string | null {
   return /^#!?\//.test(h) ? h.slice(0, 500) : null;
 }
 
+const DEBUG_PARAM_RE = /([?&])afsa_debug=([^&#]*)&?/;
+
+/**
+ * The tracker's test-traffic flag in a page URL (?afsa_debug=1 marks the event as test traffic;
+ * the tracker also keeps it for the tab), taken out of the URL before anything reads its query
+ * (UTM tags, click ids, site search), so it is never stored or counted as a parameter.
+ */
+export function takeDebugFlag(raw: string | null): { url: string | null; debug: boolean } {
+  const m = raw ? DEBUG_PARAM_RE.exec(raw.split("#")[0]!) : null;
+  if (!raw || !m) return { url: raw, debug: false };
+  return { url: raw.replace(DEBUG_PARAM_RE, "$1").replace(/[?&](?=#|$)/, ""), debug: m[2] === "1" };
+}
+
 /** The query string of a URL ("?a=1&b=2"), or "" (only read for site search; never stored). */
 export function queryOf(raw: string | null | undefined): string {
   if (!raw) return "";

@@ -8,7 +8,7 @@ import { EXCLUSION_REASONS } from "../lib/exclusions";
 import { UNTRUSTED_NOTICE } from "../do/engine";
 import { type Ctx, type PaymentsSummary, type SiteRow, type SiteSummary, isVerified, loadSite, siteStub } from "./context";
 import { linkingInstructions } from "./payments";
-import { PROXY_PATH, scriptSnippet } from "./install";
+import { PROXY_PATH, isTrackerPath, scriptSnippet } from "./install";
 import { budgetStatus, siteLimits, verificationJson, verifyRecord } from "./sites";
 
 export const verifyInput = z.object({
@@ -59,6 +59,22 @@ export const homepageUrl = (domain: string) => `https://${domain}/`;
 const isHomepageUrl = (site: Pick<SiteRow, "domain">, u: URL) => u.href === homepageUrl(site.domain);
 /** Where the homepage's redirects may end for it to count: the domain itself or www.<domain>. */
 const homeHost = (site: Pick<SiteRow, "domain">, u: URL) => u.hostname === site.domain || u.hostname === `www.${site.domain}`;
+
+/**
+ * Hosts this analytics service answers on: PUBLIC_BASE_URL's (in baseUrl) and the API request's
+ * own origin. A script there is this Worker's tracker; verify checks it in-process.
+ */
+export function selfHosts(ctx: Pick<Ctx, "baseUrl" | "origin">): Set<string> {
+  const out = new Set<string>();
+  for (const u of [ctx.baseUrl, ctx.origin]) {
+    try {
+      if (u) out.add(new URL(u).host);
+    } catch {
+      /* not a URL */
+    }
+  }
+  return out;
+}
 
 /** TXT records of `name` over DNS-over-HTTPS (Cloudflare's resolver), joined strings. */
 async function txtRecords(name: string): Promise<string[] | { error: string }> {
@@ -252,34 +268,55 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       } catch {
         scriptUrl = null;
       }
-      const ownScript = (u: URL) => u.host === ownHost && /^https?:$/.test(u.protocol);
+      const self = selfHosts(ctx);
+      const ownScript = (u: URL) => self.has(u.host) && /^https?:$/.test(u.protocol);
       const scriptHostOk = (u: URL) => ownScript(u) || siteHost(u);
-      const js: Fetched =
-        !scriptUrl || !scriptHostOk(scriptUrl)
-          ? { error: `not fetched: the script is neither on ${ownHost} nor on https://${site.domain} or a subdomain` }
-          : await fetchCapped(scriptUrl, { maxBytes: MAX_SCRIPT_BYTES, allowed: scriptHostOk });
-      if ("error" in js || js.status >= 400 || !js.text.includes(TRACKER_MARKER)) {
-        const proxied = !!scriptUrl && scriptUrl.origin === new URL(page.finalUrl).origin;
-        checks.push({
-          id: "script_loads",
-          ok: false,
-          detail:
-            "error" in js
-              ? js.error.startsWith("not fetched")
-                ? `The script was ${js.error}.`
-                : "The script could not be fetched (details in untrusted.script_error)."
-              : `The script URL returned HTTP ${js.status}${js.status < 400 ? " but not the tracker" : ""}.`,
-          fix: proxied
-            ? `Your first-party proxy does not reach ${ctx.baseUrl}. Apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy), so ${PROXY_PATH}/* is forwarded.`
-            : `Use the exact src from the snippet: ${snippet}`,
-        });
-        if ("error" in js && !js.error.startsWith("not fetched")) scriptError = js.error;
+      const snippetSrc = `${ctx.baseUrl}/s.js`;
+      if (scriptUrl && ownScript(scriptUrl)) {
+        // Served by this Worker. A Worker can't fetch its own host or zone (Cloudflare answers 522),
+        // so it is checked here, in-process: this service serves the tracker at that path.
+        checks.push(
+          isTrackerPath(scriptUrl.pathname)
+            ? {
+                id: "script_loads",
+                ok: true,
+                detail: `The script is served by this analytics service (${scriptUrl.host}), at a path where it serves the tracker; checked in-process, not fetched (a Worker can't fetch its own host). Its src is in untrusted.found_scripts.`,
+              }
+            : {
+                id: "script_loads",
+                ok: false,
+                detail: `The script is on this analytics service (${scriptUrl.host}), but its path (in untrusted.found_scripts) is not one where it serves the tracker.`,
+                fix: `Use the src from the snippet: ${snippet}`,
+              },
+        );
       } else {
-        checks.push({
-          id: "script_loads",
-          ok: true,
-          detail: `The script (${ownScript(scriptUrl!) ? ownHost : "first-party"}) serves the tracker.`,
-        });
+        const js: Fetched =
+          !scriptUrl || !scriptHostOk(scriptUrl)
+            ? { error: `not fetched: the script is neither on ${ownHost} nor on https://${site.domain} or a subdomain` }
+            : await fetchCapped(scriptUrl, { maxBytes: MAX_SCRIPT_BYTES, allowed: scriptHostOk });
+        if ("error" in js || js.status >= 400 || !js.text.includes(TRACKER_MARKER)) {
+          // On the site's own hosts it is a first-party proxy: the proxy is what to fix, not the src.
+          const proxied = !!scriptUrl && siteHost(scriptUrl);
+          const asSnippet = !!scriptUrl && scriptUrl.href === snippetSrc;
+          checks.push({
+            id: "script_loads",
+            ok: false,
+            detail:
+              "error" in js
+                ? js.error.startsWith("not fetched")
+                  ? `The script was ${js.error}.`
+                  : "The script could not be fetched (details in untrusted.script_error)."
+                : `The script URL returned HTTP ${js.status}${js.status < 400 ? " but not the tracker" : ""}.`,
+            fix: proxied
+              ? `Your first-party proxy does not reach ${ctx.baseUrl}. Apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy), so ${PROXY_PATH}/* (or the path your src uses) is forwarded.`
+              : asSnippet
+                ? `The src already matches the snippet; ${scriptUrl!.host} did not serve the tracker this time (details in untrusted.script_error). Run verify again in a minute.`
+                : `Use the exact src from the snippet: ${snippet}`,
+          });
+          if ("error" in js && !js.error.startsWith("not fetched")) scriptError = js.error;
+        } else {
+          checks.push({ id: "script_loads", ok: true, detail: "The script (first-party) serves the tracker." });
+        }
       }
       const csp = page.headers.get("content-security-policy");
       if (csp && scriptUrl && scriptHostOk(scriptUrl)) {

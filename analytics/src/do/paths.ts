@@ -52,7 +52,7 @@ export function paths(db: Db, settings: SiteSettings, q: PathsRequest, now = Dat
     nodes AS (SELECT e.session_id AS sid, e.visitor_id AS vid, e.ts, e.id,
                 CASE WHEN e.name = 'pageview' THEN e.pathname ELSE 'event:' || e.name END AS node,
                 CASE WHEN ${isAnchor} THEN 1 ELSE 0 END AS anchor
-              FROM ev e WHERE ${nodeFilter} OR ${isAnchor}),
+              FROM ev e WHERE e.no_visit = 0 AND (${nodeFilter} OR ${isAnchor})),
     dd AS (SELECT *, LAG(node || '|' || anchor) OVER (PARTITION BY sid ORDER BY ts, id) AS prev FROM nodes),
     seq AS (SELECT sid, vid, node, anchor, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY ts, id) AS pos FROM dd
             WHERE prev IS NULL OR prev != node || '|' || anchor),

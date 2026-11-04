@@ -131,13 +131,13 @@ export function realtimeMap(db: Db, q: MapRequest, now = Date.now()) {
     const points = all(db, {
       sql: `SELECT e.country, e.region, e.city, ROUND(AVG(e.latitude), 2) AS latitude, ROUND(AVG(e.longitude), 2) AS longitude,
               COUNT(DISTINCT e.visitor_id) AS visitors, COUNT(*) AS events
-            FROM events e WHERE ${w.sql} AND e.origin != 'payment' AND e.latitude IS NOT NULL AND e.longitude IS NOT NULL
+            FROM events e WHERE ${w.sql} AND e.origin != 'payment' AND e.no_visit = 0 AND e.latitude IS NOT NULL AND e.longitude IS NOT NULL
             GROUP BY e.country, e.region, e.city ORDER BY visitors DESC, events DESC LIMIT 500`,
       args: w.args,
     });
     const head = all(db, {
       sql: `SELECT COUNT(DISTINCT e.visitor_id) AS visitors, COUNT(DISTINCT CASE WHEN e.latitude IS NULL THEN e.visitor_id END) AS unlocated
-            FROM events e WHERE ${w.sql} AND e.origin != 'payment'`,
+            FROM events e WHERE ${w.sql} AND e.origin != 'payment' AND e.no_visit = 0`,
       args: w.args,
     })[0];
     return {

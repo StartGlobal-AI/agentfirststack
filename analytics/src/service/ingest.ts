@@ -5,7 +5,7 @@ import { type Bindings, isDev } from "../env";
 import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/channel";
 import { EMPTY_GEO, type Geo, PROXY_KEY_HEADER, geoFromFields, geoFromRequest, requestIp } from "../lib/geo";
 import { botReason, parseUserAgent } from "../lib/ua";
-import { hashRoute, parsePage, parseReferrer, primaryLanguage, queryOf, screenClass } from "../lib/url";
+import { hashRoute, parsePage, parseReferrer, primaryLanguage, queryOf, screenClass, takeDebugFlag } from "../lib/url";
 import { proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
 import type { Attribution, EnrichedEvent, IngestResponse } from "../lib/types";
 import { allow, enforce, limitVars, STORAGE_FULL_HINT } from "../lib/limits";
@@ -46,8 +46,20 @@ export const MAX_PROPS_BYTES = 2048;
 export const MAX_SERVER_BODY_BYTES = 1024 * 1024;
 
 /**
+ * A prop value that is a URL keeps no query string or fragment, like page URLs (UTM tags, click
+ * ids, preview tokens and emails ride there): a value starting with an http(s) URL or a path
+ * ("/pricing", "//cdn.example/a") is cut at its first ? or #, when that comes before any
+ * whitespace. Other text is kept as sent.
+ */
+export function stripUrlQuery(v: string): string {
+  const t = v.trim();
+  if (!/^(?:https?:\/\/|\/)[^\s?#]*[?#]/i.test(t)) return v;
+  return t.slice(0, t.search(/[?#]/));
+}
+
+/**
  * Props are stored as strings: at most 30 keys of 64 characters, values of 500, and 2 KB of JSON
- * in all (keys past that are dropped, in order).
+ * in all (keys past that are dropped, in order). URL values lose their query string (stripUrlQuery).
  */
 export function cleanProps(input: unknown): string | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
@@ -59,7 +71,7 @@ export function cleanProps(input: unknown): string | null {
     if (v == null || typeof v === "object") continue;
     const key = String(k).trim().slice(0, MAX_PROP_KEY);
     if (!/^[A-Za-z0-9_.-]+$/.test(key)) continue;
-    const value = String(v).slice(0, MAX_PROP_VALUE);
+    const value = (typeof v === "string" ? stripUrlQuery(v) : String(v)).slice(0, MAX_PROP_VALUE);
     const add = JSON.stringify(key).length + JSON.stringify(value).length + 2;
     if (size + add > MAX_PROPS_BYTES) break;
     out[key] = value;
@@ -278,7 +290,9 @@ export async function ingestBrowser(
     return { status: 202, body: { ok: false, dropped: "bot", reason: bot, ...replayField(env, link?.replay_site_id) } };
   }
   const now = Date.now();
-  const page = parsePage(clip(p.u, 2000));
+  // ?afsa_debug=1 in the page URL: test traffic (the tracker keeps it for the tab), never stored.
+  const flagged = takeDebugFlag(clip(p.u, 2000));
+  const page = parsePage(flagged.url);
   // Browser events always come from a real page; anything else (javascript:, file:, junk) is noise.
   if (typeof p.u !== "string" || !/^https?:\/\//i.test(p.u) || !page.hostname) {
     return { status: 400, body: { ok: false, error: "bad_url", hint: "u must be the page's absolute http(s) URL (location.href)." } };
@@ -286,7 +300,7 @@ export async function ingestBrowser(
   const viaProxy = new URL(req.url).pathname !== "/e";
   const geo = geoFromRequest(req, { devMode: isDev(env), trustForwarded: trusted });
   // Hash-routed SPAs (data-hash="true"): the route after # is part of the page path.
-  const route = p.h === 1 ? hashRoute(p.u) : null;
+  const route = p.h === 1 ? hashRoute(flagged.url) : null;
   const pathname = route ? `${page.pathname}${route}`.slice(0, 1000) : page.pathname;
   const ev: EnrichedEvent = {
     ts: now,
@@ -305,13 +319,13 @@ export async function ingestBrowser(
     client_visitor_id: typeof p.id === "string" && VISITOR_ID_RE.test(p.id) ? p.id : null,
     explicit_visitor_id: null,
     dnt: p.d === 1 || p.d === true || req.headers.get("sec-gpc") === "1" || req.headers.get("dnt") === "1",
-    debug: p.dbg === 1 || p.dbg === true,
+    debug: p.dbg === 1 || p.dbg === true || flagged.debug,
     language: primaryLanguage(req.headers.get("accept-language")),
     screen: name === "pageview" ? screenClass(p.w) : null,
     title: name === "pageview" ? clip(p.t, 200) : null,
     interactive: !(p.ni === 1 || p.ni === true),
     // Read by the DO for the site's search_params only, then dropped.
-    search_query: name === "pageview" ? queryOf(clip(p.u, 2000)) || null : null,
+    search_query: name === "pageview" ? queryOf(flagged.url) || null : null,
     proxy_warning: viaProxy && !trusted ? (presented ? "proxy_key_invalid" : "proxy_key_missing") : null,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip,
@@ -393,7 +407,15 @@ export const serverEventSchema = z.object({
   debug: z
     .boolean()
     .optional()
-    .describe("Test traffic: stored (and counted against budgets) but left out of reports unless debug=include|only; purged after 7 days."),
+    .describe(
+      "Test traffic: stored (and counted against budgets) but left out of reports unless debug=include|only; purged after 7 days. A url carrying afsa_debug=1 does the same.",
+    ),
+  visit: z
+    .boolean()
+    .optional()
+    .describe(
+      "false: a backend event that is not a visit (an agent signing up with curl, a webhook). It joins the visitor's live session if there is one; otherwise it is stored with no visitor or session: it counts as an event, a conversion and revenue, never in visitors, visits, bounce rate or entry pages. Default true.",
+    ),
   interactive: z
     .boolean()
     .optional()
@@ -436,7 +458,8 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
     const bot = botReason({ ua: e.user_agent });
     if (bot && bot !== "non_browser_user_agent" && bot !== "short_user_agent") return `bot (${bot})`;
   }
-  const page = parsePage(e.url ?? null);
+  const flagged = takeDebugFlag(e.url ?? null);
+  const page = parsePage(flagged.url);
   // Explicit UTM / click id fields override what the URL carries.
   for (const k of [
     "utm_source",
@@ -479,11 +502,12 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
     dnt: false,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip: e.ip ?? null,
-    debug: !!e.debug,
+    debug: !!e.debug || flagged.debug,
     interactive: e.interactive !== false,
+    ...(e.visit === false ? { visit: false } : {}),
     language: e.language ? primaryLanguage(e.language) : null,
     title: e.name === "pageview" ? clip(e.title, 200) : null,
-    search_query: e.name === "pageview" && e.url ? queryOf(e.url) || null : null,
+    search_query: e.name === "pageview" && flagged.url ? queryOf(flagged.url) || null : null,
     ...attribution(page.hostname, page, e.referrer),
     ...geo,
     ...parseUserAgent(e.user_agent),
@@ -527,7 +551,11 @@ export async function ingestServer(ctx: Ctx, siteId: string, raw: unknown, opts:
     const base = {
       index,
       ok: !!r?.ok,
-      ...(r?.ok ? { visitor_id: r.visitor_id, session_id: r.session_id } : { reason: r?.reason ?? "rejected" }),
+      ...(r?.ok
+        ? r.no_visit
+          ? { visitor_id: null, session_id: null, visit: false }
+          : { visitor_id: r.visitor_id, session_id: r.session_id }
+        : { reason: r?.reason ?? "rejected" }),
     };
     if (!validateOnly) return base;
     return {

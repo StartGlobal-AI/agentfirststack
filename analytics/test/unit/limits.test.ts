@@ -157,22 +157,88 @@ describe("verifyInstall: what it fetches", () => {
   const tracker = () => new Response("/*! afs-analytics */ ...");
 
   it.each([
-    ["https://analytics.example.net/s.js", true],
-    ["/_a/s.js", true],
+    // this service's own host: checked in-process (a Worker can't fetch its own host or zone)
+    ["https://analytics.example.net/s.js", "in-process"],
+    ["/_a/s.js", "fetched"],
     // allowed_hostnames aren't proven to be the owner's: never fetched
-    ["https://cdn.partner.test/s.js", false],
-    ["https://www.shop.test/s.js", true],
-    ["http://www.shop.test/s.js", false],
-    ["https://www.shop.test:8443/s.js", false],
-    ["https://evil.test/s.js", false],
-    ["http://127.0.0.1:8080/s.js", false],
-  ])("script src %s fetched: %s", async (src, fetched) => {
+    ["https://cdn.partner.test/s.js", "not fetched"],
+    ["https://www.shop.test/s.js", "fetched"],
+    ["http://www.shop.test/s.js", "not fetched"],
+    ["https://www.shop.test:8443/s.js", "not fetched"],
+    ["https://evil.test/s.js", "not fetched"],
+    ["http://127.0.0.1:8080/s.js", "not fetched"],
+  ])("script src %s: %s", async (src, how) => {
     const calls = stubFetch((u) => (u.pathname.endsWith("s.js") ? tracker() : page(src)));
     const r = await verifyInstall(ctx(), site.id, {});
     const check = r.checks.find((c) => c.id === "script_loads")!;
-    expect(calls.length).toBe(fetched ? 2 : 1);
-    expect(check.ok).toBe(fetched);
-    if (!fetched) expect(check.detail).toContain("not fetched");
+    expect(calls.length).toBe(how === "fetched" ? 2 : 1);
+    expect(check.ok).toBe(how !== "not fetched");
+    if (how === "not fetched") expect(check.detail).toContain("not fetched");
+    if (how === "in-process") expect(check.detail).toContain("checked in-process");
+  });
+
+  describe("a script served by this service is checked in-process (a Worker fetching its own zone gets 522)", () => {
+    const SNIPPET_SRC = "https://analytics.example.net/s.js";
+    /** what the hosted platform saw: every fetch of the analytics host answered 522 */
+    const own522 = (src: string) =>
+      stubFetch((u) =>
+        u.hostname === "analytics.example.net" || u.hostname.endsWith(".workers.dev")
+          ? new Response("error code: 522", { status: 522 })
+          : u.pathname.endsWith("s.js")
+            ? new Response("bad gateway", { status: 502 })
+            : page(src),
+      );
+
+    it("the exact snippet src passes without fetching, and no fix tells the page to do what it already does", async () => {
+      const calls = own522(SNIPPET_SRC);
+      const r = await verifyInstall(ctx(), site.id, {});
+      expect(r.checks.find((c) => c.id === "script_loads")).toMatchObject({
+        ok: true,
+        detail: expect.stringContaining("served by this analytics service (analytics.example.net)"),
+      });
+      expect(calls.some((c) => c.includes("analytics.example.net"))).toBe(false);
+      expect(JSON.stringify(r.fixes)).not.toContain("exact src");
+    });
+
+    it("so does the API request's own origin when PUBLIC_BASE_URL names another host, and the linker build", async () => {
+      for (const src of ["https://afs-analytics.acme.workers.dev/s.js", "https://analytics.example.net/s.js?linker=1"]) {
+        const calls = own522(src);
+        const r = await verifyInstall({ ...ctx(), origin: "https://afs-analytics.acme.workers.dev" }, site.id, {});
+        expect(
+          r.checks.find((c) => c.id === "script_loads"),
+          src,
+        ).toMatchObject({ ok: true });
+        expect(
+          calls.filter((c) => !c.startsWith("https://shop.test/")),
+          src,
+        ).toEqual([]);
+      }
+    });
+
+    it("a path on this service that doesn't serve the tracker fails, pointing at the snippet's src", async () => {
+      own522("https://analytics.example.net/v1/s.js");
+      const r = await verifyInstall(ctx(), site.id, {});
+      const check = r.checks.find((c) => c.id === "script_loads")!;
+      expect(check).toMatchObject({ ok: false, detail: expect.stringContaining("its path (in untrusted.found_scripts) is not one") });
+      // the page's own text (its src) stays under untrusted, out of the checks
+      expect(check.detail).not.toContain("/v1/s.js");
+      expect(check.fix).toContain(`src="${SNIPPET_SRC}"`);
+    });
+
+    it("a broken first-party proxy (same origin or a subdomain) is still fetched for real, and its fix is the proxy", async () => {
+      for (const src of ["/_a/s.js", "https://stats.shop.test/_a/s.js"]) {
+        const calls = own522(src);
+        const r = await verifyInstall(ctx(), site.id, {});
+        const check = r.checks.find((c) => c.id === "script_loads")!;
+        expect(
+          calls.some((c) => c.endsWith("/_a/s.js")),
+          src,
+        ).toBe(true);
+        expect(check, src).toMatchObject({ ok: false, detail: expect.stringContaining("HTTP 502") });
+        expect(check.fix, src).toContain("first-party proxy");
+        expect(check.fix, src).not.toContain("exact src");
+      }
+    });
   });
 
   it("caps the script read at 256 KB", async () => {

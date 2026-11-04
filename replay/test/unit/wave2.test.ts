@@ -8,6 +8,8 @@ import { summary } from "../../src/do/engine";
 import { deleteResponse } from "../../src/do/surveys";
 import { queueTags, tagsClear, tagsDone, tagsDue, tagsExpire, tagsQueued, tagsRetry } from "../../src/do/tags-outbox";
 import { NO_AD_CONSENT, surveyScores, tagsEvent, tagsSignalsOf } from "../../src/lib/tags";
+import { analyticsEvents } from "../../src/service/analytics";
+import { postTagsEvents } from "../../src/service/tags";
 import { feed, NOW, sid } from "./engine-helpers";
 import { memoryDb } from "./sqlite";
 
@@ -98,6 +100,55 @@ describe("wave 2, 1: residuals", () => {
 
 describe("wave 2, 3: replay signals to a tags container", () => {
   const TAGS = { host: "shop.test", signals: tagsSignalsOf(null), visitor_id: "vid_test.1700000000", daily: null };
+
+  it("test traffic (a forced session, a page with analytics debug on) is queued marked and sent in batches of its own", () => {
+    const db = memoryDb();
+    const rage = (sel: string) => [click(T0 + 1000, 1, sel), click(T0 + 1200, 1, sel), click(T0 + 1400, 1, sel)];
+    const run = (n: number, meta: Record<string, unknown>) => {
+      const r = feed(db, sid(n), 0, [page(T0, 1, "/"), ...rage(`#b${n}`)], { forward: true, tags: TAGS, end: true, meta });
+      if (r.status !== "accepted") throw new Error("not accepted");
+      return [r.test, r.forward.map((f) => f.name)];
+    };
+    expect(run(81, {})).toEqual([false, ["rage_click"]]);
+    expect(run(82, { forced: true })).toEqual([true, ["rage_click"]]);
+    expect(run(83, { debug: true })).toEqual([true, ["rage_click"]]);
+    expect(run(84, {})).toEqual([false, ["rage_click"]]);
+    // oldest first, one kind per batch; the marker stays in the outbox
+    const batches: [boolean, string[]][] = [];
+    for (let rows = tagsDue(db); rows.length; rows = tagsDue(db)) {
+      expect(JSON.stringify(rows.map((r) => r.event))).not.toContain("_afsr_test");
+      batches.push([rows[0]!.test, rows.map((r) => String(r.event.params.replay_session_id))]);
+      tagsDone(
+        db,
+        rows.map((r) => r.id),
+      );
+    }
+    expect(batches).toEqual([
+      [false, [sid(81)]],
+      [true, [sid(82), sid(83)]],
+      [false, [sid(84)]],
+    ]);
+  });
+
+  it("postTagsEvents sends test: true only for test batches; analyticsEvents marks them debug: true", async () => {
+    const bodies: unknown[] = [];
+    const env = {
+      INTERNAL_TOKEN: "t",
+      TAGS: { fetch: async (req: Request) => (bodies.push(await req.json()), Response.json({ accepted: 1 }, { status: 202 })) },
+    } as never;
+    const ev = tagsEvent({ name: "rage_click", key: "rp.x.1", ts: NOW, path: "/", params: {} }, "shop.test", null);
+    await postTagsEvents(env, "acc", "ctr_00000000", [ev]);
+    await postTagsEvents(env, "acc", "ctr_00000000", [ev], true);
+    expect(bodies.map((b) => (b as { test?: boolean }).test)).toEqual([undefined, true]);
+    const item = { name: "dead_click" as const, ts: NOW, path: "/", props: { replay_session_id: "rs_x" } };
+    const v = { ip: null, user_agent: null, analytics_visitor_id: "vid_abcdefghij" };
+    expect(analyticsEvents([item], "shop.test", v)[0]).not.toHaveProperty("debug");
+    expect(analyticsEvents([item], "shop.test", v, true)[0]).toMatchObject({
+      name: "dead_click",
+      debug: true,
+      visitor_id: "vid_abcdefghij",
+    });
+  });
 
   it("builds tags server events: deterministic event_id, page_url, short params, visitor or no ad consent", () => {
     const item = {

@@ -35,6 +35,11 @@ describe("parseEnvelope (ingest parsing)", () => {
     const bad = parseEnvelope({ v: 1, sid: SID, seq: 3, t: "x", ev: [], avid: "no spaces allowed!", end: true }, q);
     expect(bad.ok && bad.env).toEqual({ v: 1, sid: SID, seq: 3, t: 0, ev: [] });
   });
+  it("dbg: 1 (analytics debug on for the page) is kept; any other value is dropped", () => {
+    expect(parseEnvelope({ v: 1, sid: SID, seq: 3, t: T0, ev: [], dbg: 1 }, q)).toMatchObject({ ok: true, env: { dbg: 1 } });
+    const other = parseEnvelope({ v: 1, sid: SID, seq: 3, t: T0, ev: [], dbg: "yes" }, q);
+    expect(other.ok && other.env).not.toHaveProperty("dbg");
+  });
   it("refuses bodies that don't match the query or the shape, each with a hint", () => {
     for (const [body, code] of [
       [null, "invalid_body"],

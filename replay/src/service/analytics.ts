@@ -165,8 +165,12 @@ export interface ForwardVisitor {
   analytics_visitor_id: string | null;
 }
 
-/** Signals as analytics server events, joined to the visitor (afsa.visitorId(), else ip + user agent). */
-export function analyticsEvents(items: ForwardItem[], host: string, v: ForwardVisitor) {
+/**
+ * Signals as analytics server events, joined to the visitor (afsa.visitorId(), else ip + user
+ * agent). `test`: the session was forced (?afsr=1) or the page had analytics debug on, so they are
+ * sent with debug: true (analytics stores test traffic but leaves it out of reports).
+ */
+export function analyticsEvents(items: ForwardItem[], host: string, v: ForwardVisitor, test = false) {
   const visitor = v.analytics_visitor_id
     ? { visitor_id: v.analytics_visitor_id }
     : v.ip && v.user_agent
@@ -178,6 +182,7 @@ export function analyticsEvents(items: ForwardItem[], host: string, v: ForwardVi
     url: `https://${host}${i.path ?? "/"}`,
     props: Object.fromEntries(Object.entries(i.props).filter(([, val]) => val !== null && val !== "")),
     ...visitor,
+    ...(test ? { debug: true } : {}),
   }));
 }
 

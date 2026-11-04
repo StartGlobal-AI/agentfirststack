@@ -40,7 +40,7 @@ const dbg = (mode: DebugMode | undefined, alias = "events") => {
 export function eventNames(db: Db, start: number, end: number, limit = MAX_EVENT_NAMES, debug?: DebugMode) {
   return db
     .all(
-      `SELECT name, COUNT(*) AS events, COUNT(DISTINCT visitor_id) AS visitors, MAX(ts) AS last_seen_at
+      `SELECT name, COUNT(*) AS events, COUNT(DISTINCT CASE WHEN no_visit = 0 THEN visitor_id END) AS visitors, MAX(ts) AS last_seen_at
        FROM events WHERE ts >= ? AND ts < ?${dbg(debug)} GROUP BY name ORDER BY events DESC, name LIMIT ?`,
       [start, end, limit],
     )

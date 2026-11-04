@@ -136,6 +136,11 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   title?: string | null;
   /** false: a non-interactive event (doesn't un-bounce a session) */
   interactive?: boolean;
+  /**
+   * false (server events, visit: false): never opens a visit. It joins the visitor's live session
+   * when there is one; otherwise it is stored with no visitor or session (events.no_visit = 1).
+   */
+  visit?: boolean;
   /** the page URL's query string, only so the DO can read site_search params; never stored */
   search_query?: string | null;
   /** the site_search term the DO extracted (set in the DO, redacted) */
@@ -153,6 +158,8 @@ export interface IngestOutcome {
   reason?: string;
   /** the event opened a new session */
   new_session?: boolean;
+  /** visit: false and no live session: stored with no visitor or session (visitor_id / session_id are not returned) */
+  no_visit?: boolean;
   /** an engagement beacon (it updates its pageview, it doesn't add a row) */
   engagement?: boolean;
   /** validate_only: the row that would have been stored */

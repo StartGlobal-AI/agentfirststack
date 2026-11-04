@@ -170,6 +170,12 @@ export interface Envelope {
   up?: string;
   /** the tags visitor id (afst.visitorId()), sent only while a tags container is linked (config tg) */
   tvid?: string;
+  /**
+   * 1 while analytics test traffic is on for the page (?afsa_debug=1 in its URL, or sessionStorage
+   * afsa_debug = "1", which the analytics tracker keeps for the tab): the signals forwarded with
+   * this chunk are marked test traffic, like those of forced (?afsr=1) sessions.
+   */
+  dbg?: 1;
 }
 
 /** The per-site config the loader script (/r/<site>.js) is served with. */

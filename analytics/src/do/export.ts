@@ -51,6 +51,7 @@ export const EXPORT_COLUMNS = [
   "inp",
   "cls",
   "debug",
+  "no_visit",
 ] as const;
 
 export interface ExportRequest {

@@ -123,10 +123,16 @@ export function takeTagsItems(db: Db, sid: string, settledBefore: number, end: b
   return out;
 }
 
+/**
+ * Kept in an outbox row's JSON for test traffic (forced sessions, analytics debug pages) and taken
+ * out before sending: such events go in batches of their own with test: true.
+ */
+const TEST_KEY = "_afsr_test";
+
 /** Queue built events and count them against today's tags budget. */
 export function queueTags(
   db: Db,
-  q: { session_id: string | null; response_id?: string | null; events: TagsServerEvent[]; now: number },
+  q: { session_id: string | null; response_id?: string | null; events: TagsServerEvent[]; now: number; test?: boolean },
 ): number {
   if (!q.events.length) return 0;
   for (const e of q.events)
@@ -134,7 +140,7 @@ export function queueTags(
       q.session_id,
       q.response_id ?? null,
       q.now,
-      JSON.stringify(e),
+      JSON.stringify(q.test ? { ...e, [TEST_KEY]: 1 } : e),
     ]);
   db.run(
     `INSERT INTO daily (day, tags_forwarded) VALUES (?, ?)
@@ -144,23 +150,40 @@ export function queueTags(
   return q.events.length;
 }
 
-/** Take a session's settled signals and queue them (one call per ingested chunk). */
-export function queueSessionSignals(db: Db, sid: string, settledBefore: number, end: boolean, req: TagsRequest, now: number): number {
+/** Take a session's settled signals and queue them (one call per ingested chunk); `test` = test traffic. */
+export function queueSessionSignals(
+  db: Db,
+  sid: string,
+  settledBefore: number,
+  end: boolean,
+  req: TagsRequest,
+  now: number,
+  test = false,
+): number {
   const items = takeTagsItems(db, sid, settledBefore, end, tagsRoom(db, now, req.daily), req.signals);
-  return queueTags(db, { session_id: sid, events: items.map((i) => tagsEvent(i, req.host, req.visitor_id)), now });
+  return queueTags(db, { session_id: sid, events: items.map((i) => tagsEvent(i, req.host, req.visitor_id)), now, test });
 }
 
 export interface OutboxRow {
   id: number;
   tries: number;
   event: TagsServerEvent;
+  /** test traffic: sent in a batch with test: true */
+  test: boolean;
 }
 
-/** The oldest queued events (a batch for one request). */
+/**
+ * The oldest queued events of one kind, real or test traffic (a batch for one request): the kind
+ * of the oldest row, so a batch never mixes them and the queue keeps its order.
+ */
 export function tagsDue(db: Db, limit = 100): OutboxRow[] {
-  return db
-    .all("SELECT id, tries, event FROM tags_outbox ORDER BY id LIMIT ?", [limit])
-    .map((r) => ({ id: num(r.id), tries: num(r.tries), event: JSON.parse(String(r.event)) as TagsServerEvent }));
+  const rows = db.all("SELECT id, tries, event FROM tags_outbox ORDER BY id LIMIT ?", [limit]).map((r) => {
+    const { [TEST_KEY]: t, ...event } = JSON.parse(String(r.event)) as TagsServerEvent & { [TEST_KEY]?: 1 };
+    return { id: num(r.id), tries: num(r.tries), event: event as TagsServerEvent, test: t === 1 };
+  });
+  const test = rows[0]?.test ?? false;
+  const end = rows.findIndex((r) => r.test !== test);
+  return end < 0 ? rows : rows.slice(0, end);
 }
 
 export const tagsQueued = (db: Db): number => num(db.all("SELECT COUNT(*) AS n FROM tags_outbox")[0]?.n);

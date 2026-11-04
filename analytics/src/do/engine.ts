@@ -115,7 +115,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const ATTR_COLS = [
   "referrer",
@@ -336,6 +336,14 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       addColumn(db, "payments", "fx_fallback", "INTEGER");
     },
   },
+  {
+    // Server events sent with visit: false that found no live session: stored with no visit (no
+    // sessions row), so they count as events, conversions and revenue but never as visitors or visits.
+    version: 9,
+    up: (db) => {
+      addColumn(db, "events", "no_visit", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 /** Columns and their meaning, for llms.txt / the query_sql tool description. */
@@ -345,7 +353,8 @@ export const SCHEMA_DOC = `events(id, ts unix ms, name ['pageview', 'engagement'
   click_id_type, click_id, country, region, region_code, city, continent, timezone, latitude, longitude, asn, as_org,
   browser, browser_version, os, os_version, device, language, screen [xs|sm|md|lg], title, props [JSON text], revenue [refunds negative], currency,
   revenue_type [new|renewal|refund|NULL], engagement_ms, scroll_depth [0-100, pageviews], lcp [ms], inp [ms], cls,
-  debug [1 = test traffic, left out of reports by default], non_interactive [1 = doesn't un-bounce])
+  debug [1 = test traffic, left out of reports by default], non_interactive [1 = doesn't un-bounce],
+  no_visit [1 = a server event sent with visit: false that joined no visit: its session_id has no sessions row; reports never count it as a visitor or a visit, add AND no_visit = 0 when you count visitors])
 sessions(id, visitor_id, user_id, user_source [server|browser: who sent the user id], started_at, last_seen_at, hostname, entry_page,
   exit_page, pageviews, custom_events, engagement_ms, + the same attribution, geo and device columns as events)
 goals(id, name, type [event|pageview|scroll], match, glob, value, threshold, props [JSON: every key must match], counting [every|once_per_visit], created_at)
@@ -678,6 +687,7 @@ export function storedEventOut(r: Row | undefined): Record<string, unknown> | nu
     revenue: r.revenue ?? null,
     currency: r.currency ?? null,
     debug: !!r.debug,
+    no_visit: !!r.no_visit,
   };
 }
 
@@ -760,9 +770,15 @@ function ingestOne(
   let geo = pick(ev as unknown as Record<string, unknown>, GEO_COLS);
   let device = pick(ev as unknown as Record<string, unknown>, DEVICE_COLS);
   let userId = ev.user_id;
-  const newSession = !sess;
+  // visit: false (server events) never opens a visit: with no live session to join, the event is
+  // stored with its own attribution, no session row and no first touch, marked no_visit = 1 so it
+  // never counts as a visitor or a visit (it still counts as an event, a conversion and revenue).
+  const noVisit = !sess && ev.visit === false;
+  const newSession = !sess && !noVisit;
 
-  if (!sess) {
+  if (noVisit) {
+    attr = evAttr;
+  } else if (!sess) {
     const id = `s${randomString(15)}`;
     if (ignoredReferrer && evAttr.channel === "Direct") {
       // Back from a checkout after the session timed out: continue the visitor's latest attribution.
@@ -880,18 +896,20 @@ function ingestOne(
     }
     if (sets.length) db.run(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`, [...args, sess.id]);
   }
+  // A no-visit event's session id is its own (no sessions row), so session-scoped reads never join it to another.
+  const sessionId = sess ? sess.id : `n${randomString(15)}`;
 
   db.run(
     `INSERT INTO events (ts, name, visitor_id, session_id, user_id, origin, hostname, pathname, url,
-       ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, revenue, currency, engagement_ms, debug, title, non_interactive)
-     VALUES (${Array(9 + ATTR_COLS.length + GEO_COLS.length + DEVICE_COLS.length + 7)
+       ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, revenue, currency, engagement_ms, debug, title, non_interactive, no_visit)
+     VALUES (${Array(9 + ATTR_COLS.length + GEO_COLS.length + DEVICE_COLS.length + 8)
        .fill("?")
        .join(", ")})`,
     [
       ev.ts,
       ev.name,
       visitorId,
-      sess.id,
+      sessionId,
       userId,
       ev.origin,
       ev.hostname,
@@ -907,6 +925,7 @@ function ingestOne(
       ev.debug ? 1 : 0,
       isPageview ? (ev.title ?? null) : null,
       !isPageview && ev.interactive === false ? 1 : 0,
+      noVisit ? 1 : 0,
     ],
   );
   if (userId && ev.user_props && Object.keys(ev.user_props).length) {
@@ -933,41 +952,43 @@ function ingestOne(
     const items = ev.items.slice(0, max).map((it) => (priced ? it : { ...it, price: null }));
     if (max > 0) insertItems(db, num(db.all("SELECT last_insert_rowid() AS id")[0]?.id), ev.ts, ev.name, items);
   }
-  db.run(
-    `UPDATE sessions SET
+  if (sess)
+    db.run(
+      `UPDATE sessions SET
        pageviews = pageviews + ?, custom_events = custom_events + ?,
        exit_page = CASE WHEN ? = 1 AND ? >= COALESCE(last_pageview_at, 0) THEN ? ELSE exit_page END,
        last_pageview_at = CASE WHEN ? = 1 THEN MAX(COALESCE(last_pageview_at, 0), ?) ELSE last_pageview_at END,
        last_seen_at = MAX(last_seen_at, ?), started_at = MIN(started_at, ?)
      WHERE id = ?`,
-    [
-      isPageview ? 1 : 0,
-      isPageview || ev.interactive === false ? 0 : 1,
-      isPageview ? 1 : 0,
-      ev.ts,
-      ev.pathname,
-      isPageview ? 1 : 0,
-      ev.ts,
-      ev.ts,
-      ev.ts,
-      sess.id,
-    ],
-  );
+      [
+        isPageview ? 1 : 0,
+        isPageview || ev.interactive === false ? 0 : 1,
+        isPageview ? 1 : 0,
+        ev.ts,
+        ev.pathname,
+        isPageview ? 1 : 0,
+        ev.ts,
+        ev.ts,
+        ev.ts,
+        sess.id,
+      ],
+    );
   // Site search: a pageview whose URL carries one of the site's search_params also records a
   // site_search event {term} (an event of its own, within the daily budget).
   let extra = 0;
   if (isPageview && ev.search_term && o.room()) {
     db.run(
       `INSERT INTO events (ts, name, visitor_id, session_id, user_id, origin, hostname, pathname, url,
-         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, debug, non_interactive)
+         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, debug, non_interactive, no_visit)
        SELECT ts, 'site_search', visitor_id, session_id, user_id, origin, hostname, pathname, url,
-         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, ?, debug, 1
+         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, ?, debug, 1, no_visit
        FROM events WHERE id = last_insert_rowid()`,
       [JSON.stringify({ term: ev.search_term })],
     );
     extra = 1;
   }
-  return { ok: true, visitor_id: visitorId, session_id: sess.id, new_session: newSession, ...(extra ? { extra_events: extra } : {}) };
+  const ids = noVisit ? { no_visit: true } : { visitor_id: visitorId, session_id: sessionId };
+  return { ok: true, ...ids, new_session: newSession, ...(extra ? { extra_events: extra } : {}) };
 }
 
 /** The first configured search parameter's value: trimmed, lowercased, 100 characters; null if none. */
@@ -1651,14 +1672,14 @@ export function realtime(db: Db, q: RealtimeRequest = { filters: [] }, now = Dat
       const w = where(start);
       return all(db, {
         sql: `SELECT COALESCE(${col.sql}, '(none)') AS value, COUNT(DISTINCT e.visitor_id) AS visitors FROM events e LEFT JOIN sessions s ON s.id = e.session_id
-              WHERE ${w.sql} AND e.origin != 'payment' ${extra} GROUP BY value ORDER BY visitors DESC, value LIMIT 10`,
+              WHERE ${w.sql} AND e.origin != 'payment' AND e.no_visit = 0 ${extra} GROUP BY value ORDER BY visitors DESC, value LIMIT 10`,
         args: [...col.args, ...w.args],
       }).map((r) => ({ value: r.value, visitors: num(r.visitors) }));
     };
     const counts = (start: number) => {
       const w = where(start);
       const r = all(db, {
-        sql: `SELECT COUNT(DISTINCT CASE WHEN e.origin != 'payment' THEN e.visitor_id END) AS visitors,
+        sql: `SELECT COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.no_visit = 0 THEN e.visitor_id END) AS visitors,
                 COALESCE(SUM(e.name = 'pageview'), 0) AS pageviews, COUNT(*) AS events FROM events e WHERE ${w.sql}`,
         args: w.args,
       })[0];

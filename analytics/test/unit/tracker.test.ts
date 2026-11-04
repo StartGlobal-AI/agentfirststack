@@ -36,6 +36,8 @@ function browser(
     /** the /s.js?linker=1 build */
     linker?: boolean;
     userAgent?: string;
+    /** the tab's sessionStorage before the tracker runs; "blocked" = reading it throws (sandboxed iframes) */
+    session?: Record<string, string> | "blocked";
   } = {},
 ) {
   const sent: Sent[] = [];
@@ -67,6 +69,14 @@ function browser(
   const attrs: Record<string, string> = { "data-site": "site_0123456789abcdef", ...(opts.attrs ?? {}) };
   const script = { src: opts.src ?? "https://analytics.example.net/s.js", getAttribute: (k: string) => attrs[k] ?? null };
   const store: Record<string, string> = { ...(opts.storage ?? {}) };
+  // Storage keeps strings: a property set stores String(value), as in a browser.
+  const session: Record<string, string> = opts.session === "blocked" ? {} : { ...(opts.session ?? {}) };
+  const sessionStorage = new Proxy(session, {
+    set: (t, k, v) => {
+      t[k as string] = String(v);
+      return true;
+    },
+  });
   const doc = { scrollHeight: 2000 };
   const ctx: Record<string, unknown> = {
     URL,
@@ -132,6 +142,13 @@ function browser(
     addEventListener: (t: string, f: (e: unknown) => void) => (listeners[t] ||= []).push(f),
   };
   ctx.window = ctx;
+  if (opts.session === "blocked")
+    Object.defineProperty(ctx, "sessionStorage", {
+      get: () => {
+        throw new Error("SecurityError: storage is disabled");
+      },
+    });
+  else ctx.sessionStorage = sessionStorage;
   const IO = ctx.IntersectionObserver as unknown as { prototype: Record<string, unknown> };
   IO.prototype.observe = function (this: { cb: (es: unknown[]) => void; o: { threshold: number } }, el: { visible: boolean }) {
     observers.push({ threshold: this.o.threshold, el });
@@ -172,6 +189,7 @@ function browser(
     sent,
     scripts,
     store,
+    session,
     afsa,
     ctx,
     tick: (ms: number) => (clock += ms),
@@ -224,14 +242,16 @@ function browser(
 describe("tracker (/s.js)", () => {
   it("is small and carries the verify marker", () => {
     expect(TRACKER.startsWith("/*! afs-analytics */")).toBe(true);
-    // Budget: 5.1 KB minified, 2.75 KB gzip. Scroll depth, Web Vitals, 404 and form tracking took it
+    // Budget: 5.265 KB minified, 2.81 KB gzip. Scroll depth, Web Vitals, 404 and form tracking took it
     // from 2.2 KB to 3.4 KB; loading the replay recorder of linked sites added 0.2 KB; the wave-1
     // pack (debug flag, hash routing, attribute click events, element visibility, global and
     // per-pageview props, beforeSend, download extensions, redirect links, non-interactive events,
     // form_start, page title, viewport width) 1.5 KB minified / 0.7 KB gzip. Language, extra UTM
     // tags, site search and content groups are read on the server and cost the tracker nothing.
-    expect(TRACKER.length).toBeLessThan(5100);
-    expect(gzipSync(TRACKER).length).toBeLessThan(2750);
+    // ?afsa_debug=1 (test traffic from the first pageview, kept for the tab in sessionStorage) took
+    // it from 5096 / 2745 to 5260 / 2808: the budget went up by about that much (was 5100 / 2750).
+    expect(TRACKER.length).toBeLessThan(5265);
+    expect(gzipSync(TRACKER).length).toBeLessThan(2810);
   });
 
   it("exposes window.afsa and nothing under the old sga name", () => {
@@ -401,6 +421,57 @@ describe("tracker (/s.js)", () => {
     q.afsa("event", "y");
     expect(q.sent[2]!.body.dbg).toBeUndefined();
     expect(browser().sent[0]!.body.dbg).toBeUndefined();
+  });
+
+  it("?afsa_debug=1 marks the page load's own pageview and everything after it, for the rest of the tab", () => {
+    for (const linker of [false, true]) {
+      const b = browser({ search: "?utm_source=x&afsa_debug=1", linker });
+      b.afsa("event", "signup");
+      expect(
+        b.sent.map((s) => [s.body.n, s.body.dbg]),
+        `linker ${linker}`,
+      ).toEqual([
+        ["pageview", 1],
+        ["signup", 1],
+      ]);
+      expect(b.session.afsa_debug).toBe("1");
+      // the next page load in the same tab, without the flag in its URL
+      const next = browser({ search: "", session: b.session, linker });
+      expect(next.sent[0]!.body.dbg).toBe(1);
+    }
+    // a parameter that only ends in afsa_debug is not the flag
+    expect(browser({ search: "?no_afsa_debug=1" }).sent[0]!.body.dbg).toBeUndefined();
+  });
+
+  it("?afsa_debug=0 and afsa('debug', false) end it for the tab; afsa('debug') lasts for the tab too", () => {
+    const off = browser({ search: "?afsa_debug=0", session: { afsa_debug: "1" } });
+    expect(off.sent[0]!.body.dbg).toBeUndefined();
+    expect(off.session.afsa_debug).toBe("0");
+    const b = browser({ search: "", session: { afsa_debug: "1" } });
+    expect(b.sent[0]!.body.dbg).toBe(1);
+    b.afsa("debug", false);
+    b.afsa("event", "x");
+    expect(b.sent[1]!.body.dbg).toBeUndefined();
+    expect(browser({ search: "", session: b.session }).sent[0]!.body.dbg).toBeUndefined();
+    const on = browser({ search: "" });
+    on.afsa("debug");
+    expect(on.session.afsa_debug).toBe("1");
+    expect(browser({ search: "", session: on.session }).sent[0]!.body.dbg).toBe(1);
+    // data-debug="true" marks its own page only
+    const attr = browser({ attrs: { "data-debug": "true" } });
+    expect(attr.sent[0]!.body.dbg).toBe(1);
+    expect(attr.session.afsa_debug).toBeUndefined();
+  });
+
+  it("with storage blocked, ?afsa_debug=1 still marks that page and afsa('debug') still works", () => {
+    const b = browser({ search: "?afsa_debug=1", session: "blocked" });
+    expect(b.sent[0]!.body.dbg).toBe(1);
+    b.afsa("debug", false);
+    b.afsa("event", "x");
+    expect(b.sent[1]!.body.dbg).toBeUndefined();
+    b.afsa("debug");
+    b.afsa("event", "y");
+    expect(b.sent[2]!.body.dbg).toBe(1);
   });
 
   it("flags webdriver and GPC, honours afsa_ignore", () => {

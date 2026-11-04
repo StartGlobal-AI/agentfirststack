@@ -307,6 +307,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       analytics_visitor_id: envl.avid ?? null,
       forced: envl.f === 1,
       upgraded: envl.up ?? null,
+      debug: envl.dbg === 1,
     },
     end: envl.end === 1,
     limits: {
@@ -356,11 +357,13 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   if (verified && envl.end === 1) waitUntil(onSessionEnd(env, site, sid).catch((e) => console.error("replay segment.session failed", e)));
   if (result.forward.length && site.analytics_site_id)
     waitUntil(
-      forwardTo(env, site, result.forward, {
-        ip: req.headers.get("cf-connecting-ip"),
-        user_agent: ua,
-        analytics_visitor_id: envl.avid ?? null,
-      }),
+      forwardTo(
+        env,
+        site,
+        result.forward,
+        { ip: req.headers.get("cf-connecting-ip"), user_agent: ua, analytics_visitor_id: envl.avid ?? null },
+        result.test,
+      ),
     );
   return { status: 202, body: { ok: true, session_id: sid, seq, new_session: result.new_session } };
 }
@@ -370,8 +373,9 @@ function forwardTo(
   site: SiteRow,
   items: Parameters<typeof analyticsEvents>[0],
   visitor: Parameters<typeof analyticsEvents>[2],
+  test: boolean,
 ) {
-  return forwardSignals(env, site.account_id, site.analytics_site_id!, analyticsEvents(items, site.domain, visitor)).catch((e) =>
+  return forwardSignals(env, site.account_id, site.analytics_site_id!, analyticsEvents(items, site.domain, visitor, test)).catch((e) =>
     console.error("replay forward failed", e),
   );
 }

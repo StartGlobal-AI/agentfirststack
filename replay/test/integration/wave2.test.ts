@@ -99,7 +99,7 @@ describe("wave 2, 3: replay signals to a tags container", () => {
   const CTR = "ctr_0000000000000001";
   /** A stand-in for the tags Worker: GET /v1/containers/:id and POST .../events; a container of another account is a 404, as there. */
   function tagsStub(account: string, containers: string[]) {
-    const posts: { container: string; events: Record<string, any>[] }[] = [];
+    const posts: { container: string; events: Record<string, any>[]; test?: boolean }[] = [];
     const calls: string[] = [];
     const state = { status: 202 };
     const fetcher = {
@@ -114,8 +114,8 @@ describe("wave 2, 3: replay signals to a tags container", () => {
         if (req.method === "GET" && !m[2]) return Response.json({ container: { id: m[1], domain: "shop.test" } });
         if (req.method === "POST" && m[2]) {
           if (state.status !== 202) return Response.json({ error: { code: "unavailable" } }, { status: state.status });
-          const b = (await req.json()) as { events: Record<string, any>[] };
-          posts.push({ container: m[1]!, events: b.events });
+          const b = (await req.json()) as { events: Record<string, any>[]; test?: boolean };
+          posts.push({ container: m[1]!, events: b.events, ...(b.test !== undefined ? { test: b.test } : {}) });
           return Response.json({ accepted: b.events.length, duplicates: 0, results: [] }, { status: 202 });
         }
         return new Response("no", { status: 405 });
@@ -219,6 +219,36 @@ describe("wave 2, 3: replay signals to a tags container", () => {
     const after = (await call("GET", `/v1/sites/${site}`, { key })).json;
     expect(after.data.tags_forwarding).toMatchObject({ queued: 0, last: { status: 202, sent: 3 } });
     expect(after.limits.tags_events_per_day).toBe(500);
+  });
+
+  it("test traffic (forced ?afsr=1 sessions, pages with analytics debug on) goes in batches of its own with test: true", async () => {
+    const { key, site, account } = await newSite("shop.test");
+    const t = tagsStub(account, [CTR]);
+    await call("PATCH", `/v1/sites/${site}`, {
+      key,
+      body: { tags_container_id: CTR, tags_signals: ["rage_click", "survey_response"] },
+      env: t.env,
+    });
+    const T = Date.now() - 30_000;
+    const [real, forced, debug] = [newSid(), newSid(), newSid()];
+    await sendChunk(site, real, 0, [meta(T), page(T + 5, 1, "/"), ...rage(T + 1000)], { env: t.env, extra: { end: 1 } });
+    await sendChunk(site, forced, 0, [meta(T), page(T + 5, 1, "/"), ...rage(T + 1000)], { env: t.env, extra: { end: 1, f: 1 } });
+    await sendChunk(site, debug, 0, [meta(T), page(T + 5, 1, "/"), ...rage(T + 1000)], { env: t.env, extra: { end: 1, dbg: 1 } });
+    // an NPS answer given in the forced recording is test traffic too
+    const sv = (
+      await call("POST", `/v1/sites/${site}/surveys`, { key, body: { name: "NPS", kind: "popover", template: "nps", status: "active" } })
+    ).json.survey.id;
+    expect(
+      (await postF({ s: site, sv, ver: 1, r: "0000000000000fff", a: { q1: 9 }, d: 1, p: "/", sid: forced }, { env: t.env })).status,
+    ).toBe(202);
+    await flushTags(site, t.env);
+    expect(t.posts.map((p) => [p.test ?? false, p.events.map((e) => e.params.replay_session_id ?? e.name)])).toEqual([
+      [false, [real]],
+      [true, [forced, debug, forced]],
+    ]);
+    expect(t.posts[1]!.events.map((e) => e.name)).toEqual(["rage_click", "rage_click", "survey_response"]);
+    // the marker never leaves replay
+    expect(JSON.stringify(t.posts)).not.toContain("_afsr_test");
   });
 
   it("completed survey answers with an NPS score go too (scores only); unlinking and privacy deletion drop what is queued", async () => {

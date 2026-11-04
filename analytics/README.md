@@ -25,7 +25,7 @@ curl "$BASE/v1/sites/$SITE/stats?period=7d&breakdown=country" -H "Authorization:
 ## Architecture
 
 ```
-browser ── /s.js (tracker, 5.1 KB min / 2.7 KB gzip) ──► POST /e ─┐
+browser ── /s.js (tracker, 5.3 KB min / 2.8 KB gzip) ──► POST /e ─┐
 backend ── POST /v1/sites/:id/events ─────────────────────────────┤
 billing ── POST /v1/sites/:id/payments ───────────────────────────┼─► Worker: enrich (geo, UA,
 Stripe ─── POST /webhooks/stripe/:site_id (signed) ───────────────┤    bot filter, channel, visitor hash),
@@ -62,7 +62,9 @@ cron (every 5 min): due alerts -> SiteDO numbers -> decide -> deliver (signed we
   `goals.counting`; 6 adds `utm_id`, `utm_source_platform`, `utm_creative_format`,
   `utm_marketing_tactic`, `language`, `screen` (events and sessions), `events.title` and
   `events.non_interactive`; 7 adds the `identities` table (first touch per visitor id and user,
-  backfilled from the stored sessions in the migration).
+  backfilled from the stored sessions in the migration); 8 adds subscriptions, costs, items, user
+  properties, crawler hits, imports and exports; 9 adds `events.no_visit` (server events sent with
+  `visit: false` that found no live visit: no sessions row, never counted as visitors or visits).
 - **Visitor identity.** Default `cookieless`: `visitor_id = sha256(daily_salt | site_id | ip | ua)`
   truncated to 16 hex chars, where `daily_salt = HMAC(SALT_SECRET, YYYY-MM-DD)` (UTC date of the
   event). No cookies, no storage, no cross-day linking. Optional per-site `persistent` mode: the
@@ -85,7 +87,10 @@ cron (every 5 min): due alerts -> SiteDO numbers -> decide -> deliver (signed we
   v1, MIT). Bots are dropped and counted per reason: UA patterns (crawlers, HTTP libraries, uptime
   monitors, preview fetchers, AI crawlers), headless signatures, `navigator.webdriver`,
   `cf.botManagement.verifiedBot` / `cf.verifiedBotCategory` when present. Query strings are never
-  stored; only the UTM tags and the first click id.
+  stored; only the UTM tags and the first click id. The same goes for props, from every source
+  (tracker, server events, the tags app's analytics destination): a value that starts with an
+  http(s) URL or a path is cut at its first `?` or `#` (`stripUrlQuery` in `src/service/ingest.ts`),
+  before PII redaction runs on what is left.
 - **Channel classification** from referrer + UTM + click IDs: Direct, Organic Search, Paid Search,
   Organic Social, Paid Social, Email, Referral, Display, Affiliates, **AI Assistants**
   (chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com, deepseek,
@@ -124,7 +129,8 @@ Source: `src/tracker/index.ts` (own tsconfig with the DOM lib), bundled + minifi
 (`scripts/build-tracker.mjs`) into `dist/tracker.txt` and, with the cross-domain linker compiled
 in (`__LINKER__`), `dist/tracker-linker.txt` (`/s.js?linker=1`); wrangler imports both as Text
 modules (`build.command` + `rules` in `wrangler.jsonc`). Served with a 1 h cache and an ETag each.
-Size budget of the default build (tested): 5,100 bytes minified, 2,750 gzip.
+Size budget of the default build (tested): 5,265 bytes minified, 2,810 gzip (it is 5,260 / 2,808;
+the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 
 - pageviews, including SPA navigations (history.pushState/replaceState/popstate, deduped by
   path+query)
@@ -163,7 +169,9 @@ Size budget of the default build (tested): 5,100 bytes minified, 2,750 gzip.
   any payload, `data-downloads` extensions, `data-link-paths` redirect links counted as outbound,
   non-interactive events (`{interactive: false}`: they don't un-bounce), hash routing
   (`data-hash`), page titles (`data-title`, opt-in), the viewport width (stored as a class),
-  test traffic (`afsa('debug')`)
+  test traffic (`afsa('debug')`, or `?afsa_debug=1` in the page URL, which covers the page load's
+  own pageview; both last for the tab in sessionStorage `afsa_debug` until `?afsa_debug=0` or
+  `afsa('debug', false)`)
 - read on the server, no tracker bytes: the browser language (Accept-Language), utm_id,
   utm_source_platform, utm_creative_format, utm_marketing_tactic, site search terms
   (`search_params`: a `site_search` event, the rest of the query still dropped) and content
@@ -199,9 +207,9 @@ Size budget of the default build (tested): 5,100 bytes minified, 2,750 gzip.
 | PATCH | `/sites/:id` | settings (any subset, including domain; a new domain clears its verification). `replay_site_id` (`rsite_` + 16 characters, or `null`) is accepted only from the replay service (internal auth): with an API key, REST or MCP, changing it is `403 replay_link_from_replay` (link from the replay site's `analytics_site_id`). Every site response returns `replay_site_id` (null when unset) and `verification` |
 | DELETE | `/sites/:id` | deletes site, goals, share links and the DO's data |
 | GET | `/sites/:id/install?framework=html\|nextjs\|astro\|react\|wordpress\|gtm\|tags` | file + code, tracker API, proxy snippets, server-side curl |
-| POST | `/sites/:id/verify` | `{url?}`: fetches the page, checks the snippet + site id, that the script URL serves the tracker (catches broken proxies), CSP, that events arrived, hostname rejections, proxied events without the proxy key, ignored browser revenue, storage and daily limits, and verifies the domain (the tracker in a parsed `<script src>` tag on exactly `https://<domain>/`, or DNS TXT `_afs-verify.<domain>` = `afs-analytics-site=<id>`; share links need it); returns `checks`, `fixes`, `domain_verified`, `verification`, `limits`, `status`, `untrusted` (page-copied and visitor-sent strings), `next_steps`. Full key only, rate limited per account and per domain. Fetches only https on port 443 on the domain or a subdomain (never `allowed_hostnames`, IP literals or single-label hosts); redirects: at most 3, each hop under the same rule; reads at most 1 MB of the page; fetches the script (at most 256 KB) only from this deployment's host or the site's own hosts |
+| POST | `/sites/:id/verify` | `{url?}`: fetches the page, checks the snippet + site id, that the script URL serves the tracker (catches broken proxies; a src on this service's own host is checked in-process, since a Worker fetching its own host or zone gets 522), CSP, that events arrived, hostname rejections, proxied events without the proxy key, ignored browser revenue, storage and daily limits, and verifies the domain (the tracker in a parsed `<script src>` tag on exactly `https://<domain>/`, or DNS TXT `_afs-verify.<domain>` = `afs-analytics-site=<id>`; share links need it); returns `checks`, `fixes`, `domain_verified`, `verification`, `limits`, `status`, `untrusted` (page-copied and visitor-sent strings), `next_steps`. Full key only, rate limited per account and per domain. Fetches only https on port 443 on the domain or a subdomain (never `allowed_hostnames`, IP literals or single-label hosts); redirects: at most 3, each hop under the same rule; reads at most 1 MB of the page; fetches the script (at most 256 KB) only from this deployment's host or the site's own hosts |
 | POST | `/sites/:id/events` | server-side ingestion, batch up to 100 (see below); `?validate_only=true` runs every check and returns the exact row each event would store, storing and counting nothing |
-| GET | `/sites/:id/stats` | aggregate metrics, optional `breakdown`, `compare=previous\|year\|custom` |
+| GET | `/sites/:id/stats` | aggregate metrics (`metrics`), optional `breakdown` (its rows in `breakdown.results`; shapes in llms.txt "Response shapes"), `compare=previous\|year\|custom` |
 | GET | `/sites/:id/breakdown?breakdown=` | top values of one property; `sort`, comparison per row |
 | GET | `/sites/:id/timeseries` | metrics by `interval=hour\|day\|week\|month`; every bucket up to now; comparison per bucket; annotations |
 | GET | `/sites/:id/movers?breakdown=` | gainers and losers of a metric vs the comparison period |
@@ -300,8 +308,9 @@ Query params for stats/timeseries/breakdowns/funnel:
   `change:<metric>` for the biggest absolute movers.
 - `page` rows count revenue and conversions of the sessions that viewed the page.
 - `limit` (default 20, max 1000)
-- `debug`: events marked as test traffic (`afsa('debug')` / `data-debug="true"`, `debug: true` on
-  server events, DO column `events.debug`, schema version 4) are left out of every read unless
+- `debug`: events marked as test traffic (`afsa('debug')` / `data-debug="true"` / `?afsa_debug=1`,
+  `debug: true` on server events, replay's signals from forced `?afsr=1` sessions and debug pages,
+  DO column `events.debug`, schema version 4) are left out of every read unless
   `debug=include|only`; they still count against budgets and are purged after 7 days
 
 All user values are bound SQL parameters; the only text spliced into SQL comes from fixed tables
@@ -346,7 +355,8 @@ Server-side event body (`POST /v1/sites/:id/events`, also the MCP `track_events`
   "referrer": "...", "utm_source": "...", "utm_medium": "...", "utm_campaign": "...", "utm_term": "...", "utm_content": "...",
   "click_id_type": "gclid", "click_id": "...",
   "props": { "plan": "pro" },
-  "revenue": { "amount": 49.0, "currency": "USD" }
+  "revenue": { "amount": 49.0, "currency": "USD" },
+  "debug": false, "visit": true
 }] }
 ```
 
@@ -361,7 +371,15 @@ Server-side event body (`POST /v1/sites/:id/events`, also the MCP `track_events`
 - Geo: explicit fields always win; else inherited from the visitor's session; else unknown. No
   IP->geo lookup (Workers have none for arbitrary IPs), and the request's own `request.cf` is never
   used for server events (it would be the backend's location).
-- Response `202`: `{ accepted, rejected, results: [{ index, ok, visitor_id, session_id } | { index, ok: false, reason }] }`.
+- Response `202`: `{ accepted, rejected, results: [{ index, ok, visitor_id, session_id } | { index, ok, visitor_id: null, session_id: null, visit: false } | { index, ok: false, reason }] }`.
+- `debug: true` (or a `url` carrying `afsa_debug=1`) marks the event as test traffic.
+- `visit: false`: a backend event that is not a visit (an agent signing up with curl, a webhook).
+  It joins the visitor's live session if it names one; otherwise it creates no visitor and no
+  session: it is stored with `events.no_visit = 1` and a session id of its own (no sessions row),
+  and counts as an event, a conversion and revenue, never as a visitor or a visit (so never in
+  conversion_rate, bounce_rate, visit_duration, entry/exit pages, paths, session funnels or
+  realtime/insights visitors). Person funnels (a 1h-30d window) and attribution follow its
+  `user_id`; erasure deletes it by user id or visitor id.
 - Events with a bot `user_agent` are rejected per event; so are events past a daily cap (`reason:
   daily_limit`). A batch refused as a whole is `429 daily_limit` / `over_capacity`, `403
   account_suspended` or `507 storage_full`. Requests are rate limited per account.

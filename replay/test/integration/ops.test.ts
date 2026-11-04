@@ -10,10 +10,10 @@ import { E, call, hosted, markVerified, newSid, newSite, sendChunk, signup, tool
 
 const DAY = 86_400_000;
 
-async function session(site: string, opts: { env?: Bindings; end?: boolean } = {}) {
+async function session(site: string, opts: { env?: Bindings; end?: boolean; extra?: Record<string, unknown> } = {}) {
   const sid = newSid();
   const T = Date.now() - 60_000;
-  await sendChunk(site, sid, 0, [page(T, 1, "/checkout"), scroll(T + 100, 1, 600)], { env: opts.env });
+  await sendChunk(site, sid, 0, [page(T, 1, "/checkout"), scroll(T + 100, 1, 600)], { env: opts.env, extra: opts.extra });
   const r = await sendChunk(
     site,
     sid,
@@ -25,7 +25,7 @@ async function session(site: string, opts: { env?: Bindings; end?: boolean } = {
       error(T + 1500, 1, "Error: declined"),
       hide(T + 4000, 1),
     ],
-    { env: opts.env, extra: opts.end ? { end: 1, avid: "vid_abcdefghij" } : {} },
+    { env: opts.env, extra: { ...(opts.end ? { end: 1, avid: "vid_abcdefghij" } : {}), ...opts.extra } },
   );
   return { sid, r };
 }
@@ -79,6 +79,38 @@ describe("verify_install", () => {
 });
 
 describe("analytics link", () => {
+  it("forwards the signals of forced (?afsr=1) sessions and of pages with analytics debug on as test traffic (debug: true)", async () => {
+    const { key, account, site } = await newSite("shop.test");
+    const received: any[] = [];
+    const ANALYTICS = {
+      fetch: async (req: Request) => {
+        const u = new URL(req.url);
+        if (req.headers.get("x-afs-account") !== account) return Response.json({ error: { code: "unauthorized" } }, { status: 401 });
+        if (req.method === "GET") return Response.json({ site: { id: "site_0123456789abcdef", domain: "shop.test" } });
+        if (req.method === "POST" && u.pathname.endsWith("/events")) received.push(...((await req.json()) as { events: any[] }).events);
+        return Response.json({ ok: true }, { status: 202 });
+      },
+    } as unknown as Fetcher;
+    const env = hosted({ ANALYTICS, INTERNAL_TOKEN: "test-internal-0123456789" });
+    await call("PATCH", `/v1/sites/${site}`, { key, body: { analytics_site_id: "site_0123456789abcdef" }, env });
+    const forwarded = async (extra: Record<string, unknown>) => {
+      received.length = 0;
+      await session(site, { env, end: true, extra });
+      return received.map((e) => [e.name, e.debug ?? false]).sort();
+    };
+    expect(await forwarded({})).toEqual([
+      ["error_click", false],
+      ["js_error", false],
+      ["rage_click", false],
+    ]);
+    for (const extra of [{ f: 1 }, { dbg: 1 }])
+      expect(await forwarded(extra), JSON.stringify(extra)).toEqual([
+        ["error_click", true],
+        ["js_error", true],
+        ["rage_click", true],
+      ]);
+  });
+
   it("validates the analytics site, forwards settled signals as events joined to the visitor, and reads analytics funnels", async () => {
     const { key, account, site } = await newSite("shop.test");
     const received: { path: string; body: any; headers: Headers }[] = [];

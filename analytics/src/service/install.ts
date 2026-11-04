@@ -11,6 +11,12 @@ export type Framework = (typeof FRAMEWORKS)[number];
 
 export const PROXY_PATH = "/_a";
 
+/** Paths the API keeps for itself: /s.js and /e are not served under them. */
+export const isReservedPath = (p: string) =>
+  p.startsWith("/v1/") || p.startsWith("/mcp") || p.startsWith("/share/") || p.startsWith("/webhooks/");
+/** Does this Worker serve the tracker at `pathname`? /s.js, also under any prefix (/_a/s.js) for first-party proxies. */
+export const isTrackerPath = (p: string) => !isReservedPath(p) && (p === "/s.js" || p.endsWith("/s.js"));
+
 interface SiteLike {
   id: string;
   domain: string;

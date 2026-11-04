@@ -199,7 +199,15 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
       if (t && r.completed_now && !r.test && tags.tagsRoom(this.db, req.now, t.daily) > 0) {
         const event = r.session_linked ? t.event : { ...t.event, params: { ...t.event.params } };
         if (!r.session_linked) delete event.params.replay_session_id;
-        tags.queueTags(this.db, { session_id: r.session_linked ? req.session_id : null, response_id: r.id, events: [event], now: req.now });
+        // answered in a forced (?afsr=1) recording: test traffic, sent with test: true
+        const forced = r.session_linked && this.db.all("SELECT 1 FROM sessions WHERE id = ? AND forced = 1", [req.session_id]).length > 0;
+        tags.queueTags(this.db, {
+          session_id: r.session_linked ? req.session_id : null,
+          response_id: r.id,
+          events: [event],
+          now: req.now,
+          test: forced,
+        });
         await this.wakeTags(t.container_id, req.account_id);
       }
       await this.sync(req.account_id, account, platform, false);
@@ -249,11 +257,13 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     for (let round = 0; round < 5; round++) {
       const rows = tags.tagsDue(this.db, 100);
       if (!rows.length) break;
+      // Test traffic (forced sessions, analytics debug pages) goes in batches of its own with test: true.
       const r = await postTagsEvents(
         this.env,
         link.account_id,
         link.container_id,
         rows.map((x) => x.event),
+        rows[0]!.test,
       );
       const ids = rows.map((x) => x.id);
       const ok = r.status === 202 || r.status === 200;

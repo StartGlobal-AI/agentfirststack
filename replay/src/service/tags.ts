@@ -7,8 +7,9 @@ import { TAGS_CONTAINER_RE, type TagsServerEvent } from "../lib/tags";
  * internal auth (x-afs-internal: INTERNAL_TOKEN, x-afs-account: the site's account), so tags checks
  * the account exactly as it checks an API key: a container of another account is a 404 there.
  *   - GET  /v1/containers/:id          validates tags_container_id when a site is linked;
- *   - POST /v1/containers/:id/events   {events: [...<=100]} the routes backends send server events to
- *                                      (202 {accepted, duplicates, results}); event_id dedupes retries.
+ *   - POST /v1/containers/:id/events   {events: [...<=100], test?} the routes backends send server events to
+ *                                      (202 {accepted, duplicates, results}); event_id dedupes retries;
+ *                                      test traffic goes in batches of its own with test: true.
  */
 
 export const tagsAvailable = (env: Bindings) => !!env.TAGS && !!env.INTERNAL_TOKEN;
@@ -59,15 +60,20 @@ export async function checkTagsContainer(env: Bindings, accountId: string, conta
   return { domain: typeof r.json?.container?.domain === "string" ? r.json.container.domain : null };
 }
 
-/** Send one batch (at most 100 events). Never throws: status 0 = the binding failed. */
+/**
+ * Send one batch (at most 100 events). `test`: test traffic (forced ?afsr=1 sessions, pages with
+ * analytics debug on), delivered with tags' test: true (each destination's test mode). Never
+ * throws: status 0 = the binding failed.
+ */
 export async function postTagsEvents(
   env: Bindings,
   accountId: string,
   containerId: string,
   events: TagsServerEvent[],
+  test = false,
 ): Promise<{ status: number; accepted: number; error: string | null }> {
   try {
-    const r = await call(env, accountId, "POST", `/v1/containers/${containerId}/events`, { events });
+    const r = await call(env, accountId, "POST", `/v1/containers/${containerId}/events`, { events, ...(test ? { test: true } : {}) });
     const accepted = typeof r.json?.accepted === "number" ? r.json.accepted + (Number(r.json.duplicates) || 0) : 0;
     const error =
       r.status === 202 || r.status === 200 ? null : String(r.json?.error?.code ?? r.json?.error ?? `HTTP ${r.status}`).slice(0, 100);
