@@ -4,6 +4,7 @@ import { DAY, type SiteEnv, isDev } from "./env";
 import { googleConfigured, siteBase } from "./google";
 import { MARK, csrfField, fmtDate, fmtDay, googleButton, html, htmlErrorHandler, messagePage, page } from "./html";
 import { addMember, getProject } from "./identity";
+import { trackOwn } from "./own-analytics";
 import { projectResources } from "./services";
 import { optionalSession, readForm, redirect, signinUrl } from "./session";
 import { resourcesView } from "./views";
@@ -233,12 +234,16 @@ claimRoutes.post("/claim/:token", optionalSession, async (c) => {
     .bind(now, session.user.id, claim.hash, now)
     .run();
   if (!res.meta.changes) return invalidLink(session);
+  let added: Awaited<ReturnType<typeof addMember>>;
   try {
-    await addMember(c.env.DB, session.user.id, claim.account_id);
+    added = await addMember(c.env.DB, session.user.id, claim.account_id);
   } catch (e) {
     // Not added (e.g. too many projects): give the link back so it can be used once fixed.
     await c.env.DB.prepare("UPDATE claim_links SET used_at = NULL, used_by_user_id = NULL WHERE hash = ?").bind(claim.hash).run();
     throw e;
   }
+  // Only the backend knows a claim happened (the signed-in pages run no analytics). The path
+  // leaves the token out.
+  trackOwn(c, { name: "project_claimed", accountId: claim.account_id, path: "/claim", props: { role: added.role }, visitor: true });
   return redirect(`/dashboard/projects/${claim.account_id}`);
 });

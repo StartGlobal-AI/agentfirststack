@@ -79,7 +79,9 @@
   //   keys: MAX_KEYS_PER_ACCOUNT (active keys, default 50), UNCLAIMED_MAX_KEYS_PER_ACCOUNT,
   //   KEYS_HOURLY_LIMIT (new keys per account per hour);
   //   AUTH_ISSUER (the OAuth issuer; default PUBLIC_BASE_URL), OAUTH_REGISTER_HOURLY_LIMIT (new OAuth
-  //   clients per network per hour, default 30).
+  //   clients per network per hour, default 30);
+  //   own analytics: OWN_ANALYTICS_ACCOUNT_ID + OWN_ANALYTICS_SITE_ID (the deployment's own project and
+  //   analytics site) get a server event for each signup and project claim here (src/own-analytics.ts).
   // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard),
   // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google). See docs/accounts.md.
   "observability": { "enabled": true }

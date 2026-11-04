@@ -32,6 +32,8 @@ export const serviceCalls: {
   account: string | null;
   internal: string | null;
   authorization: string | null;
+  /** The request body, for anything but GET and HEAD. */
+  body: string | null;
 }[] = [];
 
 /**
@@ -54,6 +56,7 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
   svc.use("/v1/*", requireAuth());
   if (service === "analytics") {
     svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.sites ?? [] }));
+    svc.post("/v1/sites/:id/events", (c) => c.json({ accepted: 1, rejected: 0 }, 202));
   }
   if (service === "tags") svc.get("/v1/containers", (c) => c.json({ containers: fixtures.get(c.var.auth.accountId)?.containers ?? [] }));
   if (service === "mail") svc.get("/v1/inboxes", (c) => c.json({ inboxes: fixtures.get(c.var.auth.accountId)?.inboxes ?? [] }));
@@ -62,12 +65,14 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
   return {
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
       const req = new Request(input, init);
+      const body = req.method === "GET" || req.method === "HEAD" ? null : await req.clone().text();
       serviceCalls.push({
         service,
         path: new URL(req.url).pathname,
         account: req.headers.get("x-afs-account"),
         internal: req.headers.get("x-afs-internal"),
         authorization: req.headers.get("authorization"),
+        body,
       });
       return svc.fetch(req, { DB: E.DB, INTERNAL_TOKEN: E.INTERNAL_TOKEN } as AuthBindings);
     },

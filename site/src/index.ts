@@ -9,6 +9,7 @@ import { authRoutes, siteBase } from "./google";
 import { a2aEndpoint } from "./a2a";
 import { mcpGateway } from "./mcp-gateway";
 import { oauthApi, oauthPages } from "./oauth";
+import { ownAnalytics, trackOwn } from "./own-analytics";
 import { redirect } from "./session";
 
 // The platform apex (agentfirststack.com). Static assets in public/ (landing page, llms.txt,
@@ -112,6 +113,18 @@ app.route("/", claimRoutes);
 app.route("/", claimLinkApi);
 app.route("/", adminApi);
 app.route("/dashboard", dashboard);
+
+// A project created here is a conversion only the backend sees (agents sign up with curl): with
+// OWN_ANALYTICS_* set, it goes to the deployment's own analytics as a server event.
+app.use("/v1/signup", async (c, next) => {
+  await next();
+  if (c.req.method !== "POST" || c.res.status !== 201 || !ownAnalytics(c.env)) return;
+  const body = (await c.res
+    .clone()
+    .json()
+    .catch(() => null)) as { account_id?: unknown } | null;
+  if (typeof body?.account_id === "string") trackOwn(c, { name: "signup", accountId: body.account_id, path: "/v1/signup" });
+});
 
 app.route(
   "/",

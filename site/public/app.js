@@ -46,8 +46,8 @@
   }
   copyButtons.forEach(function (button) {
     button.addEventListener("click", function () {
-      // Our own analytics (AgentFirstStack on agentfirststack.com): the "Copied setup prompt" goal.
-      if (window.afsa) window.afsa("event", "copy_prompt", { page: location.pathname });
+      // The copy_prompt event (the "Copied setup prompt" goal) is sent by our tag container's
+      // click trigger on [data-copy] (see AGENTFIRSTSTACK.md), so it isn't sent here as well.
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(promptText).then(
           function () {

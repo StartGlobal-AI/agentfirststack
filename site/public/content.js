@@ -11,7 +11,7 @@
       navigator.clipboard.writeText(el.textContent.trim()).then(function () {
         btn.textContent = "Copied";
         btn.classList.add("is-copied");
-        if (window.afsa) window.afsa("event", "copy_prompt", { page: location.pathname });
+        // copy_prompt is sent by our tag container's click trigger on [data-copy-from].
         setTimeout(function () {
           btn.textContent = label;
           btn.classList.remove("is-copied");

@@ -27,6 +27,12 @@ export type Bindings = Env & {
   DEV_MODE?: string;
   /** New OAuth client registrations per network per hour (default 30). */
   OAUTH_REGISTER_HOURLY_LIMIT?: string;
+  /**
+   * The deployment's own analytics (src/own-analytics.ts): the project (acct_...) and analytics
+   * site (site_...) that get a server event for each signup and claim here. Off unless both are set.
+   */
+  OWN_ANALYTICS_ACCOUNT_ID?: string;
+  OWN_ANALYTICS_SITE_ID?: string;
 };
 
 export interface User {

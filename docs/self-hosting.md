@@ -84,6 +84,7 @@ agentfirststack.com sets all of these (its profile is kept private). All are off
 | `DELIVERY_EVENTS_QUEUE` | mail | Turns on delivery status: the queue your Email Sending event subscriptions publish to (see the mail README, "Delivery status") |
 | `MAX_EVENTS_PER_ACCOUNT_PER_DAY` / `MAX_EVENTS_PER_DAY` | tags | Browser hits and backend events per account, and for the whole deployment, per UTC day |
 | `PROJECTS_PER_USER_DAILY_LIMIT` | site | New projects one signed-in person may create a day while connecting an app (default 5) |
+| `OWN_ANALYTICS_ACCOUNT_ID` / `OWN_ANALYTICS_SITE_ID` | site | Your own project (`acct_...`) and analytics site (`site_...`): each signup and project claim on the apex is sent there as a server event (`signup`, `project_claimed`); off unless both are set |
 | `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY` / `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY` / `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | replay | Heatmap images rendered with Browser Rendering per UTC day (on by default: 10 / 30 / 300; cached images are free) |
 | `MAX_TAGS_EVENTS_PER_SITE_PER_DAY` | replay | Signals and survey scores sent to a linked tags container per site per day (default 500) |
 
