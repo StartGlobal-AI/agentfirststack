@@ -11,6 +11,7 @@ import {
   sampleRateCap,
   sessionMinutesCap,
 } from "../lib/limits";
+import { consentRequiredIn, parseCidr } from "../lib/ip";
 import { MASK_MODES, pathHash } from "../lib/mask-rules";
 import type { LoaderConfig } from "../lib/protocol";
 import { joinSelectors, selectorListProblems } from "../lib/selectors";
@@ -63,6 +64,13 @@ export const settingsShape = {
   ),
   mask_selectors: selectors("whose text is always masked (balanced and relaxed modes)"),
   block_selectors: selectors("never recorded at all (replaced by a same-size placeholder): chat widgets, payment iframes, account details"),
+  zones: z
+    .array(z.string().min(1).max(200))
+    .max(20)
+    .optional()
+    .describe(
+      'Heatmap zones: CSS selectors of page areas ("#hero", ".pricing-table", "footer"). Each click is tagged with the first zone that contains it, else a landmark (header, nav, main, footer, aside, form, section#id, dialog); get_heatmap group_by=zone. The whole list is replaced.',
+    ),
   exclude_paths: z
     .array(z.string().min(1).max(200).regex(/^\//, 'paths start with "/"'))
     .max(50)
@@ -105,7 +113,50 @@ export const settingsShape = {
     .describe(
       "Record console.error calls as errors (default true, or the deployment's CAPTURE_CONSOLE_ERRORS_DEFAULT). Uncaught errors and unhandled rejections are always recorded.",
     ),
-  require_consent: z.boolean().optional().describe("Record only after the page calls afsr('consent', true) (default false)."),
+  capture_network_errors: z
+    .boolean()
+    .optional()
+    .describe(
+      "Record failed fetch/XHR requests (status >= 400 or a network failure): method, URL path (query stripped, id-like segments as :id; origin too for other hosts), status and duration, never headers or bodies. Signal api_error, list_errors?kind=network. Default false (or the deployment's CAPTURE_NETWORK_ERRORS_DEFAULT): the recorder then wraps window.fetch and XMLHttpRequest.",
+    ),
+  auto_events: z
+    .boolean()
+    .optional()
+    .describe(
+      "Record form submits as the event form_submit (props.form = the form's stable selector; never field values). Default true. outbound_click and download need nothing: they come from recorded link targets.",
+    ),
+  capture_console_warnings: z
+    .boolean()
+    .optional()
+    .describe(
+      "Record console.warn calls too, scrubbed like errors (list_errors?kind=console_warn; not counted as JS errors). Default false.",
+    ),
+  require_consent: z
+    .union([z.boolean(), z.literal("eea")])
+    .optional()
+    .describe(
+      'true: record only after consent; "eea": only visitors from the EEA, the UK and Switzerland (Cloudflare\'s country; unknown countries too) wait for it, the rest record at once; false (default).',
+    ),
+  consent_source: z
+    .enum(["api", "gcm"])
+    .optional()
+    .describe(
+      "Where consent comes from when it is required: api (default) = the page calls afsr('consent', true); gcm = the loader follows Google Consent Mode's analytics_storage in dataLayer (gtag('consent', 'default' | 'update', ...)); afsr('consent') still works.",
+    ),
+  exclude_ip_ranges: z
+    .array(z.string().min(1).max(50))
+    .max(20)
+    .nullable()
+    .optional()
+    .describe(
+      'IPv4/IPv6 addresses or CIDRs never recorded, e.g. ["203.0.113.0/24", "2001:db8::/32"] (your office). Checked at ingest, never stored. The whole list is replaced; null clears.',
+    ),
+  hash_user_ids: z
+    .boolean()
+    .optional()
+    .describe(
+      "Hash afsr('identify') ids in the visitor's browser before they leave it (SHA-256 of \"afsr:<site_id>:<id>\", stored as h:<32 hex>). The user_id filter, get_visitor and delete_visitor_data take the raw id and hash it the same way. Default false.",
+    ),
   analytics_site_id: z
     .string()
     .max(40)
@@ -181,13 +232,20 @@ export function siteJson(s: SiteRow, baseUrl: string, env: Bindings) {
     unmask_selectors: jsonList(s.unmask_selectors),
     mask_selectors: jsonList(s.mask_selectors),
     block_selectors: jsonList(s.block_selectors),
+    zones: jsonList(s.zones),
     exclude_paths: jsonList(s.exclude_paths),
     allowed_hostnames: s.allowed_hostnames ? jsonList(s.allowed_hostnames) : null,
     max_session_minutes: s.max_session_minutes,
     retention_days: s.retention_days,
     heatmap_retention_days: s.heatmap_retention_days,
     capture_console_errors: !!s.capture_console_errors,
-    require_consent: !!s.require_consent,
+    capture_console_warnings: !!s.capture_console_warnings,
+    capture_network_errors: !!s.capture_network_errors,
+    auto_events: s.auto_events === undefined ? true : !!s.auto_events,
+    require_consent: s.require_consent === 2 ? "eea" : !!s.require_consent,
+    consent_source: s.consent_source ?? "api",
+    exclude_ip_ranges: s.exclude_ip_ranges ? jsonList(s.exclude_ip_ranges) : [],
+    hash_user_ids: !!s.hash_user_ids,
     analytics_site_id: s.analytics_site_id,
     // The analytics site confirmed its tracker loads this recorder: no snippet needed where it runs.
     loads_with_analytics: loadsWithAnalytics(s),
@@ -212,6 +270,7 @@ async function apply(ctx: Ctx, row: SiteRow, input: Settings): Promise<string[]>
     ...selectorListProblems("unmask_selectors", input.unmask_selectors ?? []),
     ...selectorListProblems("mask_selectors", input.mask_selectors ?? []),
     ...selectorListProblems("block_selectors", input.block_selectors ?? []),
+    ...selectorListProblems("zones", input.zones ?? []),
   ];
   if (problems.length) throw badRequest("Invalid CSS selectors.", problems.join(" "), problems);
   if (input.name !== undefined) row.name = input.name;
@@ -225,6 +284,7 @@ async function apply(ctx: Ctx, row: SiteRow, input: Settings): Promise<string[]>
   if (input.unmask_selectors !== undefined) row.unmask_selectors = JSON.stringify(input.unmask_selectors.map((s) => s.trim()));
   if (input.mask_selectors !== undefined) row.mask_selectors = JSON.stringify(input.mask_selectors.map((s) => s.trim()));
   if (input.block_selectors !== undefined) row.block_selectors = JSON.stringify(input.block_selectors.map((s) => s.trim()));
+  if (input.zones !== undefined) row.zones = JSON.stringify([...new Set(input.zones.map((s) => s.trim()))]);
   if (input.exclude_paths !== undefined) row.exclude_paths = JSON.stringify(input.exclude_paths);
   if (input.allowed_hostnames !== undefined) {
     const out: string[] = [];
@@ -258,7 +318,22 @@ async function apply(ctx: Ctx, row: SiteRow, input: Settings): Promise<string[]>
       notes.push(`heatmap_retention_days is capped at ${cap} on this deployment (MAX_HEATMAP_RETENTION_DAYS).`);
   }
   if (input.capture_console_errors !== undefined) row.capture_console_errors = input.capture_console_errors ? 1 : 0;
-  if (input.require_consent !== undefined) row.require_consent = input.require_consent ? 1 : 0;
+  if (input.capture_console_warnings !== undefined) row.capture_console_warnings = input.capture_console_warnings ? 1 : 0;
+  if (input.capture_network_errors !== undefined) row.capture_network_errors = input.capture_network_errors ? 1 : 0;
+  if (input.auto_events !== undefined) row.auto_events = input.auto_events ? 1 : 0;
+  if (input.require_consent !== undefined) row.require_consent = input.require_consent === "eea" ? 2 : input.require_consent ? 1 : 0;
+  if (input.consent_source !== undefined) row.consent_source = input.consent_source;
+  if (input.exclude_ip_ranges !== undefined) {
+    const list = (input.exclude_ip_ranges ?? []).map((x) => x.trim());
+    const bad = list.filter((x) => !parseCidr(x));
+    if (bad.length)
+      throw badRequest(
+        `exclude_ip_ranges: ${bad.map((b) => JSON.stringify(b.slice(0, 50))).join(", ")} is not an IP address or CIDR.`,
+        'Examples: "203.0.113.7", "203.0.113.0/24", "2001:db8::/32".',
+      );
+    row.exclude_ip_ranges = list.length ? JSON.stringify([...new Set(list)]) : null;
+  }
+  if (input.hash_user_ids !== undefined) row.hash_user_ids = input.hash_user_ids ? 1 : 0;
   if (input.analytics_site_id !== undefined) {
     if (input.analytics_site_id === null || input.analytics_site_id === "") row.analytics_site_id = null;
     else if (input.analytics_site_id !== row.analytics_site_id) {
@@ -329,7 +404,7 @@ const suggestionFor = (ctx: Ctx, s: SiteRow): Promise<AnalyticsSuggestion> =>
 
 function nextSteps(ctx: Ctx, s: SiteRow, suggestion: AnalyticsSuggestion): string[] {
   const note = analyticsInstallNote(s, suggestion);
-  const paste = `Add to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework code: GET /v1/sites/${s.id}/install?framework=nextjs|react|astro|wordpress|gtm).`;
+  const paste = `Add to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework and platform code: GET /v1/sites/${s.id}/install?framework=nextjs|react|astro|wordpress|gtm|shopify|webflow|wix|squarespace|framer).`;
   const homepage = s.analytics_site_id ? `this site's snippet or the analytics tracker for ${s.analytics_site_id}` : "the snippet";
   return [
     ...(note.paste ? (s.analytics_site_id || suggestion?.site ? [note.text, paste] : [paste]) : [note.text]),
@@ -350,13 +425,20 @@ const COLUMNS = [
   "unmask_selectors",
   "mask_selectors",
   "block_selectors",
+  "zones",
   "exclude_paths",
   "allowed_hostnames",
   "max_session_minutes",
   "retention_days",
   "heatmap_retention_days",
   "capture_console_errors",
+  "capture_console_warnings",
+  "capture_network_errors",
+  "auto_events",
   "require_consent",
+  "consent_source",
+  "exclude_ip_ranges",
+  "hash_user_ids",
   "analytics_site_id",
   "created_at",
   "updated_at",
@@ -417,13 +499,20 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     unmask_selectors: "[]",
     mask_selectors: "[]",
     block_selectors: "[]",
+    zones: "[]",
     exclude_paths: "[]",
     allowed_hostnames: null,
     max_session_minutes: Math.min(DEFAULTS.MAX_SESSION_MINUTES, sessionMinutesCap(ctx.env)),
     retention_days: Math.min(DEFAULTS.RETENTION_DAYS, retentionDaysCap(ctx.env)),
     heatmap_retention_days: Math.min(DEFAULTS.HEATMAP_RETENTION_DAYS, heatmapRetentionDaysCap(ctx.env)),
     capture_console_errors: ctx.env.CAPTURE_CONSOLE_ERRORS_DEFAULT === "false" ? 0 : 1,
+    capture_console_warnings: 0,
+    capture_network_errors: ctx.env.CAPTURE_NETWORK_ERRORS_DEFAULT === "true" ? 1 : 0,
+    auto_events: 1,
     require_consent: 0,
+    consent_source: "api",
+    exclude_ip_ranges: null,
+    hash_user_ids: 0,
     analytics_site_id: null,
     analytics_linked_at: null,
     purged_at: null,
@@ -519,12 +608,16 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   };
 }
 
+/** D1 tables with rows per site (deleted with it, besides replay_links and the site row). */
+export const SITE_TABLES = ["segments", "surveys", "webhooks", "webhook_deliveries", "event_definitions"] as const;
+
 export async function deleteSite(ctx: Ctx, siteId: string) {
   const s = await loadSite(ctx, siteId);
   // The analytics tracker must not keep loading a deleted site's loader (only if it still points here).
   const unlink = s.analytics_site_id ? await unlinkAnalyticsSite(ctx.env, ctx.accountId, s.analytics_site_id, s.id) : null;
   await ctx.env.DB.batch([
     ctx.env.DB.prepare("DELETE FROM replay_links WHERE site_id = ?").bind(s.id),
+    ...SITE_TABLES.map((t) => ctx.env.DB.prepare(`DELETE FROM ${t} WHERE site_id = ?`).bind(s.id)),
     ctx.env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, ctx.accountId),
     ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`${s.id}/`, Date.now()),
   ]);
@@ -569,7 +662,13 @@ export function excludeConfig(siteId: string, globs: readonly string[]): { ex: s
  * The config inlined into /r/<site>.js. Until the domain is verified, masking is strict whatever
  * the settings (a site registered for someone else's domain must not read its pages' text).
  */
-export function loaderConfig(s: SiteRow, env: Bindings, base: string, recorderPath: string): LoaderConfig & { base: string } {
+export function loaderConfig(
+  s: SiteRow,
+  env: Bindings,
+  base: string,
+  recorderPath: string,
+  country: string | null = null,
+): LoaderConfig & { base: string } {
   const verified = isVerified(s);
   return {
     site: s.id,
@@ -582,9 +681,16 @@ export function loaderConfig(s: SiteRow, env: Bindings, base: string, recorderPa
     ...excludeConfig(s.id, jsonList(s.exclude_paths)),
     maxMs: Math.min(s.max_session_minutes, sessionMinutesCap(env)) * 60_000,
     idleMs: DEFAULTS.IDLE_MS,
-    consent: !!s.require_consent,
+    consent: s.require_consent === 2 ? consentRequiredIn(country) : !!s.require_consent,
+    ...(s.consent_source === "gcm" ? { gcm: 1 as const } : {}),
     errors: !!s.capture_console_errors,
     on: !!s.enabled,
+    ...(s.hash_user_ids ? { hu: 1 as const } : {}),
+    ...(s.capture_network_errors ? { net: 1 as const } : {}),
+    ...(s.capture_console_warnings ? { cw: 1 as const } : {}),
+    ...(s.auto_events !== 0 ? { ae: 1 as const } : {}),
+    ...(jsonList(s.zones).length ? { zn: jsonList(s.zones) } : {}),
+    ...(verified && s.enabled && s.surveys_rev ? { sv: s.surveys_rev } : {}),
     base,
   };
 }

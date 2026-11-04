@@ -15,8 +15,12 @@ export interface SessionState {
   f?: 1;
   /** why recording ended for this tab (max_duration, daily_session_limit, ...) */
   stop?: string;
-  /** afsr('identify') value, kept across page loads */
+  /** afsr('identify') value, kept across page loads (hashed in the browser with hash_user_ids) */
   uid?: string;
+  /** custom tags of this tab (afsr('set'), identify attributes), re-sent on every page load */
+  tg?: Record<string, string[]>;
+  /** afsr('upgrade', reason): recorded although not sampled in */
+  up?: string;
 }
 
 export type Cmd = [string, ...unknown[]];

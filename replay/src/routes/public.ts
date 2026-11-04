@@ -1,10 +1,11 @@
 import { clientIp, networkKey, publicBaseUrl } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
-import type { AppEnv } from "../env";
+import { type AppEnv, isDev } from "../env";
 import { expiredPage, PLAYER_HEADERS, playerHeaders, playerPage } from "../player-page";
-import { ingestChunk } from "../service/ingest";
+import { geo, ingestChunk } from "../service/ingest";
 import { playerChunk, playerData, recordView, resolveToken, siteHostsForCsp } from "../service/links";
 import { playerHash, servePlayerAsset, serveLoader, serveRecorder } from "../service/scripts";
+import { serveSurveyScript, submitSurvey } from "../service/survey-ingest";
 import { waitUntilOf } from "./api";
 
 const CORS = {
@@ -38,11 +39,30 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
         status: 429,
         headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" },
       });
-    const res = await serveLoader(c.env, loader[1]!, publicBaseUrl(c), c.req.header("if-none-match") ?? null);
+    const res = await serveLoader(
+      c.env,
+      loader[1]!,
+      publicBaseUrl(c),
+      c.req.header("if-none-match") ?? null,
+      geo(c.req.raw, isDev(c.env)).country,
+    );
     return method === "HEAD" ? new Response(null, { status: res.status, headers: res.headers }) : res;
   }
   const rec = /\/(?:recorder\.|rec\/)([0-9a-f]{6,64})\.js$/.exec(path);
   if (rec && (method === "GET" || method === "HEAD")) return serveRecorder(rec[1]!);
+  const sv = /\/sv\/([^/.]+)\.[0-9a-z]{1,20}\.js$/.exec(path);
+  if (sv && (method === "GET" || method === "HEAD")) {
+    // the widget derives its base from its own src, like the loader: /<prefix>/sv/... works behind a proxy
+    const res = await serveSurveyScript(c.env, c.req.raw, sv[1]!, publicBaseUrl(c));
+    return method === "HEAD" ? new Response(null, { status: res.status, headers: res.headers }) : res;
+  }
+  if (path === "/f" || path.endsWith("/f")) {
+    if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    if (method === "POST") {
+      const r = await submitSurvey(c.env, c.req.raw, waitUntilOf(c));
+      return new Response(JSON.stringify(r.body), { status: r.status, headers: { ...CORS, "content-type": "application/json" } });
+    }
+  }
   if (path === "/i" || path.endsWith("/i")) {
     if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (method === "POST") {

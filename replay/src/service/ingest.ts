@@ -7,9 +7,24 @@ import { chunkBytesLimit, type IngestCaps, ingestCaps, LIMITS, sessionBytesLimit
 import { SESSION_ID_RE, SITE_ID_RE } from "../lib/protocol";
 import { Sampler } from "../lib/sampler";
 import { botReason, parseUserAgent } from "../lib/ua";
+import { type Cidr, ipInRanges, parseCidr } from "../lib/ip";
 import { siteHostAllowed } from "../lib/url";
+
+const rangeCache = new Map<string, Cidr[]>();
+function rangesOf(json: string): Cidr[] {
+  let r = rangeCache.get(json);
+  if (!r) {
+    r = jsonList(json)
+      .map(parseCidr)
+      .filter((x): x is Cidr => !!x);
+    if (rangeCache.size > 2000) rangeCache.clear();
+    rangeCache.set(json, r);
+  }
+  return r;
+}
 import { analyticsAvailable, analyticsEvents, forwardSignals } from "./analytics";
 import { isVerified, jsonList, type SiteRow, siteById, siteStub } from "./context";
+import { onNewErrors, onSessionEnd } from "./webhook-events";
 
 /**
  * POST /i?s=<site>&sid=<session>&q=<seq>&z=1|0: one recording chunk from the browser. Public and
@@ -46,7 +61,7 @@ const DAY = 86_400_000;
 const SKEW_MIN_MS = 60_000;
 const BUSY_MS = 60_000;
 
-function geo(req: Request, dev: boolean) {
+export function geo(req: Request, dev: boolean) {
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf ?? {};
   const s = (v: unknown, n: number) => (typeof v === "string" && v ? v.slice(0, n) : null);
   if (dev) {
@@ -62,7 +77,7 @@ function geo(req: Request, dev: boolean) {
 }
 
 /** A rate-limit binding's verdict; unbound or failing = allowed (fail open). */
-async function allowed(limiter: RateLimit | undefined, key: string): Promise<boolean> {
+export async function allowed(limiter: RateLimit | undefined, key: string): Promise<boolean> {
   if (!limiter) return true;
   try {
     return (await limiter.limit({ key })).success;
@@ -105,6 +120,7 @@ const HINTS: Record<string, string> = {
   unverified_daily_limit:
     "The site's domain isn't verified yet, so it records a small trial quota per day. Verify it: POST /v1/sites/:id/verify (the loader on https://<domain>/, or a DNS TXT record).",
   forced_daily_limit: "This site recorded the most ?afsr=1 test sessions allowed per day; normal sessions continue.",
+  upgraded_daily_limit: "This site recorded the most afsr('upgrade') sessions allowed per day (MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY).",
   ip_daily_limit: "This network started the most sessions allowed per site and day.",
   account_daily_limit: "The account used its daily recording budget here; recording resumes after 00:00 UTC.",
   platform_budget: "The service is at its daily recording capacity; recording resumes later (after 00:00 UTC at the latest).",
@@ -121,6 +137,7 @@ const STATUS: Record<string, number> = {
   daily_session_limit: 429,
   unverified_daily_limit: 429,
   forced_daily_limit: 429,
+  upgraded_daily_limit: 429,
   ip_daily_limit: 429,
   account_daily_limit: 429,
   platform_budget: 429,
@@ -194,6 +211,12 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       `Chunks for this site are accepted from ${site.domain}, its subdomains and allowed_hostnames only.`,
       true,
     );
+  }
+
+  // exclude_ip_ranges (an office, a QA network): checked here, the address is never stored.
+  if (site.exclude_ip_ranges && ipInRanges(clientIp(req), rangesOf(site.exclude_ip_ranges))) {
+    drop("ip_excluded", null);
+    return fail(403, "ip_excluded", "This network is in the site's exclude_ip_ranges; it isn't recorded.", true);
   }
 
   const max = chunkBytesLimit(env);
@@ -280,6 +303,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       user_id: envl.uid ?? null,
       analytics_visitor_id: envl.avid ?? null,
       forced: envl.f === 1,
+      upgraded: envl.up ?? null,
     },
     end: envl.end === 1,
     limits: {
@@ -289,6 +313,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       derived_per_session: caps.derived_per_session,
       daily_sessions: caps.daily_sessions,
       forced_daily: caps.forced_daily,
+      upgraded_daily: caps.upgraded_daily,
       net_daily: caps.net_daily,
       forward_daily: caps.forward_daily,
       account: caps.account,
@@ -318,6 +343,10 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       return fail(500, "storage_failed", "The chunk's facts were kept but its recording could not be stored; nothing to do.");
     }
   }
+  // Webhooks (verified sites; nothing to do without subscriptions): new error groups, segment entries.
+  if (verified && result.new_errors?.length)
+    waitUntil(onNewErrors(env, site, sid, result.new_errors).catch((e) => console.error("replay error.new failed", e)));
+  if (verified && envl.end === 1) waitUntil(onSessionEnd(env, site, sid).catch((e) => console.error("replay segment.session failed", e)));
   if (result.forward.length && site.analytics_site_id)
     waitUntil(
       forwardTo(env, site, result.forward, {

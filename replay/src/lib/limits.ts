@@ -20,7 +20,12 @@ export const LIMITS = {
   DERIVED_PER_CHUNK_MAX: 2_000,
   DERIVED_PER_SESSION_MAX: 10_000,
   PAGES_PER_SESSION: 500,
+  /** custom tag keys per session (afsr('set') + identify attributes) and values per key */
+  TAG_KEYS_PER_SESSION: 20,
+  TAG_VALUES_PER_KEY: 5,
   ERRORS_PER_SESSION: 300,
+  /** failed requests kept per session (capture_network_errors) */
+  NET_PER_SESSION: 200,
   /** clicks kept in any 1 s window (nobody clicks faster; more is a script, and it would make rage detection expensive) */
   CLICKS_PER_SECOND: 20,
   /** effect timestamps per chunk sent to the DO for dead-click resolution across chunks */
@@ -43,12 +48,34 @@ export const DEFAULTS = {
   DERIVED_PER_CHUNK: 500,
   DERIVED_PER_SESSION: 1_500,
   FORCED_SESSIONS_PER_SITE_PER_DAY: 20,
+  UPGRADED_SESSIONS_PER_SITE_PER_DAY: 50,
   SESSIONS_PER_IP_PER_SITE_PER_DAY: 50,
   UNVERIFIED_SESSIONS_PER_SITE_PER_DAY: 20,
   UNVERIFIED_SITES_PER_ACCOUNT: 1,
   FORWARDED_EVENTS_PER_SITE_PER_DAY: 500,
   LINK_BYTES_PER_DAY: 50 * 1_048_576,
   VERIFY_PER_ACCOUNT_PER_HOUR: 30,
+  SEGMENTS_PER_SITE: 50,
+  SURVEYS_PER_SITE: 10,
+  ACTIVE_SURVEYS_PER_SITE: 3,
+  QUESTIONS_PER_SURVEY: 20,
+  ANSWER_CHARS: 2000,
+  RESPONSES_PER_SITE_PER_DAY: 500,
+  RESPONSES_PER_NETWORK_PER_SITE_PER_DAY: 5,
+  TEST_RESPONSES_PER_SITE_PER_DAY: 20,
+  IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY: 50,
+  STARRED_SESSIONS_PER_SITE: 100,
+  STARRED_RETENTION_DAYS: 90,
+  NOTES_PER_SESSION: 50,
+  NOTES_PER_SITE: 2000,
+  LABELS_PER_SESSION: 5,
+  LABELS_PER_SITE: 1000,
+  WEBHOOKS_PER_ACCOUNT: 10,
+  WEBHOOK_DELIVERIES_PER_ACCOUNT_PER_DAY: 1000,
+  WEBHOOK_TESTS_PER_DAY: 50,
+  EVENT_DEFINITIONS_PER_SITE: 20,
+  EXPORT_ROWS: 10_000,
+  EXPORT_BYTES_PER_DAY: 100 * 1_048_576,
 } as const;
 
 const capped = (hard: number, v: string | undefined) => Math.min(hard, numVar(v) ?? Number.POSITIVE_INFINITY);
@@ -60,6 +87,10 @@ export const sessionMinutesCap = (env: Bindings) => Math.floor(capped(LIMITS.SES
 export const retentionDaysCap = (env: Bindings) => Math.floor(capped(LIMITS.RETENTION_DAYS_MAX, env.MAX_RETENTION_DAYS));
 export const heatmapRetentionDaysCap = (env: Bindings) =>
   Math.max(7, Math.floor(capped(LIMITS.HEATMAP_RETENTION_DAYS_MAX, env.MAX_HEATMAP_RETENTION_DAYS)));
+
+/** How long a starred session is kept (it outlives retention_days up to this). */
+export const starredRetentionDays = (env: Bindings) =>
+  Math.floor(Math.min(LIMITS.RETENTION_DAYS_MAX, numVar(env.MAX_STARRED_RETENTION_DAYS) ?? DEFAULTS.STARRED_RETENTION_DAYS));
 
 /**
  * A count cap by account standing (UNCLAIMED_<NAME> for accounts no person has claimed), or null
@@ -111,6 +142,7 @@ export function ingestCaps(env: Bindings, standing: Standing, verified: boolean)
     /** non-forced sessions per site per day; the trial cap while the domain isn't verified */
     daily_sessions: verified ? siteDaily : siteDaily === null ? trial : trial === null ? siteDaily : Math.min(siteDaily, trial),
     forced_daily: cap(env, standing, "MAX_FORCED_SESSIONS_PER_SITE_PER_DAY", DEFAULTS.FORCED_SESSIONS_PER_SITE_PER_DAY),
+    upgraded_daily: cap(env, standing, "MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY", DEFAULTS.UPGRADED_SESSIONS_PER_SITE_PER_DAY),
     net_daily: cap(env, standing, "MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY", DEFAULTS.SESSIONS_PER_IP_PER_SITE_PER_DAY),
     forward_daily: cap(env, standing, "MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY", DEFAULTS.FORWARDED_EVENTS_PER_SITE_PER_DAY),
     account: accountBudget(env, standing),

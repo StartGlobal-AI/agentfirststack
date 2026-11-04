@@ -32,6 +32,10 @@ interface PlayData {
   };
   timeline: TimelineEntry[];
   chunks: number[];
+  /** a clip: the window to play (ms since the session started) */
+  clip?: { start_ms: number; end_ms: number | null };
+  /** shown above the player (whoever made the link wrote it: text only) */
+  note?: string;
   expires_at: number;
 }
 
@@ -185,6 +189,24 @@ async function main() {
   const first = events[0]!.timestamp;
   const offset = s.started_at - first;
   for (const e of data.timeline) list.append(row(e, player, offset));
+  if (data.note) {
+    const banner = text($("banner"), `Note: ${data.note}`);
+    banner.hidden = false;
+  }
+  // A clip opens at its start and pauses at its end.
+  if (data.clip) {
+    const p = player as unknown as {
+      goto(t: number, play?: boolean): void;
+      pause(): void;
+      addEventListener(e: string, h: (x: { payload: number }) => void): void;
+    };
+    const end = data.clip.end_ms === null ? null : data.clip.end_ms + offset;
+    p.goto(Math.max(0, data.clip.start_ms + offset), false);
+    if (end !== null)
+      p.addEventListener("ui-update-current-time", (x) => {
+        if (x.payload >= end) p.pause();
+      });
+  }
   text(
     $("expires"),
     `Link expires ${new Date(data.expires_at).toISOString().replace("T", " ").slice(0, 16)} UTC. Text and inputs were masked in the visitor's browser before recording.`,

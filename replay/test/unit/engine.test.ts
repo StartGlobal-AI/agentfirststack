@@ -30,7 +30,7 @@ describe("ingest: one session", () => {
       error(T0 + 6700, 2, "TypeError: cannot submit"),
       mousemove(T0 + 9000),
     ]);
-    expect(r).toEqual({ status: "accepted", new_session: true, forward: [] });
+    expect(r).toMatchObject({ status: "accepted", new_session: true, forward: [] });
     const row = session(db, s);
     expect(row).toMatchObject({
       started_at: T0,

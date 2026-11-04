@@ -9,6 +9,7 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { createApiKey, forgetStanding } from "@afs/shared";
 import { describe, expect, it } from "vitest";
 import type { Bindings } from "../../src/env";
+import { SCHEMA_VERSION } from "../../src/do/engine";
 import { runPurge } from "../../src/service/purge";
 import { click, error, hide, meta, mousemove, page, snapshot } from "../fixtures/rrweb";
 import { call, E, hosted, markVerified, newSid, newSite, sendChunk, signup, tool } from "./helpers";
@@ -274,7 +275,7 @@ describe("C2: cost is bounded per session, site, account and deployment", () => 
     const old = await workload("cost-old.test", true);
     const m = { per_click: now.written / 500, per_chunk: now.written / 10, old_per_click: old.written / 500 };
     console.log(JSON.stringify({ event: "measure.do_rows_written", ...m }));
-    expect(now.schema).toBe(2);
+    expect(now.schema).toBe(SCHEMA_VERSION);
     // a click is a table row + 2 index entries (events_session, events_ce) instead of 4
     expect(m.per_click).toBeLessThan(m.old_per_click);
     expect(m.per_click).toBeLessThan(4);

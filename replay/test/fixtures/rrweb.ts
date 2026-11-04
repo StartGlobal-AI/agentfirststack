@@ -54,3 +54,5 @@ export function envelope(sid: string, seq: number, ev: unknown[], extra: Partial
   const last = ev.reduce<number>((m, e) => Math.max(m, Number((e as { timestamp?: number } | null)?.timestamp) || 0), 0);
   return { v: 1, sid, seq, t: last + 10, ev, ...extra };
 }
+export const tag = (ts: number, pv: number, k: string, v: unknown) => custom(ts, "afs.tag", { pv, k, v: Array.isArray(v) ? v : [v] });
+export const net = (ts: number, pv: number, m: string, u: string, st: number, ms = 120) => custom(ts, "afs.net", { pv, m, u, st, ms });

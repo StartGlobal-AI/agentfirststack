@@ -36,21 +36,27 @@ export const playerHash = async () => hashOf("player", PLAYER + PLAYER_CSS);
  */
 export const recorderPath = async () => `/rec/${await recorderHash()}.js`;
 
-const JS = {
+export const JS = {
   "content-type": "application/javascript; charset=utf-8",
   "access-control-allow-origin": "*",
   "x-content-type-options": "nosniff",
 };
 const IMMUTABLE = "public, max-age=31536000, immutable";
 
-const safeJson = (v: unknown) =>
+export const safeJson = (v: unknown) =>
   JSON.stringify(v)
     .replace(/</g, "\\u003c")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
 
 /** GET /r/<site_id>.js (also under a first-party proxy prefix). */
-export async function serveLoader(env: Bindings, siteId: string, base: string, ifNoneMatch: string | null): Promise<Response> {
+export async function serveLoader(
+  env: Bindings,
+  siteId: string,
+  base: string,
+  ifNoneMatch: string | null,
+  country: string | null = null,
+): Promise<Response> {
   if (!SITE_ID_RE.test(siteId))
     return new Response("/* afs-replay: bad site id in the script URL (expected /r/rsite_....js). */\n", {
       status: 404,
@@ -67,9 +73,16 @@ export async function serveLoader(env: Bindings, siteId: string, base: string, i
       status: 403,
       headers: { ...JS, "cache-control": "public, max-age=300" },
     });
-  const cfg = loaderConfig(site, env, base, await recorderPath());
-  const etag = `W/"${site.id}-${site.updated_at}-${site.verified_at ?? 0}-${await recorderHash()}"`;
-  const headers = { ...JS, "cache-control": `public, max-age=${LOADER_BROWSER_TTL}`, etag };
+  const cfg = loaderConfig(site, env, base, await recorderPath(), country);
+  const etag = `W/"${site.id}-${site.updated_at}-${site.verified_at ?? 0}-${site.surveys_rev ?? 0}-${cfg.consent ? 1 : 0}-${await recorderHash()}"`;
+  // Consent by region: the config depends on the visitor's country, so no shared caches.
+  const regional = site.require_consent === 2;
+  const headers = {
+    ...JS,
+    "cache-control": `${regional ? "private" : "public"}, max-age=${LOADER_BROWSER_TTL}`,
+    etag,
+    ...(regional ? { vary: "cf-ipcountry" } : {}),
+  };
   if (ifNoneMatch && ifNoneMatch.split(/\s*,\s*/).includes(etag)) return new Response(null, { status: 304, headers });
   return new Response(`/*! ${LOADER_MARKER} ${site.id} */\n(function(){var __AFSR__=${safeJson(cfg)};\n${LOADER}\n})();\n`, { headers });
 }

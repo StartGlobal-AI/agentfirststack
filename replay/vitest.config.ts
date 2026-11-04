@@ -54,6 +54,9 @@ export default defineConfig({
                 MAX_VERIFY_PER_ACCOUNT_PER_HOUR: "",
                 CAPTURE_CONSOLE_ERRORS_DEFAULT: "",
                 INTERNAL_TOKEN: "",
+                // An obviously fake 32-byte key (0x01 * 32): webhook secrets are sealed with it in tests.
+                ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+                CAPTURE_NETWORK_ERRORS_DEFAULT: "",
               },
             },
           })),

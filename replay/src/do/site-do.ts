@@ -1,10 +1,23 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "../env";
-import { type Budget, COUNTERS, hasBudget, heatmapRetentionDaysCap, retentionDaysCap, type Totals, zeroTotals } from "../lib/limits";
+import type { SiteRow } from "../service/context";
+import { deliverDue, emitSiteEvent } from "../service/webhooks";
+import {
+  type Budget,
+  COUNTERS,
+  hasBudget,
+  heatmapRetentionDaysCap,
+  retentionDaysCap,
+  starredRetentionDays,
+  type Totals,
+  zeroTotals,
+} from "../lib/limits";
 import { Sampler } from "../lib/sampler";
 import { DAY, type Db, type SqlValue, utcDay } from "./db";
 import * as engine from "./engine";
+import * as annotations from "./annotations";
 import * as queries from "./queries";
+import * as surveys from "./surveys";
 
 /** What the site row says about retention, handed to the DO so its own alarm can purge. */
 export interface SiteConfig {
@@ -155,6 +168,46 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     }
   }
 
+  // ------------------------------------------------------------------ surveys
+
+  async surveyRespond(req: surveys.RespondRequest): Promise<surveys.RespondResult> {
+    if (engine.isDeleted(this.db)) return { status: "rejected", reason: "unknown_site" };
+    const { account, platform } = req.limits;
+    if (this.usage?.day !== utcDay(Date.now())) await this.sync(req.account_id, account, platform, true);
+    const r = surveys.respond(this.db, { ...req, usage: this.usage });
+    if (r.status === "stored") await this.sync(req.account_id, account, platform, false);
+    return r;
+  }
+
+  surveyImpression(q: Parameters<typeof surveys.impression>[1]) {
+    if (engine.isDeleted(this.db)) return { ok: false as const, reason: "unknown_site" };
+    return surveys.impression(this.db, q);
+  }
+
+  surveyStats(surveyId: string) {
+    return surveys.stats(this.db, surveyId, Date.now());
+  }
+
+  surveyResponses(q: surveys.ResponsesQuery) {
+    return surveys.listResponses(this.db, q);
+  }
+
+  surveyResults(q: Parameters<typeof surveys.results>[1]) {
+    return surveys.results(this.db, q);
+  }
+
+  deleteSurveyResponse(surveyId: string, id: string) {
+    return surveys.deleteResponse(this.db, surveyId, id);
+  }
+
+  deleteVisitorResponses(userIds: string[]) {
+    return surveys.deleteVisitorResponses(this.db, userIds);
+  }
+
+  deleteSurveyData(surveyId: string) {
+    return surveys.deleteSurveyData(this.db, surveyId);
+  }
+
   // ------------------------------------------------------------------ reads
 
   summary() {
@@ -168,7 +221,41 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
 
   session(id: string) {
     const session = queries.getSessionRow(this.db, id);
-    return session ? { session, pages: queries.sessionPages(this.db, id), chunks: engine.chunkSeqs(this.db, id) } : null;
+    return session
+      ? {
+          session,
+          pages: queries.sessionPages(this.db, id),
+          chunks: engine.chunkSeqs(this.db, id),
+          tags: queries.sessionTags(this.db, id),
+          labels: annotations.sessionLabels(this.db, id),
+          notes: annotations.listNotes(this.db, id),
+        }
+      : null;
+  }
+
+  /** Labels per session for a page of search results. */
+  labelsOf(ids: string[]) {
+    return Object.fromEntries(annotations.labelsOf(this.db, ids));
+  }
+
+  addNote(q: Parameters<typeof annotations.addNote>[1]) {
+    return annotations.addNote(this.db, q);
+  }
+
+  listNotes(sid: string) {
+    return annotations.listNotes(this.db, sid);
+  }
+
+  deleteNote(sid: string, id: string) {
+    return annotations.deleteNote(this.db, sid, id);
+  }
+
+  annotate(q: Parameters<typeof annotations.annotate>[1]) {
+    return annotations.annotate(this.db, q);
+  }
+
+  siteLabels() {
+    return annotations.siteLabels(this.db);
   }
 
   transcript(id: string, opts: { maxEvents: number; kinds?: string[] | null }) {
@@ -181,6 +268,10 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
 
   heatmap(q: queries.HeatmapRequest) {
     return queries.heatmap(this.db, q);
+  }
+
+  metrics(q: queries.MetricsRequest) {
+    return queries.metrics(this.db, q);
   }
 
   errors(q: queries.ErrorsRequest) {
@@ -206,17 +297,34 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     return engine.chunkSeqs(this.db, id);
   }
 
-  /** The chunks a share-link player may load (with rrweb events), at most `limit`. */
-  playable(id: string, limit = 2000): number[] {
-    return engine.playableChunks(this.db, id, limit);
+  /** The chunks a share-link player may load (with rrweb events), at most `limit`; a clip's window only. */
+  playable(id: string, limit = 2000, window?: { start: number; end: number } | null): number[] {
+    return engine.playableChunks(this.db, id, limit, window);
   }
 
-  /** May share link `link_id` serve this chunk now (a real recording, within its daily byte budget)? */
-  serveChunk(q: { link_id: string; session_id: string; seq: number; budget: number | null }) {
+  /** May share link `link_id` serve this chunk now (a real recording, in its clip window, within its daily byte budget)? */
+  serveChunk(q: {
+    link_id: string;
+    session_id: string;
+    seq: number;
+    budget: number | null;
+    window?: { start: number; end: number } | null;
+  }) {
     return engine.linkChunk(this.db, { ...q, now: Date.now() });
   }
 
-  findVisitor(q: { user_id?: string; analytics_visitor_id?: string }) {
+  visitor(q: { user_ids?: string[]; analytics_visitor_id?: string }) {
+    const v = queries.visitorData(this.db, q);
+    const ids = queries.findVisitorSessions(this.db, q);
+    return { ...v, responses: surveys.visitorResponses(this.db, ids, q.user_ids ?? []) };
+  }
+
+  /** A chunk for an export (a real recording, within the site's daily export byte budget). */
+  exportChunk(q: { session_id: string; seq: number; budget: number | null }) {
+    return engine.linkChunk(this.db, { link_id: "__export", session_id: q.session_id, seq: q.seq, budget: q.budget, now: Date.now() });
+  }
+
+  findVisitor(q: { user_id?: string; user_ids?: string[]; analytics_visitor_id?: string }) {
     return queries.findVisitorSessions(this.db, q);
   }
 
@@ -255,8 +363,76 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
   }
 
   override async alarm(): Promise<void> {
+    const now = Date.now();
+    const due = this.metaNum("next_maint");
+    // Woken for webhook retries only: maintenance waits for its own time.
+    if (due !== null && due > now && (this.metaNum("webhook_at") ?? Number.POSITIVE_INFINITY) <= now) {
+      await this.runWebhooks(now);
+      await this.reschedule(false, due);
+      return;
+    }
     const r = await this.maintain();
+    await this.checkSpikes(now).catch((e) => console.error("replay spike check failed", e));
+    await this.runWebhooks(now);
     await this.reschedule(r.more);
+  }
+
+  // ------------------------------------------------------------------ webhooks
+
+  /** A delivery of this site is due at `at`: make sure the alarm comes by then. */
+  async wakeWebhooks(at: number): Promise<void> {
+    const cur = this.metaNum("webhook_at");
+    if (cur !== null && cur <= at) return;
+    this.setMeta("webhook_at", at);
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > at) await this.ctx.storage.setAlarm(at);
+  }
+
+  private async runWebhooks(now: number) {
+    const at = this.metaNum("webhook_at");
+    if (at === null || at > now || !this.config) return;
+    let next: number | null = null;
+    try {
+      next = await deliverDue(this.env, this.config.site_id);
+    } catch (e) {
+      console.error("replay webhook retries failed", e);
+      next = now + 60_000;
+    }
+    this.setMeta("webhook_at", next);
+  }
+
+  /** signal.spike: checked when maintenance runs (about hourly); D1 is read only when there is a spike. */
+  private async checkSpikes(now: number) {
+    if (!this.config) return;
+    const spikes = engine.signalSpikes(this.db, now);
+    if (!spikes.length) return;
+    const site = await this.env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(this.config.site_id).first<SiteRow>();
+    if (!site) return;
+    for (const sp of spikes)
+      await emitSiteEvent(this.env, site, "signal.spike", {
+        ...sp,
+        window: "1h",
+        compared_with: "the hourly average of the 7 days before",
+        next_steps: [`GET /v1/sites/${site.id}/sessions?signal=${sp.signal}&period=1h`],
+      });
+  }
+
+  /** segment.session: did this session just enter the segment (filters already resolved)? */
+  segmentHit(segmentId: string, f: queries.SessionFilters) {
+    const r = queries.searchSessions(this.db, { ...f, sort: "recent", limit: 1 });
+    const s = r.sessions[0];
+    if (!s || !engine.segmentHit(this.db, segmentId, s.id, Date.now())) return null;
+    return s;
+  }
+
+  private metaNum(key: string): number | null {
+    const v = this.db.all("SELECT value FROM meta WHERE key = ?", [key])[0]?.value;
+    return v === undefined || v === null || v === "" ? null : Number(v);
+  }
+
+  private setMeta(key: string, v: number | null) {
+    if (v === null) this.db.run("DELETE FROM meta WHERE key = ?", [key]);
+    else this.db.run("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, String(v)]);
   }
 
   /**
@@ -269,10 +445,12 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     const deadline = Date.now() + (opts.budgetMs ?? 10_000);
     const c = this.config;
     const retention = c ? Math.min(c.retention_days, retentionDaysCap(this.env)) : null;
+    const starredDays = starredRetentionDays(this.env);
     const heat = c ? Math.min(c.heatmap_retention_days, heatmapRetentionDaysCap(this.env)) : null;
     const r = engine.maintain(this.db, {
       now,
       cutoff: retention === null ? null : now - retention * DAY,
+      starred_cutoff: retention === null ? null : now - Math.max(retention, starredDays) * DAY,
       heat_cutoff: heat === null ? null : now - heat * DAY,
       prefix: this.prefix(),
       deadline,
@@ -353,9 +531,14 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     if (at === null || (soon && at > want)) await this.ctx.storage.setAlarm(want);
   }
 
-  private async reschedule(more: boolean) {
-    if (more) await this.ctx.storage.setAlarm(Date.now() + 30_000);
-    else if (engine.hasStoredData(this.db)) await this.ctx.storage.setAlarm(Date.now() + HOUR);
-    else await this.ctx.storage.deleteAlarm();
+  /** Next alarm: maintenance (30 s while a purge has more to do, hourly while data is stored) or a webhook retry. */
+  private async reschedule(more: boolean, keepMaint?: number) {
+    const now = Date.now();
+    const maint = keepMaint ?? (more ? now + 30_000 : engine.hasStoredData(this.db) ? now + HOUR : null);
+    this.setMeta("next_maint", maint);
+    const wh = this.metaNum("webhook_at");
+    const at = maint === null ? wh : wh === null ? maint : Math.min(maint, wh);
+    if (at === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(at);
   }
 }

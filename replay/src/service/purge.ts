@@ -1,5 +1,6 @@
 import type { Bindings } from "../env";
 import { type SiteRow, siteStub } from "./context";
+import { purgeWebhookLogs } from "./webhooks";
 
 const DAY = 86_400_000;
 /** Wall-time budget of one hourly run; what's left continues next hour. */
@@ -111,5 +112,6 @@ export async function runPurge(env: Bindings, now = Date.now(), budgetMs = PURGE
     env.DB.prepare("DELETE FROM account_usage WHERE day < ?").bind(new Date(now - 7 * DAY).toISOString().slice(0, 10)),
     env.DB.prepare("DELETE FROM verify_log WHERE created_at < ?").bind(now - 3_600_000),
   ]);
+  await purgeWebhookLogs(env, now).catch((e) => console.error(JSON.stringify({ event: "cron.webhook_logs_failed", error: String(e) })));
   return out;
 }

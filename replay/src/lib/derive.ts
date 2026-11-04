@@ -7,7 +7,7 @@
  * and clamped here, and anything malformed is dropped and counted in `dropped`.
  */
 
-import { errorFingerprint } from "./fingerprint";
+import { errorFingerprint, fnv1a64 } from "./fingerprint";
 import { LIMITS } from "./limits";
 import { cleanText, scrubPath, scrubText, stripQuery } from "./mask-rules";
 import { type Envelope, type NavType, SESSION_ID_RE, TAGS } from "./protocol";
@@ -43,6 +43,8 @@ export interface DerivedClick {
   dead: boolean;
   /** the DEAD_MS window reaches past this chunk: a later chunk may still show an effect */
   open: boolean;
+  /** the zone the recorder put the click in (a configured zones selector or a landmark), if any */
+  zone?: string | null;
 }
 export interface DerivedInput {
   ts: number;
@@ -56,7 +58,7 @@ export interface DerivedInput {
 export interface DerivedError {
   ts: number;
   pv: number;
-  kind: "error" | "rejection" | "console";
+  kind: "error" | "rejection" | "console" | "warn";
   message: string;
   source: string | null;
   line: number | null;
@@ -69,6 +71,31 @@ export interface DerivedCustom {
   pv: number;
   name: string;
   props: Record<string, string | number | boolean | null> | null;
+}
+export interface DerivedNet {
+  ts: number;
+  pv: number;
+  method: string;
+  /** same-site path or origin + path, query stripped, id-like segments as :id */
+  url: string;
+  /** 0 = network failure */
+  status: number;
+  ms: number;
+  fingerprint: string;
+}
+export interface DerivedTag {
+  ts: number;
+  pv: number;
+  key: string;
+  values: string[];
+}
+/** Visitor activity on one pageview within a chunk (active time). pv 0 = the session's current page. */
+export interface DerivedActivity {
+  pv: number;
+  first: number;
+  last: number;
+  /** sum of the gaps between consecutive activity points, each at most ACTIVE_GAP_MS */
+  ms: number;
 }
 export interface DerivedMark {
   ts: number;
@@ -94,6 +121,8 @@ export interface ScrollSegment {
   vh: number;
   /** first time 25/50/75/100% was reached in this chunk */
   milestones: { pct: number; ts: number }[];
+  /** the positions themselves [ts, y] (at most 200; attention map) */
+  pts?: [number, number][];
 }
 export interface DerivedChunk {
   first_ts: number;
@@ -108,8 +137,11 @@ export interface DerivedChunk {
   inputs: DerivedInput[];
   errors: DerivedError[];
   customs: DerivedCustom[];
+  nets: DerivedNet[];
+  tags: DerivedTag[];
   marks: DerivedMark[];
   scrolls: ScrollSegment[];
+  activity: DerivedActivity[];
   /** quantised (50 ms) effect timestamps in this chunk's first DEAD_MS: resolve open clicks of earlier chunks */
   effect_head: number[];
   viewport: { w: number; h: number } | null;
@@ -124,6 +156,33 @@ export interface DerivedChunk {
 
 /** A click with no visible effect within this long is dead. */
 export const DEAD_MS = 1000;
+
+/**
+ * Active time: the visitor counts as active between two activity points (pointer move or click,
+ * scroll, input, touch, drag, selection) at most this far apart, so a tab left open doesn't count.
+ */
+export const ACTIVE_GAP_MS = 5000;
+const ACTIVITY_SOURCES = new Set([
+  1 /* MouseMove */, 2 /* MouseInteraction */, 3 /* Scroll */, 5 /* Input */, 6 /* TouchMove */, 12 /* Drag */, 14 /* Selection */,
+]);
+
+/** Activity points (ts, pv) -> active ms per pageview: gaps up to ACTIVE_GAP_MS count. */
+export function activitySegments(points: { ts: number; pv: number }[]): DerivedActivity[] {
+  const byPv = new Map<number, number[]>();
+  for (const p of points) {
+    const l = byPv.get(p.pv);
+    if (l) l.push(p.ts);
+    else byPv.set(p.pv, [p.ts]);
+  }
+  const out: DerivedActivity[] = [];
+  for (const [pv, ts] of byPv) {
+    ts.sort((a, b) => a - b);
+    let ms = 0;
+    for (let i = 1; i < ts.length; i++) ms += Math.min(ACTIVE_GAP_MS, ts[i]! - ts[i - 1]!);
+    out.push({ pv, first: ts[0]!, last: ts[ts.length - 1]!, ms });
+  }
+  return out;
+}
 
 /** rrweb IncrementalSource values that count as a visible effect of a click. */
 const EFFECT_SOURCES = new Set([
@@ -177,10 +236,28 @@ function cleanProps(v: unknown): Record<string, string | number | boolean | null
   return n ? out : null;
 }
 
+/** A failed request's group: method, URL (already scrubbed) and status. */
+export const netFingerprint = (method: string, url: string, status: number) => fnv1a64(`net|${method}|${url}|${status}`);
+
+/** Custom tag keys: letters, digits and _ . - (like event props), not starting with "__" (no __proto__); ":" separates key and value in filters. */
+export const TAG_KEY_RE = /^(?!__)[A-Za-z0-9_.-]{1,50}$/;
+
+/** Tag values as stored: strings, numbers or booleans, at most 5, 100 characters, scrubbed like error messages. */
+export function cleanTagValues(v: unknown): string[] {
+  const list = Array.isArray(v) ? v.slice(0, 5) : [v];
+  const out: string[] = [];
+  for (const x of list) {
+    if (typeof x !== "string" && typeof x !== "boolean" && !(typeof x === "number" && Number.isFinite(x))) continue;
+    const s = str(scrubText(cleanText(String(x).slice(0, 400)), 100), 100);
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
 export type EnvelopeResult = { ok: true; env: Envelope } | { ok: false; error: string; hint: string };
 
 /** The fields an envelope may have; anything else is refused (chunks are stored as received). */
-const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd"]);
+const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd", "up"]);
 
 /** Check a decoded body against the query string (?sid=&q=) it was sent with. */
 export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): EnvelopeResult {
@@ -206,6 +283,8 @@ export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): En
   if (avid && /^[A-Za-z0-9_-]{8,64}$/.test(avid)) env.avid = avid;
   if (raw.f === 1) env.f = 1;
   if (raw.wd === 1) env.wd = 1;
+  const up = str(raw.up, 60);
+  if (up) env.up = up;
   return { ok: true, env };
 }
 
@@ -230,15 +309,9 @@ export function focusClick(tag: string): boolean {
   return !!m && !["submit", "button", "reset", "image", "checkbox", "radio", "file", "color", "range"].includes(m[1]!);
 }
 
-/**
- * Derive one chunk. `now` bounds timestamps: events claiming to be from the future (beyond
- * `now` + 5 min of the client's corrected clock) or older than a day are dropped. `maxDerived`
- * caps the facts kept (MAX_DERIVED_PER_CHUNK); clicks beyond LIMITS.CLICKS_PER_SECOND in any 1 s
- * window are dropped (no person clicks that fast).
- */
-export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number; maxDerived?: number }): DerivedChunk {
-  const maxDerived = Math.max(0, Math.min(LIMITS.DERIVED_PER_CHUNK_MAX, opts.maxDerived ?? LIMITS.DERIVED_PER_CHUNK_MAX));
-  const out: DerivedChunk = {
+/** A chunk with no facts (also what tests build on). */
+export function emptyChunk(): DerivedChunk {
+  return {
     first_ts: 0,
     last_ts: 0,
     cover_end: 0,
@@ -250,8 +323,11 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
     inputs: [],
     errors: [],
     customs: [],
+    nets: [],
+    tags: [],
     marks: [],
     scrolls: [],
+    activity: [],
     effect_head: [],
     viewport: null,
     hosts: [],
@@ -259,11 +335,26 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
     invalid: 0,
     truncated: false,
   };
+}
+
+/**
+ * Derive one chunk. `now` bounds timestamps: events claiming to be from the future (beyond
+ * `now` + 5 min of the client's corrected clock) or older than a day are dropped. `maxDerived`
+ * caps the facts kept (MAX_DERIVED_PER_CHUNK); clicks beyond LIMITS.CLICKS_PER_SECOND in any 1 s
+ * window are dropped (no person clicks that fast).
+ */
+export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number; maxDerived?: number }): DerivedChunk {
+  const maxDerived = Math.max(0, Math.min(LIMITS.DERIVED_PER_CHUNK_MAX, opts.maxDerived ?? LIMITS.DERIVED_PER_CHUNK_MAX));
+  const out = emptyChunk();
+
   const events = env.ev;
   if (events.length > LIMITS.EVENTS_PER_CHUNK) out.truncated = true;
   const effectTimes: number[] = [];
   const navTimes: number[] = [];
   const scrollPts: ScrollPoint[] = [];
+  const activity: { ts: number; pv: number }[] = [];
+  /** the pageview the latest afs.* event named: rrweb's own events don't say which page they are on */
+  let curPv = 0;
   const hosts = new Set<string>();
   let derived = 0;
   const bad = () => {
@@ -311,6 +402,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
         out.effects++;
         effectTimes.push(q50(ts));
       }
+      if (typeof data.source === "number" && ACTIVITY_SOURCES.has(data.source) && activity.length < 5000) activity.push({ ts, pv: curPv });
     } else if (e.type === 5) {
       const tag = data.tag;
       const p = data.payload;
@@ -320,6 +412,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
         bad();
         continue;
       }
+      curPv = pv;
       if (tag === TAGS.page) {
         const path = cleanPath(p.p);
         const host = str(p.h, 253)?.toLowerCase() ?? "";
@@ -372,6 +465,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
           blocked: p.b === 1,
           dead: false,
           open: false,
+          zone: str(p.z, 120),
         });
       } else if (tag === TAGS.input) {
         const selector = str(p.s, 300);
@@ -394,7 +488,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
         if (y === null) continue;
         scrollPts.push({ ts, pv, y, dh: int(p.dh, 0, 1_000_000) ?? 0, vh: int(p.vh, 0, 20_000) ?? 0 });
       } else if (tag === TAGS.error) {
-        const kind = p.k === "rejection" || p.k === "console" ? p.k : "error";
+        const kind = p.k === "rejection" || p.k === "console" || p.k === "warn" ? p.k : "error";
         const message = scrubText(str(p.m, 1000) ?? "Error", 500);
         if (!room()) continue;
         const src = str(p.src, 600);
@@ -416,6 +510,26 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
         const name = str(p.n, 100);
         if (!name || !room()) continue;
         out.customs.push({ ts, pv, name, props: cleanProps(p.p) });
+      } else if (tag === TAGS.net) {
+        const url = cleanHref(p.u);
+        const status = int(p.st, 0, 999);
+        if (!url || status === null || (status > 0 && status < 400)) {
+          bad();
+          continue;
+        }
+        if (!room()) continue;
+        const m = typeof p.m === "string" ? p.m.toUpperCase() : "";
+        const method = /^[A-Z]{1,10}$/.test(m) ? m : "GET";
+        out.nets.push({ ts, pv, method, url, status, ms: int(p.ms, 0, 600_000) ?? 0, fingerprint: netFingerprint(method, url, status) });
+      } else if (tag === TAGS.tag) {
+        const key = str(p.k, 50);
+        if (!key || !TAG_KEY_RE.test(key)) {
+          bad();
+          continue;
+        }
+        const values = cleanTagValues(p.v);
+        if (!values.length || !room()) continue;
+        out.tags.push({ ts, pv, key, values });
       } else if (tag === TAGS.hide || tag === TAGS.idle) {
         const detail = tag === TAGS.idle ? "idle" : HIDE_KINDS.has(String(p.k)) ? String(p.k) : "hidden";
         if (!room()) continue;
@@ -445,6 +559,7 @@ export function deriveChunk(env: Envelope, opts: { minTs: number; maxTs: number;
   }
 
   out.scrolls = scrollSegments(scrollPts);
+  out.activity = activitySegments(activity);
   return out;
 }
 
@@ -504,6 +619,7 @@ export function scrollSegments(points: ScrollPoint[]): ScrollSegment[] {
       dh: 0,
       vh: 0,
       milestones: [],
+      pts: pts.slice(0, 200).map((p) => [p.ts, p.y] as [number, number]),
     };
     let anchor = pts[0]!.y; // last y where a direction was established
     for (const p of pts) {
@@ -548,13 +664,43 @@ export function shiftChunk(d: DerivedChunk, ms: number): DerivedChunk {
     inputs: d.inputs.map((x) => ({ ...x, ts: s(x.ts) })),
     errors: d.errors.map((x) => ({ ...x, ts: s(x.ts) })),
     customs: d.customs.map((x) => ({ ...x, ts: s(x.ts) })),
+    tags: d.tags.map((x) => ({ ...x, ts: s(x.ts) })),
+    nets: d.nets.map((x) => ({ ...x, ts: s(x.ts) })),
+    activity: d.activity.map((x) => ({ ...x, first: s(x.first), last: s(x.last) })),
     marks: d.marks.map((x) => ({ ...x, ts: s(x.ts) })),
     scrolls: d.scrolls.map((x) => ({
       ...x,
+      pts: x.pts?.map(([t, y]) => [s(t), y] as [number, number]),
       first_ts: s(x.first_ts),
       last_ts: s(x.last_ts),
       milestones: x.milestones.map((m) => ({ ...m, ts: s(m.ts) })),
     })),
     effect_head: d.effect_head.map(s),
   };
+}
+
+/** Attention: ms each 10% band of a page was in view, from positions held until the next one. */
+export const ATTENTION_BANDS = 10;
+/** A position counts at most this long (a tab left open on one screen doesn't pile up). */
+export const ATTENTION_HOLD_MS = 30_000;
+
+export function attentionAdd(bands: number[], points: readonly [number, number][], vh: number, dh: number, until: number | null): number[] {
+  const out = bands.length === ATTENTION_BANDS ? [...bands] : new Array<number>(ATTENTION_BANDS).fill(0);
+  if (!dh || !vh || !points.length) return out;
+  const band = dh / ATTENTION_BANDS;
+  const add = (y: number, dt: number) => {
+    if (dt <= 0) return;
+    const top = Math.max(0, y);
+    const bottom = Math.min(dh, y + vh);
+    for (let b = 0; b < ATTENTION_BANDS; b++) {
+      const overlap = Math.min(bottom, (b + 1) * band) - Math.max(top, b * band);
+      if (overlap > 0) out[b]! += Math.round(dt * (overlap / band));
+    }
+  };
+  for (let i = 0; i < points.length; i++) {
+    const [t, y] = points[i]!;
+    const next = i + 1 < points.length ? points[i + 1]![0] : until;
+    if (next !== null) add(y, Math.min(ATTENTION_HOLD_MS, next - t));
+  }
+  return out;
 }

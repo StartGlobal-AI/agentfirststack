@@ -7,7 +7,7 @@
     "dev": "wrangler dev --port 8790",
     "types": "wrangler types --strict-vars=false",
     "build": "node scripts/build-recorder.mjs",
-    "typecheck": "wrangler types --strict-vars=false >/dev/null && tsc --noEmit && tsc --noEmit -p src/recorder && tsc --noEmit -p src/player",
+    "typecheck": "wrangler types --strict-vars=false >/dev/null && tsc --noEmit && tsc --noEmit -p src/recorder && tsc --noEmit -p src/player && tsc --noEmit -p src/survey",
     "test": "node scripts/build-recorder.mjs && vitest run",
     "db:migrate:local": "wrangler d1 migrations apply DB --local && wrangler d1 migrations apply AUTH_DB --local",
     "smoke": "bash scripts/smoke.sh",

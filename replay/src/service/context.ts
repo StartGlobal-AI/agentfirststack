@@ -25,6 +25,8 @@ export interface SiteRow {
   unmask_selectors: string;
   mask_selectors: string;
   block_selectors: string;
+  /** migration 0008: JSON list of zone selectors */
+  zones?: string;
   exclude_paths: string;
   allowed_hostnames: string | null;
   max_session_minutes: number;
@@ -33,6 +35,17 @@ export interface SiteRow {
   capture_console_errors: number;
   require_consent: number;
   analytics_site_id: string | null;
+  /** migration 0008: hash afsr('identify') ids in the browser */
+  hash_user_ids?: number;
+  /** migration 0008: record failed fetch/XHR requests; console.warn */
+  capture_network_errors?: number;
+  capture_console_warnings?: number;
+  auto_events?: number;
+  /** migration 0008: api | gcm; JSON list of CIDRs */
+  consent_source?: string;
+  exclude_ip_ranges?: string | null;
+  /** migration 0008: the active surveys' revision (NULL = none active) */
+  surveys_rev?: string | null;
   /** when the analytics site confirmed its tracker loads this site's recorder (migration 0007; NULL = not) */
   analytics_linked_at?: number | null;
   purged_at: number | null;

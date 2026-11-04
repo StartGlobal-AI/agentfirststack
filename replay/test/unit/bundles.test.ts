@@ -40,6 +40,7 @@ function browser(
     local?: Record<string, string>;
     now?: number;
     stubCalls?: string;
+    dataLayer?: unknown[];
   } = {},
 ) {
   const injected: { src: string; async: boolean }[] = [];
@@ -72,6 +73,7 @@ function browser(
     },
   };
   ctx.window = ctx;
+  if (opts.dataLayer) ctx.dataLayer = opts.dataLayer;
   if (opts.stubCalls) {
     runInNewContext(QUEUE_STUB.replace(/^<script>|<\/script>$/g, ""), ctx);
     runInNewContext(opts.stubCalls, ctx);
@@ -82,9 +84,12 @@ function browser(
 }
 
 describe("bundles", () => {
-  it("stay small: loader ~2 KB, recorder < 32 KB gzip, player < 90 KB gzip", () => {
-    expect(LOADER.length).toBeLessThan(3000);
-    expect(gzipSync(LOADER).length).toBeLessThan(1500);
+  // Raised from 3000 / 1500 for the parity release: survey loading and command routing (the widget
+  // itself is lazy), Google Consent Mode, afsr('upgrade') and afsr('start') live in the loader
+  // because they decide before the recorder loads.
+  it("stay small: loader < 3.6 KB (1.8 KB gzip), recorder < 32 KB gzip, player < 90 KB gzip", () => {
+    expect(LOADER.length).toBeLessThan(3600);
+    expect(gzipSync(LOADER).length).toBeLessThan(1800);
     expect(RECORDER.startsWith("/*! afs-replay recorder")).toBe(true);
     expect(gzipSync(RECORDER).length).toBeLessThan(32 * 1024);
     expect(PLAYER.startsWith("/*! afs-replay player")).toBe(true);
@@ -176,5 +181,63 @@ describe("loader (/r/<site>.js)", () => {
     const denied = browser({ cfg: { consent: true }, stubCalls: "afsr('consent', false)" });
     expect(denied.afsr.status()).toBe("stopped:consent");
     expect(denied.injected).toHaveLength(0);
+  });
+});
+
+describe("loader: consent mode, upgrade, start (parity)", () => {
+  it("consent_source gcm follows analytics_storage: default denied waits, an update granted starts", () => {
+    const b = browser({ cfg: { consent: true, gcm: 1 } as never, dataLayer: [["consent", "default", { analytics_storage: "denied" }]] });
+    expect(b.afsr.status()).toBe("consent_pending");
+    expect(b.injected).toHaveLength(0);
+    (b.ctx.dataLayer as { push: (...x: unknown[]) => void }).push(["consent", "update", { analytics_storage: "granted" }]);
+    expect(b.injected).toHaveLength(1);
+    const granted = browser({
+      cfg: { consent: true, gcm: 1 } as never,
+      dataLayer: [["consent", "default", { analytics_storage: "granted" }]],
+    });
+    expect(granted.injected).toHaveLength(1);
+    // without gcm, dataLayer means nothing
+    expect(
+      browser({ cfg: { consent: true }, dataLayer: [["consent", "default", { analytics_storage: "granted" }]] }).injected,
+    ).toHaveLength(0);
+  });
+
+  it("afsr('upgrade', reason) records a tab that wasn't sampled in, also when called before the loader", () => {
+    const b = browser({ cfg: { sr: 0 } });
+    expect(b.afsr.status()).toBe("not_sampled");
+    b.afsr("upgrade", "checkout_error");
+    expect(b.injected).toHaveLength(1);
+    expect(JSON.parse(b.session[`afsr_${SITE}`]!)).toMatchObject({ on: 1, up: "checkout_error" });
+    const early = browser({ cfg: { sr: 0 }, stubCalls: "afsr('upgrade', 'vip')" });
+    expect(early.injected).toHaveLength(1);
+    // upgrade still waits for consent
+    const c = browser({ cfg: { sr: 0, consent: true } });
+    c.afsr("upgrade", "x");
+    expect(c.afsr.status()).toBe("consent_pending");
+  });
+
+  it("afsr('start') resumes a tab stopped by afsr('stop') or consent, never one stopped by a limit", () => {
+    const state = (stop: string) => ({
+      [`afsr_${SITE}`]: JSON.stringify({
+        id: "rs_aaaaaaaaaaaaaaaa",
+        t0: 1_800_000_000_000 - 1000,
+        last: 1_800_000_000_000 - 500,
+        seq: 3,
+        pv: 1,
+        on: 1,
+        stop,
+      }),
+    });
+    const b = browser({ session: state("stop") });
+    expect(b.afsr.status()).toBe("stopped:stop");
+    b.afsr("start");
+    expect(b.injected).toHaveLength(1);
+    const limited = browser({ session: state("daily_session_limit") });
+    limited.afsr("start");
+    expect(limited.injected).toHaveLength(0);
+    const denied = browser({ cfg: { consent: true }, stubCalls: "afsr('consent', false)" });
+    expect(denied.afsr.status()).toBe("stopped:consent");
+    denied.afsr("consent", true);
+    expect(denied.injected).toHaveLength(1);
   });
 });

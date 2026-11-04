@@ -15,6 +15,7 @@ import { type Bindings, isDev } from "../env";
 import { cap, DEFAULTS } from "../lib/limits";
 import { SESSION_ID_RE } from "../lib/protocol";
 import { buildTimeline, entryLine, sessionJson } from "../lib/transcript";
+import { cleanText } from "../lib/mask-rules";
 import { safePatterns } from "../lib/url";
 import { type Ctx, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
 import { createLinkInput } from "./schemas";
@@ -36,6 +37,10 @@ interface LinkRow {
   revoked_at: number | null;
   last_viewed_at: number | null;
   views: number;
+  /** migration 0008: a clip window (ms since the session started) and a note */
+  start_ms?: number | null;
+  end_ms?: number | null;
+  note?: string | null;
 }
 
 const linkJson = (l: LinkRow) => ({
@@ -47,7 +52,15 @@ const linkJson = (l: LinkRow) => ({
   active: !l.revoked_at && l.expires_at > Date.now(),
   views: l.views,
   last_viewed_at: l.last_viewed_at,
+  ...(l.start_ms != null || l.end_ms != null ? { clip: { start_ms: l.start_ms ?? 0, end_ms: l.end_ms ?? null } } : {}),
+  ...(l.note ? { untrusted: { note: l.note } } : {}),
 });
+
+/** A clip's window in absolute ms, or null for the whole session. */
+const windowOf = (l: LinkRow, startedAt: number) =>
+  l.start_ms != null || l.end_ms != null
+    ? { start: startedAt + (l.start_ms ?? 0), end: l.end_ms != null ? startedAt + l.end_ms : Number.MAX_SAFE_INTEGER }
+    : null;
 
 export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
   // A link works for up to 30 days; a connected app's 8-hour token must not leave one behind.
@@ -65,6 +78,13 @@ export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
     );
   const s = await siteStub(ctx.env, site.id).session(q.session_id);
   if (!s) throw notFound("Session", `GET /v1/sites/${site.id}/sessions lists recorded sessions.`);
+  if (q.start_ms !== undefined && q.end_ms !== undefined && q.end_ms <= q.start_ms)
+    throw badRequest("end_ms must be after start_ms.", "Both are ms since the session started, e.g. start_ms=12000&end_ms=30000.");
+  if (q.start_ms !== undefined && q.start_ms > s.session.duration_ms)
+    throw badRequest(
+      `start_ms is after the session's end (${s.session.duration_ms} ms).`,
+      "Take times from the transcript ([mm:ss.s]) or get_session.",
+    );
   const now = Date.now();
   const max = cap(ctx.env, await accountStanding(ctx.env, ctx.accountId), "MAX_LINKS_PER_SITE", Number.POSITIVE_INFINITY);
   if (max !== null) {
@@ -91,16 +111,30 @@ export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
     revoked_at: null,
     last_viewed_at: null,
     views: 0,
+    start_ms: q.start_ms ?? null,
+    end_ms: q.end_ms ?? null,
+    note: q.note ? cleanText(q.note).trim().slice(0, 500) || null : null,
   };
   await ctx.env.DB.prepare(
-    "INSERT INTO replay_links (id, token_hash, account_id, site_id, session_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO replay_links (id, token_hash, account_id, site_id, session_id, created_at, expires_at, start_ms, end_ms, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
-    .bind(row.id, row.token_hash, row.account_id, row.site_id, row.session_id, row.created_at, row.expires_at)
+    .bind(
+      row.id,
+      row.token_hash,
+      row.account_id,
+      row.site_id,
+      row.session_id,
+      row.created_at,
+      row.expires_at,
+      row.start_ms,
+      row.end_ms,
+      row.note,
+    )
     .run();
   return {
     link: { ...linkJson(row), url: `${ctx.baseUrl}/play/${token}` },
     existing: false,
-    note: "Store the url now; it is not shown again. Anyone with it can watch this one session (masked as recorded) until it expires or is revoked. A new call makes a new link.",
+    note: `Store the url now; it is not shown again. Anyone with it can watch this one session${row.start_ms != null || row.end_ms != null ? " (only the clip's window is served)" : ""} (masked as recorded) until it expires or is revoked. A new call makes a new link.`,
     next_steps: [`Revoke: DELETE /v1/sites/${site.id}/links/${row.id} (MCP revoke_replay_link).`],
   };
 }
@@ -177,8 +211,10 @@ export async function playerData(env: Bindings, r: ResolvedLink) {
   const d = await stub.transcript(r.link.session_id, { maxEvents: 3000 });
   if (!d) return null;
   const verified = isVerified(r.site);
-  const chunks = verified ? await stub.playable(r.link.session_id, PLAYER_CHUNKS) : [];
-  const tl = buildTimeline(d.session, d.pages, d.events);
+  const win = windowOf(r.link, d.session.started_at);
+  const chunks = verified ? await stub.playable(r.link.session_id, PLAYER_CHUNKS, win) : [];
+  const all = buildTimeline(d.session, d.pages, d.events, d.tags, d.notes);
+  const tl = win ? all.filter((e) => e.ts >= win.start && e.ts <= win.end) : all;
   const s = sessionJson(d.session);
   return {
     session: {
@@ -190,6 +226,8 @@ export async function playerData(env: Bindings, r: ResolvedLink) {
     },
     timeline: tl.map((e) => ({ t: e.t, kind: e.kind, text: entryLine(e).replace(/^\[[^\]]+\]\s*/, ""), signals: e.signals })),
     chunks,
+    ...(win ? { clip: { start_ms: r.link.start_ms ?? 0, end_ms: r.link.end_ms ?? null } } : {}),
+    ...(r.link.note ? { note: r.link.note } : {}),
     expires_at: r.link.expires_at,
   };
 }
@@ -200,11 +238,19 @@ export async function playerData(env: Bindings, r: ResolvedLink) {
  */
 export async function playerChunk(env: Bindings, r: ResolvedLink, seq: number): Promise<ReadableStream | "budget" | null> {
   if (!isVerified(r.site)) return null;
-  const ok = await siteStub(env, r.site.id).serveChunk({
+  const stub = siteStub(env, r.site.id);
+  let window: { start: number; end: number } | null = null;
+  if (r.link.start_ms != null || r.link.end_ms != null) {
+    const s = await stub.session(r.link.session_id);
+    if (!s) return null;
+    window = windowOf(r.link, s.session.started_at);
+  }
+  const ok = await stub.serveChunk({
     link_id: r.link.id,
     session_id: r.link.session_id,
     seq,
     budget: linkBudget(env, r),
+    window,
   });
   if (!ok.ok) return ok.reason === "budget" ? "budget" : null;
   const obj = await env.CHUNKS.get(`${r.site.id}/${chunkKey(r.link.session_id, seq)}`);

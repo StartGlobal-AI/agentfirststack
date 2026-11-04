@@ -7,20 +7,21 @@
  * in text they sit inside an UNTRUSTED fence, in JSON under `untrusted`.
  */
 
-import type { EventRow, PageRow, SessionRow } from "./rows";
+import type { EventRow, PageRow, SessionRow, TagRow } from "./rows";
 import { fence, UNTRUSTED_NOTICE } from "./untrusted";
 
 export interface TimelineEntry {
   /** ms since the session started */
   t: number;
   ts: number;
-  kind: "page" | "click" | "input" | "scroll" | "error" | "event" | "hide" | "idle";
+  kind: "page" | "click" | "input" | "scroll" | "error" | "event" | "hide" | "idle" | "tag" | "net" | "survey" | "note";
   pv: number | null;
   path?: string | null;
   title?: string | null;
   referrer?: string | null;
   nav?: string | null;
   stayed_ms?: number | null;
+  active_ms?: number;
   max_scroll_pct?: number;
   label?: string | null;
   label_masked?: boolean;
@@ -41,6 +42,13 @@ export interface TimelineEntry {
   triggered_by?: { selector: string | null; label: string | null } | null;
   name?: string;
   props?: Record<string, unknown> | null;
+  /** tag values (kind tag; name is the key) */
+  values?: string[];
+  /** failed request (kind net) */
+  method?: string;
+  url?: string | null;
+  status?: number;
+  ms?: number;
   detail?: string;
   signals: string[];
 }
@@ -56,9 +64,28 @@ const parse = (s: string | null): Record<string, unknown> => {
 };
 
 /** Merge pages and derived events into one ordered timeline, folding rage bursts. */
-export function buildTimeline(session: SessionRow, pages: PageRow[], events: EventRow[]): TimelineEntry[] {
+export function buildTimeline(
+  session: SessionRow,
+  pages: PageRow[],
+  events: EventRow[],
+  tags: TagRow[] = [],
+  notes: { id: string; t_ms: number; text: string }[] = [],
+): TimelineEntry[] {
   const t0 = session.started_at;
   const out: TimelineEntry[] = [];
+  for (const n of notes) out.push({ t: n.t_ms, ts: t0 + n.t_ms, kind: "note", pv: null, name: n.id, detail: n.text, signals: [] });
+  // One entry per key and time: afsr('set', 'plan', ['pro', 'trial']) is one line.
+  const tagAt = new Map<string, TimelineEntry>();
+  for (const g of tags) {
+    const k = `${g.ts}\u0000${g.key}`;
+    const e = tagAt.get(k);
+    if (e) e.values!.push(g.value);
+    else {
+      const entry: TimelineEntry = { t: g.ts - t0, ts: g.ts, kind: "tag", pv: null, name: g.key, values: [g.value], signals: [] };
+      tagAt.set(k, entry);
+      out.push(entry);
+    }
+  }
   for (const p of pages) {
     const signals: string[] = [];
     if (p.quick_back) signals.push("quick_back");
@@ -73,6 +100,7 @@ export function buildTimeline(session: SessionRow, pages: PageRow[], events: Eve
       referrer: p.referrer,
       nav: p.nav,
       stayed_ms: p.left_at !== null && p.left_at >= p.ts ? p.left_at - p.ts : null,
+      active_ms: p.active_ms ?? 0,
       max_scroll_pct: p.max_scroll,
       signals,
     });
@@ -110,7 +138,7 @@ export function buildTimeline(session: SessionRow, pages: PageRow[], events: Eve
       continue;
     }
     // Errors and scroll milestones inside a burst don't end it (a broken button throws on every click).
-    if (e.kind !== "error" && e.kind !== "scroll") burst = null;
+    if (e.kind !== "error" && e.kind !== "scroll" && e.kind !== "net") burst = null;
     if (e.kind === "input") {
       out.push({
         ...base,
@@ -140,6 +168,23 @@ export function buildTimeline(session: SessionRow, pages: PageRow[], events: Eve
         triggered_by: e.error_click ? { selector: e.selector, label: e.label } : null,
         signals: e.error_click ? ["error_click"] : ["js_error"],
       });
+    } else if (e.kind === "net") {
+      out.push({
+        ...base,
+        kind: "net",
+        path: e.path,
+        method: e.tag ?? "GET",
+        url: e.href,
+        status: typeof d.status === "number" ? d.status : 0,
+        ms: typeof d.ms === "number" ? d.ms : 0,
+        fingerprint: e.fingerprint,
+        triggered_by: e.error_click ? { selector: e.selector, label: e.label } : null,
+        signals: ["api_error"],
+      });
+    } else if (e.kind === "survey") {
+      out.push({ ...base, kind: "survey", path: e.path, name: e.label ?? "", detail: e.message ?? "", signals: [] });
+    } else if (e.kind === "warn") {
+      out.push({ ...base, kind: "error", path: e.path, message: e.message, error_kind: "warn", fingerprint: e.fingerprint, signals: [] });
     } else if (e.kind === "event") {
       out.push({
         ...base,
@@ -184,6 +229,7 @@ const FLAG: Record<string, string> = {
   error_click: "ERROR-CLICK",
   quick_back: "QUICK-BACK",
   excessive_scroll: "EXCESSIVE-SCROLL",
+  api_error: "API-ERROR",
 };
 
 /** One line per entry. */
@@ -199,7 +245,8 @@ export function entryLine(e: TimelineEntry): string {
       const bits = [`page ${q(e.path)}`, e.nav ?? "load"];
       if (e.referrer) bits.push(`from ${q(e.referrer)}`);
       if (e.title) bits.push(`title ${q(e.title)}`);
-      if (e.stayed_ms !== null && e.stayed_ms !== undefined) bits.push(`stayed ${duration(e.stayed_ms)}`);
+      if (e.stayed_ms !== null && e.stayed_ms !== undefined)
+        bits.push(`stayed ${duration(e.stayed_ms)}${e.active_ms ? ` (active ${duration(e.active_ms)})` : ""}`);
       bits.push(`saw ${e.max_scroll_pct ?? 0}% of the page`);
       return `${at} ${bits.join(" · ")}${tail}`;
     }
@@ -217,7 +264,19 @@ export function entryLine(e: TimelineEntry): string {
       return `${at} scrolled to ${e.pct}% of ${q(e.path)}`;
     case "error": {
       const trig = e.triggered_by ? ` after click on {${q(e.triggered_by.selector)}}` : "";
-      return `${at} ${e.error_kind === "console" ? "console.error" : e.error_kind === "rejection" ? "unhandled rejection" : "JS error"} ${q(e.message)}${e.source ? ` at ${q(e.source)}` : ""}${trig}${tail}`;
+      const what =
+        e.error_kind === "console"
+          ? "console.error"
+          : e.error_kind === "warn"
+            ? "console.warn"
+            : e.error_kind === "rejection"
+              ? "unhandled rejection"
+              : "JS error";
+      return `${at} ${what} ${q(e.message)}${e.source ? ` at ${q(e.source)}` : ""}${trig}${tail}`;
+    }
+    case "net": {
+      const trig = e.triggered_by ? ` after click on {${q(e.triggered_by.selector)}}` : "";
+      return `${at} request failed ${e.method} ${q(e.url)} -> ${e.status ? e.status : "network error"} (${duration(e.ms ?? 0)})${trig}${tail}`;
     }
     case "event":
       return `${at} event ${q(e.name)}${e.props ? ` ${JSON.stringify(e.props)}` : ""}`;
@@ -233,6 +292,12 @@ export function entryLine(e: TimelineEntry): string {
     }
     case "idle":
       return `${at} idle: recording paused until the visitor is active again`;
+    case "tag":
+      return `${at} tag ${q(e.name)} = ${(e.values ?? []).map(q).join(", ")}`;
+    case "survey":
+      return `${at} survey ${q(e.name)} answered: ${e.detail}`;
+    case "note":
+      return `${at} note ${q(e.detail)}`;
   }
 }
 
@@ -244,6 +309,7 @@ export function signalSummary(s: SessionRow): string {
     s.errors && `${s.errors} JS error${s.errors === 1 ? "" : "s"}`,
     s.quick_backs && `${s.quick_backs} quick back${s.quick_backs === 1 ? "" : "s"}`,
     s.excessive_scrolls && `${s.excessive_scrolls} excessive scroll${s.excessive_scrolls === 1 ? "" : "s"}`,
+    s.api_errors && `${s.api_errors} failed request${s.api_errors === 1 ? "" : "s"}`,
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : "none";
 }
@@ -258,7 +324,7 @@ export function sessionHeader(s: SessionRow, domain: string): string[] {
   const device = [s.device, [s.browser, s.browser_version].filter(Boolean).join(" "), s.os, s.country].filter(Boolean).join(" · ");
   return [
     `Session ${s.id} on ${domain}`,
-    `Started ${new Date(s.started_at).toISOString()} · ${duration(s.duration_ms)} · ${device || "unknown device"}${s.viewport_w ? ` · viewport ${s.viewport_w}x${s.viewport_h}` : ""}`,
+    `Started ${new Date(s.started_at).toISOString()} · ${duration(s.duration_ms)} (active ${duration(s.active_ms ?? 0)}) · ${device || "unknown device"}${s.viewport_w ? ` · viewport ${s.viewport_w}x${s.viewport_h}` : ""}`,
     `${s.pageviews} pageview${s.pageviews === 1 ? "" : "s"} · ${s.clicks} click${s.clicks === 1 ? "" : "s"} · ${s.inputs} field${s.inputs === 1 ? "" : "s"} typed into · ${s.errors} error${s.errors === 1 ? "" : "s"}`,
     `Signals: ${signalSummary(s)} · frustration ${s.frustration}/100`,
   ];
@@ -288,6 +354,7 @@ export function sessionJson(s: SessionRow) {
     started_at_iso: new Date(s.started_at).toISOString(),
     last_at: s.last_at,
     duration_ms: s.duration_ms,
+    active_ms: s.active_ms ?? 0,
     pageviews: s.pageviews,
     clicks: s.clicks,
     inputs: s.inputs,
@@ -300,8 +367,11 @@ export function sessionJson(s: SessionRow) {
       quick_backs: s.quick_backs,
       excessive_scrolls: s.excessive_scrolls,
       js_errors: s.errors,
+      api_errors: s.api_errors ?? 0,
     },
     frustration: s.frustration,
+    starred: !!s.starred,
+    upgraded: !!s.upgraded,
     device: s.device,
     browser: s.browser,
     browser_version: s.browser_version,

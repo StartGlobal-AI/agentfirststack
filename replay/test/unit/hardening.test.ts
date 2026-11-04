@@ -16,6 +16,7 @@ import {
   recordDrop,
   rollup,
   SCHEMA_V1,
+  SCHEMA_VERSION,
   schemaVersion,
   summary,
 } from "../../src/do/engine";
@@ -380,16 +381,16 @@ describe("Durable Object schema (C2: in-place migration, fewer index writes)", (
       today,
     ]);
     migrate(db, NOW);
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(SCHEMA_VERSION);
     const indexes = () =>
       db
         .all("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events'")
         .map((r) => String(r.name))
         .sort();
-    expect(indexes()).toEqual(["events_ce", "events_fingerprint", "events_session"]);
+    expect(indexes()).toEqual(["events_ce", "events_fingerprint", "events_nw", "events_session"]);
     expect(summary(db, NOW).usage_today).toMatchObject({ sessions: 1, chunks: 2, bytes: 900 });
     migrate(db, NOW); // again: nothing recreated
-    expect(indexes()).toEqual(["events_ce", "events_fingerprint", "events_session"]);
+    expect(indexes()).toEqual(["events_ce", "events_fingerprint", "events_nw", "events_session"]);
   });
   it("time-range queries over clicks and errors use the partial index", () => {
     const db = memoryDb();

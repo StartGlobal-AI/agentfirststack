@@ -2,6 +2,7 @@
 //   dist/loader.txt     src/recorder/loader.ts    served at /r/<site_id>.js with the site config inlined
 //   dist/recorder.txt   src/recorder/recorder.ts  rrweb record + our events, /recorder.<hash>.js
 //   dist/player.txt     src/player/player.ts      rrweb-player, /assets/player-<hash>.js
+//   dist/survey.txt     src/survey/widget.ts      survey widget, /sv/<site_id>.<rev>.js with the site's surveys inlined
 //   dist/player-css.txt rrweb-player's stylesheet, /assets/player-<hash>.css
 // Run by wrangler's build.command, and before tests.
 import { build } from "esbuild";
@@ -31,6 +32,11 @@ await build({
 });
 await build({
   ...common,
+  entryPoints: [resolve(root, "src/survey/widget.ts")],
+  outfile: resolve(dist, "survey.txt"),
+});
+await build({
+  ...common,
   entryPoints: [resolve(root, "src/player/player.ts")],
   outfile: resolve(dist, "player.txt"),
   banner: { js: "/*! afs-replay player; includes rrweb-player (MIT) */" },
@@ -50,7 +56,7 @@ const { outputFiles } = await build({
 const css = outputFiles[0].text.replace(/\/\*# sourceMappingURL=.*?\*\//g, "");
 writeFileSync(resolve(dist, "player-css.txt"), css);
 
-for (const f of ["loader.txt", "recorder.txt", "player.txt", "player-css.txt"]) {
+for (const f of ["loader.txt", "recorder.txt", "survey.txt", "player.txt", "player-css.txt"]) {
   const p = resolve(dist, f);
   console.log(`replay: dist/${f} ${statSync(p).size} B (${gzipSync(readFileSync(p)).length} B gzip)`);
 }

@@ -2,6 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { describe, expect, it } from "vitest";
 import type { Bindings } from "../../src/env";
 import worker from "../../src/index";
+import { emptyChunk } from "../../src/lib/derive";
 import { runPurge } from "../../src/service/purge";
 import { findAnalyticsTrackers } from "../../src/service/verify";
 import { click, error, hide, mutation, page, scroll } from "../fixtures/rrweb";
@@ -340,27 +341,7 @@ describe("retention, deletion and the cron", () => {
       seq: 0,
       bytes: 1,
       skew_ms: 0,
-      chunk: {
-        first_ts: 0,
-        last_ts: 0,
-        cover_end: 0,
-        rr_events: 0,
-        full_snapshots: 0,
-        effects: 0,
-        pages: [],
-        clicks: [],
-        inputs: [],
-        errors: [],
-        customs: [],
-        marks: [],
-        scrolls: [],
-        effect_head: [],
-        viewport: null,
-        hosts: [],
-        dropped: 0,
-        invalid: 0,
-        truncated: false,
-      },
+      chunk: emptyChunk(),
       meta: {
         device: null,
         browser: null,

@@ -21,7 +21,7 @@
 
 import { record } from "@rrweb/record";
 import { scrubAttributes } from "../lib/attrs";
-import { type El, clickTarget, rawLabel, stableSelector, tagDescriptor } from "../lib/describe";
+import { type El, clickTarget, rawLabel, stableId, stableSelector, tagDescriptor } from "../lib/describe";
 import {
   BUILTIN_BLOCK,
   BUILTIN_IGNORE,
@@ -32,6 +32,7 @@ import {
   inputValueVisible,
   maskAll,
   pathExcluded,
+  requestUrl,
   scrubCss,
   scrubLink,
   scrubPath,
@@ -114,6 +115,16 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       within(el, MASK),
     );
 
+  // Heatmap zones: the site's zone selectors in order, else the nearest landmark.
+  const ZONES = (C.zn || []).filter((z) => valid(z) === z);
+  const zoneOf = (el: Element): string | undefined => {
+    for (const z of ZONES) if (closestAcross(el, z)) return z;
+    const l = closestAcross(el, "header,nav,main,footer,aside,form,dialog,section[id],[role=dialog]");
+    if (!l) return undefined;
+    const tag = l.tagName.toLowerCase();
+    return l.id && stableId(l.id) ? `${tag}#${l.id}` : tag;
+  };
+
   let buffer: RREvent[] = [];
   let stopRec: (() => void) | null = null;
   let paused: false | "idle" | "excluded" = false;
@@ -121,6 +132,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   let lastActivity = Date.now();
   let curPath: string | null = null;
   let errorsThisPage = 0;
+  let netThisPage = 0;
   let lastErr = "";
   let lastErrAt = 0;
   let typed = new WeakSet<Element>();
@@ -185,7 +197,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   // send "Origin: null" under a no-referrer policy, and ingest refuses that).
   const KEEPALIVE = typeof Request !== "undefined" && "keepalive" in Request.prototype;
   const post = (url: string, body: BodyInit, keepalive: boolean) =>
-    fetch(url, { method: "POST", body, keepalive, headers: { "content-type": "text/plain" } })
+    fetch(url, { method: "POST", body, keepalive, credentials: "omit", headers: { "content-type": "text/plain" } })
       .then((r) => r.json())
       .then((j: { stop?: boolean; reason?: string }) => {
         if (j && j.stop) finish(j.reason || "server", true);
@@ -204,6 +216,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     const av = avid();
     if (av) env.avid = av;
     if (S.f) env.f = 1;
+    if (S.up) env.up = S.up;
     if (nav.webdriver) env.wd = 1;
     S.last = Date.now();
     boot.save();
@@ -343,6 +356,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     curPath = p;
     typed = new WeakSet();
     errorsThisPage = 0;
+    netThisPage = 0;
     if (excluded(p)) {
       if (stopRec) custom(TAGS.hide, { pv: S.pv, k: "excluded" });
       pause("excluded");
@@ -450,10 +464,23 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
         top: dh ? Math.max(0, Math.min(100, Math.round(((rect.top + scrollY) / dh) * 100))) : 0,
         h: a ? linkTarget(a.getAttribute("href") || "") : undefined,
         b: blockEl ? 1 : undefined,
+        z: zoneOf(el),
       });
     },
     true,
   );
+
+  // auto_events: a submitted form, named by its stable selector (never its fields' values)
+  if (C.ae)
+    d.addEventListener(
+      "submit",
+      (e) => {
+        const f = e.target as Element | null;
+        if (f && f.tagName && !within(f, BUILTIN_IGNORE))
+          custom(TAGS.event, { pv: S.pv, n: "form_submit", p: { form: stableSelector(f as unknown as El), auto: true } });
+      },
+      true,
+    );
 
   const fieldLabel = (el: HTMLInputElement): { text: string; el: Element } | null => {
     const lab = el.labels && el.labels[0];
@@ -501,7 +528,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
 
   // ---------------------------------------------------------------- errors
   const report = (
-    k: "error" | "rejection" | "console",
+    k: "error" | "rejection" | "console" | "warn",
     msg: unknown,
     stack?: unknown,
     file?: string,
@@ -554,13 +581,13 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     const r = (e as PromiseRejectionEvent).reason;
     report("rejection", describeErr(r), r instanceof Error ? r.stack : undefined);
   });
-  if (C.errors) {
-    const ce = console.error;
-    console.error = function (this: Console, ...a: unknown[]) {
+  const wrapConsole = (m: "error" | "warn", k: "console" | "warn") => {
+    const ce = console[m];
+    console[m] = function (this: Console, ...a: unknown[]) {
       try {
         const err = a.find((x) => x instanceof Error) as Error | undefined;
         report(
-          "console",
+          k,
           a.map((x) => (x instanceof Error ? describeErr(x) : typeof x === "string" ? x : safeJson(x))).join(" "),
           err && err.stack,
         );
@@ -569,6 +596,71 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       }
       return ce.apply(this, a);
     };
+  };
+  if (C.errors) wrapConsole("error", "console");
+  if (C.cw) wrapConsole("warn", "warn");
+
+  // ---------------------------------------------------------------- failed requests (capture_network_errors)
+  // Only method, URL path (query stripped, id-like segments as :id) and status leave the browser:
+  // never headers or bodies. Our own requests (ingest, surveys) are skipped.
+  let lastNet = "";
+  let lastNetAt = 0;
+  const netFail = (m: unknown, u: unknown, st: number, t0: number) => {
+    if (!stopRec || netThisPage >= 30) return;
+    const url = requestUrl(String(u), loc.href, boot.base);
+    if (!url) return;
+    const method = String(m || "GET")
+      .toUpperCase()
+      .slice(0, 10);
+    const now = Date.now();
+    if (method + url + st === lastNet && now - lastNetAt < 1000) return;
+    lastNet = method + url + st;
+    lastNetAt = now;
+    netThisPage++;
+    custom(TAGS.net, { pv: S.pv, m: method, u: url.slice(0, 300), st, ms: now - t0 });
+  };
+  if (C.net) {
+    const wf = window as unknown as { fetch?: typeof fetch };
+    const of = wf.fetch;
+    if (of)
+      wf.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+        const t0 = Date.now();
+        const req = typeof Request !== "undefined" && input instanceof Request ? input : null;
+        const m = (init && init.method) || (req ? req.method : "GET");
+        const u = req ? req.url : input;
+        const p = of.call(this, input, init);
+        p.then(
+          (r) => {
+            if (r.status >= 400) netFail(m, u, r.status, t0);
+          },
+          (e) => {
+            if (!e || (e as Error).name !== "AbortError") netFail(m, u, 0, t0);
+          },
+        );
+        return p;
+      };
+    const XP = typeof XMLHttpRequest !== "undefined" ? XMLHttpRequest.prototype : null;
+    if (XP) {
+      const open = XP.open;
+      const send = XP.send;
+      XP.open = function (this: XMLHttpRequest & { _afsr?: [unknown, unknown] }, m: string, u: string | URL) {
+        this._afsr = [m, u];
+        // biome-ignore lint: forwards the page's own arguments
+        return (open as any).apply(this, arguments);
+      } as typeof XP.open;
+      XP.send = function (this: XMLHttpRequest & { _afsr?: [unknown, unknown] }, b?: Document | XMLHttpRequestBodyInit | null) {
+        const a = this._afsr;
+        const t0 = Date.now();
+        if (a) {
+          this.addEventListener("load", () => {
+            if (this.status >= 400) netFail(a[0], a[1], this.status, t0);
+          });
+          this.addEventListener("error", () => netFail(a[0], a[1], 0, t0));
+          this.addEventListener("timeout", () => netFail(a[0], a[1], 0, t0));
+        }
+        return send.call(this, b);
+      };
+    }
   }
 
   // ---------------------------------------------------------------- commands, lifecycle
@@ -585,13 +677,53 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     }
     return n ? o : undefined;
   };
+  // Custom tags: at most 20 keys per tab session, 5 values each, 100 characters, scrubbed like errors.
+  const tags = (S.tg = S.tg || {});
+  const sendTag = (k: string) => custom(TAGS.tag, { pv: S.pv, k, v: tags[k] });
+  const setTag = (k: unknown, v: unknown) => {
+    const key = String(k);
+    if (!/^(?!__)[A-Za-z0-9_.-]{1,50}$/.test(key) || (!tags[key] && Object.keys(tags).length >= 20)) return;
+    const vals = (Array.isArray(v) ? v : [v])
+      .filter((x) => x != null && typeof x !== "object")
+      .slice(0, 5)
+      .map((x) => scrubText(String(x), 100));
+    if (!vals.length) return;
+    tags[key] = vals;
+    boot.save();
+    sendTag(key);
+  };
+  const identify = (id: unknown, attrs: unknown) => {
+    const raw = id == null ? "" : String(id).slice(0, 200);
+    if (!raw) S.uid = undefined;
+    else if (!C.hu) S.uid = raw;
+    else
+      crypto.subtle
+        .digest("SHA-256", new TextEncoder().encode(`afsr:${C.site}:${raw}`))
+        .then((b) => {
+          S.uid = `h:${Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, "0"))
+            .join("")
+            .slice(0, 32)}`;
+          boot.save();
+        })
+        .catch(() => {});
+    boot.save();
+    if (attrs && typeof attrs === "object") for (const [k, v] of Object.entries(attrs)) setTag(k, v);
+  };
   const run = ([c, ...a]: Cmd) => {
-    if (c === "identify") {
-      S.uid = a[0] == null ? undefined : String(a[0]).slice(0, 200);
-      boot.save();
-    } else if (c === "event") custom(TAGS.event, { pv: S.pv, n: String(a[0]).slice(0, 100), p: cleanProps(a[1]) });
+    if (c === "identify") identify(a[0], a[1]);
+    else if (c === "set") setTag(a[0], a[1]);
+    else if (c === "event") custom(TAGS.event, { pv: S.pv, n: String(a[0]).slice(0, 100), p: cleanProps(a[1]) });
     else if (c === "stop") finish(typeof a[0] === "string" ? a[0] : "stop");
-    else if (c === "__err") report("error", a[0], a[1], a[2] as string, a[3] as number, a[4] as number, a[5] as number);
+    else if (c === "start" && ended && /^(stop|consent)$/.test(S.stop || "")) {
+      // afsr('start') after afsr('stop'), or consent given again: a new snapshot, same session
+      ended = false;
+      delete S.stop;
+      boot.save();
+      if (!excluded(loc.pathname)) start();
+    } else if (c === "upgrade" && !S.up) {
+      S.up = String(a[0] || "upgrade").slice(0, 60);
+      boot.save();
+    } else if (c === "__err") report("error", a[0], a[1], a[2] as string, a[3] as number, a[4] as number, a[5] as number);
   };
 
   const h = history;
@@ -627,6 +759,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
 
   if (!excluded(loc.pathname)) start();
   pageview(loadType());
+  for (const k in tags) sendTag(k);
   boot.cmd = run;
   for (const q of boot.queue.splice(0)) run(q);
 })();

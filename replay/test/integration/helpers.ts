@@ -106,6 +106,7 @@ export async function sendChunk(
     ip?: string;
     path?: string;
     t?: number;
+    headers?: Record<string, string>;
   } = {},
 ) {
   const last = ev.reduce<number>((m, e) => Math.max(m, Number((e as { timestamp?: number }).timestamp) || 0), 0);
@@ -118,6 +119,7 @@ export async function sendChunk(
       "content-type": "text/plain",
       "user-agent": opts.ua ?? UA,
       ...(opts.origin === null ? {} : { origin: opts.origin ?? "https://shop.test" }),
+      ...(opts.headers ?? {}),
     },
     env: opts.env,
     ip: opts.ip ?? "203.0.113.9",
@@ -150,3 +152,16 @@ export async function tool(key: string, name: string, args: Record<string, unkno
 let sidSeq = 0;
 /** A fresh session id (rs_ + 16 base32 characters). */
 export const newSid = () => `rs_${(Date.now().toString(32) + (sidSeq++).toString(32).padStart(4, "0")).slice(-16).padStart(16, "0")}`;
+
+/** POST /f as the widget does (text/plain JSON) from the site's page. */
+export const postF = (body: Record<string, unknown>, opts: { origin?: string | null; ip?: string; env?: Bindings } = {}) =>
+  call("POST", "/f", {
+    raw: JSON.stringify({ v: 1, ...body }),
+    headers: {
+      "content-type": "text/plain",
+      ...(opts.origin === null ? {} : { origin: opts.origin ?? "https://shop.test" }),
+      "user-agent": "Mozilla/5.0 Chrome/131",
+    },
+    ip: opts.ip ?? "203.0.113.50",
+    env: opts.env,
+  });

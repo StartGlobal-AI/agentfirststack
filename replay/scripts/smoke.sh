@@ -120,7 +120,7 @@ check "funnel drop-off lists the session" '[ "$(jq -r .dropped.total <<<"$BODY")
 
 echo "-- MCP"
 mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-check "19 tools" '[ "$(jq ".result.tools | length" <<<"$BODY")" = 19 ]' "$BODY"
+check "50 tools" '[ "$(jq ".result.tools | length" <<<"$BODY")" = 50 ]' "$BODY"
 mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"get_session_transcript\",\"arguments\":{\"site_id\":\"$SITE\",\"session_id\":\"$SID\",\"kinds\":[\"error\"]}}}"
 check "get_session_transcript over MCP" 'jq -r ".result.content[0].text" <<<"$BODY" | grep -q "card is undefined"' "$BODY"
 

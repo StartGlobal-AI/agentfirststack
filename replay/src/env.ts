@@ -42,6 +42,8 @@ export interface Bindings extends AuthBindings {
   MAX_SESSIONS_PER_SITE_PER_DAY?: string;
   MAX_UNVERIFIED_SESSIONS_PER_SITE_PER_DAY?: string;
   MAX_FORCED_SESSIONS_PER_SITE_PER_DAY?: string;
+  /** New sessions per site per day that afsr('upgrade') started (default 50; they count as sessions too). */
+  MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY?: string;
   MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY?: string;
   MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY?: string;
   /** Bytes per ingest request (compressed). Lower than the built-in 1 MB only. */
@@ -68,6 +70,36 @@ export interface Bindings extends AuthBindings {
   MAX_VERIFY_PER_ACCOUNT_PER_HOUR?: string;
   /** "false" = new sites start with capture_console_errors off. */
   CAPTURE_CONSOLE_ERRORS_DEFAULT?: string;
+  /** "true" = new sites start with capture_network_errors on. */
+  CAPTURE_NETWORK_ERRORS_DEFAULT?: string;
+  /** Rows per session export (default 10,000, at most 100,000); recorded bytes raw event exports may read per site per day (default 100 MB). */
+  MAX_EXPORT_ROWS?: string;
+  MAX_EXPORT_BYTES_PER_DAY?: string;
+  /** Event definitions per site (default 20). */
+  MAX_EVENT_DEFINITIONS_PER_SITE?: string;
+  /** Saved segments per site (default 50). */
+  MAX_SEGMENTS_PER_SITE?: string;
+  /** Surveys (defaults in lib/limits.ts DEFAULTS): per site, active per site, questions, answer length, responses per day. */
+  MAX_SURVEYS_PER_SITE?: string;
+  MAX_ACTIVE_SURVEYS_PER_SITE?: string;
+  MAX_QUESTIONS_PER_SURVEY?: string;
+  MAX_ANSWER_CHARS?: string;
+  MAX_RESPONSES_PER_SITE_PER_DAY?: string;
+  MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY?: string;
+  MAX_TEST_RESPONSES_PER_SITE_PER_DAY?: string;
+  MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY?: string;
+  /** 32-byte base64 key that seals webhook secrets at rest (secret). Without it webhooks can't be created (DEV_MODE: stored plain). */
+  ENCRYPTION_KEY?: string;
+  /** Webhooks per account (default 10), deliveries per account per UTC day (1000), test sends per day (50). */
+  MAX_WEBHOOKS_PER_ACCOUNT?: string;
+  MAX_WEBHOOK_DELIVERIES_PER_ACCOUNT_PER_DAY?: string;
+  MAX_WEBHOOK_TESTS_PER_DAY?: string;
+  /** Session annotations: starred sessions per site (default 100), how long they are kept (days, default 90), notes, labels. */
+  MAX_STARRED_SESSIONS_PER_SITE?: string;
+  MAX_STARRED_RETENTION_DAYS?: string;
+  MAX_NOTES_PER_SESSION?: string;
+  MAX_NOTES_PER_SITE?: string;
+  MAX_LABELS_PER_SITE?: string;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: { auth: AuthContext } };

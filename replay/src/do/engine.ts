@@ -10,11 +10,12 @@
  */
 
 import type { DerivedChunk } from "../lib/derive";
-import { anyIn, DEAD_MS, shiftChunk } from "../lib/derive";
+import { ACTIVE_GAP_MS, anyIn, ATTENTION_BANDS, attentionAdd, DEAD_MS, shiftChunk } from "../lib/derive";
 import { type Budget, COUNTERS, type Counter, DEFAULTS, LIMITS, type Totals } from "../lib/limits";
 import type { PageRow, SessionRow } from "../lib/rows";
 import { detectRage, errorClicks, excessiveScroll, frustrationScore, quickBacks } from "../lib/signals";
 import { type Db, DAY, IN_JSON, marks, num, type Row, type SqlValue, strOrNull, utcDay } from "./db";
+import { surveyHousekeeping } from "./surveys";
 
 /**
  * Schema version 1 (the first release) is SCHEMA_V1 and is never edited; later versions are
@@ -23,7 +24,7 @@ import { type Db, DAY, IN_JSON, marks, num, type Row, type SqlValue, strOrNull, 
  * engine). SCHEMA_V1 only runs for a brand-new database: running it again would recreate indexes a
  * migration dropped.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -194,6 +195,8 @@ CREATE TABLE IF NOT EXISTS drops (
  * time-range query over clicks or errors includes CE.
  */
 export const CE = "kind IN ('click', 'error')";
+/** The partial index events_nw: failed requests and console warnings (v3). */
+export const NW = "kind IN ('net', 'warn')";
 
 const SCHEMA_V2 = `
 DROP INDEX IF EXISTS events_kind_ts;
@@ -229,6 +232,112 @@ CREATE TABLE IF NOT EXISTS link_usage (
 ) WITHOUT ROWID
 `;
 
+/**
+ * Version 3 (parity release), additive only: custom tags per session, and the columns and tables
+ * the later features add (see each comment). Existing objects gain them in place; nothing is
+ * rewritten, so old rows simply have the defaults.
+ */
+const SCHEMA_V3 = `
+CREATE TABLE IF NOT EXISTS session_tags (
+  session_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (session_id, key, value)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS session_tags_kv ON session_tags(key, value);
+ALTER TABLE sessions ADD COLUMN referrer TEXT;
+ALTER TABLE sessions ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN api_errors INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pages ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pages ADD COLUMN active_last INTEGER;
+CREATE INDEX IF NOT EXISTS events_nw ON events(kind, ts) WHERE kind IN ('net', 'warn');
+CREATE TABLE IF NOT EXISTS survey_responses (
+  id TEXT PRIMARY KEY,
+  survey_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  session_id TEXT,
+  user_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  path TEXT,
+  device TEXT,
+  country TEXT,
+  answers TEXT NOT NULL,
+  answered INTEGER NOT NULL DEFAULT 0,
+  completed INTEGER NOT NULL DEFAULT 0,
+  test INTEGER NOT NULL DEFAULT 0,
+  element TEXT,
+  net TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS survey_responses_survey ON survey_responses(survey_id, created_at);
+CREATE INDEX IF NOT EXISTS survey_responses_session ON survey_responses(session_id) WHERE session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS survey_responses_user ON survey_responses(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS survey_responses_created ON survey_responses(created_at);
+CREATE TABLE IF NOT EXISTS survey_daily (
+  day TEXT NOT NULL,
+  survey_id TEXT NOT NULL,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  responses INTEGER NOT NULL DEFAULT 0,
+  completed INTEGER NOT NULL DEFAULT 0,
+  test_impressions INTEGER NOT NULL DEFAULT 0,
+  test_responses INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, survey_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS survey_net_daily (
+  day TEXT NOT NULL,
+  net TEXT NOT NULL,
+  responses INTEGER NOT NULL DEFAULT 0,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, net)
+) WITHOUT ROWID;
+ALTER TABLE sessions ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN upgraded TEXT;
+ALTER TABLE daily ADD COLUMN upgraded INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS sessions_starred ON sessions(started_at) WHERE starred = 1;
+CREATE TABLE IF NOT EXISTS session_labels (
+  session_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  PRIMARY KEY (session_id, label)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS session_labels_label ON session_labels(label);
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  t_ms INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_session ON notes(session_id, t_ms);
+ALTER TABLE chunks ADD COLUMN snap INTEGER;
+ALTER TABLE pages ADD COLUMN attention TEXT;
+ALTER TABLE pages ADD COLUMN att_ts INTEGER;
+ALTER TABLE pages ADD COLUMN att_y INTEGER;
+ALTER TABLE scroll_daily ADD COLUMN attention TEXT;
+ALTER TABLE scroll_daily ADD COLUMN click_bands TEXT;
+ALTER TABLE events ADD COLUMN zone TEXT;
+ALTER TABLE heat_daily ADD COLUMN zone TEXT;
+CREATE TABLE IF NOT EXISTS error_groups (
+  fingerprint TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS segment_hits (
+  segment_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (segment_id, session_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS survey_versions (
+  survey_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  questions TEXT NOT NULL,
+  PRIMARY KEY (survey_id, version)
+) WITHOUT ROWID
+`;
+
 const statements = (sql: string) =>
   sql
     .split(";")
@@ -251,6 +360,12 @@ const MIGRATIONS: { version: number; up: (db: Db, now: number) => void }[] = [
          FROM sessions WHERE day = ? GROUP BY day`,
         [utcDay(now)],
       );
+    },
+  },
+  {
+    version: 3,
+    up: (db) => {
+      for (const s of statements(SCHEMA_V3)) db.run(s);
     },
   },
 ];
@@ -291,6 +406,8 @@ export interface SessionMeta {
   user_id: string | null;
   analytics_visitor_id: string | null;
   forced: boolean;
+  /** afsr('upgrade', reason) */
+  upgraded?: string | null;
 }
 
 export interface IngestLimits {
@@ -304,6 +421,8 @@ export interface IngestLimits {
   daily_sessions: number | null;
   /** new ?afsr=1 sessions per UTC day; null/undefined = no cap */
   forced_daily?: number | null;
+  /** new afsr('upgrade') sessions per UTC day */
+  upgraded_daily?: number | null;
   /** new sessions per client network per UTC day */
   net_daily?: number | null;
   /** analytics events forwarded per UTC day */
@@ -351,8 +470,17 @@ export interface ForwardItem {
   props: Record<string, string | number | boolean | null>;
 }
 
+/** An error group (JS or network) seen for the first time on the site (webhook error.new). */
+export interface NewError {
+  fingerprint: string;
+  kind: "js" | "network";
+  message: string;
+  path: string | null;
+  ts: number;
+}
+
 export type IngestResult =
-  | { status: "accepted"; new_session: boolean; forward: ForwardItem[] }
+  | { status: "accepted"; new_session: boolean; forward: ForwardItem[]; new_errors?: NewError[] }
   | { status: "duplicate" }
   | { status: "rejected"; reason: string; stop: boolean; counter?: Counter };
 
@@ -417,8 +545,39 @@ const factCount = (c: DerivedChunk) =>
   c.inputs.length +
   c.errors.length +
   c.customs.length +
+  c.nets.length +
+  c.tags.reduce((n, t) => n + t.values.length, 0) +
   c.marks.length +
   c.scrolls.reduce((n, s) => n + s.milestones.length, 0);
+
+/**
+ * Would adding `add` to today's counters pass the account's or the deployment's daily budget?
+ * The last D1 totals plus what this site hasn't reported yet. Returns the refusal reason or null.
+ */
+export function overBudget(
+  db: Db,
+  day: string,
+  add: Totals,
+  account?: Budget,
+  platform?: Budget,
+  usage?: UsageSnapshot | null,
+): "account_daily_limit" | "platform_budget" | null {
+  const local = localUnreported(dailyRow(db, day));
+  const u = usage && usage.day === day ? usage : null;
+  const scopes = [
+    { budget: account, totals: u?.account ?? null, reason: "account_daily_limit" as const },
+    { budget: platform, totals: u?.platform ?? null, reason: "platform_budget" as const },
+  ];
+  for (const s of scopes) {
+    if (!s.budget) continue;
+    for (const k of COUNTERS) {
+      const max = s.budget[k];
+      if (max === null || max === undefined || !add[k]) continue;
+      if ((s.totals?.[k] ?? 0) + local[k] + add[k] > max) return s.reason;
+    }
+  }
+  return null;
+}
 
 export const isDeleted = (db: Db) => db.all("SELECT 1 FROM meta WHERE key = 'deleted'").length > 0;
 
@@ -469,6 +628,13 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     if (meta.forced) {
       if (L.forced_daily !== null && L.forced_daily !== undefined && d.forced >= L.forced_daily) return reject("forced_daily_limit");
     } else if (L.daily_sessions !== null && d.sessions - d.forced >= L.daily_sessions) return reject("daily_session_limit");
+    if (
+      meta.upgraded &&
+      L.upgraded_daily !== null &&
+      L.upgraded_daily !== undefined &&
+      num(db.all("SELECT upgraded FROM daily WHERE day = ?", [day])[0]?.upgraded) >= L.upgraded_daily
+    )
+      return reject("upgraded_daily_limit");
     if (req.net && L.net_daily !== null && L.net_daily !== undefined) {
       const n = num(db.all("SELECT sessions FROM net_daily WHERE day = ? AND net = ?", [day, req.net])[0]?.sessions);
       if (n >= L.net_daily) return reject("ip_daily_limit");
@@ -511,7 +677,7 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
   db.run(
     `UPDATE sessions SET started_at = MIN(started_at, ?), last_at = MAX(last_at, ?), received_at = ?,
        chunks = chunks + 1, bytes = bytes + ?, rr_events = rr_events + ?, ended = MAX(ended, ?),
-       user_id = COALESCE(?, user_id), analytics_visitor_id = COALESCE(?, analytics_visitor_id),
+       user_id = COALESCE(?, user_id), analytics_visitor_id = COALESCE(?, analytics_visitor_id), upgraded = COALESCE(upgraded, ?),
        viewport_w = COALESCE(viewport_w, ?), viewport_h = COALESCE(viewport_h, ?),
        device = COALESCE(device, ?), browser = COALESCE(browser, ?), os = COALESCE(os, ?), country = COALESCE(country, ?)
      WHERE id = ?`,
@@ -524,6 +690,7 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       req.end ? 1 : 0,
       meta.user_id,
       meta.analytics_visitor_id,
+      meta.upgraded ?? null,
       c.viewport?.w ?? null,
       c.viewport?.h ?? null,
       meta.device,
@@ -534,7 +701,7 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     ],
   );
   db.run(
-    "INSERT INTO chunks (session_id, seq, first_ts, last_ts, cover_end, received_at, bytes, rr_events, effect_head) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO chunks (session_id, seq, first_ts, last_ts, cover_end, received_at, bytes, rr_events, effect_head, snap) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       sid,
       seq,
@@ -545,11 +712,16 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       req.bytes,
       c.rr_events,
       c.effect_head.length ? JSON.stringify(c.effect_head) : null,
+      c.full_snapshots > 0 ? 1 : 0,
     ],
   );
 
   const session = getSession(db, sid)!;
   const device = session.device;
+  // The page activity before this chunk's first afs.* event belongs to (see derive: pv 0).
+  const currentPv =
+    num(db.all("SELECT MAX(pv) AS pv FROM pages WHERE session_id = ? AND path IS NOT NULL", [sid])[0]?.pv) ||
+    (c.pages.length ? Math.min(...c.pages.map((p) => p.pv)) : 0);
 
   // Pages (upsert: a scroll segment can create a placeholder row before its page event arrives).
   const pageCount = num(db.all("SELECT COUNT(*) AS n FROM pages WHERE session_id = ?", [sid])[0]?.n);
@@ -603,10 +775,60 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     );
   }
 
+  // Attention: how long each 10% band of the page was in view. Positions are held until the next
+  // one (at most ATTENTION_HOLD_MS); the page's last position carries into the next chunk.
+  {
+    const touched = new Map(c.scrolls.map((sg) => [sg.pv, sg] as const));
+    const latest = num(db.all("SELECT MAX(pv) AS pv FROM pages WHERE session_id = ? AND path IS NOT NULL", [sid])[0]?.pv);
+    if (latest && !touched.has(latest)) touched.set(latest, undefined as never);
+    for (const [pv, sg] of touched) {
+      const row = db.all("SELECT attention, att_ts, att_y, view_h, doc_h FROM pages WHERE session_id = ? AND pv = ?", [sid, pv])[0];
+      if (!row) continue;
+      const vh = num(row.view_h) || (sg?.vh ?? 0);
+      const dh = num(row.doc_h) || (sg?.dh ?? 0);
+      const pts: [number, number][] = [];
+      if (row.att_ts !== null && row.att_ts !== undefined) pts.push([num(row.att_ts), num(row.att_y)]);
+      for (const p of sg?.pts ?? []) if (!pts.length || p[0] >= pts[pts.length - 1]![0]) pts.push(p);
+      if (!pts.length) continue;
+      const until = pv === latest ? Math.max(lastTs, pts[pts.length - 1]![0]) : null;
+      const prev = row.attention ? (JSON.parse(String(row.attention)) as number[]) : [];
+      const bands = attentionAdd(prev, pts, vh, dh, until);
+      const [lt, ly] = pts[pts.length - 1]!;
+      db.run("UPDATE pages SET attention = ?, att_ts = ?, att_y = ? WHERE session_id = ? AND pv = ?", [
+        JSON.stringify(bands),
+        until ?? lt,
+        ly,
+        sid,
+        pv,
+      ]);
+    }
+  }
+
+  // Active time per pageview: the gaps inside this chunk, plus the gap to the page's last activity
+  // in an earlier chunk (at most ACTIVE_GAP_MS). pv 0 = activity before any afs.* event of the chunk.
+  if (c.activity.length) {
+    for (const a of c.activity) {
+      const pv = a.pv || currentPv;
+      if (!pv) continue;
+      const row = db.all("SELECT active_last FROM pages WHERE session_id = ? AND pv = ?", [sid, pv])[0];
+      if (!row) continue;
+      const lastBefore = row.active_last === null ? null : num(row.active_last);
+      const join = lastBefore !== null && a.first >= lastBefore ? Math.min(ACTIVE_GAP_MS, a.first - lastBefore) : 0;
+      db.run("UPDATE pages SET active_ms = active_ms + ?, active_last = MAX(COALESCE(active_last, 0), ?) WHERE session_id = ? AND pv = ?", [
+        a.ms + join,
+        a.last,
+        sid,
+        pv,
+      ]);
+    }
+  }
+
   // Derived events, capped per session.
   const pathOf = new Map<number, string | null>();
   const pvs = [
-    ...new Set([...c.clicks, ...c.inputs, ...c.errors, ...c.customs, ...c.marks].map((e) => e.pv).concat(milestoneRows.map((m) => m.pv))),
+    ...new Set(
+      [...c.clicks, ...c.inputs, ...c.errors, ...c.nets, ...c.customs, ...c.marks].map((e) => e.pv).concat(milestoneRows.map((m) => m.pv)),
+    ),
   ];
   if (pvs.length)
     for (const r of db.all(`SELECT pv, path FROM pages WHERE session_id = ? AND pv IN ${IN_JSON}`, [sid, JSON.stringify(pvs)]))
@@ -650,6 +872,7 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       detail: k.blocked ? '{"blocked":1}' : null,
       dead: k.dead ? 1 : 0,
       open: k.open ? 1 : 0,
+      ...(k.zone ? { zone: k.zone } : {}),
     });
   for (const i of c.inputs)
     insert({
@@ -672,11 +895,31 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     insert({
       ts: e.ts,
       pv: e.pv,
-      kind: "error",
+      // console.warn (capture_console_warnings) is kept apart: it isn't a JS error or a signal
+      kind: e.kind === "warn" ? "warn" : "error",
       path: pathOf.get(e.pv) ?? null,
       message: e.message,
       fingerprint: e.fingerprint,
       detail: JSON.stringify({ kind: e.kind, source: e.source, line: e.line, col: e.col, stack: e.stack }),
+    });
+  }
+  let netRoom = LIMITS.NET_PER_SESSION - num(session.api_errors);
+  for (const n of c.nets) {
+    if (netRoom <= 0) {
+      capped = true;
+      continue;
+    }
+    netRoom--;
+    insert({
+      ts: n.ts,
+      pv: n.pv,
+      kind: "net",
+      path: pathOf.get(n.pv) ?? null,
+      tag: n.method,
+      href: n.url,
+      message: `${n.method} ${n.url} ${n.status || "failed"}`,
+      fingerprint: n.fingerprint,
+      detail: JSON.stringify({ status: n.status, ms: n.ms }),
     });
   }
   for (const e of c.customs)
@@ -692,6 +935,59 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     insert({ ts: m.ts, pv: m.pv, kind: m.kind, path: pathOf.get(m.pv) ?? null, detail: JSON.stringify({ k: m.detail }) });
   for (const m of milestoneRows)
     insert({ ts: m.ts, pv: m.pv, kind: "scroll", path: pathOf.get(m.pv) ?? null, detail: JSON.stringify({ pct: m.pct }) });
+  // Custom tags (afsr('set'), identify attributes): at most TAG_KEYS_PER_SESSION keys and
+  // TAG_VALUES_PER_KEY values; a value sent again (every page load re-sends the tab's tags) is free.
+  if (c.tags.length) {
+    const have = new Map<string, number>();
+    for (const r of db.all("SELECT key, COUNT(*) AS n FROM session_tags WHERE session_id = ? GROUP BY key", [sid]))
+      have.set(String(r.key), num(r.n));
+    for (const t of c.tags) {
+      let n = have.get(t.key);
+      if (n === undefined) {
+        if (have.size >= LIMITS.TAG_KEYS_PER_SESSION) {
+          capped = true;
+          continue;
+        }
+        n = 0;
+      }
+      for (const v of t.values) {
+        if (db.all("SELECT 1 FROM session_tags WHERE session_id = ? AND key = ? AND value = ?", [sid, t.key, v]).length) continue;
+        if (n >= LIMITS.TAG_VALUES_PER_KEY || room <= 0) {
+          capped = true;
+          break;
+        }
+        room--;
+        added++;
+        n++;
+        db.run("INSERT INTO session_tags (session_id, key, value, ts) VALUES (?, ?, ?, ?)", [sid, t.key, v, t.ts]);
+      }
+      have.set(t.key, n);
+    }
+  }
+  // Error groups the site has never seen (or not for heatmap_retention_days): error.new webhooks.
+  const newErrors: NewError[] = [];
+  const seen = new Set<string>();
+  for (const e of [
+    ...c.errors
+      .filter((x) => x.kind !== "warn")
+      .map((x) => ({ fp: x.fingerprint, kind: "js" as const, message: x.message, pv: x.pv, ts: x.ts })),
+    ...c.nets.map((x) => ({
+      fp: x.fingerprint,
+      kind: "network" as const,
+      message: `${x.method} ${x.url} ${x.status || "failed"}`,
+      pv: x.pv,
+      ts: x.ts,
+    })),
+  ]) {
+    if (seen.has(e.fp)) continue;
+    seen.add(e.fp);
+    const g = db.all("SELECT last_seen FROM error_groups WHERE fingerprint = ?", [e.fp])[0];
+    if (!g) {
+      db.run("INSERT INTO error_groups (fingerprint, kind, first_seen, last_seen) VALUES (?, ?, ?, ?)", [e.fp, e.kind, e.ts, e.ts]);
+      if (newErrors.length < 5)
+        newErrors.push({ fingerprint: e.fp, kind: e.kind, message: e.message, path: pathOf.get(e.pv) ?? null, ts: e.ts });
+    } else if (num(g.last_seen) < now - DAY) db.run("UPDATE error_groups SET last_seen = ? WHERE fingerprint = ?", [now, e.fp]);
+  }
   if (added) db.run("UPDATE sessions SET derived = derived + ? WHERE id = ?", [added, sid]);
   if (capped || c.truncated) db.run("UPDATE sessions SET limited = 'events' WHERE id = ? AND limited IS NULL", [sid]);
 
@@ -710,12 +1006,13 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
        bytes = bytes + excluded.bytes, derived = derived + excluded.derived, forwarded = forwarded + excluded.forwarded`,
     [day, existing ? 0 : 1, !existing && meta.forced ? 1 : 0, req.bytes, added, forward.length],
   );
+  if (!existing && meta.upgraded) db.run("UPDATE daily SET upgraded = upgraded + 1 WHERE day = ?", [day]);
   if (!existing && req.net)
     db.run("INSERT INTO net_daily (day, net, sessions) VALUES (?, ?, 1) ON CONFLICT(day, net) DO UPDATE SET sessions = sessions + 1", [
       day,
       req.net,
     ]);
-  return { status: "accepted", new_session: !existing, forward };
+  return { status: "accepted", new_session: !existing, forward, ...(newErrors.length ? { new_errors: newErrors } : {}) };
 }
 
 const hasNavIn = (db: Db, sid: string, from: number, to: number) =>
@@ -776,6 +1073,11 @@ function resolveWindowSignals(db: Db, sid: string, firstTs: number, lastTs: numb
     "SELECT id, ts, error_click, selector FROM events WHERE session_id = ? AND kind = 'error' AND ts >= ? AND ts <= ? ORDER BY ts, id LIMIT ?",
     [sid, from, to, WINDOW_ROWS],
   );
+  // Failed requests remember the click that triggered them, like errors, but don't make it an error click.
+  const nets = db.all(
+    "SELECT id, ts, error_click, selector FROM events WHERE session_id = ? AND kind = 'net' AND ts >= ? AND ts <= ? ORDER BY ts, id LIMIT ?",
+    [sid, from, to, WINDOW_ROWS],
+  );
   const inRange = (ts: number) => ts >= firstTs - WINDOW_UPDATE_MS && ts <= lastTs + WINDOW_UPDATE_MS;
   const points = clicks.map((r) => ({ ts: num(r.ts), pv: num(r.pv), selector: String(r.selector ?? ""), x: num(r.x), y: num(r.y) }));
   const { rage, start } = detectRage(points);
@@ -790,6 +1092,26 @@ function resolveWindowSignals(db: Db, sid: string, firstTs: number, lastTs: numb
     const ne = clickHit[i] ? 1 : 0;
     if (nr !== num(r.rage) || ns !== num(r.rage_start) || ne !== num(r.error_click))
       db.run("UPDATE events SET rage = ?, rage_start = ?, error_click = ? WHERE id = ?", [nr, ns, ne, num(r.id)]);
+  });
+  const netClick = nets.length
+    ? errorClicks(
+        points,
+        nets.map((r) => ({ ts: num(r.ts) })),
+      ).errorClick
+    : [];
+  const link = (r: Record<string, SqlValue>, k: number) => {
+    const click = k >= 0 ? clicks[k]! : null;
+    const ne = click ? 1 : 0;
+    if (ne !== num(r.error_click) || (click && click.selector !== r.selector))
+      db.run("UPDATE events SET error_click = ?, selector = ?, label = ? WHERE id = ?", [
+        ne,
+        click ? strOrNull(click.selector) : null,
+        click ? strOrNull(click.label) : null,
+        num(r.id),
+      ]);
+  };
+  nets.forEach((r, i) => {
+    if (inRange(num(r.ts))) link(r, netClick[i]!);
   });
   errors.forEach((r, i) => {
     if (!inRange(num(r.ts))) return;
@@ -824,16 +1146,17 @@ function resolvePages(db: Db, sid: string) {
 export function refreshSession(db: Db, sid: string) {
   const e = db.all(
     `SELECT COALESCE(SUM(kind = 'click'), 0) AS clicks, COALESCE(SUM(kind = 'input'), 0) AS inputs, COALESCE(SUM(kind = 'error'), 0) AS errors,
+       COALESCE(SUM(kind = 'net'), 0) AS api_errors,
        COALESCE(SUM(kind = 'click' AND rage_start = 1), 0) AS rage, COALESCE(SUM(kind = 'click' AND dead = 1), 0) AS dead,
        COALESCE(SUM(kind = 'click' AND dead = 1 AND interactive = 1), 0) AS dead_i, COALESCE(SUM(kind = 'click' AND error_click = 1), 0) AS error_clicks
      FROM events WHERE session_id = ?`,
     [sid],
   )[0]!;
   const p = db.all(
-    "SELECT COUNT(*) AS n, COALESCE(SUM(quick_back), 0) AS qb, COALESCE(SUM(excessive_scroll), 0) AS ex FROM pages WHERE session_id = ? AND path IS NOT NULL",
+    "SELECT COUNT(*) AS n, COALESCE(SUM(quick_back), 0) AS qb, COALESCE(SUM(excessive_scroll), 0) AS ex, COALESCE(SUM(active_ms), 0) AS active FROM pages WHERE session_id = ? AND path IS NOT NULL",
     [sid],
   )[0]!;
-  const entry = db.all("SELECT path FROM pages WHERE session_id = ? AND path IS NOT NULL ORDER BY pv LIMIT 1", [sid])[0];
+  const entry = db.all("SELECT path, referrer FROM pages WHERE session_id = ? AND path IS NOT NULL ORDER BY pv LIMIT 1", [sid])[0];
   const exit = db.all("SELECT path FROM pages WHERE session_id = ? AND path IS NOT NULL ORDER BY pv DESC LIMIT 1", [sid])[0];
   const counts = {
     rage_clicks: num(e.rage),
@@ -843,10 +1166,11 @@ export function refreshSession(db: Db, sid: string) {
     errors: num(e.errors),
     quick_backs: num(p.qb),
     excessive_scrolls: num(p.ex),
+    api_errors: num(e.api_errors),
   };
   db.run(
     `UPDATE sessions SET duration_ms = MAX(0, last_at - started_at), clicks = ?, inputs = ?, errors = ?, rage_clicks = ?, dead_clicks = ?, dead_interactive = ?,
-       error_clicks = ?, quick_backs = ?, excessive_scrolls = ?, pageviews = ?, entry_path = ?, exit_path = ?, frustration = ? WHERE id = ?`,
+       error_clicks = ?, quick_backs = ?, excessive_scrolls = ?, pageviews = ?, entry_path = ?, exit_path = ?, referrer = ?, active_ms = ?, api_errors = ?, frustration = ? WHERE id = ?`,
     [
       num(e.clicks),
       num(e.inputs),
@@ -860,6 +1184,9 @@ export function refreshSession(db: Db, sid: string) {
       num(p.n),
       strOrNull(entry?.path),
       strOrNull(exit?.path),
+      strOrNull(entry?.referrer)?.toLowerCase() ?? null,
+      num(p.active),
+      counts.api_errors,
       frustrationScore(counts),
       sid,
     ],
@@ -965,6 +1292,9 @@ export interface DeleteOptions {
   tombstone_at?: number;
 }
 
+/** Every table with rows of one session (deleted with it: privacy requests and retention). */
+export const SESSION_TABLES = ["events", "pages", "chunks", "session_tags", "session_labels", "notes", "segment_hits"] as const;
+
 export function deleteSessions(db: Db, ids: string[], opts: DeleteOptions = {}): DeletedSessions {
   if (!ids.length) return { deleted: [], keys: [] };
   return db.transaction(() => {
@@ -983,7 +1313,9 @@ export function deleteSessions(db: Db, ids: string[], opts: DeleteOptions = {}):
         opts.tombstone_at,
         JSON.stringify(found),
       ]);
-    for (const t of ["events", "pages", "chunks"]) db.run(`DELETE FROM ${t} WHERE session_id IN ${IN_JSON}`, [list]);
+    for (const t of SESSION_TABLES) db.run(`DELETE FROM ${t} WHERE session_id IN ${IN_JSON}`, [list]);
+    // Responses linked to these sessions go with them (privacy requests and retention alike).
+    db.run(`DELETE FROM survey_responses WHERE session_id IN ${IN_JSON}`, [list]);
     db.run(`DELETE FROM sessions WHERE id IN ${IN_JSON}`, [list]);
     return { deleted: found, keys };
   });
@@ -1028,9 +1360,9 @@ export function rollup(db: Db, now: number, maxDays = 31): { rolled: string[]; m
     const end = start + DAY;
     db.transaction(() => {
       db.run(
-        `INSERT OR REPLACE INTO heat_daily (day, path, device, selector, label, tag, interactive, clicks, rage, dead, error_clicks, sessions, top_sum, top_n)
+        `INSERT OR REPLACE INTO heat_daily (day, path, device, selector, label, tag, interactive, clicks, rage, dead, error_clicks, sessions, top_sum, top_n, zone)
          SELECT ?, path, COALESCE(device, ''), selector, MAX(label), MAX(tag), MAX(interactive), COUNT(*), SUM(rage), SUM(dead), SUM(error_click),
-           COUNT(DISTINCT session_id), COALESCE(SUM(top_pct), 0), COUNT(top_pct)
+           COUNT(DISTINCT session_id), COALESCE(SUM(top_pct), 0), COUNT(top_pct), MAX(zone)
          FROM events WHERE ${CE} AND kind = 'click' AND ts >= ? AND ts < ? AND path IS NOT NULL AND selector IS NOT NULL
          GROUP BY path, COALESCE(device, ''), selector`,
         [day, start, end],
@@ -1042,16 +1374,46 @@ export function rollup(db: Db, now: number, maxDays = 31): { rolled: string[]; m
          FROM pages WHERE ts >= ? AND ts < ? AND path IS NOT NULL GROUP BY path, COALESCE(device, '')`,
         [start, end],
       );
-      for (const r of rows)
-        db.run("INSERT OR REPLACE INTO scroll_daily (day, path, device, pageviews, reach, fold_sum, fold_n) VALUES (?, ?, ?, ?, ?, ?, ?)", [
-          day,
-          String(r.path),
-          String(r.device),
-          num(r.n),
-          JSON.stringify(REACH_BUCKETS.map((b) => num(r[`r${b}`]))),
-          num(r.fold_sum),
-          num(r.fold_n),
-        ]);
+      const att = new Map<string, number[]>();
+      for (const p of db.all(
+        "SELECT path, COALESCE(device, '') AS device, attention FROM pages WHERE ts >= ? AND ts < ? AND path IS NOT NULL AND attention IS NOT NULL",
+        [start, end],
+      )) {
+        const k = `${p.path}\u0000${p.device}`;
+        const sum = att.get(k) ?? new Array<number>(ATTENTION_BANDS).fill(0);
+        (JSON.parse(String(p.attention)) as number[]).forEach((v, i) => {
+          if (i < ATTENTION_BANDS) sum[i]! += v;
+        });
+        att.set(k, sum);
+      }
+      const clickBands = new Map<string, number[]>();
+      for (const e of db.all(
+        `SELECT path, COALESCE(device, '') AS device, MIN(${ATTENTION_BANDS - 1}, y * ${ATTENTION_BANDS} / doc_h) AS b, COUNT(*) AS n FROM events
+         WHERE ${CE} AND kind = 'click' AND ts >= ? AND ts < ? AND path IS NOT NULL AND doc_h > 0 GROUP BY path, device, b`,
+        [start, end],
+      )) {
+        const k = `${e.path}\u0000${e.device}`;
+        const arr = clickBands.get(k) ?? new Array<number>(ATTENTION_BANDS).fill(0);
+        arr[Math.max(0, Math.min(ATTENTION_BANDS - 1, num(e.b)))]! += num(e.n);
+        clickBands.set(k, arr);
+      }
+      for (const r of rows) {
+        const k = `${r.path}\u0000${r.device}`;
+        db.run(
+          "INSERT OR REPLACE INTO scroll_daily (day, path, device, pageviews, reach, fold_sum, fold_n, attention, click_bands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            day,
+            String(r.path),
+            String(r.device),
+            num(r.n),
+            JSON.stringify(REACH_BUCKETS.map((b) => num(r[`r${b}`]))),
+            num(r.fold_sum),
+            num(r.fold_n),
+            att.has(k) ? JSON.stringify(att.get(k)) : null,
+            clickBands.has(k) ? JSON.stringify(clickBands.get(k)) : null,
+          ],
+        );
+      }
       db.run("INSERT INTO meta (key, value) VALUES ('rolled_through', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [day]);
     });
     rolled.push(day);
@@ -1066,6 +1428,8 @@ export interface PurgeRequest {
   now: number;
   /** sessions started before this are deleted (null: retention unknown, nothing deleted) */
   cutoff: number | null;
+  /** starred sessions are kept until this (MAX_STARRED_RETENTION_DAYS); default: like the others */
+  starred_cutoff?: number | null;
   /** heatmap aggregates of days before this are deleted (null: keep) */
   heat_cutoff: number | null;
   /** the site's R2 prefix ("<site_id>/"): deleted sessions' chunk keys go into r2_pending */
@@ -1085,9 +1449,11 @@ export function purgeRound(db: Db, req: PurgeRequest): DeletedSessions & { more:
   if (req.cutoff === null) return { deleted: [], keys: [], more: false };
   const maxKeys = req.max_keys ?? ROUND_KEYS;
   const maxRows = req.max_rows ?? ROUND_ROWS;
-  const rows = db.all("SELECT id, chunks, derived, pageviews FROM sessions WHERE started_at < ? ORDER BY started_at LIMIT 200", [
-    req.cutoff,
-  ]);
+  const starredCutoff = Math.min(req.cutoff, req.starred_cutoff ?? req.cutoff);
+  const rows = db.all(
+    "SELECT id, chunks, derived, pageviews FROM sessions WHERE started_at < ? AND (starred = 0 OR started_at < ?) ORDER BY started_at LIMIT 200",
+    [req.cutoff, starredCutoff],
+  );
   const ids: string[] = [];
   let keys = 0;
   let derived = 0;
@@ -1104,7 +1470,7 @@ export function purgeRound(db: Db, req: PurgeRequest): DeletedSessions & { more:
 }
 
 /** Old aggregates, counters, samples and tombstones. Cheap: every statement is an indexed range delete. */
-export function housekeeping(db: Db, now: number, heatCutoff: number | null): void {
+export function housekeeping(db: Db, now: number, heatCutoff: number | null, cutoff: number | null = null): void {
   db.transaction(() => {
     if (heatCutoff !== null) {
       const heatDay = utcDay(heatCutoff);
@@ -1118,6 +1484,8 @@ export function housekeeping(db: Db, now: number, heatCutoff: number | null): vo
     db.run("DELETE FROM net_daily WHERE day < ?", [utcDay(now - DAY)]);
     db.run("DELETE FROM link_usage WHERE day < ?", [utcDay(now - DAY)]);
     db.run("DELETE FROM deleted_sessions WHERE at < ?", [now - 2 * DAY]);
+    if (heatCutoff !== null) db.run("DELETE FROM error_groups WHERE last_seen < ?", [heatCutoff]);
+    surveyHousekeeping(db, now, cutoff);
   });
 }
 
@@ -1125,7 +1493,7 @@ export function housekeeping(db: Db, now: number, heatCutoff: number | null): vo
 export function purge(db: Db, req: PurgeRequest): DeletedSessions & { more: boolean; rolled: string[] } {
   const r = rollup(db, req.now, req.rollup_days);
   const del = purgeRound(db, req);
-  housekeeping(db, req.now, req.heat_cutoff);
+  housekeeping(db, req.now, req.heat_cutoff, req.cutoff);
   return { ...del, more: del.more || r.more, rolled: r.rolled };
 }
 
@@ -1146,13 +1514,15 @@ export function maintain(db: Db, req: PurgeRequest & { deadline: number }) {
     more = round.more;
     if (!round.more) break;
   }
-  housekeeping(db, req.now, req.heat_cutoff);
+  housekeeping(db, req.now, req.heat_cutoff, req.cutoff);
   return { sessions_deleted: sessions, chunks_queued: keys, rolled: r.rolled, more: more || r.more };
 }
 
 /** Anything a later maintenance run still has to look after (so the alarm keeps coming). */
 export const hasStoredData = (db: Db): boolean =>
-  ["sessions", "heat_daily", "scroll_daily", "r2_pending", "deleted_sessions"].some((t) => db.all(`SELECT 1 FROM ${t} LIMIT 1`).length > 0);
+  ["sessions", "heat_daily", "scroll_daily", "r2_pending", "deleted_sessions", "survey_responses"].some(
+    (t) => db.all(`SELECT 1 FROM ${t} LIMIT 1`).length > 0,
+  );
 
 // ---------------------------------------------------------------------------------- account/deployment usage
 
@@ -1186,10 +1556,19 @@ export function markReported(db: Db, rows: { day: string; delta: Totals }[]): vo
  */
 export function linkChunk(
   db: Db,
-  q: { link_id: string; session_id: string; seq: number; now: number; budget: number | null },
+  q: {
+    link_id: string;
+    session_id: string;
+    seq: number;
+    now: number;
+    budget: number | null;
+    window?: { start: number; end: number } | null;
+  },
 ): { ok: true; bytes: number } | { ok: false; reason: "not_found" | "budget" } {
   const ch = db.all("SELECT bytes, rr_events FROM chunks WHERE session_id = ? AND seq = ?", [q.session_id, q.seq])[0];
   if (!ch || !num(ch.rr_events)) return { ok: false, reason: "not_found" };
+  // A clip serves only the chunks of its window.
+  if (q.window && !playableChunks(db, q.session_id, 2000, q.window).includes(q.seq)) return { ok: false, reason: "not_found" };
   const bytes = num(ch.bytes);
   const day = utcDay(q.now);
   const used = num(db.all("SELECT bytes FROM link_usage WHERE link_id = ? AND day = ?", [q.link_id, day])[0]?.bytes);
@@ -1201,9 +1580,29 @@ export function linkChunk(
   return { ok: true, bytes };
 }
 
-/** Seqs of the chunks a player can play (with rrweb events), capped. */
-export function playableChunks(db: Db, sid: string, limit = 2000): number[] {
-  return db.all("SELECT seq FROM chunks WHERE session_id = ? AND rr_events > 0 ORDER BY seq LIMIT ?", [sid, limit]).map((r) => num(r.seq));
+/**
+ * Seqs of the chunks a player can play (with rrweb events), capped. With a clip window (absolute
+ * ms): the chunks overlapping it, starting from the latest chunk with a full DOM snapshot before
+ * its start (rrweb needs one to rebuild the page); chunks stored before v3 don't say, so from 0.
+ */
+export function playableChunks(db: Db, sid: string, limit = 2000, window?: { start: number; end: number } | null): number[] {
+  if (!window)
+    return db
+      .all("SELECT seq FROM chunks WHERE session_id = ? AND rr_events > 0 ORDER BY seq LIMIT ?", [sid, limit])
+      .map((r) => num(r.seq));
+  const unknown = db.all("SELECT 1 FROM chunks WHERE session_id = ? AND rr_events > 0 AND snap IS NULL LIMIT 1", [sid]).length > 0;
+  const snap = unknown
+    ? null
+    : db.all("SELECT MAX(seq) AS seq FROM chunks WHERE session_id = ? AND snap = 1 AND first_ts <= ?", [sid, window.start])[0]?.seq;
+  const from = snap === null || snap === undefined ? 0 : num(snap);
+  return db
+    .all("SELECT seq FROM chunks WHERE session_id = ? AND rr_events > 0 AND seq >= ? AND first_ts <= ? ORDER BY seq LIMIT ?", [
+      sid,
+      from,
+      window.end,
+      limit,
+    ])
+    .map((r) => num(r.seq));
 }
 
 // ---------------------------------------------------------------------------------- summary (verify, get_site)
@@ -1260,3 +1659,52 @@ export function chunkSeqs(db: Db, sid: string): number[] {
 }
 
 export type { Row };
+
+// ---------------------------------------------------------------------------------- webhooks: segment hits, spikes
+
+/** Record that a session entered a segment; true the first time (segment.session is sent once). */
+export function segmentHit(db: Db, segmentId: string, sessionId: string, now: number): boolean {
+  if (db.all("SELECT 1 FROM segment_hits WHERE segment_id = ? AND session_id = ?", [segmentId, sessionId]).length) return false;
+  db.run("INSERT INTO segment_hits (segment_id, session_id, at) VALUES (?, ?, ?)", [segmentId, sessionId, now]);
+  return true;
+}
+
+export const SPIKE = { MIN_SESSIONS: 5, FACTOR: 3, QUIET_MS: 6 * 3_600_000 } as const;
+const SPIKE_COLUMNS = {
+  rage_click: "rage_clicks",
+  dead_click: "dead_interactive",
+  error_click: "error_clicks",
+  js_error: "errors",
+  api_error: "api_errors",
+  quick_back: "quick_backs",
+} as const;
+
+/**
+ * Signals whose sessions in the last hour reach SPIKE.MIN_SESSIONS and SPIKE.FACTOR times the
+ * hourly average of the 7 days before (signal.spike). Each signal alerts at most once per
+ * SPIKE.QUIET_MS (remembered in meta). Two indexed range scans over sessions.
+ */
+export function signalSpikes(db: Db, now: number): { signal: string; sessions_last_hour: number; baseline_per_hour: number }[] {
+  const H = 3_600_000;
+  const cols = Object.entries(SPIKE_COLUMNS);
+  const sum = (from: number, to: number) =>
+    db.all(
+      `SELECT ${cols.map(([k, c]) => `COALESCE(SUM(${c} > 0), 0) AS ${k}`).join(", ")} FROM sessions WHERE started_at >= ? AND started_at < ?`,
+      [from, to],
+    )[0];
+  const last = sum(now - H, now + 1);
+  const out: { signal: string; sessions_last_hour: number; baseline_per_hour: number }[] = [];
+  if (!cols.some(([k]) => num(last?.[k]) >= SPIKE.MIN_SESSIONS)) return out;
+  const base = sum(now - 8 * 24 * H, now - H);
+  for (const [k] of cols) {
+    const n = num(last?.[k]);
+    const avg = num(base?.[k]) / (7 * 24);
+    if (n < SPIKE.MIN_SESSIONS || n < SPIKE.FACTOR * avg) continue;
+    const key = `spike:${k}`;
+    const lastAlert = num(db.all("SELECT value FROM meta WHERE key = ?", [key])[0]?.value);
+    if (lastAlert && now - lastAlert < SPIKE.QUIET_MS) continue;
+    db.run("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, String(now)]);
+    out.push({ signal: k, sessions_last_hour: n, baseline_per_hour: Math.round(avg * 100) / 100 });
+  }
+  return out;
+}

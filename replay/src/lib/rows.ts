@@ -40,6 +40,16 @@ export interface SessionRow {
   forced: number;
   skew_ms: number;
   limited: string | null;
+  /** v3: the entry page's referrer */
+  referrer?: string | null;
+  /** v3: time the visitor was active (see lib/derive ACTIVE_GAP_MS) */
+  active_ms?: number;
+  /** v3: failed requests */
+  api_errors?: number;
+  /** v3: starred (outlives retention_days up to MAX_STARRED_RETENTION_DAYS) */
+  starred?: number;
+  /** v3: afsr('upgrade') reason */
+  upgraded?: string | null;
 }
 
 export interface PageRow {
@@ -62,6 +72,8 @@ export interface PageRow {
   quick_back: number;
   excessive_scroll: number;
   device: string | null;
+  /** v3 */
+  active_ms?: number;
 }
 
 export interface EventRow {
@@ -70,7 +82,7 @@ export interface EventRow {
   ts: number;
   seq: number;
   pv: number | null;
-  kind: "click" | "input" | "error" | "event" | "hide" | "idle" | "scroll";
+  kind: "click" | "input" | "error" | "event" | "hide" | "idle" | "scroll" | "net" | "warn" | "survey";
   path: string | null;
   selector: string | null;
   label: string | null;
@@ -92,4 +104,10 @@ export interface EventRow {
   open: number;
   error_click: number;
   device: string | null;
+}
+
+export interface TagRow {
+  key: string;
+  value: string;
+  ts: number;
 }

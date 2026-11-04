@@ -2,6 +2,6 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "types": ["./worker-configuration.d.ts"] },
   "include": ["src", "test", "worker-configuration.d.ts"],
-  // The browser bundles have their own tsconfigs (DOM lib): `tsc -p src/recorder`, `tsc -p src/player`.
-  "exclude": ["src/recorder", "src/player"]
+  // The browser bundles have their own tsconfigs (DOM lib): `tsc -p src/recorder`, `-p src/player`, `-p src/survey`.
+  "exclude": ["src/recorder", "src/player", "src/survey"]
 }

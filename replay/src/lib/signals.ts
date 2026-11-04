@@ -12,6 +12,8 @@
  *                     flagged on B, the page that didn't deliver.
  *   excessive scroll  on one pageview, >= 4 direction reversals and a scrolled distance of at least
  *                     2.5x the page's scrollable height.
+ *   api error         a fetch/XHR request answered >= 400 or failed (capture_network_errors); one within
+ *                     1 s after a click records that click (it doesn't make it an error click).
  */
 
 export const RAGE_WINDOW_MS = 1000;
@@ -130,6 +132,8 @@ export interface SignalCounts {
   errors: number;
   quick_backs: number;
   excessive_scrolls: number;
+  /** failed requests (capture_network_errors) */
+  api_errors?: number;
 }
 
 /** Score weights; the sum is capped at 100. */
@@ -142,6 +146,8 @@ export const FRUSTRATION_WEIGHTS = {
   errors_cap: 32,
   quick_back: 10,
   excessive_scroll: 10,
+  api_error: 6,
+  api_errors_cap: 24,
 } as const;
 
 /** 0-100. Rage and error clicks dominate; plain dead clicks on text count little. */
@@ -155,9 +161,10 @@ export function frustrationScore(c: SignalCounts): number {
     Math.min(deadOther * w.dead_other, 10) +
     Math.min(c.errors * w.error, w.errors_cap) +
     c.quick_backs * w.quick_back +
-    c.excessive_scrolls * w.excessive_scroll;
+    c.excessive_scrolls * w.excessive_scroll +
+    Math.min((c.api_errors ?? 0) * w.api_error, w.api_errors_cap);
   return Math.min(100, Math.round(raw));
 }
 
-export const SIGNALS = ["rage_click", "dead_click", "error_click", "quick_back", "excessive_scroll", "js_error"] as const;
+export const SIGNALS = ["rage_click", "dead_click", "error_click", "quick_back", "excessive_scroll", "js_error", "api_error"] as const;
 export type Signal = (typeof SIGNALS)[number];

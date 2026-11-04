@@ -117,6 +117,8 @@ describe("selector config validation", () => {
       consent: true,
       errors: false,
       on: true,
+      // auto_events (form_submit) is on unless turned off
+      ae: 1,
       base: "https://replay.test",
     });
     expect(loaderConfig(site, {} as never, "b", "r").sr).toBe(0.5);

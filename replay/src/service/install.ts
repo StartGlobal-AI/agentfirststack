@@ -1,6 +1,18 @@
 import type { SiteRow } from "./context";
 
-export const FRAMEWORKS = ["html", "nextjs", "react", "astro", "wordpress", "gtm"] as const;
+export const FRAMEWORKS = [
+  "html",
+  "nextjs",
+  "react",
+  "astro",
+  "wordpress",
+  "gtm",
+  "shopify",
+  "webflow",
+  "wix",
+  "squarespace",
+  "framer",
+] as const;
 export type Framework = (typeof FRAMEWORKS)[number];
 
 export const loaderUrl = (base: string, siteId: string) => `${base}/r/${siteId}.js`;
@@ -28,7 +40,66 @@ const code = (base: string, id: string): Record<Framework, { file: string; code:
     file: "Google Tag Manager: Custom HTML tag, trigger All Pages",
     code: `<script>(function(){var s=document.createElement('script');s.defer=true;s.src='${loaderUrl(base, id)}';document.head.appendChild(s);})();</script>`,
   },
+  shopify: {
+    file: "Shopify admin: Online Store > Themes > ... > Edit code > layout/theme.liquid, just before </head> (Shopify's own checkout pages can't take scripts, except on Plus via checkout extensibility)",
+    code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}`,
+  },
+  webflow: {
+    file: "Webflow: Site settings > Custom code > Head code (a paid site plan), then publish",
+    code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}`,
+  },
+  wix: {
+    file: "Wix: Settings > Custom code (Advanced) > + Add custom code: paste, Add code to pages: All pages, Place code in: Head (a premium plan with a connected domain)",
+    code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}`,
+  },
+  squarespace: {
+    file: "Squarespace: Settings > Advanced (Developer tools) > Code injection > Header (Core plan or above)",
+    code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}`,
+  },
+  framer: {
+    file: "Framer: Site settings > General > Custom code > End of <head> tag, then publish",
+    code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}`,
+  },
 });
+
+/**
+ * Join replay to a product analytics tool: the replay session id as an event property (so an
+ * analytics event links to its recording), and the tool's identify passed on to afsr('identify').
+ */
+export const WITH_TOOLS: Record<"segment" | "mixpanel" | "amplitude", { what: string; code: string }> = {
+  segment: {
+    what: "Analytics.js: every event gets replay_session_id; identify() is passed to replay (traits you list become tags).",
+    code: `analytics.addSourceMiddleware(({ payload, next }) => {
+  const id = window.afsr && afsr.sessionId && afsr.sessionId();
+  if (id && payload.obj.properties) payload.obj.properties.replay_session_id = id;
+  next(payload);
+});
+analytics.on("identify", (userId, traits) => userId && afsr("identify", userId, { plan: traits && traits.plan }));`,
+  },
+  mixpanel: {
+    what: "Mixpanel: a super property on every event once the replay loader has run; identify alongside mixpanel.identify.",
+    code: `window.addEventListener("load", () => {
+  const id = window.afsr && afsr.sessionId && afsr.sessionId();
+  if (id) mixpanel.register({ replay_session_id: id });
+});
+// where you call mixpanel.identify(userId):
+afsr("identify", userId);`,
+  },
+  amplitude: {
+    what: "Amplitude Browser SDK 2: an enrichment plugin adds replay_session_id to every event; identify alongside setUserId.",
+    code: `amplitude.add({
+  name: "afs-replay",
+  type: "enrichment",
+  execute: async (event) => {
+    const id = window.afsr && afsr.sessionId && afsr.sessionId();
+    if (id) event.event_properties = { ...event.event_properties, replay_session_id: id };
+    return event;
+  },
+});
+// where you call amplitude.setUserId(userId):
+afsr("identify", userId);`,
+  },
+};
 
 /** Linked, and the analytics site confirmed its tracker loads this site's recorder. */
 export const loadsWithAnalytics = (s: SiteRow) => !!s.analytics_site_id && s.analytics_linked_at != null;
@@ -105,5 +176,6 @@ export function installInstructions(site: SiteRow, base: string, framework: Fram
       "Browsers sending Global Privacy Control or Do Not Track are never recorded.",
     ],
     with_analytics: note.text,
+    with_tools: WITH_TOOLS,
   };
 }

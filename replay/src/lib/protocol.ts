@@ -19,6 +19,10 @@ export const TAGS = {
   event: "afs.event",
   hide: "afs.hide",
   idle: "afs.idle",
+  /** afsr('set', key, value) and afsr('identify', id, attrs) */
+  tag: "afs.tag",
+  /** a failed fetch/XHR (status >= 400 or network failure) */
+  net: "afs.net",
 } as const;
 
 export type NavType = "load" | "reload" | "back_forward" | "push" | "replace" | "pop";
@@ -65,6 +69,8 @@ export interface ClickPayload {
   h?: string;
   /** 1 when the click landed in a blocked element */
   b?: 0 | 1;
+  /** the zone: the first zones selector containing the element, else a landmark ("nav", "section#pricing") */
+  z?: string;
 }
 
 export interface InputPayload {
@@ -88,8 +94,8 @@ export interface ScrollPayload {
 
 export interface ErrorPayload {
   pv: number;
-  /** error = window.onerror, rejection = unhandledrejection, console = console.error */
-  k: "error" | "rejection" | "console";
+  /** error = window.onerror, rejection = unhandledrejection, console = console.error, warn = console.warn */
+  k: "error" | "rejection" | "console" | "warn";
   /** message, scrubbed of emails, long numbers and query strings */
   m: string;
   /** script path (no query), line, column */
@@ -119,6 +125,30 @@ export interface IdlePayload {
   pv: number;
 }
 
+/** A custom tag: afsr('set', key, value | value[]) or an attribute of afsr('identify', id, attrs). */
+export interface TagPayload {
+  pv: number;
+  /** key: letters, digits, _ . - (at most 50) */
+  k: string;
+  /** values (at most 5, 100 characters each, scrubbed of emails, long numbers and tokens) */
+  v: string[];
+}
+
+/**
+ * A failed network request (capture_network_errors): never headers, bodies or the query string.
+ * u is the path (same origin) or origin + path (another host), id-like segments as ":id".
+ */
+export interface NetPayload {
+  pv: number;
+  /** method: GET, POST, ... */
+  m: string;
+  u: string;
+  /** HTTP status; 0 = the request failed (network error, CORS, blocked) */
+  st: number;
+  /** duration (ms) */
+  ms: number;
+}
+
 export interface Envelope {
   v: 1;
   sid: string;
@@ -136,6 +166,8 @@ export interface Envelope {
   f?: 1;
   /** navigator.webdriver */
   wd?: 1;
+  /** afsr('upgrade', reason): a tab that wasn't sampled in records from now on */
+  up?: string;
 }
 
 /** The per-site config the loader script (/r/<site>.js) is served with. */
@@ -163,6 +195,20 @@ export interface LoaderConfig {
   errors: boolean;
   /** false = recording turned off for the site */
   on: boolean;
+  /** 1 = hash afsr('identify') ids in the browser (SHA-256 of "afsr:<site>:<id>", see lib/hash.ts) */
+  hu?: 1;
+  /** 1 = record failed fetch/XHR requests (capture_network_errors) */
+  net?: 1;
+  /** 1 = record console.warn (capture_console_warnings) */
+  cw?: 1;
+  /** 1 = automatic events: form_submit (auto_events) */
+  ae?: 1;
+  /** heatmap zone selectors (zones) */
+  zn?: string[];
+  /** the active surveys' revision: load /sv/<site>.<sv>.js (absent = no active survey) */
+  sv?: string;
+  /** 1 = consent follows Google Consent Mode analytics_storage (consent_source gcm) */
+  gcm?: 1;
 }
 
 /** Ids the browser generates: rs_ + 16 base32 characters, like newId("rs"). */

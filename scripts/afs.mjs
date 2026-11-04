@@ -271,6 +271,7 @@ async function cmdInit(name, opts) {
     "analytics.ENCRYPTION_KEY": b64,
     "tags.ENCRYPTION_KEY": b64,
     "mail.ENCRYPTION_KEY": b64,
+    "replay.ENCRYPTION_KEY": b64,
   };
   const secrets = existingSecrets ?? {};
   const added = [];

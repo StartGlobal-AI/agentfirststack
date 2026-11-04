@@ -218,7 +218,9 @@ export function scrubText(s: string, max: number): string {
  * exclude_paths in the browser and page filters on the server.
  */
 export function globToRegExp(glob: string): RegExp {
+  // repeated stars mean the same and only add backtracking
   const body = glob
+    .replace(/\*{2,}/g, "*")
     .split("*")
     .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
     .join(".*");
@@ -226,3 +228,18 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 export const pathMatches = (path: string, globs: readonly string[]): boolean => globs.some((g) => globToRegExp(g).test(path));
+
+/**
+ * A failed request's URL as the recorder sends it: same-host requests as their path, others as
+ * origin + path; never the query string or fragment; id-like segments as ":id". null for non-http
+ * URLs and for `skip` (the replay service's own requests).
+ */
+export function requestUrl(raw: string, pageHref: string, skip: string): string | null {
+  try {
+    const u = new URL(raw, pageHref);
+    if (!/^https?:$/.test(u.protocol) || (skip && u.href.startsWith(skip))) return null;
+    return (u.host === new URL(pageHref).host ? "" : u.origin) + scrubPath(u.pathname);
+  } catch {
+    return null;
+  }
+}

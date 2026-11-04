@@ -35,7 +35,7 @@ export interface Opts {
 /** Derive a chunk from fixture events and ingest it, as the Worker + DO do. */
 export function feed(db: Db, sid: string, seq: number, ev: unknown[], o: Opts = {}) {
   const env = envelope(sid, seq, ev, o.t !== undefined ? { t: o.t } : {});
-  const chunk = deriveChunk(env, { minTs: T0 - 86_400_000, maxTs: NOW + 3_600_000 });
+  const chunk = deriveChunk(env, { minTs: T0 - 86_400_000, maxTs: Math.max(NOW, o.now ?? 0) + 3_600_000 });
   return ingestChunk(db, {
     now: o.now ?? NOW,
     session_id: sid,
