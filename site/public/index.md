@@ -1,8 +1,9 @@
 # AgentFirstStack
 
-Infrastructure your agent sets up by itself: web analytics, tag management with server-side
-conversion tracking, email inboxes and session replay. No signup form, no verification email, no dashboard to
-click through. Free to use, and open source (MIT).
+Analytics, tag manager, email and session replay, set up by your AI agent. Like Google Analytics,
+Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding
+agent creates the account, adds everything to your site and checks it works. No signup form, no
+verification email, no dashboard to click through. Free to use, and open source (MIT).
 
 - Manual for agents: https://agentfirststack.com/llms.txt
 - Registration and credentials: https://agentfirststack.com/auth.md
@@ -27,6 +28,58 @@ click through. Free to use, and open source (MIT).
 | Tags | One snippet for every pixel; conversions sent from the browser and your server to GA4, Google Ads, Meta and TikTok with one event id, so each counts it once; click IDs kept; preview, publish, roll back | Google Tag Manager | https://tags.agentfirststack.com/llms.txt |
 | Mail | Inboxes in one request; verification codes and links extracted; read, reply, send; your own domain; webhooks | A Gmail account per project | https://mail.agentfirststack.com/llms.txt |
 | Replay | Session recordings masked in the browser by default; sessions as readable transcripts; rage, dead and error clicks; heatmaps and JS errors as data | Hotjar, Microsoft Clarity | https://replay.agentfirststack.com/llms.txt |
+
+## What each service includes
+
+All of it over REST and MCP, with the same key.
+
+### Analytics (instead of GA4, Plausible or DataFast)
+
+- **Tracking:** Cookieless by default, single-page and hash routing, custom events and properties (also from HTML attributes), outbound clicks, downloads, forms, 404s, scroll depth, engaged time, Core Web Vitals, site search, UTMs and ad click IDs.
+- **Server events:** An events API with a dry run, joined to browser visitors.
+- **Reports:** Stats, timeseries and comparisons, breakdowns by up to three dimensions, realtime, engagement rate, average order value, top movers, insights, CSV.
+- **Filters:** Wildcards, nested and/or groups, saved segments, timezones.
+- **Goals and funnels:** Goals that apply to past data, funnels in order or any order, with time windows and revenue per step.
+- **People:** Visitors, sessions and journeys, first touch, retention cohorts, path exploration, six attribution models.
+- **Revenue:** Stripe, a payments API, new and renewal revenue by source, page and campaign.
+- **Querying:** Read-only SQL with cost limits, and a schema call that lists every event and property.
+- **Alerts:** Spikes, drops, no data, goals and payments, plus weekly or monthly reports, by webhook, Slack or email.
+- **Privacy:** Delete a visitor, purge with a dry run, email and phone redaction, path rules, exclusions, a referral-spam filter, Do Not Track and GPC.
+
+### Tags (instead of Google Tag Manager)
+
+- **Workflow:** A draft you edit item by item, diffs between versions, GTM import, a preview log, environments, versions and rollback.
+- **Triggers:** Pageview, DOM ready, window loaded, consent initialization, clicks, forms, history changes, element visibility, scroll depth, timers, JavaScript errors, video, custom events, trigger groups.
+- **Variables:** Data layer, URL parts, cookies, element attributes, lookup and regex tables, formatting, about 30 built-ins.
+- **Tag options:** Priority, scheduling, sequencing, firing limits, consent per tag.
+- **Browser tags:** GA4, Google Ads, Meta, TikTok, Snap, image pixels, custom HTML on verified domains.
+- **Conversion APIs:** GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap, X and webhooks, each counted once with the browser pixel.
+- **Routing:** Per-platform conditions and parameter rules, test sends.
+- **Consent and identity:** Consent Mode v2, TCF v2, hashed user data, cross-domain linking, a lookup store for values like margin by SKU.
+- **Monitoring:** An event and delivery log, tag-fire stats, page coverage, retries and a circuit breaker.
+
+### Mail (instead of AgentMail or a Gmail account)
+
+- **Inboxes:** Instant inboxes on our domain or yours, plus-address tags, labels, usage limits you can read.
+- **Waiting:** Wait for an email and get the verification code or link back, from authenticated senders only.
+- **Reading:** Threads, search, raw email, attachments and their text, calendar invites, replies without the quoted history.
+- **Sending:** Send, reply and forward, safe to retry, scheduled sending, delivery status per recipient.
+- **Safety:** Inboxes on the shared domain reply only to people who wrote first; allow and block lists.
+- **Domains:** Custom domains with DNS checks, send-only domains, a zone file to import.
+- **Events:** Signed webhooks, and an event feed an agent can poll without a public URL.
+- **Checks:** A deliverability report for any message: SPF, DKIM and DMARC.
+
+### Replay (instead of Hotjar or Clarity)
+
+- **Recording:** Text and inputs masked in the browser by default, selectors to unmask, mask or block, sampling.
+- **Consent:** Consent only where the law asks (EEA, UK, Switzerland), Google Consent Mode, TCF v2, Do Not Track and GPC, IP exclusion.
+- **Sessions:** Search, readable transcripts, summaries across many sessions, raw events, exports, a share-link player and clips.
+- **Signals:** Rage, dead and error clicks, quick backs, excessive scrolling, JavaScript and console errors, failed requests, a frustration score.
+- **Analysis:** Tags and identify, saved segments, trends, funnel drop-offs, events defined after the fact.
+- **Heatmaps:** Click, scroll and attention maps by element or zone, comparisons, conversion share, PNG images.
+- **Surveys:** Popovers, embedded surveys and a feedback tab: NPS, CSAT, CES, product-market fit and text, triggered on exit intent or after a rage click, each answer linked to its session.
+- **Workflow:** Notes, labels, stars, signed webhooks, signals sent on to analytics and your tag container.
+- **Privacy:** Delete or look up one visitor's data, recordings kept 14 days.
 
 ## MCP
 

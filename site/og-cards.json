@@ -1,8 +1,8 @@
 [
   {
     "slug": "home",
-    "title": "Infrastructure your agent sets up by itself",
-    "kicker": "Analytics, tag management, email inboxes and session replay. No signup form. Free and open source.",
+    "title": "Analytics, tag manager, email and replay, set up by your AI agent",
+    "kicker": "Like Google Analytics, Tag Manager and Hotjar, plus inboxes for agents. One prompt, no signup form. Free and open source.",
     "service": "all"
   },
   {

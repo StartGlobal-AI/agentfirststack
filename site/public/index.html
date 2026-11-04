@@ -15,15 +15,15 @@
 <meta property="og:site_name" content="AgentFirstStack">
 <meta property="og:locale" content="en_US">
 <meta property="og:type" content="website">
-<meta property="og:title" content="AgentFirstStack: infrastructure your agent sets up by itself">
+<meta property="og:title" content="AgentFirstStack: analytics, tag manager, email and session replay your AI agent sets up">
 <meta property="og:description" content="Analytics, tag management, email inboxes and session replay your AI agent sets up end to end. No signup form. Free and open source.">
 <meta property="og:url" content="https://agentfirststack.com/">
 <meta property="og:image" content="https://agentfirststack.com/og/home.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="AgentFirstStack: infrastructure your agent sets up by itself. Analytics, tags, mail, replay.">
+<meta property="og:image:alt" content="AgentFirstStack: analytics, tag manager, email and session replay, set up by your AI agent.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="AgentFirstStack: infrastructure your agent sets up by itself">
+<meta name="twitter:title" content="AgentFirstStack: analytics, tag manager, email and session replay your AI agent sets up">
 <meta name="twitter:description" content="Analytics, tag management, email inboxes and session replay your AI agent sets up end to end. Free and open source.">
 <meta name="twitter:image" content="https://agentfirststack.com/og/home.png">
 <meta name="theme-color" content="#FFFFFF">
@@ -107,8 +107,8 @@
 <section class="hero" id="setup">
   <div class="wrap hero-grid">
     <div class="hero-copy">
-      <h1>Infrastructure your agent sets up by itself</h1>
-      <p class="lede">Analytics, tag management with server-side conversion tracking, email inboxes and session replay. No signup form, no verification email, no dashboard to click through. Free and open source.</p>
+      <h1>Analytics, tag manager, email and session replay, set&nbsp;up by your AI agent</h1>
+      <p class="lede">Like Google Analytics, Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding agent creates the account, adds everything to your site and checks it works. No signup form, no dashboard. Free and open source.</p>
       <div class="actions">
         <button class="btn btn-primary" type="button" data-copy>Copy prompt for your agent</button>
         <a class="btn btn-quiet" href="/llms.txt">Read the manual</a>
@@ -280,6 +280,68 @@
         <a class="product-guide" href="/guides/session-replay-for-ai-agents">Session replay for AI agents</a>
       </article>
 
+    </div>
+    <div class="features" id="features">
+      <h3 class="features-title">What each service includes</h3>
+      <p class="features-lede">All of it over REST and MCP, with the same key. <a href="/guides">Comparisons with the tools you may use now</a>.</p>
+      <div class="features-grid">
+        <div class="feature-list" style="--c: var(--orange)">
+          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Analytics <span>instead of GA4, Plausible or DataFast</span></h4>
+          <dl>
+            <div><dt>Tracking</dt><dd>Cookieless by default, single-page and hash routing, custom events and properties (also from HTML attributes), outbound clicks, downloads, forms, 404s, scroll depth, engaged time, Core Web Vitals, site search, UTMs and ad click IDs</dd></div>
+            <div><dt>Server events</dt><dd>An events API with a dry run, joined to browser visitors</dd></div>
+            <div><dt>Reports</dt><dd>Stats, timeseries and comparisons, breakdowns by up to three dimensions, realtime, engagement rate, average order value, top movers, insights, CSV</dd></div>
+            <div><dt>Filters</dt><dd>Wildcards, nested and/or groups, saved segments, timezones</dd></div>
+            <div><dt>Goals and funnels</dt><dd>Goals that apply to past data, funnels in order or any order, with time windows and revenue per step</dd></div>
+            <div><dt>People</dt><dd>Visitors, sessions and journeys, first touch, retention cohorts, path exploration, six attribution models</dd></div>
+            <div><dt>Revenue</dt><dd>Stripe, a payments API, new and renewal revenue by source, page and campaign</dd></div>
+            <div><dt>Querying</dt><dd>Read-only SQL with cost limits, and a schema call that lists every event and property</dd></div>
+            <div><dt>Alerts</dt><dd>Spikes, drops, no data, goals and payments, plus weekly or monthly reports, by webhook, Slack or email</dd></div>
+            <div><dt>Privacy</dt><dd>Delete a visitor, purge with a dry run, email and phone redaction, path rules, exclusions, a referral-spam filter, Do Not Track and GPC</dd></div>
+          </dl>
+        </div>
+        <div class="feature-list" style="--c: var(--yellow)">
+          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Tags <span>instead of Google Tag Manager</span></h4>
+          <dl>
+            <div><dt>Workflow</dt><dd>A draft you edit item by item, diffs between versions, GTM import, a preview log, environments, versions and rollback</dd></div>
+            <div><dt>Triggers</dt><dd>Pageview, DOM ready, window loaded, consent initialization, clicks, forms, history changes, element visibility, scroll depth, timers, JavaScript errors, video, custom events, trigger groups</dd></div>
+            <div><dt>Variables</dt><dd>Data layer, URL parts, cookies, element attributes, lookup and regex tables, formatting, about 30 built-ins</dd></div>
+            <div><dt>Tag options</dt><dd>Priority, scheduling, sequencing, firing limits, consent per tag</dd></div>
+            <div><dt>Browser tags</dt><dd>GA4, Google Ads, Meta, TikTok, Snap, image pixels, custom HTML on verified domains</dd></div>
+            <div><dt>Conversion APIs</dt><dd>GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap, X and webhooks, each counted once with the browser pixel</dd></div>
+            <div><dt>Routing</dt><dd>Per-platform conditions and parameter rules, test sends</dd></div>
+            <div><dt>Consent and identity</dt><dd>Consent Mode v2, TCF v2, hashed user data, cross-domain linking, a lookup store for values like margin by SKU</dd></div>
+            <div><dt>Monitoring</dt><dd>An event and delivery log, tag-fire stats, page coverage, retries and a circuit breaker</dd></div>
+          </dl>
+        </div>
+        <div class="feature-list" style="--c: var(--blue)">
+          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Mail <span>instead of AgentMail or a Gmail account</span></h4>
+          <dl>
+            <div><dt>Inboxes</dt><dd>Instant inboxes on our domain or yours, plus-address tags, labels, usage limits you can read</dd></div>
+            <div><dt>Waiting</dt><dd>Wait for an email and get the verification code or link back, from authenticated senders only</dd></div>
+            <div><dt>Reading</dt><dd>Threads, search, raw email, attachments and their text, calendar invites, replies without the quoted history</dd></div>
+            <div><dt>Sending</dt><dd>Send, reply and forward, safe to retry, scheduled sending, delivery status per recipient</dd></div>
+            <div><dt>Safety</dt><dd>Inboxes on the shared domain reply only to people who wrote first; allow and block lists</dd></div>
+            <div><dt>Domains</dt><dd>Custom domains with DNS checks, send-only domains, a zone file to import</dd></div>
+            <div><dt>Events</dt><dd>Signed webhooks, and an event feed an agent can poll without a public URL</dd></div>
+            <div><dt>Checks</dt><dd>A deliverability report for any message: SPF, DKIM and DMARC</dd></div>
+          </dl>
+        </div>
+        <div class="feature-list" style="--c: var(--green)">
+          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Replay <span>instead of Hotjar or Clarity</span></h4>
+          <dl>
+            <div><dt>Recording</dt><dd>Text and inputs masked in the browser by default, selectors to unmask, mask or block, sampling</dd></div>
+            <div><dt>Consent</dt><dd>Consent only where the law asks (EEA, UK, Switzerland), Google Consent Mode, TCF v2, Do Not Track and GPC, IP exclusion</dd></div>
+            <div><dt>Sessions</dt><dd>Search, readable transcripts, summaries across many sessions, raw events, exports, a share-link player and clips</dd></div>
+            <div><dt>Signals</dt><dd>Rage, dead and error clicks, quick backs, excessive scrolling, JavaScript and console errors, failed requests, a frustration score</dd></div>
+            <div><dt>Analysis</dt><dd>Tags and identify, saved segments, trends, funnel drop-offs, events defined after the fact</dd></div>
+            <div><dt>Heatmaps</dt><dd>Click, scroll and attention maps by element or zone, comparisons, conversion share, PNG images</dd></div>
+            <div><dt>Surveys</dt><dd>Popovers, embedded surveys and a feedback tab: NPS, CSAT, CES, product-market fit and text, triggered on exit intent or after a rage click, each answer linked to its session</dd></div>
+            <div><dt>Workflow</dt><dd>Notes, labels, stars, signed webhooks, signals sent on to analytics and your tag container</dd></div>
+            <div><dt>Privacy</dt><dd>Delete or look up one visitor&#x27;s data, recordings kept 14 days</dd></div>
+          </dl>
+        </div>
+      </div>
     </div>
   </div>
 </section>
