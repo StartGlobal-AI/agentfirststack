@@ -298,7 +298,10 @@ describe("2. R2 blobs never outlive their D1 rows", () => {
     expect(m.attachment_count).toBe(50);
     expect(m.attachments_omitted).toBe(5);
     expect(m.attachments[0].filename.length).toBeLessThanOrEqual(255);
-    expect((await E.BLOBS.list({ prefix: `inbox/${s.inbox.id}/` })).objects).toHaveLength(51); // raw + 50
+    // One copy: attachments are served from the raw MIME, not stored again as objects of their own.
+    expect((await E.BLOBS.list({ prefix: `inbox/${s.inbox.id}/` })).objects).toHaveLength(1);
+    const f7 = m.attachments.find((a: { filename: string }) => a.filename === "f7.txt");
+    expect((await call("GET", `/v1/messages/${id}/attachments/${f7.id}`, { key: s.key })).text).toBe("file 7");
   });
 
   it("the cron's sweep deletes blobs whose message is gone, after a grace period, and keeps live ones", async () => {

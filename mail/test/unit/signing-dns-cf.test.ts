@@ -36,12 +36,18 @@ describe("webhook signing", () => {
     expect(r.headers["x-delivery-attempt"]).toBe("2");
     expect(await verifySignature("sec", r.body, r.headers["x-signature"], { nowSec: 1234 })).toBe(true);
   });
-  it("webhook URLs must be https (http only for localhost)", () => {
-    expect(validateWebhookUrl("https://hooks.example.com/x")).toBe("https://hooks.example.com/x");
-    expect(validateWebhookUrl("http://127.0.0.1:9999/h")).toBe("http://127.0.0.1:9999/h");
-    expect(() => validateWebhookUrl("http://hooks.example.com/x")).toThrow(/https/);
-    expect(() => validateWebhookUrl("https://user:pw@x.com/")).toThrow(/Credentials/);
-    expect(() => validateWebhookUrl("nope")).toThrow();
+  it("webhook URLs must be https (http only for localhost, and only in DEV_MODE)", () => {
+    const prod = {};
+    const dev = { DEV_MODE: "true" };
+    expect(validateWebhookUrl("https://hooks.example.com/x", prod)).toBe("https://hooks.example.com/x");
+    expect(validateWebhookUrl("http://127.0.0.1:9999/h", dev)).toBe("http://127.0.0.1:9999/h");
+    expect(validateWebhookUrl("http://localhost:9999/h", dev)).toBe("http://localhost:9999/h");
+    expect(() => validateWebhookUrl("http://127.0.0.1:9999/h", prod)).toThrow(/https/);
+    expect(() => validateWebhookUrl("http://localhost:9999/h", { DEV_MODE: "false" })).toThrow(/https/);
+    expect(() => validateWebhookUrl("https://localhost/h", prod)).toThrow(/localhost/);
+    expect(() => validateWebhookUrl("http://hooks.example.com/x", dev)).toThrow(/https/);
+    expect(() => validateWebhookUrl("https://user:pw@x.com/", prod)).toThrow(/Credentials/);
+    expect(() => validateWebhookUrl("nope", prod)).toThrow();
   });
 });
 

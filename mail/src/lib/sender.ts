@@ -5,7 +5,8 @@
  * authenticated sender ("github.com" for noreply@github.com and bounces@mail.github.com), or the
  * full address on shared mailbox providers, where one domain holds millions of unrelated people
  * (gmail.com, outlook.com, the operator's own shared MAIL_DOMAIN, ...). Random local parts on your
- * own domain all count as that domain; random subdomains count as the registrable domain.
+ * own domain all count as that domain; random subdomains count as the registrable domain. Mail
+ * that no authentication vouches for shares one key, UNAUTHENTICATED_SENDER.
  *
  * The registrable domain is an approximation of the Public Suffix List: the last two labels, or
  * three when the second-level label is a common public second level under a two-letter ccTLD
@@ -111,7 +112,7 @@ export function senderKeyOf(address: string | null | undefined, sharedDomains: s
  *   - auth verdict "pass": the From address (its domain is authenticated);
  *   - else, Cloudflare saw SPF pass: the envelope sender (SMTP MAIL FROM);
  *   - else a passing DKIM signature: its domain (the signer controls it);
- *   - else the envelope sender as given.
+ *   - else null: nothing vouches for any address, so none is used (see UNAUTHENTICATED_SENDER).
  */
 export function senderIdentity(input: {
   fromAddress: string | null;
@@ -121,7 +122,22 @@ export function senderIdentity(input: {
   if (input.auth.verdict === "pass" && input.fromAddress) return input.fromAddress;
   if (input.auth.trusted && input.auth.spf === "pass" && input.envelopeFrom) return input.envelopeFrom;
   if (input.auth.trusted && input.auth.dkim_domains[0]) return `dkim@${input.auth.dkim_domains[0]}`;
-  return input.envelopeFrom || input.fromAddress;
+  return null;
+}
+
+/**
+ * The one sender key all unauthenticated mail shares (no SPF, DKIM or DMARC pass on Cloudflare's
+ * own header). Its envelope sender and From are whatever the sender typed, so keying by them would
+ * give every forged domain a fresh per-sender allowance; together, unauthenticated mail gets one
+ * MAX_INBOUND_PER_SENDER_PER_DAY per inbox and at most half of the account's daily quota, and is
+ * what a full inbox evicts first when it dominates. Not a domain or address, so no real key equals it.
+ */
+export const UNAUTHENTICATED_SENDER = "unauthenticated";
+
+/** The fair-use sender key of a message: senderKeyOf(senderIdentity(...)), or UNAUTHENTICATED_SENDER. */
+export function senderKeyFor(input: Parameters<typeof senderIdentity>[0], sharedDomains: string[] = []): string {
+  const id = senderIdentity(input);
+  return id ? senderKeyOf(id, sharedDomains) : UNAUTHENTICATED_SENDER;
 }
 
 export interface HeaderLike {

@@ -1,5 +1,7 @@
 import { badRequest, notFound } from "@afs/shared";
+import PostalMime from "postal-mime";
 import type { AppEnv } from "../env";
+import { headerSafe } from "../lib/headers";
 import { rateLimit } from "./budgets";
 import { type AttachmentRow, type MessageRow, type ThreadRow, messageDetail, messageSummary, threadJson } from "./format";
 import { getInboxRow } from "./inboxes";
@@ -163,20 +165,44 @@ export async function getRawMessage(env: AppEnv, accountId: string, id: string):
   return { row, body };
 }
 
+/**
+ * An attachment's metadata, and `open()` for its content. Attachments of received mail are not
+ * stored twice: open() parses the stored raw MIME and returns the part at `part_index` (checked
+ * against the stored size and filename). Others (sent mail, mail received before migration 0010)
+ * are their own R2 object.
+ */
 export async function getAttachment(
   env: AppEnv,
   accountId: string,
   messageId: string,
   attachmentId: string,
-): Promise<{ meta: AttachmentRow; body: R2ObjectBody }> {
-  await getMessageRow(env, accountId, messageId);
+): Promise<{ meta: AttachmentRow; open: () => Promise<ReadableStream | Uint8Array> }> {
+  const row = await getMessageRow(env, accountId, messageId);
   const meta = await env.DB.prepare("SELECT * FROM attachments WHERE id = ? AND message_id = ?")
     .bind(attachmentId, messageId)
     .first<AttachmentRow>();
   if (!meta) throw notFound("Attachment", `GET /v1/messages/${messageId} lists its attachments.`);
-  const body = await env.BLOBS.get(meta.r2_key);
-  if (!body) throw notFound("Attachment content");
-  return { meta, body };
+  const open = async (): Promise<ReadableStream | Uint8Array> => {
+    if (meta.part_index === null || meta.part_index === undefined) {
+      const body = await env.BLOBS.get(meta.r2_key);
+      if (!body) throw notFound("Attachment content");
+      return body.body;
+    }
+    const raw = row.raw_key ? await env.BLOBS.get(row.raw_key) : null;
+    if (!raw) throw notFound("Attachment content", `The raw message is gone; GET /v1/messages/${messageId} shows what is left.`);
+    const parsed = await PostalMime.parse(await raw.arrayBuffer(), { attachmentEncoding: "arraybuffer" });
+    const bytes = (a: (typeof parsed.attachments)[number] | undefined) =>
+      !a ? null : typeof a.content === "string" ? new TextEncoder().encode(a.content) : new Uint8Array(a.content as ArrayBuffer);
+    const at = bytes(parsed.attachments[meta.part_index]);
+    if (at && at.byteLength === meta.size) return at;
+    // Defensive: a parser that orders parts differently. Fall back to the part with the same size and name.
+    const name = (f: string | null | undefined) => (f ? headerSafe(f).slice(0, 255) || null : null); // as ingest stores it
+    const same = parsed.attachments.find((a) => bytes(a)?.byteLength === meta.size && name(a.filename) === meta.filename);
+    const content = bytes(same);
+    if (!content) throw notFound("Attachment content");
+    return content;
+  };
+  return { meta, open };
 }
 
 export async function markRead(env: AppEnv, accountId: string, id: string, read: boolean) {

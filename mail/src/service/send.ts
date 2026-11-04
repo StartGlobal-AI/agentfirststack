@@ -5,7 +5,7 @@ import { normalizeOutgoingAddress } from "../lib/address";
 import { hasControlChars, headerSafe, isMimeType } from "../lib/headers";
 import { bracketMessageId, buildReferences, replySubject } from "../lib/threading";
 import { type Addr, type InboxRow, type MessageRow, messageSummary, utcDay } from "./format";
-import { assertActive } from "./budgets";
+import { assertActive, maxBlobBytes, storedBlobBytes } from "./budgets";
 import { OVER_BUDGET_TEXT_BYTES, blobKey, capText, insertMessage, overTextBudget, threadUpsert, utf8Bytes } from "./ingest";
 import { getInboxRow, ownershipNotVerified, sharedDomain } from "./inboxes";
 import { getMessageRow } from "./messages";
@@ -337,10 +337,15 @@ async function sendAndStore(
   }
 
   const id = newId("msg");
-  const htmlKey = p.html ? blobKey.html(inbox.id, id) : null;
-  const atts = p.attachments.map((a) => ({ ...a, id: newId("att") }));
+  const html = p.html ? new TextEncoder().encode(p.html) : null;
+  const blobBytes = (html?.byteLength ?? 0) + p.attachments.reduce((n, a) => n + a.bytes.byteLength, 0);
+  // MAX_BLOB_BYTES_PER_ACCOUNT: the message has gone out either way; over the budget, the copy kept
+  // here has its text but no HTML or attachments (so mail others send in cannot block sending).
+  const keepBlobs = blobBytes === 0 || (await storedBlobBytes(env, inbox.account_id)) + blobBytes <= maxBlobBytes(env, standing);
+  const htmlKey = html && keepBlobs ? blobKey.html(inbox.id, id) : null;
+  const atts = keepBlobs ? p.attachments.map((a) => ({ ...a, id: newId("att") })) : [];
   await Promise.all([
-    htmlKey ? env.BLOBS.put(htmlKey, p.html!, { httpMetadata: { contentType: "text/html; charset=utf-8" } }) : null,
+    htmlKey ? env.BLOBS.put(htmlKey, html!, { httpMetadata: { contentType: "text/html; charset=utf-8" } }) : null,
     ...atts.map((a) => env.BLOBS.put(blobKey.attachment(inbox.id, id, a.id), a.bytes, { httpMetadata: { contentType: a.type } })),
   ]);
   const t = threadUpsert(env, inbox, thread.threadId, p.subject, now);
@@ -373,7 +378,7 @@ async function sendAndStore(
     html_key: htmlKey,
     html_size: p.html?.length ?? null,
     raw_key: null,
-    size: (p.text?.length ?? 0) + (p.html?.length ?? 0) + atts.reduce((s, a) => s + a.bytes.byteLength, 0),
+    size: (p.text?.length ?? 0) + (p.html?.length ?? 0) + p.attachments.reduce((s, a) => s + a.bytes.byteLength, 0),
     code: null,
     verify_link: null,
     codes_json: "[]",
@@ -387,7 +392,8 @@ async function sendAndStore(
     sent_at: now,
     sender_key: null,
     automated: 0,
-    attachments_omitted: 0,
+    attachments_omitted: p.attachments.length - atts.length,
+    blob_bytes: keepBlobs ? blobBytes : 0,
   };
   await env.DB.batch([
     t.stmt,
@@ -403,6 +409,12 @@ async function sendAndStore(
     provider_message_id: providerId,
     recipients: n,
     daily: { used: quota.used, limit: quota.limit, day: quota.day },
+    ...(keepBlobs
+      ? {}
+      : {
+          stored_copy: "text_only" as const,
+          note: "Sent in full. This account's stored mail is at its limit, so the copy kept here has the text but not the HTML or attachments. Delete old mail (DELETE /v1/messages/:id, or whole inboxes) to free storage.",
+        }),
     next_steps: [
       `Replies land in the same thread: GET /v1/threads/${t.threadId}, or wait for them with GET /v1/inboxes/${inbox.id}/wait?after=${now}.`,
     ],

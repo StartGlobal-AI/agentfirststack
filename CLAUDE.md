@@ -72,9 +72,11 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
 | `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (`429 signups_paused`) |
 | `MAX_KEYS_PER_ACCOUNT` / `KEYS_HOURLY_LIMIT` (+ `KEY_LIMITER` binding) | all | 25 active (10 unclaimed) / 20 created an hour |
+| `PROJECTS_PER_USER_DAILY_LIMIT` | site | 5 new projects a day per signed-in person (OAuth consent "new project"), on top of the signup limits |
 | `UNCLAIMED_<NAME>` | all | any account cap or daily budget has a lower value for accounts no person has claimed (`capFor()` in `@afs/shared`) |
 | Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows | analytics / tags / replay | per site or container, per account and per deployment, counters never go down; values in the hosted profile |
 | `MAX_CONCURRENT_WAITS` / `MAX_INBOUND_PER_SENDER_PER_DAY` / `MAX_TEXT_BYTES_PER_ACCOUNT` | mail | 3 (2 unclaimed) / 20 / 10 MB |
+| `MAX_BLOB_BYTES_PER_ACCOUNT` | mail | stored mail in R2 per account (default 1 GiB, 256 MiB unclaimed); full = inbound rejected at SMTP |
 | `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` / `MAX_CHUNK_BYTES` / `MAX_SESSION_BYTES` | replay | 5 / 200 / 30 / 14 / 5 / 256 KB / 2 MB (`MAX_SAMPLE_RATE` unset: sites choose); R2 lifecycle deletes chunks after 16 days |
 
 ## Deployments (`pnpm afs`, profiles in `deploy/`)

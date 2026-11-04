@@ -88,7 +88,9 @@ export function parseAuthenticationResults(value: string): ParsedAR {
     const m = /^([a-z0-9_-]+)\s*=\s*([a-z]+)(.*)$/i.exec(p);
     if (!m) continue;
     const props: Record<string, string> = {};
-    for (const kv of m[3]!.matchAll(/([a-z0-9_-]+\.[a-z0-9_-]+)\s*=\s*("[^"]*"|\S+)/gi)) {
+    // The lookbehind starts a property name only at the start of its run: without it a long run of
+    // letters is rescanned from each of its characters (quadratic in a sender-written header).
+    for (const kv of m[3]!.matchAll(/(?<![a-z0-9_-])([a-z0-9_-]+\.[a-z0-9_-]+)\s*=\s*("[^"]*"|\S+)/gi)) {
       props[kv[1]!.toLowerCase()] = kv[2]!.replace(/^"|"$/g, "").toLowerCase();
     }
     methods.push({ method: m[1]!.toLowerCase(), result: m[2]!.toLowerCase(), props });

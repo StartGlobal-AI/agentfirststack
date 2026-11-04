@@ -1,4 +1,4 @@
-import { parse, readJson, readQuery } from "@afs/shared";
+import { assertPermanentKey, parse, readJson, readQuery } from "@afs/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppHono } from "../env";
@@ -141,9 +141,9 @@ api.get("/messages/:id/raw", async (c) => {
 });
 
 api.get("/messages/:id/attachments/:aid", async (c) => {
-  const { meta, body } = await getAttachment(c.env, acct(c), c.req.param("id"), c.req.param("aid"));
+  const { meta, open } = await getAttachment(c.env, acct(c), c.req.param("id"), c.req.param("aid"));
   const name = (meta.filename ?? meta.id).replace(/["\\\r\n]/g, "_");
-  return new Response(body.body, {
+  return new Response(await open(), {
     headers: {
       // Never let a browser render attachment content inline on this origin.
       "content-type": meta.content_type ?? "application/octet-stream",
@@ -209,6 +209,9 @@ api.post("/domains/:domain/verify", async (c) => c.json(await verifyDomain(c.env
 // ---- webhooks -------------------------------------------------------------------------------
 
 api.post("/webhooks", async (c) => {
+  // A webhook keeps sending every email out after the credential that made it is gone, so a
+  // connected app's expiring OAuth token may not create (or re-enable) one.
+  assertPermanentKey(c.var.auth, "create webhooks");
   const body = await readJson(c, z.object(createWebhookShape));
   const r = await createWebhook(c.env, acct(c), body);
   return c.json(r, r.existing ? 200 : 201);

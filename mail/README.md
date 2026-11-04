@@ -26,10 +26,13 @@ curl -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -d '{"
 ```
 internet ─ MX ─► Cloudflare Email Routing (catch-all) ─► Worker email() handler
                    recipient -> inbox (D1), else domain catch-all inbox, else setReject
-                   suspended account / account's daily limit -> setReject (before the body is read)
-                   parse (postal-mime), per-sender daily cap -> setReject
-                                       ─► R2: raw .eml, HTML body, attachments (deleted again if D1 fails)
-                                       ─► D1: message row (+ FTS5 index), extracted codes/links/auth, thread
+                   suspended account / daily limit / storage full -> setReject (before the body is read)
+                   parse the headers only: duplicate? per-sender daily cap -> setReject
+                   parse the body (postal-mime), extract from its first 512 KB (linear scanners)
+                                       ─► R2: raw .eml, HTML body (deleted again if the commit fails)
+                                       ─► D1, one transaction: message row if the daily quota and stored
+                                          bytes still allow (+ FTS5 index, the day's count, attachment
+                                          rows pointing into the raw .eml), extracted codes/links/auth, thread
                                        ─► full inbox: evict the dominant sender's oldest mail
                                        ─► InboxDO.notify() wakes any parked wait_for_email
                                        ─► Queue: webhook deliveries (signed, retried)
@@ -41,7 +44,8 @@ Code layout: `src/index.ts` (Hono app + `fetch`/`email`/`queue`/`scheduled` hand
 shared by both), `src/extract/*` (pure extraction), `src/lib/*` (address rules, threading, DNS,
 Cloudflare API, signing, header hygiene, sender keys), `src/llms.ts`, `src/ui.ts`, `migrations/0002_mail.sql` (schema)
 plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombstones.sql`,
-`0009_abuse_controls.sql` (wait slots, sender keys and counters, daily budgets, text usage, cron state).
+`0009_abuse_controls.sql` (wait slots, sender keys and counters, daily budgets, text usage, cron state),
+`0010_blob_storage.sql` (stored bytes per message and account, attachments served from the raw MIME).
 
 - **Receiving**: Email Routing's catch-all routes every address of a mail domain to this Worker.
   The envelope recipient is lowercased and its `+tag` stripped (`acme+meta@` delivers to `acme@`).
@@ -51,18 +55,29 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   whose ownership challenge has not passed (see Domains). Messages over 25 MB are rejected (Email
   Routing's limit). Also before the body is read: mail for a suspended account is refused with
   `Mailbox unavailable: <address> is not accepting mail` (polite, says nothing about why); with
-  `MAX_INBOUND_PER_ACCOUNT_PER_DAY` set, the account's Nth+1 inbound message of the UTC day is
-  rejected with `Daily limit reached: ...; retry after 00:00 UTC` (one atomic upsert in
-  `inbound_counters`; refunded if the message turns out to be a duplicate, is refused later or
-  fails). A `wait` that times out says so in its hint. After parsing, with
-  `MAX_INBOUND_PER_SENDER_PER_DAY` set, one sender may send one inbox that many messages per UTC
-  day (`Too much mail from <sender> to <address> today (UTC)`), and with the daily account limit
-  set one sender never gets more than half of it, across inboxes (one atomic upsert in
-  `sender_counters`). The sender is a key one party cannot multiply for free
-  (`src/lib/sender.ts`): the registrable domain of whatever authentication vouches for (the From
-  address when `auth.verdict` is `pass`, else the SPF-checked envelope sender, else the DKIM signing
-  domain), or the full address on shared mailbox providers (gmail.com, outlook.com, ...,
-  `MAIL_DOMAIN`). With `MAX_MESSAGES_PER_INBOX` set, a full inbox no longer refuses everyone: after
+  `MAX_INBOUND_PER_ACCOUNT_PER_DAY` set, once the account received N messages in the UTC day new
+  mail is rejected with `Daily limit reached: ...; retry after 00:00 UTC`. The count
+  (`inbound_counters`) only goes up in the transaction that stores a message, and the message's
+  INSERT re-checks it there, so mail that is not stored (a duplicate, refused later, a failed or
+  killed invocation) never uses up the quota, and concurrent deliveries cannot pass it. A `wait`
+  that times out says so in its hint. With `MAX_BLOB_BYTES_PER_ACCOUNT` (on by default, see
+  Storage) the account's stored bytes plus the message's size must fit, or it is rejected with
+  `Mailbox full: ...`. Then the headers alone are parsed (`headerBlock()`): duplicates and the
+  per-sender cap are settled before the body is parsed or extracted, so the cost of a hostile body
+  only ever spends its own sender's allowance. With `MAX_INBOUND_PER_SENDER_PER_DAY` set, one sender
+  may send one inbox that many messages per UTC day (`Too much mail from <sender> to <address>
+  today (UTC)`), and with the daily account limit set one sender never gets more than half of it,
+  across inboxes (one atomic upsert in `sender_counters`). The sender is a key one party cannot
+  multiply for free (`src/lib/sender.ts`): the registrable domain of whatever authentication
+  vouches for (the From address when `auth.verdict` is `pass`, else the SPF-checked envelope
+  sender, else the DKIM signing domain), or the full address on shared mailbox providers
+  (gmail.com, outlook.com, ..., `MAIL_DOMAIN`). Mail nothing vouches for (no SPF, DKIM or DMARC
+  pass on Cloudflare's header) is one sender, `unauthenticated` (`Too much unauthenticated mail
+  ...`): its envelope sender and From are whatever the sender typed, so keying by them would give
+  every forged domain a fresh allowance. Extraction (`src/extract/*`) reads at most 512 KB of the
+  text part and of the HTML, and every scanner in it is linear: tags are found with `indexOf`, and
+  no regex can rescan the rest of the body from each repeat of an unclosed construct (a test runs
+  each extractor over 300 KB of such input). With `MAX_MESSAGES_PER_INBOX` set, a full inbox no longer refuses everyone: after
   each new message is stored, the oldest messages of the sender that holds the most mail in the
   inbox are evicted until it holds N again (one flooder evicts itself; with many senders it is
   simply the oldest mail). A repeated Message-ID in the same inbox is a no-op, so redeliveries
@@ -74,7 +89,18 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   D1 refuses `LIKE` patterns over 50 bytes, which used to make long sender addresses fail.
 - **Storage**: D1 `messages` (headers, envelope, plain text, extracted data, thread_id, direction
   in/out, read flag), an FTS5 table over subject/sender/text kept in sync by triggers; R2 for the
-  raw MIME (`inbox/<id>/<msg>/raw.eml`), the HTML body and attachments. HTML is stored as received
+  raw MIME (`inbox/<id>/<msg>/raw.eml`) and the HTML body. Attachments of received mail are kept
+  once, inside the raw MIME: their D1 rows record their position (`part_index`) and a download
+  parses the stored message to serve them. Sent mail (which has no raw MIME) keeps its HTML and
+  attachments as objects of their own. Each message records the bytes it keeps in R2
+  (`blob_bytes`) and `account_usage.blob_bytes` sums them by trigger, so it always equals what
+  the account's current rows hold and every deletion (by hand, eviction, retention, inbox expiry
+  or deletion) gives the bytes back. `MAX_BLOB_BYTES_PER_ACCOUNT` (default 1 GiB, 256 MiB for
+  unclaimed accounts; `"0"` = off) caps it: inbound mail that does not fit is rejected at SMTP time
+  (`Mailbox full: ...`; checked before the body is read and again, exactly, in the commit), and a
+  sent message still goes out but its stored copy keeps only the text (`stored_copy: "text_only"`),
+  so mail others send in cannot block sending. `GET /v1/inboxes` reports `storage`
+  (`used_bytes`, `limit_bytes`). HTML is stored as received
   (not rewritten); the UI only renders it in a sandboxed iframe (see Human view). Plain text above
   64 KB (UTF-8) is cut in D1 and the message reports `text_truncated: true` (the raw MIME in R2
   keeps everything; for sent mail, which has no raw MIME, the message went out in full). Other
@@ -223,7 +249,14 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   10 s, 30 s, 1 min, 5 min, 15 min, 30 min, 1 h (8 attempts); 410 disables the webhook. Redirects
   are not followed (`redirect: "manual"`): a 3xx is a failed attempt. At most 64 KB of a response
   body is read (a failed delivery's `error` keeps the first 200 characters). URLs must be https
-  (http only for localhost). Same url + inbox again returns the existing webhook. At most
+  (http only for localhost, and only with `DEV_MODE=true`), and never the platform itself: the
+  registrable domain of `PUBLIC_BASE_URL` and of `AUTH_ISSUER` (e.g. `agentfirststack.com`) and
+  all its subdomains are refused (400), checked again before every delivery (a webhook saved
+  under other settings is marked `failed` without a request). Creating a webhook (or re-enabling
+  one by creating it again) needs a permanent API key: a connected app's OAuth access token gets
+  403 `temporary_credential` (`assertPermanentKey`), since a webhook would keep receiving every
+  email after the token is gone; it is the only thing in mail that keeps sending data out (catch-all
+  inboxes and custom domains route mail into the account). Same url + inbox again returns the existing webhook. At most
   `MAX_WEBHOOKS_PER_ACCOUNT` (default 10) webhooks per account (403 `quota_exceeded`). Fan-out is
   enqueued in `sendBatch` calls of at most 100 messages / 200 KB, under the Queues limits.
   `POST /webhooks/:id/test` is rate limited per account (`WEBHOOK_TEST_LIMITER`, 429
@@ -306,12 +339,13 @@ served with a strict CSP.
 
 | Var / secret | |
 |---|---|
-| `PUBLIC_BASE_URL` | var; URL used in responses and llms.txt (default: request origin) |
+| `PUBLIC_BASE_URL` | var; URL used in responses and llms.txt (default: request origin). Its registrable domain and subdomains, and `AUTH_ISSUER`'s, are off limits to webhooks |
+| `DEV_MODE` | var; `"true"` only for local development (`.dev.vars`): webhooks may use `http://localhost`. Template default `"false"` |
 | `MAIL_DOMAIN` | var; shared domain for instant inboxes (placeholder `mail.example.com`; see operator setup) |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth (`SIGNUP_MODE` is a var, the tokens are secrets). `ADMIN_TOKEN` also authorises `auto_configure`/`force` (request header `x-admin-token`) and keys domain ownership challenges when `ENCRYPTION_KEY` is unset |
 | `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SEND_DAILY_LIMIT` | var, default 200 recipients per account per UTC day |
-| `UNCLAIMED_<name>` | optional vars; for `SEND_DAILY_LIMIT` and every per-account cap below (`MAX_INBOXES_PER_ACCOUNT`, `MAX_INBOX_CREATES_PER_DAY`, `MAX_INBOX_DELETES_PER_DAY`, `MAX_MESSAGES_PER_INBOX`, `MAX_INBOUND_PER_ACCOUNT_PER_DAY`, `MAX_INBOUND_PER_SENDER_PER_DAY`, `MAX_TEXT_BYTES_PER_ACCOUNT`, `MAX_CONCURRENT_WAITS`, `MAX_CONCURRENT_WAITS_PER_INBOX`, `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_TESTS_PER_DAY`): the value for accounts no person has claimed (`capFor` in `@afs/shared`). For any cap, `"0"` means none allowed and unset means the default (or no cap) |
+| `UNCLAIMED_<name>` | optional vars; for `SEND_DAILY_LIMIT` and every per-account cap below (`MAX_INBOXES_PER_ACCOUNT`, `MAX_INBOX_CREATES_PER_DAY`, `MAX_INBOX_DELETES_PER_DAY`, `MAX_MESSAGES_PER_INBOX`, `MAX_INBOUND_PER_ACCOUNT_PER_DAY`, `MAX_INBOUND_PER_SENDER_PER_DAY`, `MAX_TEXT_BYTES_PER_ACCOUNT`, `MAX_BLOB_BYTES_PER_ACCOUNT`, `MAX_CONCURRENT_WAITS`, `MAX_CONCURRENT_WAITS_PER_INBOX`, `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_TESTS_PER_DAY`): the value for accounts no person has claimed (`capFor` in `@afs/shared`). For any cap, `"0"` means none allowed (except `MAX_BLOB_BYTES_PER_ACCOUNT`, where it turns the cap off) and unset means the default (or no cap) |
 | `WORKER_NAME` | var; must equal the Worker name (`sg-mail`); auto_configure points catch-alls at it |
 | `ENCRYPTION_KEY` | secret; 32-byte base64 (`openssl rand -base64 32`), seals webhook secrets and keys domain ownership challenges. Without it webhook secrets are stored unsealed (`plain:` prefix), and without it and `ADMIN_TOKEN` custom domains are refused. Changing it changes the challenge of domains whose ownership is still pending |
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID` | optional secrets; enable `auto_configure` (operator only). Token: Zone Read, Zone Settings Edit, Email Routing Rules Edit, Email Sending Edit on the zones it may configure |
@@ -326,6 +360,7 @@ served with a strict CSP.
 | `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | optional var; inbound messages an account may receive per UTC day across its inboxes, more are rejected at SMTP time; one sender gets at most half of it (unset = no cap) |
 | `MAX_INBOUND_PER_SENDER_PER_DAY` | optional var; inbound messages one sender key may send one inbox per UTC day, more from it are rejected (unset = no cap) |
 | `MAX_TEXT_BYTES_PER_ACCOUNT` | optional var; UTF-8 bytes of stored text and links per account; beyond it new mail keeps a 2 KB excerpt (unset = no budget) |
+| `MAX_BLOB_BYTES_PER_ACCOUNT` | var; bytes of mail an account keeps in R2 (raw MIME, HTML bodies, sent attachments); beyond it inbound mail is rejected (`Mailbox full`) and sent mail keeps a text-only copy. Default 1 GiB, 256 MiB for unclaimed accounts (`UNCLAIMED_MAX_BLOB_BYTES_PER_ACCOUNT` overrides that); `"0"` = off |
 | `MAX_CONCURRENT_WAITS` | optional var; parked waits per account (default 3) |
 | `MAX_CONCURRENT_WAITS_PER_INBOX` | optional var; parked waits per inbox (default 2) |
 | `MAX_WEBHOOKS_PER_ACCOUNT` | optional var; webhooks per account (default 10) |
@@ -424,9 +459,18 @@ pnpm smoke                   # against BASE (default http://localhost:8789); nee
   attachment cap and the orphan sweep, per-sender caps and eviction, tombstone expiry and daily
   create/delete caps, strict latest-code, the text budget, delivery-log purge, webhook-test limits,
   scoped search, first-header-only auth trust, reply_only and automated mail, and the REST
-  untrusted markers.
+  untrusted markers; `hardening.test.ts` (with `test/unit/hardening-pure.test.ts`), one group per
+  finding of the pre-public review: every extractor over 300 KB of hostile input (unclosed tags,
+  comments, anchors, long runs) in well under a second, the daily quota counted only for stored
+  mail and re-checked in the commit (also under concurrency), unauthenticated senders sharing one
+  allowance, the stored-bytes budget (SMTP rejection, exact re-check, given back on delete,
+  eviction, retention and inbox deletion, `UNCLAIMED_`, `"0"`), attachments stored once and served
+  from the raw MIME, text-only copies of sent mail over the budget, webhooks refused (and not
+  delivered) to the platform's own hosts or plain http outside `DEV_MODE`, and OAuth access tokens
+  refused for webhook creation.
 - `scripts/smoke.sh`: the full path over HTTP against `wrangler dev`, including a local webhook
-  receiver (`scripts/webhook-receiver.mjs`) that verifies signatures.
+  receiver (`scripts/webhook-receiver.mjs`) that verifies signatures; it needs `DEV_MODE=true` in
+  `.dev.vars` (see `.dev.vars.example`) for its `http://127.0.0.1` webhook.
 
 ## Not yet (v2)
 

@@ -1,9 +1,27 @@
 import { ApiError, accountSuspended } from "@afs/shared";
-import type { AppEnv, Standing } from "../env";
+import { type AppEnv, type Standing, cap } from "../env";
 import { utcDay } from "./format";
 
 /** Kinds of per-account daily budget kept in `account_daily`. */
 export type DailyKind = "inbox_create" | "inbox_delete" | "webhook_test";
+
+/** MAX_BLOB_BYTES_PER_ACCOUNT defaults (claimed / unclaimed accounts). */
+export const DEFAULT_MAX_BLOB_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_UNCLAIMED_MAX_BLOB_BYTES = 256 * 1024 * 1024;
+
+/** Bytes of mail an account may keep in R2: MAX_BLOB_BYTES_PER_ACCOUNT (UNCLAIMED_ via capFor), "0" = no cap. */
+export function maxBlobBytes(env: AppEnv, standing: Standing): number {
+  const n = cap(env, standing, "MAX_BLOB_BYTES_PER_ACCOUNT", standing.claimed ? DEFAULT_MAX_BLOB_BYTES : DEFAULT_UNCLAIMED_MAX_BLOB_BYTES);
+  return n === 0 ? Number.POSITIVE_INFINITY : n;
+}
+
+/** Bytes the account's current messages keep in R2 (kept by triggers in account_usage). */
+export async function storedBlobBytes(env: AppEnv, accountId: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT blob_bytes FROM account_usage WHERE account_id = ?")
+    .bind(accountId)
+    .first<{ blob_bytes: number }>();
+  return row?.blob_bytes ?? 0;
+}
 
 /** Throws account_suspended (403) for a suspended account. */
 export function assertActive(standing: Standing): void {

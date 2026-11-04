@@ -85,18 +85,26 @@ curl -s -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -H 
 - \`preview\`: ~160 chars of plain text.
 - \`text\` is stored up to 64 KB (UTF-8); longer bodies are cut and the message has \`text_truncated: true\`
   (\`GET /v1/messages/:id/raw\` still has everything). Subject (2,000 chars), sender name (500), To/Cc (100 each)
-  and link URLs (4,096 chars; longer links are dropped) are bounded too. At most 50 attachments are stored per message
-  (\`attachments_omitted\` counts the rest, which stay in the raw MIME); filenames are cut at 255 characters. Malformed
-  attachment content types become application/octet-stream.
+  and link URLs (4,096 chars; longer links are dropped) are bounded too. Codes and links are extracted from the first
+  512 KB of the text part and of the HTML. At most 50 attachments are listed per message (\`attachments_omitted\` counts
+  the rest, which stay in the raw MIME); attachments are kept once, inside the raw MIME, and served from it. Filenames
+  are cut at 255 characters. Malformed attachment content types become application/octet-stream.
 
 ## Inbound limits (when the operator sets them)
 
 - \`MAX_MESSAGES_PER_INBOX\`: what an inbox holds. New mail is still accepted: the oldest message of the sender that
   holds the most mail in the inbox is deleted to make room, so one flooder cannot block it.
 - \`MAX_INBOUND_PER_SENDER_PER_DAY\`: messages one sender may send one inbox per UTC day ("Too much mail from <sender>
-  ..."). A sender is its registrable domain (random addresses and subdomains count together) or, on shared mailbox
-  providers such as gmail.com, the address. One sender also never gets more than half of the account's daily quota.
+  ..."). A sender is what authentication vouches for: its registrable domain (random addresses and subdomains count
+  together) or, on shared mailbox providers such as gmail.com, the address. All mail with no SPF, DKIM or DMARC pass
+  is one sender, "unauthenticated" ("Too much unauthenticated mail ..."), whatever domain it claims. One sender also
+  never gets more than half of the account's daily quota. Checked from the headers, before the body is read.
 - \`MAX_INBOUND_PER_ACCOUNT_PER_DAY\`: the account's inbound mail per UTC day, across inboxes ("Daily limit reached: ...").
+  Only stored messages count (not rejected mail or redeliveries).
+- \`MAX_BLOB_BYTES_PER_ACCOUNT\` (on by default: 1 GiB, 256 MiB until a person claims the account): bytes of mail the
+  account keeps (raw messages, HTML bodies, attachments of sent mail). When full, new mail is rejected ("Mailbox full:
+  ...") until you delete old mail (messages, inboxes; expiry and retention free it too). Sending still works, but the
+  copy kept of a sent message is text only (\`stored_copy: "text_only"\`). \`GET /v1/inboxes\` shows \`storage\`.
 - \`MAX_TEXT_BYTES_PER_ACCOUNT\`: stored text per account; beyond it new mail keeps a 2 KB excerpt and 10 links in the
   API (\`text_truncated: true\`; codes are still extracted from all of it; the raw MIME keeps everything).
 - Senders get the rejection; a \`wait\` that times out says in its hint when the daily limit is the reason.
@@ -121,7 +129,7 @@ curl -s -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -H 
   \`ttl_days\`: inbox and its mail are deleted after that many days. \`display_name\`: line breaks and other
   control characters are replaced by spaces.
   \`curl -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -d '{"username":"acme-ads","ttl_days":7}'\`
-- \`GET /v1/inboxes?limit=&domain=\` -> \`{ inboxes, shared_domain }\`
+- \`GET /v1/inboxes?limit=&domain=\` -> \`{ inboxes, shared_domain, storage: { used_bytes, limit_bytes } }\` (limit_bytes null = no cap)
 - \`GET /v1/inboxes/:id\` -> \`{ inbox }\` incl. message_count, unread_count
 - \`PATCH /v1/inboxes/:id\` \`{ display_name?, ttl_days? (null = forever) }\`
 - \`DELETE /v1/inboxes/:id\` -> deletes the inbox, its messages, attachments and raw MIME; \`address_reserved_until\` says
@@ -147,6 +155,7 @@ curl -s -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -H 
 
 ### Sending
 - \`POST /v1/inboxes/:id/send\` \`{ to, cc?, bcc?, subject, text?, html?, reply_to?, attachments?, headers? }\` -> 201 \`{ message, provider_message_id, recipients, daily, next_steps }\`
+  (plus \`stored_copy: "text_only"\` and a \`note\` when the account's storage is full: sent in full, kept without HTML/attachments)
   to/cc/bcc: an address or list (max 50 in total). At least one of text/html (text is derived from html if missing).
   attachments: \`[{ filename, content (base64), content_type?, disposition?: "attachment"|"inline", content_id? }]\` (max 32, 25 MiB total).
   headers: X-* custom headers only. From is always the inbox address (display_name as the name).
@@ -196,6 +205,10 @@ curl -s -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -H 
 - \`POST /v1/webhooks\` \`{ url, events?: ["message.received"], inbox_id? }\` -> 201 \`{ webhook, secret }\`. The secret is shown ONCE.
   Same url+inbox again returns the existing webhook (no secret; delete and recreate to rotate).
   At most MAX_WEBHOOKS_PER_ACCOUNT webhooks per account (default 10): 403 \`quota_exceeded\` beyond that.
+  \`url\` must be https (http://localhost only when the deployment runs with DEV_MODE=true) and not this platform's
+  own domain or any of its subdomains (400); deliveries re-check it.
+  Needs the project's own API key: a connected app's OAuth access token gets 403 \`temporary_credential\` (a webhook
+  would keep receiving mail after the token expires). Listing, testing and deleting work with either.
 - \`GET /v1/webhooks\`, \`GET /v1/webhooks/:id\` (last 20 deliveries), \`DELETE /v1/webhooks/:id\`
 - \`POST /v1/webhooks/:id/test\` -> queues a signed \`webhook.test\` event, sent once (no retries); check
   \`GET /v1/webhooks/:id\`. Rate limited per account (429 \`rate_limited\`) and capped per UTC day by
@@ -225,7 +238,7 @@ Read-only keys see only the read tools. Operator-only arguments (\`auto_configur
 | Tool | Does | REST equivalent |
 |---|---|---|
 | create_inbox { username?, domain?, display_name?, ttl_days? } | new address | POST /v1/inboxes |
-| list_inboxes { limit? } | | GET /v1/inboxes |
+| list_inboxes { limit? } | incl. storage used / limit | GET /v1/inboxes |
 | get_inbox { inbox_id } | | GET /v1/inboxes/:id |
 | update_inbox { inbox_id, display_name?, ttl_days? } | | PATCH /v1/inboxes/:id |
 | delete_inbox { inbox_id } | destructive | DELETE /v1/inboxes/:id |
@@ -248,7 +261,7 @@ Read-only keys see only the read tools. Operator-only arguments (\`auto_configur
 | update_domain { domain, catch_all_inbox_id?, auto_configure?, force? } | | PATCH /v1/domains/:domain |
 | delete_domain { domain, delete_inboxes? } | destructive | DELETE /v1/domains/:domain |
 | verify_domain { domain } | live DNS check | POST /v1/domains/:domain/verify |
-| create_webhook { url, events?, inbox_id? } | returns secret once | POST /v1/webhooks |
+| create_webhook { url, events?, inbox_id? } | returns secret once; not with an OAuth token | POST /v1/webhooks |
 | list_webhooks {} | | GET /v1/webhooks |
 | get_webhook { webhook_id } | recent deliveries | GET /v1/webhooks/:id |
 | test_webhook { webhook_id } | | POST /v1/webhooks/:id/test |
@@ -268,7 +281,8 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | SEND_DAILY_LIMIT | var | per-account recipients per UTC day, default 200 |
 | UNCLAIMED_<name> | var | optional; for every per-account cap below (and SEND_DAILY_LIMIT): the value for accounts no person has claimed yet |
 | WORKER_NAME | var | this Worker's name; auto_configure points catch-all rules at it |
-| PUBLIC_BASE_URL | var | URL used in responses (default: request origin) |
+| PUBLIC_BASE_URL | var | URL used in responses (default: request origin); its domain and subdomains (and AUTH_ISSUER's) are off limits to webhooks |
+| DEV_MODE | var | "true" only for local development: webhooks may use http://localhost |
 | SIGNUP_MODE, SIGNUP_TOKEN, ADMIN_TOKEN | var/secrets | open / token / closed signup; ADMIN_TOKEN is also the x-admin-token for auto_configure/force and the fallback key for ownership challenges |
 | ENCRYPTION_KEY | secret | 32-byte base64; seals webhook secrets at rest and keys domain ownership challenges (without it and ADMIN_TOKEN, no custom domains) |
 | CF_API_TOKEN, CF_ACCOUNT_ID | secrets | optional; enable auto_configure for custom domains (operator only) |
@@ -282,6 +296,7 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | MAX_INBOUND_PER_ACCOUNT_PER_DAY | var | optional; inbound messages per account per UTC day (more are rejected at SMTP time) |
 | MAX_INBOUND_PER_SENDER_PER_DAY | var | optional; inbound messages per sender per inbox per UTC day (more from that sender are rejected) |
 | MAX_TEXT_BYTES_PER_ACCOUNT | var | optional; stored text bytes per account (beyond it, new mail keeps an excerpt) |
+| MAX_BLOB_BYTES_PER_ACCOUNT | var | stored mail bytes per account (raw MIME, HTML, sent attachments), default 1 GiB (256 MiB unclaimed); full = inbound rejected; "0" = off |
 | MAX_CONCURRENT_WAITS, MAX_CONCURRENT_WAITS_PER_INBOX | var | optional; parked waits per account (default 3) / per inbox (default 2) |
 | MAX_WEBHOOKS_PER_ACCOUNT | var | optional; webhooks per account, default 10 |
 | MAX_WEBHOOK_TESTS_PER_DAY | var | optional; webhook test events per account per UTC day |
@@ -291,6 +306,6 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 Inbound messages up to 25 MB; stored text up to 64 KB (text_truncated); 50 stored attachments. Sending: 50 recipients,
 32 attachments, 25 MiB per message; custom headers X-* only. Waits up to 120 s, 3 at once per account by default. Search:
 words of 3+ characters, all must appear. Webhooks: 10 per account unless the operator says otherwise. "0" for a cap
-means none allowed.
+means none allowed (except MAX_BLOB_BYTES_PER_ACCOUNT, where "0" turns the cap off).
 `;
 }

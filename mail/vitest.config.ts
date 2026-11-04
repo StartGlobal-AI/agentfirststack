@@ -21,6 +21,8 @@ export default defineConfig({
                 // Fair-use controls stay off in tests (deployments may turn them on); fair-use tests set their own.
                 MAIL_DOMAIN: "mail.example.com",
                 PUBLIC_BASE_URL: "",
+                // As deployed, whatever a local .dev.vars says; tests that need it set DEV_MODE themselves.
+                DEV_MODE: "false",
                 SIGNUP_HOURLY_LIMIT: "0",
                 SHARED_SEND_POLICY: "",
                 SHARED_RETENTION_DAYS: "",
@@ -33,6 +35,8 @@ export default defineConfig({
                 ADDRESS_TOMBSTONE_DAYS: "",
                 MAX_INBOUND_PER_SENDER_PER_DAY: "",
                 MAX_TEXT_BYTES_PER_ACCOUNT: "",
+                // Unset: the safe default applies (1 GiB, 256 MiB unclaimed); its tests set their own.
+                MAX_BLOB_BYTES_PER_ACCOUNT: "",
                 MAX_CONCURRENT_WAITS: "",
                 MAX_CONCURRENT_WAITS_PER_INBOX: "",
                 MAX_WEBHOOK_TESTS_PER_DAY: "",
@@ -46,6 +50,7 @@ export default defineConfig({
                     "MAX_INBOUND_PER_ACCOUNT_PER_DAY",
                     "MAX_INBOUND_PER_SENDER_PER_DAY",
                     "MAX_TEXT_BYTES_PER_ACCOUNT",
+                    "MAX_BLOB_BYTES_PER_ACCOUNT",
                     "MAX_CONCURRENT_WAITS",
                     "MAX_CONCURRENT_WAITS_PER_INBOX",
                     "MAX_WEBHOOKS_PER_ACCOUNT",

@@ -1,5 +1,6 @@
 import { ApiError, badRequest, decryptSecret, encryptSecret, newId, notFound } from "@afs/shared";
-import { type AppEnv, type Standing, type WebhookEvent, type WebhookJob, cap, standingOf } from "../env";
+import { type AppEnv, type Standing, type WebhookEvent, type WebhookJob, cap, isDevMode, standingOf } from "../env";
+import { registrableDomain } from "../lib/sender";
 import { newWebhookSecret, signPayload } from "../lib/signing";
 import { assertActive, dailyLimitError, rateLimit, refundDaily, reserveDaily } from "./budgets";
 import { getInboxRow } from "./inboxes";
@@ -48,25 +49,107 @@ interface DeliveryRow {
   updated_at: number;
 }
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", "0.0.0.0"]);
+const isLocalHost = (h: string) => LOCAL_HOSTS.has(h) || h.endsWith(".localhost");
+const isIpLiteral = (h: string) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(h) || h.startsWith("[");
 
-export function validateWebhookUrl(raw: string): string {
+/**
+ * Hosting suffixes under which every name belongs to a different customer (a small slice of the
+ * Public Suffix List's private section): the deployment's own unit there is one label below.
+ */
+const SHARED_HOSTING_SUFFIXES = [
+  "workers.dev",
+  "pages.dev",
+  "trycloudflare.com",
+  "herokuapp.com",
+  "vercel.app",
+  "netlify.app",
+  "github.io",
+  "fly.dev",
+  "onrender.com",
+  "appspot.com",
+  "azurewebsites.net",
+  "cloudfront.net",
+];
+
+/** The registrable parent of a public host: example.com for mail.example.com, acme.workers.dev for afs-mail.acme.workers.dev. */
+export function apexOf(host: string): string {
+  for (const sfx of SHARED_HOSTING_SUFFIXES) {
+    if (host === sfx) return host;
+    if (host.endsWith(`.${sfx}`))
+      return `${host
+        .slice(0, -(sfx.length + 1))
+        .split(".")
+        .pop()}.${sfx}`;
+  }
+  return registrableDomain(host);
+}
+
+/**
+ * The deployment's own hosts, from PUBLIC_BASE_URL and AUTH_ISSUER: each one's registrable parent
+ * (the platform apex), which covers every app of the platform as a subdomain. A local or IP host
+ * is kept as an exact origin instead (in development another port is another service).
+ */
+export function deploymentHosts(env: Pick<AppEnv, "PUBLIC_BASE_URL" | "AUTH_ISSUER">): { apex: string[]; origins: URL[] } {
+  const apex = new Set<string>();
+  const origins: URL[] = [];
+  for (const v of [env.PUBLIC_BASE_URL, env.AUTH_ISSUER]) {
+    if (!v) continue;
+    let u: URL;
+    try {
+      u = new URL(v);
+    } catch {
+      continue;
+    }
+    const h = u.hostname.toLowerCase().replace(/\.$/, "");
+    if (!h) continue;
+    if (isLocalHost(h) || isIpLiteral(h)) origins.push(u);
+    else apex.add(apexOf(h));
+  }
+  return { apex: [...apex], origins };
+}
+
+/**
+ * Why `raw` may not be a webhook URL here, or null. https only (http://localhost and other local
+ * hosts only with DEV_MODE=true), no credentials, and never the deployment itself: not its apex
+ * (from PUBLIC_BASE_URL / AUTH_ISSUER) or any subdomain, so a webhook cannot make the platform
+ * call its own services. Checked when a webhook is created and again before every delivery.
+ */
+export function webhookUrlProblem(raw: string, env: Pick<AppEnv, "PUBLIC_BASE_URL" | "AUTH_ISSUER" | "DEV_MODE">): string | null {
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
-    throw badRequest("url is not a valid URL.", "Pass an absolute https:// URL that accepts POST.");
+    return "not a valid URL";
   }
-  const local = LOCAL_HOSTS.has(u.hostname) || u.hostname.endsWith(".localhost");
-  if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) {
-    throw badRequest(
-      "Webhook URLs must use https.",
-      "Use an https:// endpoint (plain http is only accepted for localhost during development).",
-    );
+  const h = u.hostname.toLowerCase().replace(/\.$/, "");
+  const local = isLocalHost(h);
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && local && isDevMode(env))) {
+    return isDevMode(env) ? "must use https (or http://localhost)" : "must use https";
   }
-  if (u.username || u.password)
+  if (local && !isDevMode(env)) return "localhost is only allowed with DEV_MODE=true";
+  if (u.username || u.password) return "credentials in the URL are not allowed";
+  const own = deploymentHosts(env);
+  if (own.apex.some((a) => h === a || h.endsWith(`.${a}`))) return `points at this deployment (${h})`;
+  if (own.origins.some((o) => o.hostname.toLowerCase() === h && o.port === u.port)) return `points at this deployment (${u.host})`;
+  return null;
+}
+
+export function validateWebhookUrl(raw: string, env: Pick<AppEnv, "PUBLIC_BASE_URL" | "AUTH_ISSUER" | "DEV_MODE">): string {
+  const problem = webhookUrlProblem(raw, env);
+  if (!problem) return new URL(raw).toString();
+  if (problem === "not a valid URL") throw badRequest("url is not a valid URL.", "Pass an absolute https:// URL that accepts POST.");
+  if (problem.startsWith("credentials"))
     throw badRequest("Credentials in webhook URLs are not allowed.", "Verify requests with the x-signature header instead.");
-  return u.toString();
+  if (problem.startsWith("points at"))
+    throw badRequest(
+      `Webhook URL ${problem}.`,
+      "Webhooks can't call this platform's own hosts (its domain or any subdomain). Point it at your own endpoint.",
+    );
+  throw badRequest(
+    `Webhook URLs ${problem.startsWith("localhost") ? "can't use localhost here" : "must use https"}.`,
+    "Use a public https:// endpoint that accepts POST (plain http://localhost is only accepted when the deployment runs with DEV_MODE=true, i.e. local development).",
+  );
 }
 
 async function seal(env: AppEnv, secret: string): Promise<string> {
@@ -123,7 +206,7 @@ export async function createWebhook(
 ) {
   const standing = await standingOf(env, accountId);
   assertActive(standing);
-  const url = validateWebhookUrl(input.url);
+  const url = validateWebhookUrl(input.url, env);
   const events = [...new Set(input.events?.length ? input.events : ["message.received"])];
   for (const e of events) {
     if (!(WEBHOOK_EVENTS as readonly string[]).includes(e))
@@ -401,6 +484,16 @@ export async function deliverBatch(batch: MessageBatch<WebhookJob>, env: AppEnv,
       continue;
     }
     const attempt = msg.attempts;
+    // Re-checked at send time: PUBLIC_BASE_URL / AUTH_ISSUER / DEV_MODE may have changed since the
+    // webhook was saved, and webhooks saved before these rules existed are held to them too.
+    const problem = webhookUrlProblem(w.url, env);
+    if (problem) {
+      await env.DB.prepare("UPDATE webhook_deliveries SET status = 'failed', attempts = ?, error = ?, updated_at = ? WHERE id = ?")
+        .bind(attempt, `webhook URL not allowed: ${problem}; not delivered`, Date.now(), job.delivery_id)
+        .run();
+      msg.ack();
+      continue;
+    }
     if ((await standingOf(env, w.account_id)).suspended) {
       await env.DB.prepare("UPDATE webhook_deliveries SET status = 'failed', attempts = ?, error = ?, updated_at = ? WHERE id = ?")
         .bind(attempt, "account suspended: not delivered", Date.now(), job.delivery_id)

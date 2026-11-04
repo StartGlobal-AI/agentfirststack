@@ -1,4 +1,4 @@
-import { toBase64 } from "@afs/shared";
+import { assertPermanentKey, toBase64 } from "@afs/shared";
 import type { ToolRegistrar } from "@afs/shared/mcp";
 import { z } from "zod";
 import type { AppEnv } from "./env";
@@ -70,7 +70,8 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     "list_inboxes",
     {
       title: "List inboxes",
-      description: "All inboxes of this account, newest first, plus the shared domain name.",
+      description:
+        "All inboxes of this account, newest first, plus the shared domain name and `storage` (bytes of mail kept / the limit; when full, new mail is rejected until old mail is deleted).",
       input: { limit: z.number().int().min(1).max(500).optional() },
     },
     (i) => listInboxes(env, a, i),
@@ -223,7 +224,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
       input: { message_id: z.string(), attachment_id: z.string() },
     },
     async (i) => {
-      const { meta, body } = await getAttachment(env, a, i.message_id, i.attachment_id);
+      const { meta, open } = await getAttachment(env, a, i.message_id, i.attachment_id);
       const base = { notice: UNTRUSTED_NOTICE, id: meta.id, filename: meta.filename, content_type: meta.content_type, size: meta.size };
       if (meta.size > 2 * 1024 * 1024)
         return {
@@ -231,7 +232,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
           content: null,
           hint: `Too large for MCP; download GET /v1/messages/${i.message_id}/attachments/${i.attachment_id}.`,
         };
-      const bytes = new Uint8Array(await body.arrayBuffer());
+      const bytes = new Uint8Array(await new Response(await open()).arrayBuffer());
       if (/^text\/|json|xml|csv/.test(meta.content_type ?? ""))
         return { ...base, encoding: "utf8", content: fence("ATTACHMENT", new TextDecoder().decode(bytes)) };
       return { ...base, encoding: "base64", content_base64: toBase64(bytes) };
@@ -393,11 +394,14 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Create webhook",
       description:
-        'POST a signed JSON event to your URL whenever mail arrives (message.received), optionally for one inbox. Returns `secret` once; each delivery has x-signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>. Retried with backoff for ~2 h on non-2xx; redirects are not followed (3xx = failure). Same URL+inbox again returns the existing webhook. Accounts have a webhook limit (403 quota_exceeded).',
+        "POST a signed JSON event to your URL whenever mail arrives (message.received), optionally for one inbox. Returns `secret` once; each delivery has x-signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>. Retried with backoff for ~2 h on non-2xx; redirects are not followed (3xx = failure). https only, and not this platform's own hosts. Same URL+inbox again returns the existing webhook. Accounts have a webhook limit (403 quota_exceeded). Needs the project's own API key: a connected app's OAuth access token gets 403 temporary_credential (a webhook would outlive it).",
       input: createWebhookShape,
       openWorld: true,
     },
-    (i) => createWebhook(env, a, i),
+    (i) => {
+      assertPermanentKey(t.auth, "create webhooks"); // a webhook would keep receiving mail after the token expires
+      return createWebhook(env, a, i);
+    },
   );
 
   t.read("list_webhooks", { title: "List webhooks", description: "Your webhooks with the status of their last delivery.", input: {} }, () =>

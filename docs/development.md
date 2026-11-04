@@ -32,6 +32,7 @@ Useful local hooks:
   unless `DEV_MODE` is exactly `true`.
 - **analytics:** `DEV_MODE=true` honours `x-dev-geo-*` headers, so you can fake countries.
 - **tags:** `DEV_MODE=true` allows `http://localhost` webhook destinations.
+- **mail:** `DEV_MODE=true` allows `http://localhost` webhooks (the smoke script uses one).
 - **mail:** deliver a test message to the `email()` handler with
   `curl -X POST "localhost:8789/cdn-cgi/local/email?from=a@b.test&to=<inbox>" --data-binary @message.eml`.
   Sends land in `.wrangler/tmp/email/`.

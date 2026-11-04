@@ -8,14 +8,28 @@ All notable changes to this project. The format follows
 
 ### Security
 
+- **Pre-launch review** (two independent reviews of the whole codebase before the repo went public). Identity and control plane:
+  - Creating a project while connecting an app over OAuth goes through the signup gate (`SIGNUP_MODE`, network and deployment-wide counts) plus `PROJECTS_PER_USER_DAILY_LIMIT` (default 5).
+  - Keys made with a person's dashboard key are revoked when that person leaves; a connected app's token revokes only its own tokens; each OAuth refresh revokes the access tokens issued before it.
+  - Signup refuses cross-site browser requests; claim links die with the key that asked for them; Google sign-in state is a `__Host-` cookie; OAuth redirect URIs can't point at the platform's own hosts.
+  - Auth and account standing no longer fail open on database errors; internal calls can't change a suspended account.
+  - Deploys turn off `workers.dev` and preview URLs (they'd skip the zone's WAF) and give `ADMIN_TOKEN` only to the site and mail. `deploy/hosted.json` is no longer in the repo.
 - **Abuse and cost controls across the platform**, after a full audit of the free hosted service.
   - Account suspension (`pnpm afs suspend`), and lower `UNCLAIMED_*` caps for accounts no person has claimed.
   - Signup limits per network per day (IPv6 grouped by /48) and a deployment-wide hourly breaker; caps on API keys.
   - Daily budgets that never reset for analytics events, tags deliveries and events, replay sessions, chunks, bytes and derived rows, and mail inbound per sender; Workers rate-limit bindings in every app; Cloudflare edge rules on the hosted zone.
   - Replay requires a browser Origin and the page host, verifies domain ownership (snippet on the homepage or a `_afs-verify` TXT record) before more than a trial, purges through per-site alarms, masks more, and quotes transcript fields.
   - Tags: webhooks get matched conversions only, a circuit breaker per destination, the analytics destination is locked to the deployment's analytics, custom code needs a verified domain and a claimed account, and browser hits can no longer claim users or consent.
+  - Tags: daily event budgets per account (`MAX_EVENTS_PER_ACCOUNT_PER_DAY`) and deployment-wide (`MAX_EVENTS_PER_DAY`, lower `UNCLAIMED_` value on the same counter), reported to D1 by each container's Durable Object at most once a minute (migration `tags/0007_event_budgets.sql`); past them `/collect` and backend events answer `429 quota_exceeded` until 00:00 UTC.
+  - Tags: webhooks can't call any host of the platform (the apex the deployment's hosts share and every subdomain, IP literals and local names too) and their answers are summarized with anything key-like redacted; OAuth access tokens can't add destinations or change their URL or credentials (`403 temporary_credential`); domain proof counts only a real `<script src>` tag on the bare homepage; the Google Ads token cache is keyed by a hash of the full credentials.
   - Analytics: a stricter SQL guard with a query-plan cost bound, hostnames default to the site's domain, storage and retention bounds, opt-in browser revenue.
+  - Replay: domain proof counts only a parsed `<script src>` tag (the loader, or the linked analytics tracker) on exactly `https://<domain>/`, which verify fetches itself; a `url` with a query string, fragment or other path never counts, and a loader URL in inline code or echoed text is reported, not accepted (a search page repeating `?s=/r/<id>.js` verified someone else's domain).
+  - Analytics: payments, API and signed Stripe webhooks alike, count against the site's, account's and deployment's daily event budgets (an account picks its own signing secret; past them Stripe gets `429` and retries), and the Stripe delivery status is written at most every 5 seconds per site.
+  - Analytics: `replay_site_id` is set only by the replay service over internal auth (`403 replay_link_from_replay` for API keys), so a site can't load another account's recorder.
+  - Analytics and replay: OAuth access tokens can't create share links or connect Stripe (`403 temporary_credential`), since those outlive the token.
+  - Analytics: share links need a verified domain: verify now proves it (the tracker in a `<script src>` tag on exactly `https://<domain>/`, or DNS TXT `_afs-verify.<domain>` = `afs-analytics-site=<id>`; migration `analytics/0009_domain_verification.sql`). Share pages name the verified domain, never the site's free-form name, say the numbers come from the site's own tracker, and show "Unverified site" after a domain change.
   - Mail: waits hibernate and are capped, attachments can't leak in R2, per-sender caps, `latest-code` trusts only authenticated mail from the exact domain, forged `Authentication-Results` and mailing lists no longer unlock replies.
+  - Mail: extraction is linear on hostile HTML and text (no backtracking regex; at most 512 KB of each body is read), the per-sender cap runs on the headers before the body is parsed, the daily inbound quota counts only stored mail (in the commit, so killed or concurrent deliveries can't use it up), and unauthenticated mail shares one per-sender allowance; a stored-bytes cap per account (`MAX_BLOB_BYTES_PER_ACCOUNT`, default 1 GiB / 256 MiB unclaimed, `"0"` = off; `Mailbox full` at SMTP; `storage` in `GET /v1/inboxes`) with received attachments kept once and served from the raw MIME (migration `mail/0010_blob_storage.sql`); webhooks can't call the platform's own domain or subdomains and use `http://localhost` only with `DEV_MODE=true` (re-checked before each delivery); OAuth access tokens can't create webhooks (`403 temporary_credential`).
   - Site: removing a member revokes their keys and invites, OAuth tokens can't mint permanent keys, gateway batches are capped, an open redirect is fixed, and the session cookie is now `__Host-` prefixed (everyone signs in again once).
 
 ### Added
@@ -60,6 +74,7 @@ All notable changes to this project. The format follows
 
 ### Migrations
 
+- Analytics `0008_replay_link.sql`, `0009_domain_verification.sql`; replay `0007_analytics_link.sql`; tags `0007_event_budgets.sql`; mail `0010_blob_storage.sql`.
 - Identity DB (`site/migrations`): `0003_api_key_metadata.sql` (`api_keys.expires_at`, `oauth_grant_id`, `created_by_user_id`), `0004_users_oauth.sql` (users, memberships, sessions, claim links, OAuth clients, grants, codes, refresh tokens).
 - App DBs: `analytics/0004`, `tags/0004`, `mail/0007` `_api_key_expiry.sql` (`api_keys.expires_at`, for standalone mode).
 - Analytics D1: `0005_revenue_funnels_exclusions.sql` (`sites.exclusions`, `goals.threshold`, `funnels`, `integrations`).

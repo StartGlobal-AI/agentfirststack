@@ -64,28 +64,115 @@ export function stripInvisible(s: string): string {
   return s.replace(INVISIBLE_RE, "");
 }
 
-const BLOCK_END_RE =
-  /<\/(p|div|tr|table|tbody|thead|h[1-6]|li|ul|ol|blockquote|section|article|header|footer|center|pre|dt|dd|title)\s*>/gi;
-const BLOCK_START_RE = /<(p|div|tr|table|h[1-6]|li|ul|ol|blockquote|section|article|header|footer|center|pre|hr|dt|dd)\b[^>]*>/gi;
+/** Elements whose content is never text: dropped together with their content. */
+const SKIP_CONTENT = ["head", "style", "script", "noscript", "template", "svg", "object"];
+/** Closers of SKIP_CONTENT elements; each search scans forward once (linear). */
+const SKIP_CLOSER = new Map(SKIP_CONTENT.map((n) => [n, new RegExp(`<\\/${n}\\s*>`, "gi")]));
+/** Closing tags that end a line (table cells too, so a code alone in a cell is alone on its line). */
+const BLOCK_END = new Set(
+  "p div tr table tbody thead h1 h2 h3 h4 h5 h6 li ul ol blockquote section article header footer center pre dt dd title td th".split(" "),
+);
+/** Opening tags that start a line. */
+const BLOCK_START = new Set(
+  "p div tr table h1 h2 h3 h4 h5 h6 li ul ol blockquote section article header footer center pre hr dt dd br".split(" "),
+);
+const TAG_NAME_RE = /^\/?(\w*)/;
+const ALT_RE = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
+/** The alt text of one tag's source (`img src=... alt="..."`), or null. Linear in the tag. */
+export function altOf(tag: string): string | null {
+  const m = ALT_RE.exec(tag);
+  return m ? (m[1] ?? m[2] ?? "") : null;
+}
 
 /**
  * Plain text from HTML. Table cells and blocks become separate lines so a code sitting alone
  * in a big table cell ends up alone on its own line (extraction relies on that).
+ *
+ * One forward pass with indexOf, no backtracking regex over the document: sender-controlled HTML
+ * full of unclosed openers ("<style <style ...", "<!--<!--", "<p<p<p") costs linear time. A tag
+ * runs from "<" to the next ">"; comments, and head/style/script/noscript/template/svg/object
+ * elements, go with their content; an opener whose closer never comes is just a tag (its content
+ * stays text), and is not searched for again.
  */
 export function htmlToText(html: string): string {
-  let s = html;
-  s = s.replace(/<!--[\s\S]*?-->/g, " ");
-  s = s.replace(/<(head|style|script|noscript|template|svg|object)\b[\s\S]*?<\/\1\s*>/gi, " ");
-  s = s.replace(/<!doctype[^>]*>/gi, " ");
-  s = s.replace(/<br\s*\/?>/gi, "\n");
-  s = s.replace(/<\/(td|th)\s*>/gi, "\n");
-  s = s.replace(BLOCK_END_RE, "\n");
-  s = s.replace(BLOCK_START_RE, "\n");
-  // Images: keep alt text, it often carries the only label of a button.
-  s = s.replace(/<img\b[^>]*?\balt\s*=\s*(["'])(.*?)\1[^>]*>/gi, " $2 ");
-  s = s.replace(/<[^>]+>/g, " ");
-  s = decodeEntities(s);
-  return tidyText(s);
+  const s = html;
+  const n = s.length;
+  const out: string[] = [];
+  const unclosed = new Set<string>();
+  let commentsClose = true;
+  let i = 0;
+  while (i < n) {
+    const lt = s.indexOf("<", i);
+    if (lt < 0) {
+      out.push(s.slice(i));
+      break;
+    }
+    if (lt > i) out.push(s.slice(i, lt));
+    if (commentsClose && s.startsWith("<!--", lt)) {
+      const end = s.indexOf("-->", lt + 4);
+      if (end >= 0) {
+        out.push(" ");
+        i = end + 3;
+        continue;
+      }
+      commentsClose = false; // no "-->" anywhere after: later "<!--" are plain tags
+    }
+    const gt = s.indexOf(">", lt + 1);
+    if (gt < 0) {
+      out.push(s.slice(lt)); // no tag can close after this point: the rest is text
+      break;
+    }
+    if (gt === lt + 1) {
+      out.push("<>");
+      i = gt + 1;
+      continue;
+    }
+    const tag = s.slice(lt + 1, gt);
+    const closing = tag.charCodeAt(0) === 47; // "/"
+    const name = (TAG_NAME_RE.exec(tag)?.[1] ?? "").toLowerCase();
+    i = gt + 1;
+    if (!closing && SKIP_CLOSER.has(name) && !unclosed.has(name)) {
+      const re = SKIP_CLOSER.get(name)!;
+      re.lastIndex = i;
+      const m = re.exec(s);
+      if (m) {
+        out.push(" ");
+        i = m.index + m[0].length;
+        continue;
+      }
+      unclosed.add(name); // never closed: strip just the opener, now and for later ones
+    }
+    if (closing) out.push(BLOCK_END.has(name) ? "\n" : " ");
+    else if (BLOCK_START.has(name)) out.push("\n");
+    else if (name === "img") {
+      // Keep alt text, it often carries the only label of a button.
+      const alt = altOf(tag);
+      out.push(alt === null ? " " : ` ${alt} `);
+    } else out.push(" ");
+  }
+  return tidyText(decodeEntities(out.join("")));
+}
+
+/** Every tag replaced by a space (like `s.replace(/<[^>]+>/g, " ")`), in linear time. */
+export function stripTags(s: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < s.length) {
+    const lt = s.indexOf("<", i);
+    const gt = lt < 0 ? -1 : s.indexOf(">", lt + 1);
+    if (gt < 0) {
+      out.push(s.slice(i));
+      break;
+    }
+    if (gt === lt + 1) {
+      out.push(s.slice(i, gt + 1)); // "<>" is not a tag
+    } else {
+      out.push(s.slice(i, lt), " ");
+    }
+    i = gt + 1;
+  }
+  return out.join("");
 }
 
 /** Collapse runs of spaces, trim lines, keep at most one blank line between paragraphs. */

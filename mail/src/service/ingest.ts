@@ -2,13 +2,17 @@ import { newId } from "@afs/shared";
 import PostalMime, { type Address, type Email } from "postal-mime";
 import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { type ExtractedLink, extractAll } from "../extract";
+import { extractAuth } from "../extract/auth";
 import { normalizeRecipient } from "../lib/address";
 import { headerSafe, isMimeType } from "../lib/headers";
-import { isAutomated, senderIdentity, senderKeyOf } from "../lib/sender";
+import { UNAUTHENTICATED_SENDER, isAutomated, senderKeyFor } from "../lib/sender";
 import { bracketMessageId, hasReplyPrefix, normalizeSubject, threadLookupIds } from "../lib/threading";
 import { type Addr, type InboxRow, type MessageRow, UNTRUSTED_NOTICE, messageSummary, utcDay } from "./format";
+import { maxBlobBytes } from "./budgets";
 import { findInboxForRecipient, sharedDomain } from "./inboxes";
 import { deleteMessageRows } from "./messages";
+
+export { DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES, maxBlobBytes, storedBlobBytes } from "./budgets";
 import { emitEvent } from "./webhooks";
 
 /** Email Routing's inbound limit. */
@@ -23,7 +27,10 @@ export const MAX_SUBJECT_CHARS = 2_000;
 export const MAX_NAME_CHARS = 500;
 export const MAX_LISTED_ADDRESSES = 100;
 export const MAX_REFERENCES_CHARS = 8_000;
-/** Attachments stored per inbound message (R2 object + D1 row each); the rest stay in the raw MIME. */
+/**
+ * Attachments listed per inbound message (a D1 row each, served from the raw MIME); the rest are
+ * only in the raw MIME.
+ */
 export const MAX_STORED_ATTACHMENTS = 50;
 export const MAX_FILENAME_CHARS = 255;
 /** Over MAX_TEXT_BYTES_PER_ACCOUNT, a message keeps this much text and this many links in D1. */
@@ -50,44 +57,84 @@ function capReferences(refs: string | null | undefined): string | null {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Inbound admission (all off when unset; UNCLAIMED_* variants via capFor):
-//   MAX_INBOUND_PER_ACCOUNT_PER_DAY  the account's inbound mail per UTC day (before the body is read)
+// Inbound admission (all off when unset unless a default is given; UNCLAIMED_* variants via capFor):
+//   MAX_INBOUND_PER_ACCOUNT_PER_DAY  the account's inbound mail per UTC day. Checked before the
+//                                    body is read, and counted in the same transaction that stores
+//                                    the message: mail that is not stored (rejected, a duplicate,
+//                                    an invocation that died) never uses up the quota.
 //   MAX_INBOUND_PER_SENDER_PER_DAY   one sender's mail to one inbox per UTC day; and one sender
-//                                    never gets more than half of the account's daily quota
+//                                    never gets more than half of the account's daily quota.
+//                                    Checked right after the headers are parsed, before the body.
 //   MAX_MESSAGES_PER_INBOX           what an inbox holds: beyond it the oldest mail of the sender
 //                                    holding the most is evicted (one flooder cannot fill it)
+//   MAX_BLOB_BYTES_PER_ACCOUNT       bytes of mail kept in R2 (default 1 GiB, 256 MiB unclaimed;
+//                                    "0" = off): checked before the body is read and again, with the
+//                                    exact size, in the transaction that stores the message.
 
 export const maxMessagesPerInbox = (env: AppEnv, standing: Standing) => Math.max(1, cap(env, standing, "MAX_MESSAGES_PER_INBOX"));
 export const maxInboundPerDay = (env: AppEnv, standing: Standing) => cap(env, standing, "MAX_INBOUND_PER_ACCOUNT_PER_DAY");
 
 export type Admission = { ok: true; day: string | null } | { ok: false; reason: string };
 
-/**
- * Decide, before the body is read, whether the inbox's account may take one more message today:
- * one atomic upsert for the account's daily count. Reserves the daily slot; call refundInbound()
- * if the message is not stored after all.
- */
-export async function admitInbound(env: AppEnv, inbox: InboxRow, standing: Standing, now = Date.now()): Promise<Admission> {
-  const perDay = maxInboundPerDay(env, standing);
-  if (!Number.isFinite(perDay)) return { ok: true, day: null };
-  const day = utcDay(now);
-  const row = await env.DB.prepare(
-    `INSERT INTO inbound_counters (account_id, day, count) SELECT ?, ?, 1 WHERE ? >= 1
-     ON CONFLICT(account_id, day) DO UPDATE SET count = inbound_counters.count + 1
-     WHERE inbound_counters.count + 1 <= ? RETURNING count`,
-  )
-    .bind(inbox.account_id, day, perDay, perDay)
-    .first<{ count: number }>();
-  if (!row)
-    return {
-      ok: false,
-      reason: `Daily limit reached: the account behind ${inbox.address} received its maximum of ${perDay} messages today (UTC); retry after 00:00 UTC`,
-    };
-  return { ok: true, day };
+/** 1.5 GB, 256 MB, 40 KB, 900 bytes. */
+export function formatBytes(n: number): string {
+  const units: [number, string][] = [
+    [1024 ** 3, "GB"],
+    [1024 ** 2, "MB"],
+    [1024, "KB"],
+  ];
+  for (const [size, unit] of units) if (n >= size) return `${Math.round((n / size) * 10) / 10} ${unit}`;
+  return `${n} bytes`;
 }
 
-export async function refundInbound(env: AppEnv, accountId: string, day: string) {
-  await env.DB.prepare("UPDATE inbound_counters SET count = MAX(0, count - 1) WHERE account_id = ? AND day = ?").bind(accountId, day).run();
+/**
+ * Why the inbox's account cannot take a message of `bytes` more stored bytes now, or null: its
+ * daily quota is used up, or its storage would pass MAX_BLOB_BYTES_PER_ACCOUNT. Read-only (one
+ * query): the email() handler calls it before reading the body, ingest again after a refused
+ * commit to say why.
+ */
+export async function inboundRefusal(
+  env: AppEnv,
+  inbox: InboxRow,
+  standing: Standing,
+  bytes: number,
+  now = Date.now(),
+): Promise<string | null> {
+  const perDay = maxInboundPerDay(env, standing);
+  const blobCap = maxBlobBytes(env, standing);
+  if (!Number.isFinite(perDay) && !Number.isFinite(blobCap)) return null;
+  const row = await env.DB.prepare(
+    `SELECT (SELECT count FROM inbound_counters WHERE account_id = ?1 AND day = ?2) AS today,
+            (SELECT blob_bytes FROM account_usage WHERE account_id = ?1) AS stored`,
+  )
+    .bind(inbox.account_id, utcDay(now))
+    .first<{ today: number | null; stored: number | null }>();
+  if ((row?.today ?? 0) >= perDay)
+    return `Daily limit reached: the account behind ${inbox.address} received its maximum of ${perDay} messages today (UTC); retry after 00:00 UTC`;
+  if ((row?.stored ?? 0) + bytes > blobCap)
+    return `Mailbox full: the account behind ${inbox.address} keeps at most ${formatBytes(blobCap)} of mail and this message does not fit; it accepts mail again once older mail is deleted`;
+  return null;
+}
+
+/**
+ * SQL condition (for the INSERT of the message) that admits it only if the account's daily quota
+ * and stored-bytes budget still have room, evaluated inside the commit's transaction: concurrent
+ * deliveries cannot overshoot either. null when neither is capped.
+ */
+function admissionGuard(env: AppEnv, inbox: InboxRow, standing: Standing, bytes: number, day: string) {
+  const perDay = maxInboundPerDay(env, standing);
+  const blobCap = maxBlobBytes(env, standing);
+  const parts: string[] = [];
+  const binds: unknown[] = [];
+  if (Number.isFinite(perDay)) {
+    parts.push("COALESCE((SELECT count FROM inbound_counters WHERE account_id = ? AND day = ?), 0) < ?");
+    binds.push(inbox.account_id, day, perDay);
+  }
+  if (Number.isFinite(blobCap)) {
+    parts.push("COALESCE((SELECT blob_bytes FROM account_usage WHERE account_id = ?), 0) + ? <= ?");
+    binds.push(inbox.account_id, bytes, blobCap);
+  }
+  return parts.length ? { sql: parts.join(" AND "), binds, countDay: Number.isFinite(perDay) } : null;
 }
 
 /**
@@ -113,7 +160,14 @@ export async function admitSender(env: AppEnv, standing: Standing, inbox: InboxR
   )
     .bind(inbox.id, sender, day, inbox.account_id, bound(perInbox), bound(perAccount))
     .first<{ count: number }>();
-  if (!row) return { ok: false, reason: `Too much mail from ${sender} to ${inbox.address} today (UTC); retry after 00:00 UTC` };
+  if (!row)
+    return {
+      ok: false,
+      reason:
+        sender === UNAUTHENTICATED_SENDER
+          ? `Too much unauthenticated mail (no SPF, DKIM or DMARC pass) to ${inbox.address} today (UTC); retry after 00:00 UTC`
+          : `Too much mail from ${sender} to ${inbox.address} today (UTC); retry after 00:00 UTC`,
+    };
   return { ok: true, day };
 }
 
@@ -292,19 +346,27 @@ export const MESSAGE_COLUMNS = [
   "sender_key",
   "automated",
   "attachments_omitted",
+  "blob_bytes",
 ] as const;
 
-const ZERO_DEFAULT = new Set<string>(["text_truncated", "read", "attachment_count", "automated", "attachments_omitted"]);
+const ZERO_DEFAULT = new Set<string>(["text_truncated", "read", "attachment_count", "automated", "attachments_omitted", "blob_bytes"]);
 
 /**
  * `ignoreDuplicate`: insert-or-ignore on the inbound Message-ID unique index
  * (messages_inbound_msgid), so concurrent deliveries of one message store it once.
  */
-export function insertMessage(env: AppEnv, row: Omit<MessageRow, "seq">, opts: { ignoreDuplicate?: boolean } = {}): D1PreparedStatement {
+export function insertMessage(
+  env: AppEnv,
+  row: Omit<MessageRow, "seq">,
+  opts: { ignoreDuplicate?: boolean; onlyIf?: { sql: string; binds: unknown[] } | null } = {},
+): D1PreparedStatement {
   const cols = MESSAGE_COLUMNS.join(", ");
   const ph = MESSAGE_COLUMNS.map(() => "?").join(", ");
-  return env.DB.prepare(`INSERT INTO messages (${cols}) VALUES (${ph})${opts.ignoreDuplicate ? " ON CONFLICT DO NOTHING" : ""}`).bind(
+  // `onlyIf`: INSERT ... SELECT ... WHERE <condition>, so the row is only written when it holds.
+  const values = opts.onlyIf ? `SELECT ${ph} WHERE ${opts.onlyIf.sql}` : `VALUES (${ph})`;
+  return env.DB.prepare(`INSERT INTO messages (${cols}) ${values}${opts.ignoreDuplicate ? " ON CONFLICT DO NOTHING" : ""}`).bind(
     ...MESSAGE_COLUMNS.map((c) => row[c] ?? (ZERO_DEFAULT.has(c) ? 0 : null)),
+    ...(opts.onlyIf?.binds ?? []),
   );
 }
 
@@ -313,12 +375,32 @@ const ifStored = (env: AppEnv, id: string, sql: string, ...binds: unknown[]) =>
   env.DB.prepare(`${sql} AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`).bind(...binds, id);
 
 /**
+ * The header section of a raw message: everything up to the first empty line (or all of it).
+ * Parsing only this gives From, Message-ID and Authentication-Results without touching the body.
+ */
+export function headerBlock(raw: Uint8Array): Uint8Array {
+  for (let i = raw.indexOf(10); i >= 0 && i < raw.length - 1; i = raw.indexOf(10, i + 1)) {
+    const next = raw[i + 1];
+    if (next === 10 || (next === 13 && raw[i + 2] === 10)) return raw.subarray(0, i + 1);
+  }
+  return raw;
+}
+
+/**
  * Store one inbound message. `raw` is the full MIME as received. Safe to call twice for the same
  * message (Email Routing retries): a repeated Message-ID in the same inbox is a no-op.
  *
- * Order matters for cost: every D1 read and admission check runs before anything is written to
- * R2, and the R2 objects of a message that does not get committed (an error, a duplicate) are
- * deleted again, so blobs never outlive their D1 row (the cron's orphan sweep catches a crash).
+ * Order matters for cost. The headers are parsed first, on their own: duplicates and the
+ * per-sender cap (MAX_INBOUND_PER_SENDER_PER_DAY, half the daily quota per sender) are settled
+ * before the body is parsed, so a sender's expensive mail only ever spends that sender's
+ * allowance. Then the body is parsed and extracted (bounded, linear work), every D1 read runs
+ * before anything is written to R2, and the message is committed in one transaction that also
+ * re-checks and counts the account's daily quota and stored bytes. The R2 objects of a message
+ * that does not get committed (an error, a duplicate, a full account) are deleted again, so blobs
+ * never outlive their D1 row (the cron's orphan sweep catches a crash).
+ *
+ * R2 keeps the raw MIME and the HTML body. Attachments are not copied out: they are served from
+ * the raw MIME (attachments.part_index).
  */
 export async function ingestRaw(
   env: AppEnv,
@@ -336,13 +418,15 @@ export async function ingestRaw(
   const target = input.inbox ?? (await findInboxForRecipient(env, rcpt.address, now));
   if (!target) return { status: "rejected", reason: "Address does not exist" };
   const { inbox, via } = target;
-  const size = input.raw.byteLength;
+  const raw = input.raw instanceof Uint8Array ? input.raw : new Uint8Array(input.raw);
+  const size = raw.byteLength;
   if (size > MAX_MESSAGE_BYTES) return { status: "rejected", reason: "Message too large (25 MB limit)" };
   const standing = input.standing ?? (await standingOf(env, inbox.account_id));
   if (standing.suspended) return { status: "rejected", reason: suspendedReason(inbox.address) };
 
-  const parsed: Email = await PostalMime.parse(input.raw, { attachmentEncoding: "arraybuffer" });
-  const msgIdHeader = bracketMessageId(parsed.messageId);
+  // 1. Headers only.
+  const head: Email = await PostalMime.parse(headerBlock(raw));
+  const msgIdHeader = bracketMessageId(head.messageId);
   const findDup = async () =>
     msgIdHeader
       ? env.DB.prepare("SELECT id FROM messages WHERE inbox_id = ? AND message_id_header = ? AND direction = 'in' LIMIT 1")
@@ -353,45 +437,48 @@ export async function ingestRaw(
   const dup = await findDup();
   if (dup) return { status: "duplicate", message_id: dup.id, inbox_id: inbox.id };
 
-  const from = firstMailbox(parsed.from) ?? { address: input.envelopeFrom.toLowerCase(), name: null };
-  const subject = parsed.subject?.trim().slice(0, MAX_SUBJECT_CHARS) || null;
-  const ex = extractAll({
-    subject,
-    text: parsed.text,
-    html: parsed.html,
-    headers: parsed.headers,
-    fromAddress: from.address,
-    otpHeader: parsed.otp?.code ?? null,
-  });
+  const from = firstMailbox(head.from) ?? { address: input.envelopeFrom.toLowerCase(), name: null };
   const envelopeFrom = input.envelopeFrom.toLowerCase();
-  const senderKey = senderKeyOf(senderIdentity({ fromAddress: from.address, envelopeFrom, auth: ex.auth }), [sharedDomain(env)]);
+  const auth = extractAuth(head.headers, from.address);
+  const senderKey = senderKeyFor({ fromAddress: from.address, envelopeFrom, auth }, [sharedDomain(env)]);
   const sender = await admitSender(env, standing, inbox, senderKey, now);
   if (!sender.ok) return { status: "rejected", reason: sender.reason };
 
   let stored = false;
   try {
+    // 2. The body.
+    const parsed: Email = await PostalMime.parse(raw, { attachmentEncoding: "arraybuffer" });
+    const subject = parsed.subject?.trim().slice(0, MAX_SUBJECT_CHARS) || null;
+    const ex = extractAll({
+      subject,
+      text: parsed.text,
+      html: parsed.html,
+      headers: parsed.headers,
+      fromAddress: from.address,
+      otpHeader: parsed.otp?.code ?? null,
+      auth,
+    });
     const id = newId("msg");
     const rawKey = blobKey.raw(inbox.id, id);
-    const htmlKey = parsed.html ? blobKey.html(inbox.id, id) : null;
+    const html = parsed.html ? new TextEncoder().encode(parsed.html) : null;
+    const htmlKey = html ? blobKey.html(inbox.id, id) : null;
+    const blobBytes = size + (html?.byteLength ?? 0);
 
     const kept = parsed.attachments.slice(0, MAX_STORED_ATTACHMENTS);
-    const attachments = kept.map((a) => {
-      const content = typeof a.content === "string" ? new TextEncoder().encode(a.content) : new Uint8Array(a.content as ArrayBuffer);
-      const attId = newId("att");
-      return {
-        id: attId,
-        filename: a.filename ? headerSafe(a.filename).slice(0, MAX_FILENAME_CHARS) || null : null,
-        // Served back as a Content-Type header on download: only well-formed types.
-        content_type: a.mimeType && isMimeType(a.mimeType) ? a.mimeType : "application/octet-stream",
-        size: content.byteLength,
-        content_id: a.contentId ? a.contentId.slice(0, MAX_FILENAME_CHARS) : null,
-        disposition: a.disposition ?? null,
-        r2_key: blobKey.attachment(inbox.id, id, attId),
-        content,
-      };
-    });
+    const attachments = kept.map((a, i) => ({
+      id: newId("att"),
+      filename: a.filename ? headerSafe(a.filename).slice(0, MAX_FILENAME_CHARS) || null : null,
+      // Served back as a Content-Type header on download: only well-formed types.
+      content_type: a.mimeType && isMimeType(a.mimeType) ? a.mimeType : "application/octet-stream",
+      size: typeof a.content === "string" ? utf8Bytes(a.content) : (a.content as ArrayBuffer).byteLength,
+      content_id: a.contentId ? a.contentId.slice(0, MAX_FILENAME_CHARS) : null,
+      disposition: a.disposition ?? null,
+      part_index: i,
+    }));
 
-    // D1 reads first: nothing is in R2 yet if one of them throws.
+    // D1 reads first: nothing is in R2 yet if one of them throws, or if the account is full.
+    const refusal = await inboundRefusal(env, inbox, standing, blobBytes, now);
+    if (refusal) return { status: "rejected", reason: refusal };
     const threadId = await resolveThread(
       env,
       inbox.id,
@@ -447,19 +534,32 @@ export async function ingestRaw(
       sender_key: senderKey,
       automated: isAutomated(parsed.headers, input.envelopeFrom) ? 1 : 0,
       attachments_omitted: parsed.attachments.length - attachments.length,
+      blob_bytes: blobBytes,
     };
 
-    const keys = [rawKey, ...(htmlKey ? [htmlKey] : []), ...attachments.map((a) => a.r2_key)];
+    const day = utcDay(now);
+    const guard = admissionGuard(env, inbox, standing, blobBytes, day);
+    const keys = [rawKey, ...(htmlKey ? [htmlKey] : [])];
     try {
       await Promise.all([
-        env.BLOBS.put(rawKey, input.raw, { httpMetadata: { contentType: "message/rfc822" } }),
-        htmlKey ? env.BLOBS.put(htmlKey, parsed.html!, { httpMetadata: { contentType: "text/html; charset=utf-8" } }) : null,
-        ...attachments.map((a) => env.BLOBS.put(a.r2_key, a.content, { httpMetadata: { contentType: a.content_type } })),
+        env.BLOBS.put(rawKey, raw, { httpMetadata: { contentType: "message/rfc822" } }),
+        htmlKey ? env.BLOBS.put(htmlKey, html!, { httpMetadata: { contentType: "text/html; charset=utf-8" } }) : null,
       ]);
-      // One transaction. The message goes first with insert-or-ignore on (inbox, Message-ID); every
-      // other statement only runs if it was stored, so a concurrent duplicate changes nothing.
+      // One transaction. The message goes first with insert-or-ignore on (inbox, Message-ID), and
+      // only if the account's daily quota and stored bytes still have room; every other statement
+      // only runs if it was stored, so a concurrent duplicate or a full account changes nothing.
       const batch = await env.DB.batch([
-        insertMessage(env, row, { ignoreDuplicate: true }),
+        insertMessage(env, row, { ignoreDuplicate: true, onlyIf: guard }),
+        // The day's count goes up only with a stored message (not via ifStored: in an upsert its
+        // condition would land on the DO UPDATE branch, not on the insert).
+        ...(guard?.countDay
+          ? [
+              env.DB.prepare(
+                `INSERT INTO inbound_counters (account_id, day, count) SELECT ?, ?, 1 WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)
+                 ON CONFLICT(account_id, day) DO UPDATE SET count = inbound_counters.count + 1`,
+              ).bind(inbox.account_id, day, id),
+            ]
+          : []),
         thread.threadId === threadId
           ? ifStored(
               env,
@@ -473,19 +573,22 @@ export async function ingestRaw(
             ).bind(thread.threadId, inbox.account_id, inbox.id, subject, normalizeSubject(subject), now, now, id),
         ...attachments.map((a) =>
           env.DB.prepare(
-            "INSERT INTO attachments (id, message_id, filename, content_type, size, content_id, disposition, r2_key) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
-          ).bind(a.id, id, a.filename, a.content_type, a.size, a.content_id, a.disposition, a.r2_key, id),
+            "INSERT INTO attachments (id, message_id, filename, content_type, size, content_id, disposition, r2_key, part_index) SELECT ?, ?, ?, ?, ?, ?, ?, '', ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
+          ).bind(a.id, id, a.filename, a.content_type, a.size, a.content_id, a.disposition, a.part_index, id),
         ),
         ifStored(env, id, "UPDATE inboxes SET last_message_at = ? WHERE id = ?", now, inbox.id),
       ]);
       stored = !!batch[0]?.meta.changes;
     } finally {
-      // Not committed (an error, or lost the race to an identical delivery): drop this copy's blobs.
+      // Not committed (an error, a full account, or lost the race to an identical delivery): drop this copy's blobs.
       if (!stored) await env.BLOBS.delete(keys).catch((e) => console.error("blob cleanup failed (the cron sweep retries)", e));
     }
     if (!stored) {
       const winner = await findDup();
-      return { status: "duplicate", message_id: winner?.id ?? id, inbox_id: inbox.id };
+      if (winner) return { status: "duplicate", message_id: winner.id, inbox_id: inbox.id };
+      // Refused by the guard: the quota or the storage filled up since the check above.
+      const reason = await inboundRefusal(env, inbox, standing, blobBytes, now);
+      return { status: "rejected", reason: reason ?? "Mailbox temporarily unavailable; retry later" };
     }
 
     // A full inbox makes room by evicting the dominant sender's oldest mail (never this one).
@@ -556,22 +659,15 @@ export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv)
     message.setReject(suspendedReason(target.inbox.address));
     return;
   }
-  const admit = await admitInbound(env, target.inbox, standing);
-  if (!admit.ok) {
-    console.log(JSON.stringify({ event: "mail.rejected", reason: admit.reason, inbox_id: target.inbox.id }));
-    message.setReject(admit.reason);
+  // Read-only: the quota is only counted when the message is stored (see ingestRaw).
+  const refusal = await inboundRefusal(env, target.inbox, standing, message.rawSize);
+  if (refusal) {
+    console.log(JSON.stringify({ event: "mail.rejected", reason: refusal, inbox_id: target.inbox.id }));
+    message.setReject(refusal);
     return;
   }
-  const refund = () => (admit.day ? refundInbound(env, target.inbox.account_id, admit.day) : Promise.resolve());
-  let res: IngestResult;
-  try {
-    const raw = await new Response(message.raw).arrayBuffer(); // the stream is single-use
-    res = await ingestRaw(env, { envelopeFrom: message.from, envelopeTo: message.to, raw, inbox: target, standing });
-  } catch (e) {
-    await refund();
-    throw e;
-  }
-  if (res.status !== "stored") await refund();
+  const raw = await new Response(message.raw).arrayBuffer(); // the stream is single-use
+  const res = await ingestRaw(env, { envelopeFrom: message.from, envelopeTo: message.to, raw, inbox: target, standing });
   if (res.status === "rejected") {
     console.log(JSON.stringify({ event: "mail.rejected", reason: res.reason, inbox_id: target.inbox.id }));
     message.setReject(res.reason);

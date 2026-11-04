@@ -58,8 +58,13 @@ export interface MessageRow {
   sender_key?: string | null;
   /** 1 = list, bulk or auto-generated mail (never unlocks reply_only). */
   automated?: number;
-  /** Attachments beyond MAX_STORED_ATTACHMENTS, kept only in the raw MIME. */
+  /**
+   * Attachments not listed: received ones beyond MAX_STORED_ATTACHMENTS (still in the raw MIME), or
+   * those of a sent message that was not stored in full because the account's storage was full.
+   */
   attachments_omitted?: number;
+  /** Bytes this message keeps in R2 (MAX_BLOB_BYTES_PER_ACCOUNT; summed in account_usage by triggers). */
+  blob_bytes?: number;
 }
 
 export interface AttachmentRow {
@@ -70,7 +75,10 @@ export interface AttachmentRow {
   size: number;
   content_id: string | null;
   disposition: string | null;
+  /** The attachment's own R2 object; '' when it is served from the raw MIME (part_index). */
   r2_key: string;
+  /** Position in the stored raw message's attachments (received mail); null = an own R2 object. */
+  part_index?: number | null;
 }
 
 export interface ThreadRow {

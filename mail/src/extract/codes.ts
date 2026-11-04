@@ -25,6 +25,13 @@ import { decodeEntities, htmlToText } from "./text";
 
 export const THRESHOLD = 6;
 const MAX_CODES = 5;
+/**
+ * Candidate tokens scored per document (subject, text part, HTML). Real mail has a handful; the
+ * cap bounds the per-token work a sender can make us do with a body full of numbers.
+ */
+export const MAX_CANDIDATES = 500;
+/** Of a line above a standalone code, only this much of its end is read for keywords. */
+const PREV_LINE_CHARS = 1000;
 
 export interface CodeInput {
   subject?: string | null;
@@ -32,6 +39,8 @@ export interface CodeInput {
   html?: string | null;
   /** Code from the OTP-Token header (postal-mime `otp.code`), if any. */
   otpHeader?: string | null;
+  /** htmlToText(html), when the caller already has it. */
+  htmlText?: string;
 }
 
 export interface CodeCandidate {
@@ -225,9 +234,12 @@ const PROMO_SUBJECT_RE = /\b(?:sale|off|discount|promo|deal|save|coupon|offer)\b
 
 const MASKS: RegExp[] = [
   /(?:https?:\/\/|www\.)[^\s<>"')\]]+/gi, // URLs
-  /[A-Za-z0-9._%+*-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, // emails (incl. masked a***@x.com)
+  // emails (incl. masked a***@x.com). The lookbehind starts the local part only at the start of its
+  // run: without it, every character of a long run of letters retries the whole run (quadratic).
+  /(?<![A-Za-z0-9._%+*-])[A-Za-z0-9._%+*-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
   /(?:[$€£¥₹₩₽¢]|\b(?:usd|eur|gbp|cad|aud|inr|jpy|chf|sek|nok|dkk|nzd|sgd|hkd|mxn|brl|zar|rs\.?|r\$|us\$|ca\$|a\$)\s?)\s?\d[\d,.]*/gi, // money, symbol first
-  /\b\d[\d,]*(?:\.\d+)?\s?(?:usd|eur|gbp|cad|aud|inr|jpy|dollars?|euros?|pounds?|cents?)\b/gi, // money, unit after
+  // money, unit after. Bounded: "1,1,1,1,..." would otherwise rescan the run from every digit.
+  /\b\d[\d,]{0,40}(?:\.\d+)?\s?(?:usd|eur|gbp|cad|aud|inr|jpy|dollars?|euros?|pounds?|cents?)\b/gi,
   /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b/g, // 1,299 / 25,000
   /\b\d+[.,]\d{1,2}\b(?![.,]?\d)/g, // 12.99 / 4,5
   /\b\d+(?:[.,]\d+)?\s?%/g, // percentages
@@ -262,10 +274,10 @@ interface Token {
   start: number;
 }
 
-function tokensIn(masked: string): Token[] {
+function tokensIn(masked: string, max = Number.POSITIVE_INFINITY): Token[] {
   const out: Token[] = [];
   TOKEN_RE.lastIndex = 0;
-  for (let m = TOKEN_RE.exec(masked); m; m = TOKEN_RE.exec(masked)) {
+  for (let m = TOKEN_RE.exec(masked); m && out.length < max; m = TOKEN_RE.exec(masked)) {
     const raw = m[1]!;
     const t = normaliseToken(raw);
     if (t) out.push({ ...t, raw, start: m.index });
@@ -349,13 +361,39 @@ interface Doc {
   lines: string[]; // original lines
 }
 
-function scoreDoc(doc: Doc, ctx: { global: boolean; html: string | null }, out: CodeCandidate[]) {
+/** Characters that do not count as content next to a token (a line holding only a code and these is "standalone"). */
+const SEPARATORS_RE = /[\s¤:：.,;!?()"'*_\-–—|]+/g;
+const contentLength = (s: string) => s.replace(SEPARATORS_RE, "").length;
+
+/**
+ * Per-document context for scoring. Everything that depends only on a line (or on the whole HTML)
+ * is computed once, not once per token: a long line full of numbers must not cost
+ * tokens x line length.
+ */
+interface ScoreCtx {
+  global: boolean;
+  /** Trimmed text of every HTML element whose whole content is short text (see `emphasised`). */
+  emphasis: Set<string> | null;
+}
+
+function scoreDoc(doc: Doc, ctx: ScoreCtx, out: CodeCandidate[]) {
   const masked = doc.lines.map((l) => maskLine(l));
   const lower = masked.map((l) => l.toLowerCase());
-  for (let i = 0; i < doc.lines.length; i++) {
+  const prevCache = new Map<number, { p: { tier: Tier; dist: number } | null; n: number | null }>();
+  const prevKeywords = (j: number, prev: string) => {
+    let c = prevCache.get(j);
+    if (!c) {
+      const tail = prev.slice(-PREV_LINE_CHARS);
+      c = { p: nearestPositive(tail), n: nearestEnd(tail, NEGATIVE) };
+      prevCache.set(j, c);
+    }
+    return c;
+  };
+  let budget = MAX_CANDIDATES;
+  for (let i = 0; i < doc.lines.length && budget > 0; i++) {
     const original = doc.lines[i]!;
     if (/^\s*>/.test(original)) continue; // quoted reply text
-    let tokens = tokensIn(masked[i]!);
+    let tokens = tokensIn(masked[i]!, budget);
     let standaloneOverride = false;
     const trimmed = original.trim();
     if (!tokens.length && SPACED_RE.test(trimmed)) {
@@ -367,15 +405,16 @@ function scoreDoc(doc: Doc, ctx: { global: boolean; html: string | null }, out: 
         standaloneOverride = true;
       }
     }
+    if (!tokens.length) continue;
+    budget -= tokens.length;
+    const lineContent = contentLength(lower[i]!);
+    let promo: boolean | null = null; // PROMO_RE over this line and the one above, once per line
     for (const tok of tokens) {
       const before = lower[i]!.slice(Math.max(0, tok.start - 120), tok.start);
       const after = masked[i]!.slice(tok.start + tok.raw.length, tok.start + tok.raw.length + 80);
       const afterMatch = AFTER_RE.test(after);
-      const rest = (lower[i]!.slice(0, tok.start) + " " + lower[i]!.slice(tok.start + tok.raw.length)).replace(
-        /[\s¤:：.,;!?()"'*_\-–—|]+/g,
-        "",
-      );
-      const standalone = standaloneOverride || rest.length === 0;
+      // Nothing but separators besides the token on its line.
+      const standalone = standaloneOverride || lineContent === contentLength(tok.raw.toLowerCase());
 
       const pos = nearestPositive(before);
       const neg = nearestEnd(before, NEGATIVE);
@@ -398,8 +437,7 @@ function scoreDoc(doc: Doc, ctx: { global: boolean; html: string | null }, out: 
         for (let j = i - 1; j >= 0 && seen < 2; j--) {
           const prev = lower[j]!.trim();
           if (!prev || prev === "¤") continue;
-          const p = nearestPositive(prev);
-          const n = nearestEnd(prev, NEGATIVE);
+          const { p, n } = prevKeywords(j, prev);
           if (seen === 0 && n !== null && (!p || n < p.dist)) {
             vetoed = true;
             break;
@@ -412,7 +450,7 @@ function scoreDoc(doc: Doc, ctx: { global: boolean; html: string | null }, out: 
         }
         if (vetoed) continue;
         // The line below sometimes carries the label ("482913" / "is your verification code").
-        const next = doc.lines[i + 1];
+        const next = doc.lines[i + 1]?.slice(0, 200);
         if (
           next &&
           AFTER_RE.test(` is ${next}`) &&
@@ -427,37 +465,50 @@ function scoreDoc(doc: Doc, ctx: { global: boolean; html: string | null }, out: 
 
       if (isYearLike(tok.code) && !(afterMatch || (pos?.tier === "strong" && pos.dist <= 15))) continue;
 
-      const lineCtx = `${lower[i]!} ${lower[i - 1] ?? ""}`;
+      promo ??= PROMO_RE.test(`${lower[i]!} ${lower[i - 1] ?? ""}`);
       if (tok.alnum) {
         if (!strongEvidence) continue; // "use code SPRING25" is a coupon
-        if (PROMO_RE.test(lineCtx)) continue;
-      } else if (!strongEvidence && PROMO_RE.test(lineCtx)) {
+        if (promo) continue;
+      } else if (!strongEvidence && promo) {
         continue; // "use code 2468 at checkout"
       }
 
       if (doc.where === "subject") score += 1;
       if (ctx.global) score += 1;
-      if (ctx.html && emphasised(ctx.html, tok.raw)) score += 1;
+      if (ctx.emphasis?.has(tok.raw)) score += 1;
 
       out.push({ code: tok.code, score, where: doc.where, line: original.trim().slice(0, 200) });
     }
   }
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+/** Longest element content kept for `emphasised` (tokens are at most ~20 characters). */
+const MAX_EMPHASIS_CHARS = 40;
 
-/** The token is the entire text content of some element: `<td ...>482913</td>`. */
-function emphasised(html: string, raw: string): boolean {
-  return new RegExp(`>\\s*${escapeRe(raw)}\\s*<`).test(html);
+/**
+ * The trimmed text of every element whose entire content is plain text (`<td ...> 482913 </td>`):
+ * the runs between a ">" and the next "<". A token is emphasised when it is one of them. One pass
+ * over the HTML, instead of one regex search over all of it per token.
+ */
+export function emphasisSet(html: string): Set<string> {
+  const out = new Set<string>();
+  let gt = html.indexOf(">");
+  while (gt >= 0) {
+    const lt = html.indexOf("<", gt + 1);
+    if (lt < 0) break;
+    const next = html.lastIndexOf(">", lt - 1); // the ">" nearest before this "<"
+    const t = html.slice(next + 1, lt).trim();
+    if (t && t.length <= MAX_EMPHASIS_CHARS) out.add(t);
+    gt = html.indexOf(">", lt + 1);
+  }
+  return out;
 }
 
 /** All scored candidates (for tests and debugging), best first. */
 export function scoreCodes(input: CodeInput): CodeCandidate[] {
   const subject = (input.subject ?? "").replace(/\s+/g, " ").trim();
   const text = input.text ?? "";
-  const htmlText = input.html ? htmlToText(input.html) : "";
+  const htmlText = input.htmlText ?? (input.html ? htmlToText(input.html) : "");
   const opening = `${text.slice(0, 1500)}\n${htmlText.slice(0, 1500)}`;
   const promoSubject = PROMO_SUBJECT_RE.test(subject);
   const global = GLOBAL_RE.test(subject) || GLOBAL_RE.test(opening) || (CODE_SUBJECT_RE.test(subject) && !promoSubject);
@@ -467,9 +518,10 @@ export function scoreCodes(input: CodeInput): CodeCandidate[] {
   if (input.otpHeader && /^[\x21-\x7e]{4,32}$/.test(input.otpHeader)) {
     raw.push({ code: input.otpHeader, score: 100, where: "header", line: "OTP-Token header" });
   }
-  scoreDoc({ where: "subject", lines: [subject] }, { global: subjectBonus, html: null }, raw);
-  if (text.trim()) scoreDoc({ where: "text", lines: text.split(/\r?\n/) }, { global, html: null }, raw);
-  if (htmlText.trim()) scoreDoc({ where: "html", lines: htmlText.split("\n") }, { global, html: decodeEntities(input.html ?? "") }, raw);
+  scoreDoc({ where: "subject", lines: [subject] }, { global: subjectBonus, emphasis: null }, raw);
+  if (text.trim()) scoreDoc({ where: "text", lines: text.split(/\r?\n/) }, { global, emphasis: null }, raw);
+  if (htmlText.trim())
+    scoreDoc({ where: "html", lines: htmlText.split("\n") }, { global, emphasis: emphasisSet(decodeEntities(input.html ?? "")) }, raw);
 
   // Merge by code: best score, +1 when it is corroborated in a second place.
   const byCode = new Map<string, CodeCandidate & { places: Set<string> }>();

@@ -2,7 +2,7 @@ import { ApiError, badRequest, conflict, newId, notFound } from "@afs/shared";
 import { type AppEnv, type Standing, cap, positiveIntVar, standingOf } from "../env";
 import { checkUsername, normalizeDomain, randomUsername } from "../lib/address";
 import { headerSafe } from "../lib/headers";
-import { assertActive, dailyLimitError, refundDaily, reserveDaily } from "./budgets";
+import { assertActive, dailyLimitError, maxBlobBytes, refundDaily, reserveDaily, storedBlobBytes } from "./budgets";
 import { type InboxRow, inboxJson, utcDay } from "./format";
 
 export const MAX_TTL_DAYS = 3650;
@@ -202,7 +202,15 @@ export async function listInboxes(env: AppEnv, accountId: string, opts: { limit?
     : await env.DB.prepare("SELECT * FROM inboxes WHERE account_id = ? ORDER BY created_at DESC LIMIT ?")
         .bind(accountId, limit)
         .all<InboxRow>();
-  return { inboxes: results.map(inboxJson), shared_domain: sharedDomain(env) };
+  const [standing, used] = await Promise.all([standingOf(env, accountId), storedBlobBytes(env, accountId)]);
+  const limit_bytes = maxBlobBytes(env, standing);
+  return {
+    inboxes: results.map(inboxJson),
+    shared_domain: sharedDomain(env),
+    // Mail kept for the account (raw messages, HTML bodies, sent attachments). At the limit, new
+    // mail is rejected ("Mailbox full") until old mail is deleted.
+    storage: { used_bytes: used, limit_bytes: Number.isFinite(limit_bytes) ? limit_bytes : null },
+  };
 }
 
 export async function updateInbox(

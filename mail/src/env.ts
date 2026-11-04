@@ -11,6 +11,7 @@ export type AppEnv = Omit<
   | "WORKER_NAME"
   | "SIGNUP_MODE"
   | "PUBLIC_BASE_URL"
+  | "DEV_MODE"
   | "INBOX"
   | "WAIT_LIMITER"
   | "WEBHOOK_TEST_LIMITER"
@@ -26,6 +27,10 @@ export type AppEnv = Omit<
   WORKER_NAME?: string;
   SIGNUP_MODE?: string;
   PUBLIC_BASE_URL?: string;
+  /** The OAuth authorization server (the platform's site), e.g. https://example.com. */
+  AUTH_ISSUER?: string;
+  /** "true" only locally: webhooks may use http://localhost. */
+  DEV_MODE?: string;
   SIGNUP_TOKEN?: string;
   /**
    * Operator secret. Also authorises `auto_configure` / `force` on domains (request header
@@ -58,6 +63,10 @@ export type AppEnv = Omit<
    *   MAX_INBOUND_PER_SENDER_PER_DAY   inbound messages one sender may send one inbox per UTC day.
    *   MAX_TEXT_BYTES_PER_ACCOUNT       stored text (bodies + links) per account; beyond it new
    *                            mail keeps only a short excerpt in D1.
+   *   MAX_BLOB_BYTES_PER_ACCOUNT       bytes of mail an account keeps in R2 (raw MIME, HTML bodies,
+   *                            sent attachments); beyond it inbound mail is rejected ("Mailbox
+   *                            full") and sent mail keeps no HTML/attachment copy. Default 1 GiB
+   *                            (256 MiB for unclaimed accounts); "0" turns it off.
    *   MAX_CONCURRENT_WAITS     parked waits per account (default 3).
    *   MAX_CONCURRENT_WAITS_PER_INBOX   parked waits per inbox (default 2).
    *   MAX_WEBHOOKS_PER_ACCOUNT webhooks per account (default 10).
@@ -74,6 +83,7 @@ export type AppEnv = Omit<
   MAX_INBOUND_PER_ACCOUNT_PER_DAY?: string;
   MAX_INBOUND_PER_SENDER_PER_DAY?: string;
   MAX_TEXT_BYTES_PER_ACCOUNT?: string;
+  MAX_BLOB_BYTES_PER_ACCOUNT?: string;
   MAX_CONCURRENT_WAITS?: string;
   MAX_CONCURRENT_WAITS_PER_INBOX?: string;
   MAX_WEBHOOKS_PER_ACCOUNT?: string;
@@ -96,6 +106,7 @@ export type CapName =
   | "MAX_INBOUND_PER_ACCOUNT_PER_DAY"
   | "MAX_INBOUND_PER_SENDER_PER_DAY"
   | "MAX_TEXT_BYTES_PER_ACCOUNT"
+  | "MAX_BLOB_BYTES_PER_ACCOUNT"
   | "MAX_CONCURRENT_WAITS"
   | "MAX_CONCURRENT_WAITS_PER_INBOX"
   | "MAX_WEBHOOKS_PER_ACCOUNT"
@@ -109,6 +120,9 @@ export function cap(env: AppEnv, standing: Standing, name: CapName, fallback = N
   const n = capFor(env as unknown as Record<string, unknown>, standing, name, fallback);
   return Number.isFinite(n) ? Math.floor(n) : n;
 }
+
+/** DEV_MODE=true: local development only. */
+export const isDevMode = (env: { DEV_MODE?: unknown }) => String(env.DEV_MODE ?? "") === "true";
 
 /** The account's standing (suspended / claimed), cached per isolate for a minute by @afs/shared. */
 export const standingOf = (env: AppEnv, accountId: string): Promise<Standing> => accountStanding(env, accountId);

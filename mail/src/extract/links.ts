@@ -1,4 +1,4 @@
-import { decodeEntities, htmlToText, stripInvisible } from "./text";
+import { altOf, decodeEntities, htmlToText, stripInvisible, stripTags } from "./text";
 
 /**
  * Link extraction and classification. Every http(s) link in the message, each with a `kind`:
@@ -29,11 +29,18 @@ export interface LinkInput {
   html?: string | null;
   /** Raw List-Unsubscribe header value, if present. */
   listUnsubscribe?: string | null;
+  /** htmlToText(html), when the caller already has it. */
+  htmlText?: string;
 }
 
 const MAX_LINKS = 50;
 /** Longer URLs are dropped (they would bloat the stored row; real action links are far shorter). */
 export const MAX_URL_CHARS = 4096;
+/**
+ * Links looked at per source (HTML anchors, URLs in the text part). Real mail has far fewer; the
+ * cap bounds the per-link work (context, classification) a sender can make us do.
+ */
+export const MAX_RAW_LINKS = 500;
 
 const UNSUB_TEXT =
   /unsubscribe|opt[\s-]?out|manage\s+(?:your\s+)?(?:email\s+)?(?:preferences|subscriptions?|notifications)|email\s+preferences|notification\s+settings|stop\s+receiving|update\s+(?:your\s+)?(?:email\s+)?preferences|subscription\s+preferences|no\s+longer\s+(?:wish|want)\s+to\s+receive|(?:don'?t|do\s+not)\s+want\s+(?:to\s+receive|these)|abbestellen|d[ée]sabonner|darse\s+de\s+baja|cancelar\s+suscripci/i;
@@ -118,17 +125,20 @@ export function classifyLink(url: string, anchor: string, context: string, email
 }
 
 const HTTP_RE = /^https?:\/\//i;
+const TRAILING_PUNCT = new Set([...".,;:!?'\"”’)]}>"]);
 
 function cleanUrl(raw: string): string | null {
   let u = decodeEntities(raw.trim()).replace(/\s+/g, "");
   u = u.replace(/^<|>$/g, "");
   if (!HTTP_RE.test(u)) return null;
-  // Trailing punctuation from prose ("...verify: https://x.com/abc.")
-  u = u.replace(/[.,;:!?'"”’)\]}>]+$/, (m) => {
+  // Trailing punctuation from prose ("...verify: https://x.com/abc."), trimmed by a scan from the
+  // end (a `[...]+$` regex would retry at every character of a long punctuation run).
+  let end = u.length;
+  while (end > 0 && TRAILING_PUNCT.has(u[end - 1]!)) end--;
+  if (end < u.length) {
     // keep a closing paren if the URL contains an opening one
-    if (m.startsWith(")") && u.includes("(")) return ")";
-    return "";
-  });
+    u = u.slice(0, end) + (u[end] === ")" && u.includes("(") ? ")" : "");
+  }
   try {
     return new URL(u).toString();
   } catch {
@@ -136,16 +146,30 @@ function cleanUrl(raw: string): string | null {
   }
 }
 
-const ANCHOR_RE = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+const ANCHOR_OPEN_RE = /<a\b/gi;
+const ANCHOR_CLOSE_RE = /<\/a\s*>/gi;
+const IMG_OPEN_RE = /<img\b/gi;
 const HREF_RE = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 const TEXT_URL_RE = /<?(https?:\/\/[^\s<>"'\]\[]+)>?/gi;
 
+/** Alt text of the first <img> with one in `inner`. One forward pass over the tags. */
+function firstImgAlt(inner: string): string {
+  IMG_OPEN_RE.lastIndex = 0;
+  for (let m = IMG_OPEN_RE.exec(inner); m; m = IMG_OPEN_RE.exec(inner)) {
+    const gt = inner.indexOf(">", m.index);
+    const alt = altOf(inner.slice(m.index, gt < 0 ? undefined : gt));
+    if (alt !== null) return alt;
+    if (gt < 0) break;
+    IMG_OPEN_RE.lastIndex = gt;
+  }
+  return "";
+}
+
 function anchorText(inner: string): string {
-  const alt = /<img\b[^>]*?\balt\s*=\s*(["'])(.*?)\1/i.exec(inner)?.[2] ?? "";
-  const t = stripInvisible(decodeEntities(inner.replace(/<[^>]+>/g, " ")))
+  const t = stripInvisible(decodeEntities(stripTags(inner)))
     .replace(/\s+/g, " ")
     .trim();
-  return (t || decodeEntities(alt).trim()).slice(0, 200);
+  return (t || decodeEntities(firstImgAlt(inner)).trim()).slice(0, 200);
 }
 
 function lastSentence(s: string, max = 200): string {
@@ -160,42 +184,73 @@ interface RawLink {
   pos: number;
 }
 
+/**
+ * Anchors in document order: `<a ...>` up to its next `</a>`, scanned forward with indexOf-style
+ * searches (a lazy `<a[^>]*>[\s\S]*?</a>` regex would rescan to the end for every unclosed <a>).
+ */
 function linksFromHtml(html: string): RawLink[] {
   const out: RawLink[] = [];
-  ANCHOR_RE.lastIndex = 0;
-  for (let m = ANCHOR_RE.exec(html); m; m = ANCHOR_RE.exec(html)) {
-    const href = HREF_RE.exec(m[1]!);
+  ANCHOR_OPEN_RE.lastIndex = 0;
+  for (let m = ANCHOR_OPEN_RE.exec(html); m && out.length < MAX_RAW_LINKS; m = ANCHOR_OPEN_RE.exec(html)) {
+    const gt = html.indexOf(">", m.index);
+    if (gt < 0) break; // no tag closes after this point
+    ANCHOR_CLOSE_RE.lastIndex = gt + 1;
+    const close = ANCHOR_CLOSE_RE.exec(html);
+    if (!close) break; // no </a> after this point, so none for any later <a> either
+    ANCHOR_OPEN_RE.lastIndex = close.index + close[0].length;
+    const href = HREF_RE.exec(html.slice(m.index + 2, gt));
     const raw = href?.[1] ?? href?.[2] ?? href?.[3];
     if (!raw) continue;
     const url = cleanUrl(raw);
     if (!url) continue;
     const before = htmlToText(html.slice(Math.max(0, m.index - 1500), m.index));
-    out.push({ url, text: anchorText(m[2]!), context: lastSentence(before), pos: m.index });
+    out.push({ url, text: anchorText(html.slice(gt + 1, close.index)), context: lastSentence(before), pos: m.index });
   }
   return out;
+}
+
+/** Context kept before a URL in the text part (classification looks at its last 120 characters). */
+const TEXT_CONTEXT_CHARS = 400;
+
+/** The markdown label of "[Verify email](" ending exactly at `end`, or "" (no regex over the line). */
+function markdownLabel(line: string, end: number): string {
+  if (end < 3 || line[end - 1] !== "(" || line[end - 2] !== "]") return "";
+  const close = end - 2;
+  const from = Math.max(0, close - TEXT_CONTEXT_CHARS);
+  const prevClose = line.lastIndexOf("]", close - 1);
+  const open = line.indexOf("[", Math.max(from, prevClose + 1));
+  return open >= 0 && open < close - 1 ? line.slice(open + 1, close) : "";
 }
 
 function linksFromText(text: string): RawLink[] {
   const out: RawLink[] = [];
   const lines = text.split(/\r?\n/);
   let offset = 0;
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length && out.length < MAX_RAW_LINKS; i++) {
     const line = lines[i]!;
+    let above: string | null = null; // the nearest non-empty line above, found once per line
     TEXT_URL_RE.lastIndex = 0;
-    for (let m = TEXT_URL_RE.exec(line); m; m = TEXT_URL_RE.exec(line)) {
+    for (let m = TEXT_URL_RE.exec(line); m && out.length < MAX_RAW_LINKS; m = TEXT_URL_RE.exec(line)) {
       const url = cleanUrl(m[1]!);
       if (!url) continue;
-      // Context: this line before the URL, plus the nearest non-empty line above.
-      let above = "";
-      for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
-        if (lines[j]!.trim()) {
-          above = lines[j]!.trim();
-          break;
+      if (above === null) {
+        above = "";
+        for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+          const t = lines[j]!.trim();
+          if (t) {
+            above = t.slice(-TEXT_CONTEXT_CHARS);
+            break;
+          }
         }
       }
-      const before = line.slice(0, m.index).replace(/https?:\/\/\S+/gi, " "); // not TEXT_URL_RE: replace() would reset its lastIndex
+      // This line before the URL, other URLs blanked. Only its tail matters, so only a window is
+      // read; a word cut at the window's start is dropped (it may be the end of a URL).
+      const from = Math.max(0, m.index - TEXT_CONTEXT_CHARS);
+      let win = line.slice(from, m.index);
+      if (from > 0 && !/\s/.test(line[from - 1]!)) win = win.replace(/^\S*/, "");
+      const before = win.replace(/https?:\/\/\S+/gi, " "); // not TEXT_URL_RE: replace() would reset its lastIndex
       // Markdown-ish "[Verify email](https://...)" or "Verify email: https://..."
-      const label = /\[([^\]]+)\]\($/.exec(line.slice(0, m.index))?.[1] ?? "";
+      const label = markdownLabel(line, m.index);
       out.push({ url, text: label, context: `${above} ${before}`.trim(), pos: offset + m.index });
     }
     offset += line.length + 1;
@@ -207,7 +262,7 @@ const ACTION_ORDER: Record<LinkKind, number> = { verify: 0, magic_login: 1, pass
 
 export function extractLinks(input: LinkInput): ExtractedLink[] {
   const subject = input.subject ?? "";
-  const htmlText = input.html ? htmlToText(input.html) : "";
+  const htmlText = input.htmlText ?? (input.html ? htmlToText(input.html) : "");
   const emailContext = `${subject}\n${(input.text ?? "").slice(0, 3000)}\n${htmlText.slice(0, 3000)}`;
 
   const raw: RawLink[] = [];
@@ -216,6 +271,7 @@ export function extractLinks(input: LinkInput): ExtractedLink[] {
 
   const byUrl = new Map<string, ExtractedLink & { pos: number }>();
   for (const l of raw) {
+    if (l.url.length > MAX_URL_CHARS) continue; // dropped anyway: skip the work
     const kind = classifyLink(l.url, l.text, l.context, emailContext);
     const prev = byUrl.get(l.url);
     if (!prev) byUrl.set(l.url, { url: l.url, kind, text: l.text || null, pos: l.pos });
@@ -225,7 +281,7 @@ export function extractLinks(input: LinkInput): ExtractedLink[] {
 
   // List-Unsubscribe: <https://...>, <mailto:...>
   if (input.listUnsubscribe) {
-    for (const m of input.listUnsubscribe.matchAll(/<([^>]+)>/g)) {
+    for (const m of input.listUnsubscribe.slice(0, 16_384).matchAll(/<([^<>]+)>/g)) {
       const url = cleanUrl(m[1]!);
       if (url && !byUrl.has(url)) byUrl.set(url, { url, kind: "unsubscribe", text: "List-Unsubscribe", pos: 2e7 });
     }

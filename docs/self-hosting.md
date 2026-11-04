@@ -69,6 +69,9 @@ agentfirststack.com sets all of these (its profile is kept private). All are off
 | `EXTRA_RESERVED_USERNAMES` | mail | Your brand and role names, on top of the built-in reserved list |
 | `MAX_MESSAGES_PER_INBOX` | mail | Messages an inbox may hold; more are rejected at SMTP |
 | `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | mail | Inbound messages per account per UTC day |
+| `MAX_BLOB_BYTES_PER_ACCOUNT` | mail | Stored mail (raw messages, HTML, attachments) per account; full means inbound is rejected at SMTP (default 1 GiB) |
+| `MAX_EVENTS_PER_ACCOUNT_PER_DAY` / `MAX_EVENTS_PER_DAY` | tags | Browser hits and backend events per account, and for the whole deployment, per UTC day |
+| `PROJECTS_PER_USER_DAILY_LIMIT` | site | New projects one signed-in person may create a day while connecting an app (default 5) |
 
 Some caps are on by default with safe values and only need setting to change them:
 `MAX_WEBHOOKS_PER_ACCOUNT` (10), `MAX_DESTINATIONS_PER_CONTAINER` (10),
