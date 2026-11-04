@@ -1,3 +1,4 @@
+import { heatmapImageInfo, heatmapImageInput } from "./service/heatmap-image";
 import type { ToolRegistrar } from "@afs/shared/mcp";
 import { z } from "zod";
 import { SIGNALS } from "./lib/signals";
@@ -81,7 +82,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Create replay site",
       description:
-        'Register a website for session replay. Idempotent by domain: the same domain again returns the existing site (existing: true). Settings: sample_rate, mask_mode (strict default) with unmask/mask/block selectors, zones, exclude_paths, exclude_ip_ranges, retention_days, max_session_minutes, require_consent (true | "eea") with consent_source (api | gcm), capture_console_errors / capture_console_warnings / capture_network_errors, auto_events, hash_user_ids, analytics_site_id. With analytics_site_id the analytics tracker loads the recorder by itself (site.loads_with_analytics: true = nothing to paste where it runs). Returns the <script> snippet, install instructions and next_steps.',
+        'Register a website for session replay. Idempotent by domain: the same domain again returns the existing site (existing: true). Settings: sample_rate, mask_mode (strict default) with unmask/mask/block selectors, zones, exclude_paths, exclude_ip_ranges, retention_days, max_session_minutes, require_consent (true | "eea") with consent_source (api | gcm | tcf; tcf_purposes), capture_console_errors / capture_console_warnings / capture_network_errors, auto_events, hash_user_ids, analytics_site_id. With analytics_site_id the analytics tracker loads the recorder by itself (site.loads_with_analytics: true = nothing to paste where it runs). Returns the <script> snippet, install instructions and next_steps.',
       input: createSiteInput.shape,
     },
     (a) => createSite(ctx, a),
@@ -116,7 +117,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Update replay site",
       description:
-        "Change settings; only the fields you pass change, selector and path lists are replaced whole. Values above the deployment's caps are clamped (see notes). Setting analytics_site_id links an analytics site: its tracker then loads this recorder by itself (loads_with_analytics), and signals and JS errors are forwarded there as events. Passing the same analytics_site_id again re-asserts the link (use it when loads_with_analytics is false); null unlinks.",
+        "Change settings; only the fields you pass change, selector and path lists are replaced whole. Values above the deployment's caps are clamped (see notes). Setting analytics_site_id links an analytics site: its tracker then loads this recorder by itself (loads_with_analytics), and signals and JS errors are forwarded there as events. Passing the same analytics_site_id again re-asserts the link (use it when loads_with_analytics is false); null unlinks. Setting tags_container_id (ctr_..., same account) sends tags_signals (rage_click, dead_click, js_error, api_error, survey_response scores) to that tags container as batched server events, which its conversions route to GA4 and ad platforms; get_site shows data.tags_forwarding.",
       input: { site_id: siteId, ...updateSiteInput.shape },
     },
     ({ site_id, ...rest }) => updateSite(ctx, site_id, rest),
@@ -315,6 +316,21 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
       const r = await getHeatmap(ctx, site_id, rest);
       return isRaw(r) ? { format: r.format, rows: r.rows, notice: UNTRUSTED_NOTICE, untrusted: { csv: r.body } } : r;
     },
+  );
+
+  t.read(
+    "get_heatmap_image",
+    {
+      title: "Heatmap image (PNG)",
+      description: `Draw a heatmap over the page as it was recorded: the latest stored snapshot of a page load (masked in the visitor's browser) with click dots (rage red, dead amber, error purple), scroll-reach bands or attention bands, rendered by Cloudflare Browser Rendering. Verified sites only; needs the deployment's BROWSER binding. Cached for a day per page + device + type + period (fetching again is free); a new render counts against MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY / _PER_ACCOUNT_PER_DAY / MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY. Returns image.url (GET it with your API key for the PNG; or include_base64 for up to 1.5 MB inline), what it shows and today's usage. The numbers behind it: get_heatmap.${UNTRUSTED_TOOL_NOTE}`,
+      input: {
+        site_id: siteId,
+        ...heatmapImageInput.shape,
+        include_base64: z.boolean().optional().describe("Also return the PNG as base64 (png_base64) when it is at most 1.5 MB."),
+      },
+      openWorld: true,
+    },
+    async ({ site_id, ...rest }) => heatmapImageInfo(ctx, site_id, rest),
   );
   t.read(
     "list_errors",

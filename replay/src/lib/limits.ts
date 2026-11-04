@@ -53,6 +53,11 @@ export const DEFAULTS = {
   UNVERIFIED_SESSIONS_PER_SITE_PER_DAY: 20,
   UNVERIFIED_SITES_PER_ACCOUNT: 1,
   FORWARDED_EVENTS_PER_SITE_PER_DAY: 500,
+  TAGS_EVENTS_PER_SITE_PER_DAY: 500,
+  // Browser Rendering is billed by browser time: strict on purpose (a cached image costs nothing).
+  HEATMAP_IMAGES_PER_SITE_PER_DAY: 10,
+  HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY: 30,
+  HEATMAP_IMAGES_PLATFORM_PER_DAY: 300,
   LINK_BYTES_PER_DAY: 50 * 1_048_576,
   VERIFY_PER_ACCOUNT_PER_HOUR: 30,
   SEGMENTS_PER_SITE: 50,
@@ -66,6 +71,7 @@ export const DEFAULTS = {
   IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY: 50,
   STARRED_SESSIONS_PER_SITE: 100,
   STARRED_RETENTION_DAYS: 90,
+  STARRED_BYTES_PER_SITE: 200 * 1_048_576,
   NOTES_PER_SESSION: 50,
   NOTES_PER_SITE: 2000,
   LABELS_PER_SESSION: 5,
@@ -145,6 +151,8 @@ export function ingestCaps(env: Bindings, standing: Standing, verified: boolean)
     upgraded_daily: cap(env, standing, "MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY", DEFAULTS.UPGRADED_SESSIONS_PER_SITE_PER_DAY),
     net_daily: cap(env, standing, "MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY", DEFAULTS.SESSIONS_PER_IP_PER_SITE_PER_DAY),
     forward_daily: cap(env, standing, "MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY", DEFAULTS.FORWARDED_EVENTS_PER_SITE_PER_DAY),
+    /** signals and survey scores queued for the linked tags container */
+    tags_daily: cap(env, standing, "MAX_TAGS_EVENTS_PER_SITE_PER_DAY", DEFAULTS.TAGS_EVENTS_PER_SITE_PER_DAY),
     account: accountBudget(env, standing),
     platform: platformBudget(env, standing),
   };

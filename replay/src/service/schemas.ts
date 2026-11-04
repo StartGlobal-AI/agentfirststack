@@ -247,6 +247,13 @@ export const deleteVisitorInput = z.object({
   user_id: z.string().max(200).optional().describe("Every session identified with this user id."),
   analytics_visitor_id: z.string().max(64).optional().describe("Every session of this analytics visitor id."),
   session_ids: list(z.string().max(40), 500).optional().describe("These sessions."),
+  email: z
+    .string()
+    .max(254)
+    .optional()
+    .describe(
+      "Survey responses holding this address (an email question's answer, or a text answer that is exactly it), and the sessions they are linked to.",
+    ),
 });
 
 export const createLinkInput = z.object({

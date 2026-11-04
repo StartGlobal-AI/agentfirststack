@@ -103,7 +103,10 @@ export function respond(db: Db, q: RespondRequest): RespondResult {
     db.run("INSERT OR IGNORE INTO survey_versions (survey_id, version, questions) VALUES (?, ?, ?)", [
       q.survey_id,
       q.version,
-      JSON.stringify(q.questions.map((x) => ({ id: x.id, type: x.type, text: x.text }))),
+      // an email question's consent line is kept with the version: what the respondent agreed to
+      JSON.stringify(
+        q.questions.map((x) => ({ id: x.id, type: x.type, text: x.text, ...(x.consent_text ? { consent_text: x.consent_text } : {}) })),
+      ),
     ]);
     const element = q.element ? JSON.stringify(q.element) : null;
     if (existing)
@@ -183,9 +186,22 @@ export function respond(db: Db, q: RespondRequest): RespondResult {
 /** A widget showed the survey (counted per survey and day; per network capped). */
 export function impression(
   db: Db,
-  q: { now: number; survey_id: string; test: boolean; net: string; net_daily: number | null; test_daily?: number | null },
+  q: {
+    now: number;
+    survey_id: string;
+    test: boolean;
+    net: string;
+    net_daily: number | null;
+    test_daily?: number | null;
+    /** the account's and deployment's daily budgets: an impression counts as one derived row (wave 2) */
+    account?: Budget;
+    platform?: Budget;
+    usage?: UsageSnapshot | null;
+  },
 ) {
   const day = utcDay(q.now);
+  const over = overBudget(db, day, { sessions: 0, chunks: 0, bytes: 0, derived: 1 }, q.account, q.platform, q.usage);
+  if (over) return { ok: false as const, reason: over };
   if (q.test && q.test_daily !== null && q.test_daily !== undefined) {
     const n = num(db.all("SELECT COALESCE(SUM(test_impressions), 0) AS n FROM survey_daily WHERE day = ?", [day])[0]?.n);
     if (n >= q.test_daily) return { ok: false as const, reason: "test_daily_limit" };
@@ -204,6 +220,8 @@ export function impression(
       "INSERT INTO survey_net_daily (day, net, responses, impressions) VALUES (?, ?, 0, 1) ON CONFLICT(day, net) DO UPDATE SET impressions = impressions + 1",
       [day, q.net],
     );
+  // the site's daily derived counter (reported to the account and deployment totals like the rest)
+  db.run("INSERT INTO daily (day, derived) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET derived = derived + 1", [day]);
   return { ok: true as const };
 }
 
@@ -394,6 +412,7 @@ export function deleteResponse(db: Db, surveyId: string, id: string): boolean {
   if (!found) return false;
   db.transaction(() => {
     db.run("DELETE FROM survey_responses WHERE id = ?", [id]);
+    db.run("DELETE FROM tags_outbox WHERE response_id = ?", [id]);
     if (found.session_id)
       db.run("DELETE FROM events WHERE session_id = ? AND kind = 'survey' AND json_extract(detail, '$.response_id') = ?", [
         String(found.session_id),
@@ -411,9 +430,29 @@ export function deleteSurveyData(db: Db, surveyId: string): number {
       "DELETE FROM events WHERE kind = 'survey' AND json_extract(detail, '$.survey_id') = ? AND session_id IN (SELECT session_id FROM survey_responses WHERE survey_id = ? AND session_id IS NOT NULL)",
       [surveyId, surveyId],
     );
+    db.run("DELETE FROM tags_outbox WHERE response_id IN (SELECT id FROM survey_responses WHERE survey_id = ?)", [surveyId]);
     for (const t of ["survey_responses", "survey_daily", "survey_versions"]) db.run(`DELETE FROM ${t} WHERE survey_id = ?`, [surveyId]);
     return n;
   });
+}
+
+/** delete_visitor_data / get_visitor by email: responses holding this address (an email answer, or a text answer that is exactly it). */
+const BY_EMAIL = "SELECT r.id FROM survey_responses r, json_each(r.answers) j WHERE j.type = 'text' AND lower(j.value) = lower(?)";
+
+export function deleteResponsesByEmail(db: Db, email: string): number {
+  const ids = db.all(BY_EMAIL, [email]).map((r) => String(r.id));
+  if (!ids.length) return 0;
+  const list = JSON.stringify([...new Set(ids)]);
+  db.transaction(() => {
+    db.run(`DELETE FROM tags_outbox WHERE response_id IN ${IN_JSON}`, [list]);
+    db.run(`DELETE FROM events WHERE kind = 'survey' AND json_extract(detail, '$.response_id') IN ${IN_JSON}`, [list]);
+    db.run(`DELETE FROM survey_responses WHERE id IN ${IN_JSON}`, [list]);
+  });
+  return new Set(ids).size;
+}
+
+export function responsesByEmail(db: Db, email: string): ResponseRowOut[] {
+  return db.all(`SELECT * FROM survey_responses WHERE id IN (${BY_EMAIL}) ORDER BY created_at DESC LIMIT 200`, [email]).map(rowOut);
 }
 
 /** delete_visitor_data: responses by the visitor's user id (also those whose session is gone). */
@@ -421,7 +460,10 @@ export function deleteVisitorResponses(db: Db, userIds: string[]): number {
   if (!userIds.length) return 0;
   const list = JSON.stringify(userIds);
   const n = num(db.all(`SELECT COUNT(*) AS n FROM survey_responses WHERE user_id IN ${IN_JSON}`, [list])[0]?.n);
-  if (n) db.run(`DELETE FROM survey_responses WHERE user_id IN ${IN_JSON}`, [list]);
+  if (n) {
+    db.run(`DELETE FROM tags_outbox WHERE response_id IN (SELECT id FROM survey_responses WHERE user_id IN ${IN_JSON})`, [list]);
+    db.run(`DELETE FROM survey_responses WHERE user_id IN ${IN_JSON}`, [list]);
+  }
   return n;
 }
 

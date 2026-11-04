@@ -1,7 +1,7 @@
 import type { AuthContext } from "@afs/shared";
 import type { NewError } from "../do/engine";
 import type { Bindings } from "../env";
-import type { CleanAnswers } from "../lib/survey-def";
+import { type CleanAnswers, redactEmails, type SurveyDef } from "../lib/survey-def";
 import { UNTRUSTED_NOTICE } from "../lib/untrusted";
 import type { Ctx, SiteRow } from "./context";
 import { siteStub } from "./context";
@@ -40,7 +40,13 @@ export async function onSurveyResponse(
     session_id: r.session_id,
     test: r.test,
     created_at: r.created_at,
-    ...untrusted({ survey_name: survey.name, path: r.path, answers: r.answers, element: r.element }),
+    // email answers stay in the response (delivery logs keep payloads for 7 days): only "given" here
+    ...untrusted({
+      survey_name: survey.name,
+      path: r.path,
+      answers: redactEmails((JSON.parse(survey.definition) as SurveyDef).questions, r.answers),
+      element: r.element,
+    }),
     next_steps: r.session_id ? [`GET /v1/sites/${site.id}/sessions/${r.session_id}/transcript`] : [],
   });
 }

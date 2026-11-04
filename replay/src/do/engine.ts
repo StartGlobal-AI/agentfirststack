@@ -16,6 +16,7 @@ import type { PageRow, SessionRow } from "../lib/rows";
 import { detectRage, errorClicks, excessiveScroll, frustrationScore, quickBacks } from "../lib/signals";
 import { type Db, DAY, IN_JSON, marks, num, type Row, type SqlValue, strOrNull, utcDay } from "./db";
 import { surveyHousekeeping } from "./surveys";
+import { FWD_ANALYTICS, queueSessionSignals, type TagsRequest, tagsQueued } from "./tags-outbox";
 
 /**
  * Schema version 1 (the first release) is SCHEMA_V1 and is never edited; later versions are
@@ -24,7 +25,7 @@ import { surveyHousekeeping } from "./surveys";
  * engine). SCHEMA_V1 only runs for a brand-new database: running it again would recreate indexes a
  * migration dropped.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -338,6 +339,28 @@ CREATE TABLE IF NOT EXISTS survey_versions (
 ) WITHOUT ROWID
 `;
 
+/**
+ * Version 4 (wave 2), additive: chunks of starred sessions copied to the starred/ prefix (kept:
+ * NULL not yet, 1 copied, 0 the original was gone); signals and survey scores queued for a linked
+ * tags container (tags_outbox, its daily counter daily.tags_forwarded; events.forwarded becomes a
+ * bit set: 1 analytics, 2 tags).
+ */
+const SCHEMA_V4 = `
+ALTER TABLE chunks ADD COLUMN kept INTEGER;
+CREATE INDEX IF NOT EXISTS chunks_kept ON chunks(session_id) WHERE kept = 1;
+ALTER TABLE daily ADD COLUMN tags_forwarded INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS tags_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT,
+  response_id TEXT,
+  created_at INTEGER NOT NULL,
+  tries INTEGER NOT NULL DEFAULT 0,
+  event TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tags_outbox_session ON tags_outbox(session_id);
+CREATE INDEX IF NOT EXISTS tags_outbox_response ON tags_outbox(response_id) WHERE response_id IS NOT NULL
+`;
+
 const statements = (sql: string) =>
   sql
     .split(";")
@@ -366,6 +389,12 @@ const MIGRATIONS: { version: number; up: (db: Db, now: number) => void }[] = [
     version: 3,
     up: (db) => {
       for (const s of statements(SCHEMA_V3)) db.run(s);
+    },
+  },
+  {
+    version: 4,
+    up: (db) => {
+      for (const s of statements(SCHEMA_V4)) db.run(s);
     },
   },
 ];
@@ -458,6 +487,8 @@ export interface IngestRequest {
   limits: IngestLimits;
   /** collect settled signals not forwarded yet (the site is verified and linked to analytics) */
   forward: boolean;
+  /** queue settled signals for the linked tags container (verified site, TAGS binding) */
+  tags?: TagsRequest | null;
   /** hashed client network (IPv4 address or IPv6 /48), for net_daily; never the address */
   net?: string | null;
   usage?: UsageSnapshot | null;
@@ -480,7 +511,7 @@ export interface NewError {
 }
 
 export type IngestResult =
-  | { status: "accepted"; new_session: boolean; forward: ForwardItem[]; new_errors?: NewError[] }
+  | { status: "accepted"; new_session: boolean; forward: ForwardItem[]; new_errors?: NewError[]; tags_queued?: number }
   | { status: "duplicate" }
   | { status: "rejected"; reason: string; stop: boolean; counter?: Counter };
 
@@ -1012,7 +1043,14 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       day,
       req.net,
     ]);
-  return { status: "accepted", new_session: !existing, forward, ...(newErrors.length ? { new_errors: newErrors } : {}) };
+  const tagsQueuedNow = req.tags ? queueSessionSignals(db, sid, Math.max(c.cover_end, lastTs) - 1500, req.end, req.tags, req.now) : 0;
+  return {
+    status: "accepted",
+    new_session: !existing,
+    forward,
+    ...(newErrors.length ? { new_errors: newErrors } : {}),
+    ...(tagsQueuedNow ? { tags_queued: tagsQueuedNow } : {}),
+  };
 }
 
 const hasNavIn = (db: Db, sid: string, from: number, to: number) =>
@@ -1205,7 +1243,7 @@ function takeForwardable(db: Db, sid: string, settledBefore: number, end: boolea
   const limit = end ? Number.MAX_SAFE_INTEGER : settledBefore;
   const clicks = db.all(
     `SELECT id, ts, path, selector, label, interactive, rage, rage_start, dead, error_click FROM events
-     WHERE session_id = ? AND kind = 'click' AND forwarded = 0 AND ts <= ? AND (open = 0 OR ? = 1)
+     WHERE session_id = ? AND kind = 'click' AND (forwarded & ${FWD_ANALYTICS}) = 0 AND ts <= ? AND (open = 0 OR ? = 1)
        AND (rage_start = 1 OR (dead = 1 AND interactive = 1 AND rage = 0) OR error_click = 1)
      ORDER BY ts LIMIT 100`,
     [sid, limit, end ? 1 : 0],
@@ -1220,16 +1258,16 @@ function takeForwardable(db: Db, sid: string, settledBefore: number, end: boolea
     if (num(r.error_click)) items.push({ name: "error_click", ts: num(r.ts), path: strOrNull(r.path), props: base });
     if (out.length + items.length > room) return out;
     out.push(...items);
-    db.run("UPDATE events SET forwarded = 1 WHERE id = ?", [num(r.id)]);
+    db.run(`UPDATE events SET forwarded = forwarded | ${FWD_ANALYTICS} WHERE id = ?`, [num(r.id)]);
   }
   const errors = db.all(
-    `SELECT id, ts, path, message, fingerprint FROM events e WHERE session_id = ? AND kind = 'error' AND forwarded = 0 AND ts <= ?
+    `SELECT id, ts, path, message, fingerprint FROM events e WHERE session_id = ? AND kind = 'error' AND (forwarded & ${FWD_ANALYTICS}) = 0 AND ts <= ?
      ORDER BY ts LIMIT 50`,
     [sid, limit],
   );
   const sent = new Set(
     db
-      .all("SELECT DISTINCT fingerprint FROM events WHERE session_id = ? AND kind = 'error' AND forwarded = 1", [sid])
+      .all(`SELECT DISTINCT fingerprint FROM events WHERE session_id = ? AND kind = 'error' AND (forwarded & ${FWD_ANALYTICS}) != 0`, [sid])
       .map((r) => String(r.fingerprint)),
   );
   for (const r of errors) {
@@ -1244,7 +1282,7 @@ function takeForwardable(db: Db, sid: string, settledBefore: number, end: boolea
         props: { replay_session_id: sid, fingerprint: fp, message: String(r.message ?? "").slice(0, 200) },
       });
     }
-    db.run("UPDATE events SET forwarded = 1 WHERE id = ?", [num(r.id)]);
+    db.run(`UPDATE events SET forwarded = forwarded | ${FWD_ANALYTICS} WHERE id = ?`, [num(r.id)]);
   }
   const pages = db.all(
     `SELECT pv, ts, path, quick_back, excessive_scroll, forwarded FROM pages WHERE session_id = ? AND path IS NOT NULL
@@ -1276,6 +1314,8 @@ export interface DeletedSessions {
   deleted: string[];
   /** R2 keys below the site prefix: "<session_id>/<seq 6 digits>" */
   keys: string[];
+  /** full R2 keys of starred playback copies ("starred/<site_id>/<session_id>/<seq>") */
+  starred_keys?: string[];
 }
 
 export const chunkKey = (sid: string, seq: number) => `${sid}/${String(seq).padStart(6, "0")}`;
@@ -1293,7 +1333,16 @@ export interface DeleteOptions {
 }
 
 /** Every table with rows of one session (deleted with it: privacy requests and retention). */
-export const SESSION_TABLES = ["events", "pages", "chunks", "session_tags", "session_labels", "notes", "segment_hits"] as const;
+export const SESSION_TABLES = [
+  "events",
+  "pages",
+  "chunks",
+  "session_tags",
+  "session_labels",
+  "notes",
+  "segment_hits",
+  "tags_outbox",
+] as const;
 
 export function deleteSessions(db: Db, ids: string[], opts: DeleteOptions = {}): DeletedSessions {
   if (!ids.length) return { deleted: [], keys: [] };
@@ -1303,11 +1352,23 @@ export function deleteSessions(db: Db, ids: string[], opts: DeleteOptions = {}):
     const keys = db
       .all(`SELECT session_id, seq FROM chunks WHERE session_id IN ${IN_JSON}`, [list])
       .map((r) => chunkKey(String(r.session_id), num(r.seq)));
-    if (opts.prefix !== undefined)
+    const starred_keys =
+      opts.prefix === undefined
+        ? []
+        : db
+            .all(`SELECT session_id, seq FROM chunks WHERE session_id IN ${IN_JSON} AND kept = 1`, [list])
+            .map((r) => starredKey(opts.prefix!, String(r.session_id), num(r.seq)));
+    if (opts.prefix !== undefined) {
       db.run(
         `INSERT OR IGNORE INTO r2_pending (key, not_before) SELECT ? || session_id || '/' || printf('%06d', seq), ? FROM chunks WHERE session_id IN ${IN_JSON}`,
         [opts.prefix, opts.not_before ?? 0, list],
       );
+      // a starred session's playback copies go with it
+      db.run(
+        `INSERT OR IGNORE INTO r2_pending (key, not_before) SELECT ? || ? || session_id || '/' || printf('%06d', seq), ? FROM chunks WHERE session_id IN ${IN_JSON} AND kept = 1`,
+        [STARRED_PREFIX, opts.prefix, opts.not_before ?? 0, list],
+      );
+    }
     if (opts.tombstone_at !== undefined)
       db.run(`INSERT OR REPLACE INTO deleted_sessions (id, at) SELECT value, ? FROM json_each(?)`, [
         opts.tombstone_at,
@@ -1317,7 +1378,7 @@ export function deleteSessions(db: Db, ids: string[], opts: DeleteOptions = {}):
     // Responses linked to these sessions go with them (privacy requests and retention alike).
     db.run(`DELETE FROM survey_responses WHERE session_id IN ${IN_JSON}`, [list]);
     db.run(`DELETE FROM sessions WHERE id IN ${IN_JSON}`, [list]);
-    return { deleted: found, keys };
+    return { deleted: found, keys, ...(starred_keys.length ? { starred_keys } : {}) };
   });
 }
 
@@ -1644,8 +1705,13 @@ export function summary(db: Db, now: number) {
       bytes: t.bytes,
       derived_events: t.derived,
       forwarded_events: t.forwarded,
+      tags_events: num(db.all("SELECT tags_forwarded FROM daily WHERE day = ?", [utcDay(now)])[0]?.tags_forwarded),
     },
+    /** signals and survey scores waiting for the linked tags container, and its last answer */
+    tags_forwarding: tagsStatus(db),
     hostnames_last_7d: hosts,
+    /** bytes kept in starred playback copies (counted against the daily byte budgets when copied) */
+    starred_copy_bytes: starredBytes(db),
     dropped_last_7d: drops,
     /** the latest refused Origin / hostname / user agent per reason (raw request data: untrusted) */
     drop_samples: samples,
@@ -1653,6 +1719,27 @@ export function summary(db: Db, now: number) {
 }
 
 export type Summary = ReturnType<typeof summary>;
+
+/** The last batch sent to tags: HTTP status (0 = the binding failed), when, events accepted, dropped. */
+export interface TagsLast {
+  status: number;
+  at: number;
+  sent: number;
+  dropped: number;
+  error: string | null;
+}
+
+/** meta tags_last: the last batch sent to tags. */
+function tagsStatus(db: Db): { queued: number; last: TagsLast | null } {
+  const v = db.all("SELECT value FROM meta WHERE key = 'tags_last'")[0]?.value;
+  let last: TagsLast | null = null;
+  try {
+    last = v ? (JSON.parse(String(v)) as TagsLast) : null;
+  } catch {
+    last = null;
+  }
+  return { queued: tagsQueued(db), last };
+}
 
 export function chunkSeqs(db: Db, sid: string): number[] {
   return db.all("SELECT seq FROM chunks WHERE session_id = ? ORDER BY seq", [sid]).map((r) => num(r.seq));
@@ -1708,3 +1795,53 @@ export function signalSpikes(db: Db, now: number): { signal: string; sessions_la
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------------- starred playback copies
+
+/**
+ * Chunks of starred sessions are copied to `starred/<site_id>/<session_id>/<seq>` (outside the
+ * `rsite_` prefix an R2 lifecycle rule may expire), so a starred session keeps its playback for
+ * MAX_STARRED_RETENTION_DAYS. The copy is deleted when the session is unstarred or deleted.
+ */
+export const STARRED_PREFIX = "starred/";
+export const starredKey = (prefix: string, sid: string, seq: number) => `${STARRED_PREFIX}${prefix}${chunkKey(sid, seq)}`;
+
+/** Chunks of starred sessions not copied yet (oldest sessions first). */
+export function starredCopyDue(db: Db, limit = 100): { session_id: string; seq: number; bytes: number }[] {
+  return db
+    .all(
+      `SELECT session_id, seq, bytes FROM chunks WHERE session_id IN (SELECT id FROM sessions WHERE starred = 1) AND kept IS NULL AND rr_events > 0
+       ORDER BY session_id, seq LIMIT ?`,
+      [limit],
+    )
+    .map((r) => ({ session_id: String(r.session_id), seq: num(r.seq), bytes: num(r.bytes) }));
+}
+
+/** After a copy: kept 1 (copied, its bytes counted today) or 0 (the original was already gone). */
+export function markKept(db: Db, sid: string, seq: number, kept: 0 | 1, bytes: number, now: number): void {
+  db.transaction(() => {
+    db.run("UPDATE chunks SET kept = ? WHERE session_id = ? AND seq = ?", [kept, sid, seq]);
+    if (kept && bytes)
+      db.run("INSERT INTO daily (day, bytes) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET bytes = bytes + excluded.bytes", [
+        utcDay(now),
+        bytes,
+      ]);
+  });
+}
+
+/** Unstarred: the copies are queued for deletion and forgotten. */
+export function dropKept(db: Db, sid: string, prefix: string | undefined, now: number): number {
+  const n = num(db.all("SELECT COUNT(*) AS n FROM chunks WHERE session_id = ? AND kept = 1", [sid])[0]?.n);
+  db.transaction(() => {
+    if (prefix !== undefined && n)
+      db.run(
+        `INSERT OR IGNORE INTO r2_pending (key, not_before) SELECT ? || ? || session_id || '/' || printf('%06d', seq), ? FROM chunks WHERE session_id = ? AND kept = 1`,
+        [STARRED_PREFIX, prefix, now, sid],
+      );
+    db.run("UPDATE chunks SET kept = NULL WHERE session_id = ? AND kept IS NOT NULL", [sid]);
+  });
+  return n;
+}
+
+/** Bytes the site keeps in starred copies (and would with this session). */
+export const starredBytes = (db: Db): number => num(db.all("SELECT COALESCE(SUM(bytes), 0) AS n FROM chunks WHERE kept = 1")[0]?.n);

@@ -132,3 +132,20 @@ export const ownHost = (host: string, domain: string) => {
   const h = host.toLowerCase();
   return !isIpLiteral(h) && (h === domain || h.endsWith(`.${domain}`));
 };
+
+/**
+ * A page's Origin we accept browser uploads from: https, or plain http only for localhost /
+ * 127.0.0.1 in local development (DEV_MODE). Returns its hostname, or null.
+ */
+export function secureOriginHost(origin: string | null, dev: boolean): string | null {
+  if (!origin || origin === "null") return null;
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return null;
+  }
+  if (u.protocol === "https:") return u.hostname;
+  if (u.protocol === "http:" && dev && (u.hostname === "localhost" || u.hostname === "127.0.0.1")) return u.hostname;
+  return null;
+}

@@ -27,6 +27,8 @@ import {
   BUILTIN_IGNORE,
   BUILTIN_MASK,
   BUILTIN_UNMASK,
+  dropPointerOver,
+  SURVEY_HOST_ATTR,
   type TextRule,
   applyRule,
   inputValueVisible,
@@ -59,7 +61,11 @@ interface SNode {
 type RREvent = { type: number; timestamp: number; data: Record<string, unknown> };
 
 (() => {
-  const w = window as unknown as { __afsrBoot?: Boot; afsa?: { visitorId?: () => string | null } };
+  const w = window as unknown as {
+    __afsrBoot?: Boot;
+    afsa?: { visitorId?: () => string | null };
+    afst?: { visitorId?: () => string | null };
+  };
   const boot = w.__afsrBoot;
   if (!boot || boot.cmd) return;
   delete w.__afsrBoot;
@@ -163,8 +169,17 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     if (n.type === 2 && n.tagName) scrubAttrs(n.tagName, n.attributes, record.mirror.getNode(n.id) as Element | null, !!n.isSVG);
     if (n.childNodes) for (const c of n.childNodes) walk(c);
   };
-  const scrub = (e: RREvent) => {
+  // The survey widget's host (closed shadow root): pointer data over it is never recorded.
+  const overSurvey = (id: number) => {
+    const n = record.mirror.getNode(id) as Element | null;
+    return !!n && n.nodeType === 1 && n.hasAttribute(SURVEY_HOST_ATTR);
+  };
+  /** Mask, scrub, drop: false = don't send this event at all. */
+  const scrub = (e: RREvent): boolean => {
     const data = e.data;
+    // MouseMove 1, MouseInteraction 2, TouchMove 6, Drag 12
+    if (e.type === 3 && (data.source === 1 || data.source === 2 || data.source === 6 || data.source === 12))
+      return dropPointerOver(data as never, overSurvey);
     if (e.type === 4 && typeof data.href === "string") data.href = scrubLink(data.href);
     else if (e.type === 2) walk(data.node as SNode);
     else if (e.type === 3 && data.source === 0) {
@@ -182,6 +197,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
       const set = data.set as { value?: string } | undefined;
       if (set) set.value = sc(set.value) as string;
     }
+    return true;
   };
 
   // ---------------------------------------------------------------- sending
@@ -215,6 +231,15 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     if (S.uid) env.uid = S.uid;
     const av = avid();
     if (av) env.avid = av;
+    // A tags container is linked: its visitor id lets tags apply this visitor's own consent to forwarded signals.
+    if (C.tg) {
+      try {
+        const tv = w.afst && w.afst.visitorId ? w.afst.visitorId() : null;
+        if (tv) env.tvid = String(tv).slice(0, 64);
+      } catch {
+        /* no tags runtime */
+      }
+    }
     if (S.f) env.f = 1;
     if (S.up) env.up = S.up;
     if (nav.webdriver) env.wd = 1;
@@ -239,7 +264,7 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   // ---------------------------------------------------------------- recording
   const emit = (e: RREvent) => {
     try {
-      scrub(e);
+      if (!scrub(e)) return;
     } catch {
       return; // never ship an event we failed to scrub
     }

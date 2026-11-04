@@ -18,6 +18,10 @@ import * as engine from "./engine";
 import * as annotations from "./annotations";
 import * as queries from "./queries";
 import * as surveys from "./surveys";
+import * as tags from "./tags-outbox";
+import * as heatmapImage from "./heatmap-image";
+import { postTagsEvents } from "../service/tags";
+import type { TagsServerEvent } from "../lib/tags";
 
 /** What the site row says about retention, handed to the DO so its own alarm can purge. */
 export interface SiteConfig {
@@ -29,7 +33,19 @@ export interface SiteConfig {
 export interface IngestCall extends engine.IngestRequest {
   account_id: string;
   config: SiteConfig;
+  /** the linked tags container (with `tags`): where the alarm sends queued events */
+  tags_container?: string | null;
 }
+
+/** A completed survey response's scores for the linked tags container. */
+export interface SurveyTags {
+  container_id: string;
+  event: TagsServerEvent;
+  daily: number | null;
+}
+
+/** Batching window for tags: the first queued event waits this long for others. */
+const TAGS_BATCH_MS = 15_000;
 
 const SYNC_MS = 60_000;
 const SYNC_MIN_MS = 2_000;
@@ -87,11 +103,13 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     // A deleted site's tombstone: refuse without writing anything (config, alarm).
     if (engine.isDeleted(this.db)) return { status: "rejected", reason: "unknown_site", stop: true };
     this.remember(req.config);
+    this.rememberBudgets(req.limits.account, req.limits.platform);
     await this.ensureAlarm();
     const { account, platform } = req.limits;
     // No totals for today yet (new instance, new day): read them first, so the check is real.
     if (this.usage?.day !== utcDay(Date.now())) await this.sync(req.account_id, account, platform, true);
     const r = engine.ingestChunk(this.db, { ...req, usage: this.usage });
+    if (r.status === "accepted" && r.tags_queued && req.tags_container) await this.wakeTags(req.tags_container, req.account_id);
     if (r.status === "rejected") this.noteDrop(r.reason, req.session_id);
     // Report what was just counted when due (other sites of the account see it from then on).
     else await this.sync(req.account_id, account, platform, false);
@@ -170,18 +188,104 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
 
   // ------------------------------------------------------------------ surveys
 
-  async surveyRespond(req: surveys.RespondRequest): Promise<surveys.RespondResult> {
+  async surveyRespond(req: surveys.RespondRequest & { tags?: SurveyTags | null }): Promise<surveys.RespondResult> {
     if (engine.isDeleted(this.db)) return { status: "rejected", reason: "unknown_site" };
     const { account, platform } = req.limits;
     if (this.usage?.day !== utcDay(Date.now())) await this.sync(req.account_id, account, platform, true);
-    const r = surveys.respond(this.db, { ...req, usage: this.usage });
-    if (r.status === "stored") await this.sync(req.account_id, account, platform, false);
+    const { tags: t, ...rest } = req;
+    const r = surveys.respond(this.db, { ...rest, usage: this.usage });
+    if (r.status === "stored") {
+      // A completed, real response with a score: queued for the tags container (its own daily budget).
+      if (t && r.completed_now && !r.test && tags.tagsRoom(this.db, req.now, t.daily) > 0) {
+        const event = r.session_linked ? t.event : { ...t.event, params: { ...t.event.params } };
+        if (!r.session_linked) delete event.params.replay_session_id;
+        tags.queueTags(this.db, { session_id: r.session_linked ? req.session_id : null, response_id: r.id, events: [event], now: req.now });
+        await this.wakeTags(t.container_id, req.account_id);
+      }
+      await this.sync(req.account_id, account, platform, false);
+    }
     return r;
   }
 
-  surveyImpression(q: Parameters<typeof surveys.impression>[1]) {
+  // ------------------------------------------------------------------ tags
+
+  /** Events are queued: remember where they go and send them within TAGS_BATCH_MS (with more that arrive meanwhile). */
+  private async wakeTags(containerId: string, accountId: string) {
+    const link = JSON.stringify({ container_id: containerId, account_id: accountId });
+    const cur = this.db.all("SELECT value FROM meta WHERE key = 'tags_link'")[0]?.value;
+    if (cur !== link)
+      this.db.run("INSERT INTO meta (key, value) VALUES ('tags_link', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [link]);
+    if (this.metaNum("tags_at") !== null) return;
+    const at = Date.now() + TAGS_BATCH_MS;
+    this.setMeta("tags_at", at);
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > at) await this.ctx.storage.setAlarm(at);
+  }
+
+  /** The site was unlinked from tags (or the binding is gone): nothing queued is sent. */
+  tagsUnlink(): { dropped: number } {
+    const dropped = tags.tagsClear(this.db);
+    this.db.run("DELETE FROM meta WHERE key IN ('tags_link', 'tags_at')");
+    return { dropped };
+  }
+
+  /**
+   * Send queued events in batches of 100 (at most 5 per run). 2xx: done. 429, 5xx, a binding
+   * failure: retried with backoff (30 s doubling, at most an hour); events older than a day or
+   * tried 8 times are dropped. Another 4xx (container deleted, invalid batch): the batch is dropped.
+   * The outcome is kept in meta tags_last (get_site shows it under data.tags_forwarding).
+   */
+  private async runTags(now: number) {
+    const at = this.metaNum("tags_at");
+    if (at === null || at > now) return;
+    const raw = this.db.all("SELECT value FROM meta WHERE key = 'tags_link'")[0]?.value;
+    const link = raw ? (JSON.parse(String(raw)) as { container_id: string; account_id: string }) : null;
+    let dropped = tags.tagsExpire(this.db, now);
+    if (!link || !this.env.TAGS || !this.env.INTERNAL_TOKEN) {
+      this.tagsUnlink();
+      return;
+    }
+    let next: number | null = null;
+    for (let round = 0; round < 5; round++) {
+      const rows = tags.tagsDue(this.db, 100);
+      if (!rows.length) break;
+      const r = await postTagsEvents(
+        this.env,
+        link.account_id,
+        link.container_id,
+        rows.map((x) => x.event),
+      );
+      const ids = rows.map((x) => x.id);
+      const ok = r.status === 202 || r.status === 200;
+      const retry = r.status === 0 || r.status === 429 || r.status >= 500;
+      if (ok || !retry) tags.tagsDone(this.db, ids);
+      else tags.tagsRetry(this.db, ids);
+      if (!ok && !retry) {
+        dropped += rows.length;
+        console.log(
+          JSON.stringify({ event: "replay.tags_forward_refused", status: r.status, error: r.error, container: link.container_id }),
+        );
+      }
+      const last: engine.TagsLast = { status: r.status, at: now, sent: ok ? rows.length : 0, dropped, error: r.error };
+      this.db.run("INSERT INTO meta (key, value) VALUES ('tags_last', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [
+        JSON.stringify(last),
+      ]);
+      if (retry) {
+        next = now + Math.min(3_600_000, 30_000 * 2 ** Math.max(0, Math.min(7, rows[0]!.tries)));
+        break;
+      }
+    }
+    if (next === null && tags.tagsQueued(this.db) > 0) next = now + TAGS_BATCH_MS;
+    this.setMeta("tags_at", next);
+  }
+
+  async surveyImpression(q: Parameters<typeof surveys.impression>[1] & { account_id: string }) {
     if (engine.isDeleted(this.db)) return { ok: false as const, reason: "unknown_site" };
-    return surveys.impression(this.db, q);
+    const { account, platform } = q;
+    if (this.usage?.day !== utcDay(Date.now())) await this.sync(q.account_id, account, platform, true);
+    const r = surveys.impression(this.db, { ...q, usage: this.usage });
+    if (r.ok) await this.sync(q.account_id, account, platform, false);
+    return r;
   }
 
   surveyStats(surveyId: string) {
@@ -202,6 +306,14 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
 
   deleteVisitorResponses(userIds: string[]) {
     return surveys.deleteVisitorResponses(this.db, userIds);
+  }
+
+  deleteResponsesByEmail(email: string) {
+    return surveys.deleteResponsesByEmail(this.db, email);
+  }
+
+  responsesByEmail(email: string) {
+    return surveys.responsesByEmail(this.db, email);
   }
 
   deleteSurveyData(surveyId: string) {
@@ -250,8 +362,71 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     return annotations.deleteNote(this.db, sid, id);
   }
 
-  annotate(q: Parameters<typeof annotations.annotate>[1]) {
-    return annotations.annotate(this.db, q);
+  /** Star / label; starring copies the playback now (bounded; the alarm finishes), unstarring deletes the copy. */
+  async annotate(q: Parameters<typeof annotations.annotate>[1]) {
+    const r = annotations.annotate(this.db, q);
+    if (!r.ok) return r;
+    if (r.was_starred && !r.starred) {
+      engine.dropKept(this.db, q.session_id, this.prefix(), Date.now());
+      await this.ensureAlarm(true);
+    }
+    if (r.starred && !r.was_starred) await this.runCopies(Date.now(), 5_000);
+    return r;
+  }
+
+  /**
+   * Copy due chunks of starred sessions to the starred/ prefix (get + put; R2 has no server-side
+   * copy), counting their bytes against today's budgets; past a budget it waits for tomorrow.
+   * Leaves copy_at set when more remain, so the alarm comes back for them.
+   */
+  private async runCopies(now: number, budgetMs = 10_000) {
+    const prefix = this.prefix();
+    if (prefix === undefined) return;
+    const stop = Date.now() + budgetMs;
+    const limits = this.budgets();
+    let more = false;
+    for (;;) {
+      const due = engine.starredCopyDue(this.db, 50);
+      if (!due.length) break;
+      for (const c of due) {
+        if (Date.now() > stop) {
+          more = true;
+          break;
+        }
+        if (
+          engine.overBudget(
+            this.db,
+            utcDay(now),
+            { sessions: 0, chunks: 0, bytes: c.bytes, derived: 0 },
+            limits?.account,
+            limits?.platform,
+            this.usage,
+          )
+        ) {
+          more = true; // tomorrow
+          break;
+        }
+        const obj = await this.env.CHUNKS.get(prefix + engine.chunkKey(c.session_id, c.seq));
+        if (!obj) {
+          engine.markKept(this.db, c.session_id, c.seq, 0, 0, now);
+          continue;
+        }
+        await this.env.CHUNKS.put(engine.starredKey(prefix, c.session_id, c.seq), obj.body, {
+          httpMetadata: obj.httpMetadata,
+          customMetadata: obj.customMetadata,
+        });
+        engine.markKept(this.db, c.session_id, c.seq, 1, c.bytes, now);
+      }
+      if (more || Date.now() > stop) {
+        more = more || engine.starredCopyDue(this.db, 1).length > 0;
+        break;
+      }
+    }
+    this.setMeta("copy_at", more ? Date.now() + 30_000 : null);
+    if (more) {
+      const at = await this.ctx.storage.getAlarm();
+      if (at === null || at > Date.now() + 30_000) await this.ctx.storage.setAlarm(Date.now() + 30_000);
+    }
   }
 
   siteLabels() {
@@ -268,6 +443,16 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
 
   heatmap(q: queries.HeatmapRequest) {
     return queries.heatmap(this.db, q);
+  }
+
+  /** What a heatmap image is drawn from: the latest snapshot of a page load, click dots, scroll reach and attention. */
+  heatmapImageData(q: { page: string; device: string; start: number; end: number }) {
+    const h = queries.heatmap(this.db, { ...q, limit: 1 });
+    return {
+      snapshot: heatmapImage.latestSnapshot(this.db, q),
+      dots: heatmapImage.clickDots(this.db, q),
+      heat: { pageviews: h.pageviews, clicks: h.clicks, reach: h.scroll.reach, attention: h.attention },
+    };
   }
 
   metrics(q: queries.MetricsRequest) {
@@ -346,7 +531,8 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     const r = engine.deleteSessions(this.db, ids, { prefix, not_before: now + REDELETE_MS, tombstone_at: now });
     if (r.keys.length && prefix !== undefined) {
       try {
-        for (let i = 0; i < r.keys.length; i += 1000) await this.env.CHUNKS.delete(r.keys.slice(i, i + 1000).map((k) => prefix + k));
+        const all = [...r.keys.map((k) => prefix + k), ...(r.starred_keys ?? [])];
+        for (let i = 0; i < all.length; i += 1000) await this.env.CHUNKS.delete(all.slice(i, i + 1000));
       } catch (e) {
         console.error("replay R2 delete failed (the alarm retries)", e);
       }
@@ -364,17 +550,21 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
 
   override async alarm(): Promise<void> {
     const now = Date.now();
-    const due = this.metaNum("next_maint");
-    // Woken for webhook retries only: maintenance waits for its own time.
-    if (due !== null && due > now && (this.metaNum("webhook_at") ?? Number.POSITIVE_INFINITY) <= now) {
-      await this.runWebhooks(now);
-      await this.reschedule(false, due);
-      return;
+    const next = this.metaNum("next_maint");
+    // Woken for a webhook retry, starred copies or a tags batch only: maintenance keeps its own time.
+    const maintDue = next === null || next <= now;
+    let more = false;
+    if (maintDue) {
+      const r = await this.maintain();
+      more = r.more;
+      await this.checkSpikes(now).catch((e) => console.error("replay spike check failed", e));
     }
-    const r = await this.maintain();
-    await this.checkSpikes(now).catch((e) => console.error("replay spike check failed", e));
     await this.runWebhooks(now);
-    await this.reschedule(r.more);
+    const copyAt = this.metaNum("copy_at");
+    if (maintDue || (copyAt !== null && copyAt <= now))
+      await this.runCopies(now).catch((e) => console.error("replay starred copy failed", e));
+    await this.runTags(now).catch((e) => console.error("replay tags forwarding failed", e));
+    await this.reschedule(more, maintDue ? undefined : (next ?? undefined));
   }
 
   // ------------------------------------------------------------------ webhooks
@@ -423,6 +613,21 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     const s = r.sessions[0];
     if (!s || !engine.segmentHit(this.db, segmentId, s.id, Date.now())) return null;
     return s;
+  }
+
+  /** The account's and deployment's daily budgets as last given by ingest (for work the alarm does). */
+  private budgetCache: { account?: Budget; platform?: Budget } | null = null;
+  private rememberBudgets(account: Budget | undefined, platform: Budget | undefined) {
+    const v = JSON.stringify({ account, platform });
+    if (this.budgetCache && JSON.stringify(this.budgetCache) === v) return;
+    this.budgetCache = { account, platform };
+    this.db.run("INSERT INTO meta (key, value) VALUES ('budgets', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [v]);
+  }
+  private budgets(): { account?: Budget; platform?: Budget } {
+    if (this.budgetCache) return this.budgetCache;
+    const v = this.db.all("SELECT value FROM meta WHERE key = 'budgets'")[0]?.value;
+    this.budgetCache = v ? (JSON.parse(String(v)) as { account?: Budget; platform?: Budget }) : {};
+    return this.budgetCache;
   }
 
   private metaNum(key: string): number | null {
@@ -536,8 +741,10 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     const now = Date.now();
     const maint = keepMaint ?? (more ? now + 30_000 : engine.hasStoredData(this.db) ? now + HOUR : null);
     this.setMeta("next_maint", maint);
-    const wh = this.metaNum("webhook_at");
-    const at = maint === null ? wh : wh === null ? maint : Math.min(maint, wh);
+    const wake = [maint, this.metaNum("webhook_at"), this.metaNum("copy_at"), this.metaNum("tags_at")].filter(
+      (x): x is number => x !== null,
+    );
+    const at = wake.length ? Math.min(...wake) : null;
     if (at === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(at);
   }

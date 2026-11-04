@@ -8,9 +8,11 @@ import { cleanText } from "../lib/mask-rules";
 import { SESSION_ID_RE, SITE_ID_RE } from "../lib/protocol";
 import { answerSummary, SURVEY_LIMITS, validateAnswers } from "../lib/survey-def";
 import { parseUserAgent } from "../lib/ua";
-import { siteHostAllowed } from "../lib/url";
+import { secureOriginHost, siteHostAllowed } from "../lib/url";
 import { isVerified, jsonList, siteById, siteStub } from "./context";
 import { allowed, geo } from "./ingest";
+import { cleanVisitorId, surveyScores, tagsEvent, tagsSignalsOf } from "../lib/tags";
+import { tagsAvailable } from "./tags";
 import { JS, safeJson } from "./scripts";
 import { bumpSurveysRev, defOf, PREVIEW_TOKEN_RE, previewOk, surveyById, surveyCaps, widgetSurveys } from "./surveys";
 import { onSurveyResponse } from "./webhook-events";
@@ -42,7 +44,9 @@ export async function serveSurveyScript(env: Bindings, req: Request, siteId: str
   const preview = p && /^rsv_[0-9a-z]{16}$/.test(p) && pt && PREVIEW_TOKEN_RE.test(pt) ? { id: p, token: pt } : null;
   // Unverified or disabled sites show no surveys (a draft can't be previewed either).
   const surveys = isVerified(site) && site.enabled ? await widgetSurveys(env, site, geo(req, isDev(env)).country, preview) : [];
-  const cfg = { site: site.id, base, s: surveys };
+  const tags =
+    isVerified(site) && !!site.tags_container_id && tagsAvailable(env) && tagsSignalsOf(site.tags_signals).includes("survey_response");
+  const cfg = { site: site.id, base, s: surveys, ...(tags ? { tg: 1 } : {}) };
   return js(
     `/*! afs-replay surveys ${site.id} */\n(function(){var __AFSV__=${safeJson(cfg)};\n${SURVEY}\n})();\n`,
     200,
@@ -58,7 +62,7 @@ export interface SurveyIngestResponse {
 
 const fail = (status: number, error: string, hint: string): SurveyIngestResponse => ({ status, body: { ok: false, error, hint } });
 
-const KEYS = new Set(["v", "s", "sv", "ver", "r", "sid", "a", "d", "p", "t", "el", "imp"]);
+const KEYS = new Set(["v", "s", "sv", "ver", "r", "sid", "a", "d", "p", "t", "el", "imp", "tv"]);
 
 const HINTS: Record<string, [number, string]> = {
   daily_response_limit: [429, "This site received the most survey responses allowed per day here (MAX_RESPONSES_PER_SITE_PER_DAY)."],
@@ -98,16 +102,14 @@ export async function submitSurvey(env: Bindings, req: Request, waitUntil: (p: P
   if (!(await allowed(env.INGEST_SITE_IP_LIMITER, `${site.id}:f:${net}`))) return fail(429, "rate_limited", "Too many survey requests.");
   const dev = isDev(env);
   const origin = req.headers.get("origin");
-  let host = "";
-  try {
-    host = origin && origin !== "null" ? new URL(origin).hostname : "";
-  } catch {
-    /* invalid */
-  }
-  // https pages only (http in local development)
-  const secure = !!origin && (origin.startsWith("https://") || dev);
-  if (!host || !secure || !siteHostAllowed(host, site.domain, site.allowed_hostnames ? jsonList(site.allowed_hostnames) : null, dev))
-    return fail(403, "origin_not_allowed", `Survey posts are accepted from ${site.domain}, its subdomains and allowed_hostnames only.`);
+  // https pages only (http://localhost in local development)
+  const host = secureOriginHost(origin, dev);
+  if (!host || !siteHostAllowed(host, site.domain, site.allowed_hostnames ? jsonList(site.allowed_hostnames) : null, dev))
+    return fail(
+      403,
+      "origin_not_allowed",
+      `Survey posts are accepted from https pages on ${site.domain}, its subdomains and allowed_hostnames only.`,
+    );
   const survey = typeof b.sv === "string" ? await surveyById(env, site.id, b.sv) : null;
   if (!survey) return fail(404, "unknown_survey", "This survey does not exist (deleted?).");
   const def = defOf(survey);
@@ -122,15 +124,21 @@ export async function submitSurvey(env: Bindings, req: Request, waitUntil: (p: P
   const caps = surveyCaps(env, standing);
   const stub = siteStub(env, site.id);
   if (b.imp === 1) {
+    const ib = ingestCaps(env, standing, true);
     const r = await stub.surveyImpression({
       now,
+      account_id: site.account_id,
       survey_id: survey.id,
       test,
       net: netHash,
       net_daily: caps.impressions_net_daily,
       test_daily: caps.test_daily === null ? null : caps.test_daily * 5,
+      account: ib.account,
+      platform: ib.platform,
     });
-    return r.ok ? { status: 202, body: { ok: true } } : fail(429, r.reason, "Impressions from this network are capped per day.");
+    if (r.ok) return { status: 202, body: { ok: true } };
+    const [st, hint] = HINTS[r.reason] ?? [429, "Impressions from this network are capped per day."];
+    return fail(st, r.reason, r.reason === "network_daily_limit" ? "Impressions from this network are capped per day." : hint);
   }
   const r = typeof b.r === "string" && /^[0-9a-z]{16}$/.test(b.r) ? b.r : null;
   if (!r) return fail(400, "bad_response_id", "r is the response id the widget generates (16 base32 characters).");
@@ -149,7 +157,28 @@ export async function submitSurvey(env: Bindings, req: Request, waitUntil: (p: P
       : null;
   const sid = def.link_session !== "never" && typeof b.sid === "string" && SESSION_ID_RE.test(b.sid) ? b.sid : null;
   const ic = ingestCaps(env, standing, true);
+  // A completed answer with an NPS or rating score goes to the linked tags container (scores only, never text).
+  const scores = complete && !test ? surveyScores(def.questions, v.answers) : null;
+  const tags =
+    scores && site.tags_container_id && tagsAvailable(env) && tagsSignalsOf(site.tags_signals).includes("survey_response")
+      ? {
+          container_id: site.tags_container_id,
+          daily: ic.tags_daily,
+          event: tagsEvent(
+            {
+              name: "survey_response" as const,
+              key: `rp.rsr_${r}`,
+              ts: now,
+              path: cleanPath(b.p),
+              params: { survey_id: survey.id, replay_session_id: sid, ...scores },
+            },
+            site.domain,
+            cleanVisitorId(b.tv),
+          ),
+        }
+      : null;
   const res = await stub.surveyRespond({
+    tags,
     now,
     account_id: site.account_id,
     survey_id: survey.id,

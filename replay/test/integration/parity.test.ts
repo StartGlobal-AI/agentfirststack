@@ -464,6 +464,7 @@ describe("MCP and llms.txt cover every parity tool and route", () => {
     "export_sessions",
     "get_funnel_dropoffs",
     "get_heatmap",
+    "get_heatmap_image",
     "get_install_snippet",
     "get_manual",
     "get_replay_metrics",

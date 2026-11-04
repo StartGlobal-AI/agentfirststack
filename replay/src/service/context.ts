@@ -41,8 +41,13 @@ export interface SiteRow {
   capture_network_errors?: number;
   capture_console_warnings?: number;
   auto_events?: number;
-  /** migration 0008: api | gcm; JSON list of CIDRs */
+  /** migration 0008: api | gcm (| tcf, wave 2); JSON list of CIDRs */
   consent_source?: string;
+  /** migration 0009: JSON list of IAB TCF v2 purpose ids (NULL = [1, 8]) */
+  tcf_purposes?: string | null;
+  /** migration 0009: the linked tags container (ctr_...) and the signals sent there (JSON list; NULL = all) */
+  tags_container_id?: string | null;
+  tags_signals?: string | null;
   exclude_ip_ranges?: string | null;
   /** migration 0008: the active surveys' revision (NULL = none active) */
   surveys_rev?: string | null;
@@ -120,4 +125,13 @@ export const forgetSite = (siteId: string) => {
 /** DO errors are values; this turns one into an ApiError. */
 export function doFailure(e: { error: { code: string; message: string; hint?: string } }): never {
   throw new ApiError(e.error.code === "not_found" ? 404 : 400, e.error.code, e.error.message, e.error.hint);
+}
+
+/**
+ * A recording chunk: the original (`<site>/<session>/<seq>`, which an R2 lifecycle rule may
+ * expire), else a starred session's copy (`starred/<site>/...`).
+ */
+export async function chunkObject(env: Bindings, siteId: string, sid: string, seq: number): Promise<R2ObjectBody | null> {
+  const key = `${sid}/${String(seq).padStart(6, "0")}`;
+  return (await env.CHUNKS.get(`${siteId}/${key}`)) ?? (await env.CHUNKS.get(`starred/${siteId}/${key}`));
 }

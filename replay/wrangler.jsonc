@@ -51,9 +51,15 @@
   "durable_objects": { "bindings": [{ "name": "SITE", "class_name": "ReplaySiteDO" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReplaySiteDO"] }],
 
-  // Optional: forwards frustration signals and JS errors to a linked analytics site as events, and
-  // reads analytics funnels (internal auth with INTERNAL_TOKEN). Unbound or no INTERNAL_TOKEN = off.
-  "services": [{ "binding": "ANALYTICS", "service": "afs-analytics" }],
+  // Optional, internal auth with INTERNAL_TOKEN (unbound or no INTERNAL_TOKEN = off): ANALYTICS gets
+  // frustration signals and JS errors of a linked analytics site as events and serves its funnels;
+  // TAGS gets the chosen signals and survey scores of a linked tags container as server events.
+  // Optional: Cloudflare Browser Rendering (Quick Actions, billed by browser time) renders heatmap
+  // images from a recorded snapshot (GET /v1/sites/:id/heatmap/image, verified sites, strict daily
+  // caps). Unbound = that route answers 503 heatmap_images_unavailable.
+  "browser": { "binding": "BROWSER" },
+
+  "services": [{ "binding": "ANALYTICS", "service": "afs-analytics" }, { "binding": "TAGS", "service": "afs-tags" }],
 
   "vars": {
     // The URL agents and install snippets use. Empty = the request origin.
@@ -69,13 +75,14 @@
   // count caps also take an UNCLAIMED_<NAME> variant): SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT,
   // MAX_UNVERIFIED_SITES_PER_ACCOUNT, MAX_SAMPLE_RATE, MAX_SESSION_MINUTES, MAX_SESSIONS_PER_SITE_PER_DAY,
   // MAX_UNVERIFIED_SESSIONS_PER_SITE_PER_DAY, MAX_FORCED_SESSIONS_PER_SITE_PER_DAY,
-  // MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY, MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY, MAX_CHUNK_BYTES,
+  // MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY, MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY, MAX_TAGS_EVENTS_PER_SITE_PER_DAY,
+  // MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY, MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY, MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY, MAX_CHUNK_BYTES,
   // MAX_SESSION_BYTES, MAX_CHUNKS_PER_SESSION, MAX_DERIVED_PER_CHUNK, MAX_DERIVED_PER_SESSION,
   // MAX_{SESSIONS,CHUNKS,BYTES,DERIVED}_PER_ACCOUNT_PER_DAY, MAX_PLATFORM_{SESSIONS,CHUNKS,BYTES,DERIVED}_PER_DAY,
   // MAX_RETENTION_DAYS, MAX_HEATMAP_RETENTION_DAYS, MAX_LINKS_PER_SITE, MAX_LINK_BYTES_PER_DAY,
   // MAX_VERIFY_PER_ACCOUNT_PER_HOUR, CAPTURE_CONSOLE_ERRORS_DEFAULT, CAPTURE_NETWORK_ERRORS_DEFAULT,
   // MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY, MAX_SEGMENTS_PER_SITE, MAX_EVENT_DEFINITIONS_PER_SITE,
-  // MAX_STARRED_SESSIONS_PER_SITE, MAX_STARRED_RETENTION_DAYS, MAX_NOTES_PER_SESSION, MAX_NOTES_PER_SITE,
+  // MAX_STARRED_SESSIONS_PER_SITE, MAX_STARRED_RETENTION_DAYS, MAX_STARRED_BYTES_PER_SITE, MAX_NOTES_PER_SESSION, MAX_NOTES_PER_SITE,
   // MAX_LABELS_PER_SITE, MAX_SURVEYS_PER_SITE, MAX_ACTIVE_SURVEYS_PER_SITE, MAX_QUESTIONS_PER_SURVEY,
   // MAX_ANSWER_CHARS, MAX_RESPONSES_PER_SITE_PER_DAY, MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY,
   // MAX_TEST_RESPONSES_PER_SITE_PER_DAY, MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY,

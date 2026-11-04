@@ -168,6 +168,8 @@ export interface Envelope {
   wd?: 1;
   /** afsr('upgrade', reason): a tab that wasn't sampled in records from now on */
   up?: string;
+  /** the tags visitor id (afst.visitorId()), sent only while a tags container is linked (config tg) */
+  tvid?: string;
 }
 
 /** The per-site config the loader script (/r/<site>.js) is served with. */
@@ -209,6 +211,10 @@ export interface LoaderConfig {
   sv?: string;
   /** 1 = consent follows Google Consent Mode analytics_storage (consent_source gcm) */
   gcm?: 1;
+  /** consent_source tcf: the IAB TCF v2 purposes that all need consent (via __tcfapi), e.g. [1, 8] */
+  tcf?: number[];
+  /** 1 = a tags container is linked: chunks carry the tags visitor id (afst.visitorId()) for forwarded signals */
+  tg?: 1;
 }
 
 /** Ids the browser generates: rs_ + 16 base32 characters, like newId("rs"). */

@@ -84,6 +84,9 @@ export function surveyResults(qs: readonly Question[], rows: readonly ResultRow[
           ...(q.type === "single_choice" && /disappointed/i.test(known[0] ?? "") && first ? { pmf_share: first.share } : {}),
         };
       }
+      case "email":
+        // how many gave an address; the addresses stay in the responses
+        return { ...base, emails_given: answered };
       case "short_text":
       case "long_text": {
         const items = rows

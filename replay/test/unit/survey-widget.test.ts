@@ -207,6 +207,7 @@ describe("survey widget (dist/survey.txt in a fake DOM)", () => {
     expect(SURVEY).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|document\.cookie/);
     expect(SURVEY).toContain('mode:"closed"');
     expect(SURVEY).toContain("data-afsr-block");
+    expect(SURVEY).toContain("data-afsr-survey");
   });
 
   it("renders in a closed shadow root on a blocked host, owner text as text only, then posts the answers", () => {
@@ -301,6 +302,36 @@ describe("survey widget (dist/survey.txt in a fake DOM)", () => {
     expect(ok.body.children).toHaveLength(1); // the side tab
     (ok.ctx.__afsrSv as { h: (c: unknown[]) => void }).h(["feedback"]);
     expect(ok.body.children).toHaveLength(2);
+  });
+
+  it("an email question sends the address only with its consent box ticked, and never takes the focus", () => {
+    const qs = normalizeQuestions(
+      [{ type: "email", text: "Can we follow up?", consent_text: "You may email me about this answer only." }] as Parameters<
+        typeof normalizeQuestions
+      >[0],
+      20,
+    ).questions;
+    const send = (tick: boolean) => {
+      const p = page({ surveys: [sv({ questions: qs })] });
+      const input = p.find((e) => e.tagName === "INPUT" && (e as unknown as { type: string }).type === "email")[0]!;
+      const box = p.find((e) => e.tagName === "INPUT" && (e as unknown as { type: string }).type === "checkbox")[0]!;
+      expect((input as unknown as { autocomplete: string }).autocomplete).toBe("email");
+      expect(p.find((e) => e.textContent === "You may email me about this answer only." && e.children.length === 0)).toHaveLength(1);
+      let focused = false;
+      input.focus = () => void (focused = true);
+      input.value = "person@example.test";
+      for (const f of input.listeners.input ?? []) f({});
+      if (tick) {
+        (box as unknown as { checked: boolean }).checked = true;
+        for (const f of box.listeners.change ?? []) f({});
+      }
+      p.flush();
+      expect(focused).toBe(false);
+      p.find((e) => e.tagName === "BUTTON" && e.textContent === "Send")[0]!.click();
+      return p.posts.find((x) => x.d === 1);
+    };
+    expect(send(false)).toMatchObject({ a: {} });
+    expect(send(true)).toMatchObject({ a: { q1: { email: "person@example.test", consent: true } } });
   });
 
   it("the Send label follows skip logic; Other text survives toggling choices", () => {

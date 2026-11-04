@@ -61,6 +61,7 @@ export async function annotateSession(ctx: Ctx, siteId: string, sessionId: strin
     max_starred: cap(ctx.env, standing, "MAX_STARRED_SESSIONS_PER_SITE", DEFAULTS.STARRED_SESSIONS_PER_SITE),
     labels_per_session: DEFAULTS.LABELS_PER_SESSION,
     max_labels: cap(ctx.env, standing, "MAX_LABELS_PER_SITE", DEFAULTS.LABELS_PER_SITE),
+    max_starred_bytes: cap(ctx.env, standing, "MAX_STARRED_BYTES_PER_SITE", DEFAULTS.STARRED_BYTES_PER_SITE),
     now: Date.now(),
   });
   if (!r.ok) {
@@ -75,7 +76,11 @@ export async function annotateSession(ctx: Ctx, siteId: string, sessionId: strin
         "This site uses the most distinct labels allowed (MAX_LABELS_PER_SITE).",
         "Reuse existing labels: GET /v1/sites/:id/labels.",
       ],
-    }[r.reason];
+      starred_bytes_limit: [
+        "Starred sessions' playback copies would pass this site's storage for them (MAX_STARRED_BYTES_PER_SITE).",
+        'Unstar sessions you no longer need: PATCH .../sessions/<id> {"starred": false}.',
+      ],
+    }[r.reason]!;
     throw new ApiError(403, "quota_exceeded", msg[0]!, msg[1]);
   }
   return {
@@ -84,7 +89,7 @@ export async function annotateSession(ctx: Ctx, siteId: string, sessionId: strin
     labels: r.labels,
     ...(r.starred
       ? {
-          note: `Starred sessions are kept ${Math.max(site.retention_days, starredRetentionDays(ctx.env))} days (retention_days ${site.retention_days} for the rest).`,
+          note: `Its recording is copied to a separate prefix so playback outlives the storage lifecycle too (it counts against MAX_STARRED_BYTES_PER_SITE and today's byte budget). Starred sessions are kept ${Math.max(site.retention_days, starredRetentionDays(ctx.env))} days (retention_days ${site.retention_days} for the rest).`,
         }
       : {}),
     next_steps: [

@@ -1,3 +1,5 @@
+import { defOf, surveyById } from "./surveys";
+import { dropHeatmapImages } from "./heatmap-image";
 import { badRequest, notFound, parse } from "@afs/shared";
 import type { z } from "zod";
 import { chunkKey } from "../do/engine";
@@ -71,6 +73,16 @@ export async function resolveFilters(
     segment = { id: seg.id, name: seg.name };
   }
   const f = toFilters(q, fallback);
+  if (f.survey_answer && f.survey_id) {
+    // an email answer stays in its response: no session search by address
+    const sv = await surveyById(ctx.env, site.id, f.survey_id);
+    const qt = sv ? defOf(sv).questions.find((x) => x.id === f.survey_answer!.qid) : undefined;
+    if (qt?.type === "email")
+      throw badRequest(
+        `survey_answer can't filter on ${qt.id}, an email question.`,
+        "Filter on answered sessions with survey_id alone, or read the response with list_survey_responses.",
+      );
+  }
   if (q.user_id) f.user_ids = await userIdForms(site.id, q.user_id, !!site.hash_user_ids);
   if (q.event) {
     const m = await eventMatchFor(ctx.env, site, q.event.startsWith("!") ? q.event.slice(1) : q.event);
@@ -353,15 +365,20 @@ async function deleteMany(ctx: Ctx, site: SiteRow, ids: string[]) {
         .bind(site.id, ...part)
         .run();
     }
+    // Cached heatmap images may show a deleted session's page snapshot: they go too (re-rendered on demand).
+    await dropHeatmapImages(ctx.env, site.id).catch((e) => console.error("replay heatmap cache delete failed", e));
   }
   return { deleted, chunks };
 }
 
 /** Said with deletions when the site is linked: what replay can't delete on the analytics side. */
 const analyticsNote = (site: SiteRow) =>
-  site.analytics_site_id
+  (site.analytics_site_id
     ? ` Signal events already forwarded to the linked analytics site (${site.analytics_site_id}) stay there: analytics has no per-visitor deletion API yet; delete that analytics data there if needed.`
-    : "";
+    : "") +
+  (site.tags_container_id
+    ? ` Events not yet sent to the linked tags container (${site.tags_container_id}) were dropped; those already sent stay in its event log (7 days) and with the platforms it delivered them to.`
+    : "");
 
 export async function deleteSession(ctx: Ctx, siteId: string, sessionId: string) {
   const site = await loadSite(ctx, siteId);
@@ -376,10 +393,10 @@ export async function deleteSession(ctx: Ctx, siteId: string, sessionId: string)
 
 export async function deleteVisitorData(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(deleteVisitorInput, raw);
-  if (!q.user_id && !q.analytics_visitor_id && !q.session_ids?.length)
+  if (!q.user_id && !q.analytics_visitor_id && !q.session_ids?.length && !q.email)
     throw badRequest(
       "Say whose data to delete.",
-      'Pass user_id (afsr(\'identify\')), analytics_visitor_id (afsa.visitorId()) or session_ids, e.g. {"user_id":"u_123"}.',
+      'Pass user_id (afsr(\'identify\')), analytics_visitor_id (afsa.visitorId()), session_ids or email (survey answers), e.g. {"user_id":"u_123"}.',
     );
   if (q.session_ids?.some((id) => !SESSION_ID_RE.test(id)))
     throw badRequest("session_ids must be rs_... ids.", "Take them from search_sessions.");
@@ -391,12 +408,16 @@ export async function deleteVisitorData(ctx: Ctx, siteId: string, raw: unknown) 
           analytics_visitor_id: q.analytics_visitor_id,
         })
       : [];
-  const ids = [...new Set([...found, ...(q.session_ids ?? [])])];
+  // by email: the sessions linked to responses holding the address are that visitor's too
+  const byEmail = q.email
+    ? (await siteStub(ctx.env, site.id).responsesByEmail(q.email.trim())).map((x) => x.session_id).filter((x): x is string => !!x)
+    : [];
+  const ids = [...new Set([...found, ...(q.session_ids ?? []), ...byEmail])];
   const r = await deleteMany(ctx, site, ids);
   // Survey responses of the visitor whose sessions are already gone (linked ones went with their sessions).
-  const responses = q.user_id
-    ? await siteStub(ctx.env, site.id).deleteVisitorResponses(await userIdForms(site.id, q.user_id, !!site.hash_user_ids))
-    : 0;
+  const responses =
+    (q.user_id ? await siteStub(ctx.env, site.id).deleteVisitorResponses(await userIdForms(site.id, q.user_id, !!site.hash_user_ids)) : 0) +
+    (q.email ? await siteStub(ctx.env, site.id).deleteResponsesByEmail(q.email.trim()) : 0);
   return {
     site_id: site.id,
     deleted_sessions: r.deleted.length,

@@ -243,3 +243,20 @@ export function requestUrl(raw: string, pageHref: string, skip: string): string 
     return null;
   }
 }
+
+/** The attribute the survey widget's host carries (with data-afsr-block): pointer data over it is dropped. */
+export const SURVEY_HOST_ATTR = "data-afsr-survey";
+
+/**
+ * rrweb pointer events (mouse move, touch move, drag positions; mouse interactions) over the survey
+ * widget would let a replay show where the visitor clicked an answer (an NPS score). Positions whose
+ * node is a survey host are removed; an interaction on one is dropped. Returns false when nothing
+ * of the event is left (drop it).
+ */
+export function dropPointerOver(data: { positions?: { id?: unknown }[]; id?: unknown }, over: (id: number) => boolean): boolean {
+  if (Array.isArray(data.positions)) {
+    data.positions = data.positions.filter((p) => !(p && typeof p.id === "number" && over(p.id)));
+    return data.positions.length > 0;
+  }
+  return !(typeof data.id === "number" && over(data.id));
+}

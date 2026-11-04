@@ -13,9 +13,12 @@ export default defineConfig({
           cloudflareTest(async () => ({
             wrangler: { configPath: "./wrangler.jsonc" },
             miniflare: {
-              // The analytics Worker isn't part of this run: a placeholder keeps workerd starting;
-              // forwarding tests pass an env with an in-isolate stub instead.
-              serviceBindings: { ANALYTICS: () => new Response("not wired in tests", { status: 503 }) },
+              // The analytics and tags Workers aren't part of this run: placeholders keep workerd
+              // starting; forwarding tests pass an env with an in-isolate stub instead.
+              serviceBindings: {
+                ANALYTICS: () => new Response("not wired in tests", { status: 503 }),
+                TAGS: () => new Response("not wired in tests", { status: 503 }),
+              },
               bindings: {
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
                 // The shared identity DB (AUTH_DB), as on the hosted platform.
@@ -38,6 +41,10 @@ export default defineConfig({
                 MAX_FORCED_SESSIONS_PER_SITE_PER_DAY: "",
                 MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY: "",
                 MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY: "",
+                MAX_TAGS_EVENTS_PER_SITE_PER_DAY: "",
+                MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY: "",
+                MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY: "",
+                MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY: "",
                 MAX_CHUNKS_PER_SESSION: "",
                 MAX_DERIVED_PER_CHUNK: "",
                 MAX_DERIVED_PER_SESSION: "",

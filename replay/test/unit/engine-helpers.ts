@@ -28,6 +28,7 @@ export interface Opts {
   skew?: number;
   limits?: Partial<IngestRequest["limits"]>;
   forward?: boolean;
+  tags?: IngestRequest["tags"];
   net?: string;
   usage?: UsageSnapshot;
 }
@@ -47,6 +48,7 @@ export function feed(db: Db, sid: string, seq: number, ev: unknown[], o: Opts = 
     end: !!o.end,
     limits: { session_bytes: 1e9, max_session_ms: 30 * 60_000, daily_sessions: null, ...o.limits },
     forward: !!o.forward,
+    tags: o.tags ?? null,
     net: o.net ?? null,
     usage: o.usage ?? null,
   });

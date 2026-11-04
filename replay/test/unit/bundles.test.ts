@@ -41,6 +41,8 @@ function browser(
     now?: number;
     stubCalls?: string;
     dataLayer?: unknown[];
+    /** more globals (e.g. a CMP's __tcfapi) */
+    globals?: Record<string, unknown>;
   } = {},
 ) {
   const injected: { src: string; async: boolean }[] = [];
@@ -74,6 +76,7 @@ function browser(
   };
   ctx.window = ctx;
   if (opts.dataLayer) ctx.dataLayer = opts.dataLayer;
+  Object.assign(ctx, opts.globals ?? {});
   if (opts.stubCalls) {
     runInNewContext(QUEUE_STUB.replace(/^<script>|<\/script>$/g, ""), ctx);
     runInNewContext(opts.stubCalls, ctx);
@@ -86,10 +89,11 @@ function browser(
 describe("bundles", () => {
   // Raised from 3000 / 1500 for the parity release: survey loading and command routing (the widget
   // itself is lazy), Google Consent Mode, afsr('upgrade') and afsr('start') live in the loader
-  // because they decide before the recorder loads.
-  it("stay small: loader < 3.6 KB (1.8 KB gzip), recorder < 32 KB gzip, player < 90 KB gzip", () => {
-    expect(LOADER.length).toBeLessThan(3600);
-    expect(gzipSync(LOADER).length).toBeLessThan(1800);
+  // because they decide before the recorder loads. Raised from 3600 / 1800 in wave 2 for IAB TCF v2
+  // consent (the __tcfapi listener, ~350 bytes): consent decides whether the recorder loads at all.
+  it("stay small: loader < 3.95 KB (1.95 KB gzip), recorder < 32 KB gzip, player < 90 KB gzip", () => {
+    expect(LOADER.length).toBeLessThan(3950);
+    expect(gzipSync(LOADER).length).toBeLessThan(1950);
     expect(RECORDER.startsWith("/*! afs-replay recorder")).toBe(true);
     expect(gzipSync(RECORDER).length).toBeLessThan(32 * 1024);
     expect(PLAYER.startsWith("/*! afs-replay player")).toBe(true);
@@ -103,6 +107,7 @@ describe("bundles", () => {
       "[data-afsr-mask]",
       "[data-afsr-block]",
       "[data-afsr-ignore]",
+      "data-afsr-survey", // pointer moves and clicks over the survey widget are dropped
       "one-time-code",
       "CompressionStream",
       "sendBeacon",
@@ -200,6 +205,69 @@ describe("loader: consent mode, upgrade, start (parity)", () => {
     expect(
       browser({ cfg: { consent: true }, dataLayer: [["consent", "default", { analytics_storage: "granted" }]] }).injected,
     ).toHaveLength(0);
+  });
+
+  /** A fake IAB TCF v2 CMP: addEventListener calls back at once with `first`, then on every emit. */
+  function cmp(first: Record<string, unknown>) {
+    const listeners: ((t: unknown, ok: boolean) => void)[] = [];
+    const calls: unknown[][] = [];
+    const __tcfapi = (cmd: string, version: number, cb: (t: unknown, ok: boolean) => void) => {
+      calls.push([cmd, version]);
+      if (cmd === "addEventListener" && version === 2) {
+        listeners.push(cb);
+        cb(first, true);
+      }
+    };
+    return { globals: { __tcfapi }, calls, emit: (t: Record<string, unknown>) => listeners.forEach((l) => l(t, true)) };
+  }
+  const yes = (...ids: number[]) => Object.fromEntries(ids.map((i) => [String(i), true]));
+  const TCF = { consent: true, tcf: [1, 8] } as never;
+
+  it("consent_source tcf: purposes 1 and 8 with consent start recording; the CMP's UI or a partial choice waits", () => {
+    const loaded = cmp({ gdprApplies: true, eventStatus: "tcloaded", purpose: { consents: yes(1, 8) } });
+    const b = browser({ cfg: TCF, globals: loaded.globals });
+    expect(loaded.calls).toEqual([["addEventListener", 2]]);
+    expect(b.injected).toHaveLength(1);
+
+    const shown = cmp({ gdprApplies: true, eventStatus: "cmpuishown", purpose: { consents: yes(1, 8) } });
+    const w = browser({ cfg: TCF, globals: shown.globals });
+    expect(w.afsr.status()).toBe("consent_pending"); // the banner is up: not a choice yet
+    shown.emit({ gdprApplies: true, eventStatus: "useractioncomplete", purpose: { consents: yes(1) } });
+    expect(w.injected).toHaveLength(0); // purpose 8 refused
+    shown.emit({ gdprApplies: true, eventStatus: "useractioncomplete", purpose: { consents: yes(1, 8) } });
+    expect(w.injected).toHaveLength(1);
+  });
+
+  it("consent_source tcf: legitimate interest never counts; the publisher's own consents do; GDPR not applying records", () => {
+    const li = cmp({
+      gdprApplies: true,
+      eventStatus: "tcloaded",
+      purpose: { consents: yes(1), legitimateInterests: yes(8) },
+    });
+    expect(browser({ cfg: TCF, globals: li.globals }).injected).toHaveLength(0);
+    const pub = cmp({ gdprApplies: true, eventStatus: "tcloaded", purpose: { consents: {} }, publisher: { consents: yes(1, 8) } });
+    expect(browser({ cfg: TCF, globals: pub.globals }).injected).toHaveLength(1);
+    const outside = cmp({ gdprApplies: false });
+    expect(browser({ cfg: TCF, globals: outside.globals }).injected).toHaveLength(1);
+    // tcf_purposes [1, 10]: purpose 8 alone isn't enough
+    const custom = { consent: true, tcf: [1, 10] } as never;
+    expect(
+      browser({ cfg: custom, globals: cmp({ gdprApplies: true, eventStatus: "tcloaded", purpose: { consents: yes(1, 8) } }).globals })
+        .injected,
+    ).toHaveLength(0);
+    expect(
+      browser({ cfg: custom, globals: cmp({ gdprApplies: true, eventStatus: "tcloaded", purpose: { consents: yes(1, 10) } }).globals })
+        .injected,
+    ).toHaveLength(1);
+  });
+
+  it("consent_source tcf without a CMP on the page waits (no consent assumed); afsr('consent', true) still works", () => {
+    const b = browser({ cfg: TCF });
+    expect(b.afsr.status()).toBe("consent_pending");
+    b.afsr("consent", true);
+    expect(b.injected).toHaveLength(1);
+    // without tcf in the config a CMP means nothing
+    expect(browser({ cfg: { consent: true }, globals: cmp({ gdprApplies: false }).globals }).injected).toHaveLength(0);
   });
 
   it("afsr('upgrade', reason) records a tab that wasn't sampled in, also when called before the loader", () => {

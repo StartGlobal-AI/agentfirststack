@@ -1,6 +1,5 @@
 import { accountStanding, ApiError, badRequest, notFound, parse } from "@afs/shared";
 import { z } from "zod";
-import { chunkKey } from "../do/engine";
 import type { SessionSort } from "../do/queries";
 import { gunzipCapped } from "../lib/body";
 import { toCsv } from "../lib/csv";
@@ -10,7 +9,7 @@ import { SESSION_ID_RE } from "../lib/protocol";
 import type { SessionRow } from "../lib/rows";
 import { UNTRUSTED_NOTICE } from "../lib/untrusted";
 import { llmsTxt } from "../llms";
-import { type Ctx, loadSite, siteStub } from "./context";
+import { chunkObject, type Ctx, loadSite, siteStub } from "./context";
 import { int, searchInput } from "./schemas";
 import { resolveFilters, sessionListItem, tagMap } from "./sessions";
 import type { RawExport } from "./surveys";
@@ -154,7 +153,7 @@ export async function sessionEvents(ctx: Ctx, siteId: string, sessionId: string,
       }
       continue;
     }
-    const obj = await ctx.env.CHUNKS.get(`${site.id}/${chunkKey(sessionId, seq)}`);
+    const obj = await chunkObject(ctx.env, site.id, sessionId, seq);
     if (!obj) continue;
     const r = await gunzipCapped(new Uint8Array(await obj.arrayBuffer()), LIMITS.DECOMPRESSED_BYTES);
     if ("error" in r) continue;
@@ -184,16 +183,33 @@ export const visitorInput = z.object({
     .optional()
     .describe("The id the page passed to afsr('identify') (raw: hashed here when the site hashes ids)."),
   analytics_visitor_id: z.string().max(64).optional().describe("The analytics visitor id (afsa.visitorId())."),
+  email: z
+    .string()
+    .max(254)
+    .optional()
+    .describe("Survey responses holding this address (email questions, or a text answer that is exactly it)."),
 });
 
 /** GET /visitors (MCP get_visitor): what is stored about one visitor; the answer to a data-access request. */
 export async function getVisitor(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(visitorInput, raw);
-  if (!q.user_id && !q.analytics_visitor_id)
-    throw badRequest("Say whose data.", "Pass user_id (afsr('identify')) or analytics_visitor_id, e.g. ?user_id=u_123.");
+  if (!q.user_id && !q.analytics_visitor_id && !q.email)
+    throw badRequest(
+      "Say whose data.",
+      "Pass user_id (afsr('identify')), analytics_visitor_id or email (survey answers), e.g. ?user_id=u_123.",
+    );
   const site = await loadSite(ctx, siteId);
   const user_ids = q.user_id ? await userIdForms(site.id, q.user_id, !!site.hash_user_ids) : undefined;
-  const v = await siteStub(ctx.env, site.id).visitor({ user_ids, analytics_visitor_id: q.analytics_visitor_id });
+  const stub = siteStub(ctx.env, site.id);
+  type Visitor = Awaited<ReturnType<typeof stub.visitor>>;
+  const v: Visitor =
+    q.user_id || q.analytics_visitor_id
+      ? await stub.visitor({ user_ids, analytics_visitor_id: q.analytics_visitor_id })
+      : ({ session_count: 0, sessions: [], tags: [], notes: [], responses: [] } as unknown as Visitor);
+  if (q.email) {
+    const seen = new Set(v.responses.map((r) => r.id));
+    for (const r of await stub.responsesByEmail(q.email.trim())) if (!seen.has(r.id)) v.responses.push(r as Visitor["responses"][number]);
+  }
   return {
     site_id: site.id,
     sessions_total: v.session_count,

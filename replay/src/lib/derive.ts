@@ -256,8 +256,11 @@ export function cleanTagValues(v: unknown): string[] {
 
 export type EnvelopeResult = { ok: true; env: Envelope } | { ok: false; error: string; hint: string };
 
+/** The tags runtime's visitor ids (afst.visitorId()). */
+export const TAGS_VISITOR_RE = /^[A-Za-z0-9_.-]{6,64}$/;
+
 /** The fields an envelope may have; anything else is refused (chunks are stored as received). */
-const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd", "up"]);
+const ENVELOPE_KEYS = new Set(["v", "sid", "seq", "t", "ev", "end", "uid", "avid", "f", "wd", "up", "tvid"]);
 
 /** Check a decoded body against the query string (?sid=&q=) it was sent with. */
 export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): EnvelopeResult {
@@ -285,6 +288,8 @@ export function parseEnvelope(raw: unknown, q: { sid: string; seq: number }): En
   if (raw.wd === 1) env.wd = 1;
   const up = str(raw.up, 60);
   if (up) env.up = up;
+  const tvid = str(raw.tvid, 64);
+  if (tvid && TAGS_VISITOR_RE.test(tvid)) env.tvid = tvid;
   return { ok: true, env };
 }
 

@@ -8,7 +8,7 @@ import { SESSION_ID_RE, SITE_ID_RE } from "../lib/protocol";
 import { Sampler } from "../lib/sampler";
 import { botReason, parseUserAgent } from "../lib/ua";
 import { type Cidr, ipInRanges, parseCidr } from "../lib/ip";
-import { siteHostAllowed } from "../lib/url";
+import { secureOriginHost, siteHostAllowed } from "../lib/url";
 
 const rangeCache = new Map<string, Cidr[]>();
 function rangesOf(json: string): Cidr[] {
@@ -23,6 +23,8 @@ function rangesOf(json: string): Cidr[] {
   return r;
 }
 import { analyticsAvailable, analyticsEvents, forwardSignals } from "./analytics";
+import { tagsAvailable } from "./tags";
+import { tagsSignalsOf } from "../lib/tags";
 import { isVerified, jsonList, type SiteRow, siteById, siteStub } from "./context";
 import { onNewErrors, onSessionEnd } from "./webhook-events";
 
@@ -197,11 +199,11 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       true,
     );
   }
-  let host = "";
-  try {
-    host = new URL(origin).hostname;
-  } catch {
-    /* invalid Origin */
+  // https pages only (a plain-http page can be rewritten by anyone on the path); http://localhost in dev.
+  const host = secureOriginHost(origin, dev);
+  if (host === null && /^http:\/\//i.test(origin)) {
+    drop("origin_not_https", origin.slice(0, 100));
+    return fail(403, "origin_not_https", "Chunks are accepted from https pages only (http://localhost in local development).", true);
   }
   if (!host || !siteHostAllowed(host, site.domain, allowedHosts, dev)) {
     drop("origin_not_allowed", host || origin.slice(0, 100));
@@ -289,6 +291,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   const device = parseUserAgent(ua, derived.viewport?.w ?? null);
   const stored = compressed ? bytes : await gzip(text);
   const forward = verified && !!site.analytics_site_id && analyticsAvailable(env);
+  const toTags = verified && !!site.tags_container_id && tagsAvailable(env);
   const result = await stub.ingest({
     now,
     session_id: sid,
@@ -320,6 +323,10 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       platform: caps.platform,
     },
     forward,
+    tags: toTags
+      ? { host: site.domain, signals: tagsSignalsOf(site.tags_signals), visitor_id: envl.tvid ?? null, daily: caps.tags_daily }
+      : null,
+    tags_container: toTags ? site.tags_container_id : null,
     net: (await sha256Hex(`replay-net:${net}`)).slice(0, 16),
     account_id: site.account_id,
     config: { site_id: site.id, retention_days: site.retention_days, heatmap_retention_days: site.heatmap_retention_days },

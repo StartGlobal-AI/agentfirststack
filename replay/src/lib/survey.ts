@@ -13,6 +13,8 @@ export const QUESTION_TYPES = [
   "rating",
   "nps",
   "statement",
+  // opt-in only: never required, shown with the survey's consent line and a checkbox (wave 2)
+  "email",
 ] as const;
 export type QuestionType = (typeof QUESTION_TYPES)[number];
 
@@ -53,9 +55,16 @@ export interface Question {
   other?: boolean;
   placeholder?: string;
   logic?: LogicRule[];
+  /** email: the consent line shown next to the checkbox the visitor must tick for the address to be sent */
+  consent_text?: string;
 }
 
-export type Answer = string | number | string[] | null | undefined;
+/** An email question's answer as the widget sends it: only with the consent box ticked. */
+export interface EmailAnswer {
+  email: string;
+  consent: true;
+}
+export type Answer = string | number | string[] | EmailAnswer | null | undefined;
 
 export const isAnswered = (a: Answer): boolean => a !== null && a !== undefined && a !== "" && !(Array.isArray(a) && a.length === 0);
 

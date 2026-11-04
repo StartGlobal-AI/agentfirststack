@@ -14,6 +14,18 @@ export interface Bindings extends AuthBindings {
    */
   ANALYTICS?: Fetcher;
   /**
+   * Optional service binding to the tags Worker. With INTERNAL_TOKEN set, a verified site with
+   * tags_container_id queues its chosen signals and survey scores and sends them in batches to
+   * POST /v1/containers/:id/events there (server events, routed on to GA4 and ad platforms by the
+   * container's config). Unbound = off.
+   */
+  TAGS?: Fetcher;
+  /**
+   * Optional Cloudflare Browser Rendering binding ("browser": { "binding": "BROWSER" }): renders
+   * heatmap images (GET /v1/sites/:id/heatmap/image) from a recorded snapshot. Unbound = off (503).
+   */
+  BROWSER?: BrowserRun;
+  /**
    * Edge rate limits on the public browser routes (Workers rate-limit bindings, per Cloudflare
    * location): per client network (loader + ingest, before any D1 read), per site and network,
    * and per site. Unbound = off.
@@ -46,6 +58,12 @@ export interface Bindings extends AuthBindings {
   MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY?: string;
   MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY?: string;
   MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY?: string;
+  /** Signals and survey scores queued for the linked tags container per site per UTC day (default 500). */
+  MAX_TAGS_EVENTS_PER_SITE_PER_DAY?: string;
+  /** Heatmap images rendered per UTC day (cached images are free): per site, per account, deployment-wide. */
+  MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY?: string;
+  MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY?: string;
+  MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY?: string;
   /** Bytes per ingest request (compressed). Lower than the built-in 1 MB only. */
   MAX_CHUNK_BYTES?: string;
   /** Stored bytes per session (compressed). Lower than the built-in 20 MB only. */
@@ -97,6 +115,8 @@ export interface Bindings extends AuthBindings {
   /** Session annotations: starred sessions per site (default 100), how long they are kept (days, default 90), notes, labels. */
   MAX_STARRED_SESSIONS_PER_SITE?: string;
   MAX_STARRED_RETENTION_DAYS?: string;
+  /** Bytes of starred sessions' playback copies per site (default 200 MB). */
+  MAX_STARRED_BYTES_PER_SITE?: string;
   MAX_NOTES_PER_SESSION?: string;
   MAX_NOTES_PER_SITE?: string;
   MAX_LABELS_PER_SITE?: string;

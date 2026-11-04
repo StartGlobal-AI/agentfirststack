@@ -88,6 +88,11 @@ export const questionSchema = z
     randomize: z.boolean().optional(),
     other: z.boolean().optional(),
     placeholder: text(120).optional(),
+    consent_text: text(300)
+      .optional()
+      .describe(
+        'email (required there): the consent line shown next to a checkbox, e.g. "You may email me about my answer. Not used for anything else." The address is sent only when the box is ticked.',
+      ),
     logic: z
       .array(z.object({ if: condition.optional(), goto: z.string().min(1).max(20) }).strict())
       .max(10)
@@ -293,6 +298,14 @@ export function normalizeQuestions(input: Q[], maxQuestions: number): { question
     if (q.type === "rating") q.scale = q.scale ?? { max: 5, style: "stars" };
     else delete q.scale;
     if (q.type === "statement") delete q.required;
+    if (q.type === "email") {
+      if (!q.consent_text?.trim())
+        problems.push(`${at}: an email question needs consent_text, the line the visitor agrees to by ticking its box.`);
+      if (q.required) problems.push(`${at}: an email question can't be required: giving an address is opt-in.`);
+      delete q.required;
+      if ((q.logic ?? []).some((r) => r.if && Object.keys(r.if).some((k) => k !== "answered")))
+        problems.push(`${at}.logic: on an email question, conditions can only test "answered".`);
+    } else delete q.consent_text;
     for (const [k, r] of (q.logic ?? []).entries()) {
       if (r.goto === "end") continue;
       const j = qs.findIndex((x) => (x.id ?? "") === r.goto);
@@ -384,6 +397,10 @@ export function publicSurvey(
 
 export type CleanAnswers = Record<string, string | number | string[]>;
 
+/** A plausible address (no spaces, quotes or angle brackets; a dotted domain). */
+const EMAIL_RE =
+  /^[^\s@<>()[\]",;:\\]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?)+$/;
+
 /**
  * Answers as stored: only questions of this survey, values of the right type and range, text
  * cleaned, capped at `maxChars` and (scrub) emails, long numbers and tokens masked. With
@@ -443,6 +460,18 @@ export function validateAnswers(
       }
       case "statement":
         break;
+      case "email": {
+        // only with the consent box ticked; the address is kept as given (not scrubbed: it is the answer)
+        const e = v as { email?: unknown; consent?: unknown };
+        const addr = e && typeof e === "object" && e.consent === true && typeof e.email === "string" ? e.email.trim() : "";
+        a = addr.length <= 254 && EMAIL_RE.test(addr) ? addr : null;
+        if (a === null)
+          return {
+            error: "invalid_answer",
+            hint: `The answer to ${q.id} (email) is {email, consent: true}: an address, given with the consent box ticked.`,
+          };
+        break;
+      }
     }
     if (a === null) return { error: "invalid_answer", hint: `The answer to ${q.id} (${q.type}) is not a valid value.` };
     out[q.id] = a;
@@ -463,11 +492,23 @@ export function answerSummary(qs: readonly Question[], answers: CleanAnswers, ma
   for (const q of qs) {
     const a = answers[q.id];
     if (a === undefined) continue;
+    // an email address stays in the response: transcripts and webhooks only say one was given
+    if (q.type === "email") {
+      parts.push(`${q.id}=(email given)`);
+      continue;
+    }
     const v = typeof a === "number" ? String(a) : JSON.stringify(a);
     parts.push(`${q.id}=${v}${q.type === "nps" && typeof a === "number" ? ` (${npsGroup(a)})` : ""}`);
   }
   const s = parts.join(", ");
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/** Answers with email addresses replaced (webhook payloads, anything outside the response itself). */
+export function redactEmails(qs: readonly Question[], answers: CleanAnswers): CleanAnswers {
+  const out: CleanAnswers = { ...answers };
+  for (const q of qs) if (q.type === "email" && out[q.id] !== undefined) out[q.id] = "(email given: list_survey_responses)";
+  return out;
 }
 
 /** "q1<=6", "q1>=9", "q1=Yes", "q1!=No": a survey_answer filter. */

@@ -5,6 +5,7 @@
  */
 
 import { type Db, IN_JSON, num, strOrNull } from "./db";
+import { starredBytes } from "./engine";
 
 export interface NoteRow {
   id: string;
@@ -75,16 +76,22 @@ export function annotate(
     labels_per_session: number;
     max_labels: number | null;
     now: number;
+    /** MAX_STARRED_BYTES_PER_SITE: bytes of starred playback copies */
+    max_starred_bytes?: number | null;
   },
 ):
-  | { ok: true; starred: boolean; labels: string[] }
-  | { ok: false; reason: "not_found" | "starred_limit" | "labels_limit" | "site_labels_limit" } {
+  | { ok: true; starred: boolean; labels: string[]; was_starred: boolean }
+  | { ok: false; reason: "not_found" | "starred_limit" | "labels_limit" | "site_labels_limit" | "starred_bytes_limit" } {
   return db.transaction(() => {
-    const s = db.all("SELECT starred FROM sessions WHERE id = ?", [q.session_id])[0];
+    const s = db.all("SELECT starred, bytes FROM sessions WHERE id = ?", [q.session_id])[0];
     if (!s) return { ok: false as const, reason: "not_found" as const };
     if (q.starred === true && !num(s.starred) && q.max_starred !== null) {
       if (num(db.all("SELECT COUNT(*) AS n FROM sessions WHERE starred = 1")[0]?.n) >= q.max_starred)
         return { ok: false as const, reason: "starred_limit" as const };
+    }
+    // the playback copies of starred sessions count against the site's storage cap
+    if (q.starred === true && !num(s.starred) && q.max_starred_bytes !== null && q.max_starred_bytes !== undefined) {
+      if (starredBytes(db) + num(s.bytes) > q.max_starred_bytes) return { ok: false as const, reason: "starred_bytes_limit" as const };
     }
     if (q.labels) {
       if (q.labels.length > q.labels_per_session) return { ok: false as const, reason: "labels_limit" as const };
@@ -98,7 +105,7 @@ export function annotate(
     }
     if (q.starred !== undefined) db.run("UPDATE sessions SET starred = ? WHERE id = ?", [q.starred ? 1 : 0, q.session_id]);
     const starred = !!num(db.all("SELECT starred FROM sessions WHERE id = ?", [q.session_id])[0]?.starred);
-    return { ok: true as const, starred, labels: sessionLabels(db, q.session_id) };
+    return { ok: true as const, starred, labels: sessionLabels(db, q.session_id), was_starred: !!num(s.starred) };
   });
 }
 

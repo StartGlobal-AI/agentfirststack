@@ -10,14 +10,13 @@ import {
   sha256Hex,
   type Standing,
 } from "@afs/shared";
-import { chunkKey } from "../do/engine";
 import { type Bindings, isDev } from "../env";
 import { cap, DEFAULTS } from "../lib/limits";
 import { SESSION_ID_RE } from "../lib/protocol";
 import { buildTimeline, entryLine, sessionJson } from "../lib/transcript";
 import { cleanText } from "../lib/mask-rules";
 import { safePatterns } from "../lib/url";
-import { type Ctx, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
+import { chunkObject, type Ctx, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
 import { createLinkInput } from "./schemas";
 
 /**
@@ -253,6 +252,6 @@ export async function playerChunk(env: Bindings, r: ResolvedLink, seq: number): 
     window,
   });
   if (!ok.ok) return ok.reason === "budget" ? "budget" : null;
-  const obj = await env.CHUNKS.get(`${r.site.id}/${chunkKey(r.link.session_id, seq)}`);
+  const obj = await chunkObject(env, r.site.id, r.link.session_id, seq);
   return obj ? obj.body : null;
 }

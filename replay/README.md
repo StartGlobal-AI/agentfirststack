@@ -51,11 +51,16 @@ browser ── /r/<site>.js (2 KB loader, config inlined) ── decides: enable
                                    │   daily counters and caps, frustration score, heatmap rollups,
                                    │   drop counters, its own retention alarm; reports usage to D1
                                    │   (account_usage) at most once a minute for account/deployment budgets
-                                   ├─► R2 CHUNKS: <site_id>/<session_id>/<seq 6 digits> (gzip, as received)
+                                   ├─► R2 CHUNKS: <site_id>/<session_id>/<seq 6 digits> (gzip, as received);
+                                   │   starred sessions' copies under starred/<site_id>/ (no lifecycle rule)
+                                   ├─► (optional, verified sites) TAGS service binding: chosen signals and survey
+                                   │   scores as server events, batched by the DO's alarm (tags_outbox)
                                    └─► (optional, verified sites) ANALYTICS service binding: settled signals
 agent ── REST /v1 or MCP /mcp ──► src/service/* ──► DO queries (search, transcript, summary,
                                                     heatmap, errors, funnel) + R2 (player, deletion)
 person ── /play/<token> ──► rrweb-player page (CSP script-src 'self') ──► /play/<token>/{data,chunks/<seq>}
+agent ── GET /v1/sites/:id/heatmap/image ──► latest stored snapshot (R2) -> static HTML + overlay -> BROWSER
+                                              (Browser Rendering screenshot, JS off) -> R2 heatmaps/<site>/ (a day)
 visitor ── /sv/<site>.<rev>.js (survey widget, lazy, closed Shadow DOM) ── POST /f (impressions, answers)
                                  └─► ReplaySiteDO: survey_responses (linked to the session), daily caps
 events ──► D1 webhook_deliveries ──► signed POST now; retries on the site DO's alarm (10 s ... 1 h, 8 tries)
@@ -120,6 +125,8 @@ own `src`, so a first-party proxy of `/<prefix>/*` works unchanged.
 - **No cookies.** The per-tab session (id, chunk counter, pageview counter, sampling decision,
   identify) is in sessionStorage. It spans page loads in the tab, ends after 30 idle minutes or
   `max_session_minutes`. After 5 minutes without input, recording pauses until the next input.
+- **https only:** `/i` and `/f` refuse a plain `http://` Origin (403 `origin_not_https`); `wrangler dev`
+  (`DEV_MODE`) also accepts `http://localhost` and `http://127.0.0.1`.
 - **Batches:** a chunk every 5 s or 800 events; the DOM snapshot goes alone. gzip with
   CompressionStream, `fetch` with `keepalive` under 63 KB. On tab hide and pagehide the rest goes
   uncompressed with a keepalive `fetch` (a CORS request, so it always carries the page's Origin;
@@ -132,7 +139,10 @@ own `src`, so a first-party proxy of `/<prefix>/*` works unchanged.
   bodies), `afs.hide`, `afs.idle`.
 - **Consent:** `require_consent: true | "eea"` (EEA, UK, CH and unknown countries only; the loader is then
   served `private`), `consent_source: "gcm"` follows Google Consent Mode's `analytics_storage` in
-  `dataLayer`. `exclude_ip_ranges` (CIDRs) are refused at ingest; the address is never stored.
+  `dataLayer`; `consent_source: "tcf"` follows an IAB TCF v2 CMP (`__tcfapi`): consent (never legitimate
+  interest) for every purpose in `tcf_purposes`, default 1 "Store and/or access information on a device" and
+  8 "Measure content performance" (9 or 10 may stand in for 8), in the purpose or publisher consents;
+  `gdprApplies: false` records, no CMP = no consent, the TC string is never stored. `exclude_ip_ranges` (CIDRs) are refused at ingest; the address is never stored.
 - **Page API:** `afsr.sessionId()`, `afsr.status()`, `afsr('identify', id, attrs?)` (attrs become tags; with
   `hash_user_ids` the id is hashed in the browser), `afsr('set', key, value | values)` (custom tags: 20 keys, 5 values,
   100 characters, scrubbed), `afsr('event', name, props)`, `afsr('consent', bool)`, `afsr('stop')`, `afsr('start')`
@@ -177,10 +187,12 @@ On-site only (popover, embedded, feedback tab), shown by the loader already on t
 surveys (`sites.surveys_rev`) the loader lazy-loads `/sv/<site>.<rev>.js` (~6 KB gzip, the widget with the
 site's active surveys inlined; `private, max-age=300`, since country targeting is decided there) after the
 load event, whatever the recording decision. Templates (nps, csat, ces, pmf, free_text), question types
-(reaction, short/long text, single/multi choice, rating 5/7/10, nps, statement), forward-only skip logic,
+(reaction, short/long text, single/multi choice, rating 5/7/10, nps, statement, and opt-in email: never required,
+sent only with a ticked consent box whose line is the question's `consent_text`, kept in the response only:
+transcripts, webhooks and results say "given", filters and themes skip it), forward-only skip logic,
 targeting (pages, devices, countries, tags, identified, browser-checkable segments, sample rate), triggers
 (load, delay, scroll %, exit intent, frustration after a rage or error click detected in the browser,
-`afsr('survey', id)`), frequency and limits. Answers go to `POST /f` (Origin on the site's hosts, 60 KB, strict
+`afsr('survey', id)`), frequency and limits. Answers go to `POST /f` (an https Origin on the site's hosts, 60 KB, strict
 body, answers validated against the survey's current version and scrubbed) and into the site's DO; a response
 linked to a recorded session is a transcript line and a session filter (`survey_id`, `survey_answer`).
 Results are deterministic (NPS, top-two share, means, PMF share, text themes from recurring words and
@@ -193,7 +205,8 @@ The widget's safety rules (on customers' pages): closed Shadow DOM, host with `d
 `data-afsr-ignore` that gets its shadow root before it is attached (rrweb never sees it), every string set
 with `textContent`, no `innerHTML`, eval or cookies, the accent colour re-checked as `#rgb`/`#rrggbb` before it
 becomes a CSS custom property, styles through `adoptedStyleSheets` (a strict `style-src` CSP doesn't break it),
-the feedback element pick keeps only a stable selector and position (a transparent overlay in the shadow
+the recorder drops pointer moves and clicks over the widget's host (`data-afsr-survey`), so a replay can't
+show where an answer was clicked, the feedback element pick keeps only a stable selector and position (a transparent overlay in the shadow
 root takes every pointer event meanwhile, with a Cancel button, so the page's own controls never fire),
 typing/input/clipboard/focus events stop at the shadow root, a text box never takes the focus unless the
 visitor opened the survey, posts go with `credentials: "omit"`. What isn't isolated: a page script
@@ -236,6 +249,23 @@ label props, joined to the visitor by `afsa.visitorId()` or, failing that, IP + 
 same cookieless hash analytics computes). "Settled" = 1.5 s inside the chunk's coverage, or the
 page ended; nothing is sent twice.
 
+With `tags_container_id` set (a tags container on the same account, checked with tags
+`GET /v1/containers/:id`), the domain verified, and the `TAGS` binding + `INTERNAL_TOKEN` present, the
+signals in `tags_signals` (`rage_click`, `dead_click`, `js_error`, `api_error`, `survey_response`; default
+all) go to that container as server events, the route backends use (`POST /v1/containers/:id/events`,
+internal auth): queued in the site's DO (`tags_outbox`, its own bit in `events.forwarded` and counter
+`daily.tags_forwarded`, at most `MAX_TAGS_EVENTS_PER_SITE_PER_DAY`, default 500), sent by the DO's
+alarm in batches of up to 100 within 15 s, 429/5xx/binding failures retried (30 s doubling, at most an
+hour; dropped after a day or 8 tries), other 4xx dropped and logged; the last answer shows in
+`data.tags_forwarding`. Events carry a fixed `event_id` (tags dedupes retries), `page_url`, `send_to.ga4`
+(the container's GA4 destination gets them by name; a conversion of the same name in its config wins and is
+needed for ad platforms), `params`
+(ids, selector, error fingerprint/message, method/url/status, NPS and rating scores), and `visitor_id` =
+the tags runtime's `afst.visitorId()` (read by the recorder and widget only while linked, config `tg`) so
+tags applies that visitor's consent, or else an explicit consent with every ad purpose denied. No IP, user
+agent, user id, label, typed value or survey text. Survey responses: completed, non-test, with an NPS or
+rating answer only.
+
 ## API (under `/v1`)
 
 | Method | Path | |
@@ -253,6 +283,7 @@ page ended; nothing is sent twice.
 | DELETE | `/sites/:id/sessions/:sid` | recording, derived events, links |
 | GET | `/sites/:id/summary` | filters or `session_ids`, `limit` (sessions considered), `top` |
 | GET | `/sites/:id/heatmap` | `?page=<glob>&device=&type=click\|scroll\|both&period=&limit=` |
+| GET | `/sites/:id/heatmap/image` | `?page=&device=desktop\|mobile\|tablet&type=click\|scroll\|attention&period=&max_height=` -> PNG (Browser Rendering; verified sites; cached a day) |
 | GET | `/sites/:id/errors` | `?period=&page=&device=&browser=&fingerprint=&limit=` |
 | GET | `/sites/:id/funnel` | `?steps=/a,/b*,event:x` or `analytics_funnel_id=`, `drop_step=`, filters |
 | POST | `/sites/:id/delete-visitor-data` | `{ user_id? \| analytics_visitor_id? \| session_ids? }` |
@@ -302,7 +333,8 @@ overrides and zero-width characters are removed when chunks are stored.
 `list_session_notes`, `delete_session_note`, `define_event`, `list_event_definitions`, `delete_event_definition`,
 `create_segment`, `list_segments`, `update_segment`, `delete_segment`, `create_survey`, `list_surveys`, `get_survey`,
 `update_survey`, `delete_survey`, `test_survey`, `list_survey_responses`, `get_survey_results`, `delete_survey_response`,
-`create_webhook`, `list_webhooks`, `get_webhook`, `delete_webhook`, `test_webhook` (50 tools). Each calls the same service function as its REST route;
+`create_webhook`, `list_webhooks`, `get_webhook`, `delete_webhook`, `test_webhook`, and since wave 2
+`get_heatmap_image` (51 tools). Each calls the same service function as its REST route;
 write tools are hidden from read-only keys; tools that return recorded content say in their
 description that it is untrusted.
 
@@ -328,7 +360,7 @@ replay. Links of suspended accounts stop working.
 |---|---|
 | `PUBLIC_BASE_URL` | var; the URL used in snippets, links and llms.txt (empty = request origin) |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth (`SIGNUP_MODE` is a var, the tokens are secrets) |
-| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`), and the secret the site's dashboard uses for internal auth. `INTERNAL_TOKEN` also turns on analytics forwarding (with the `ANALYTICS` binding) |
+| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`), and the secret the site's dashboard uses for internal auth. `INTERNAL_TOKEN` also turns on analytics forwarding (with the `ANALYTICS` binding) and tags forwarding (with the `TAGS` binding) |
 | `KEY_PREFIX` | var; prefix of minted keys (`afs`) |
 | `DEV_MODE` | `"true"` only in local `.dev.vars`: honours `x-dev-geo-country/-region/-city`, accepts `localhost`/`127.0.0.1` origins and page hosts and `localhost` as a site domain, lets verify fetch localhost (and count a localhost page with the loader as domain verification) |
 | `SIGNUP_HOURLY_LIMIT` | optional var; signups per network per hour (`@afs/shared`) |
@@ -341,6 +373,8 @@ replay. Links of suspended accounts stop working.
 | `MAX_FORCED_SESSIONS_PER_SITE_PER_DAY` | `?afsr=1` sessions per site per day (unset = 20) |
 | `MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY` | new sessions per client network (IPv4, IPv6 /48) per site per day (unset = 50) |
 | `MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY` | analytics events forwarded per site per day (unset = 500) |
+| `MAX_TAGS_EVENTS_PER_SITE_PER_DAY` | signals and survey scores queued for the linked tags container per site per day (unset = 500) |
+| `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY`, `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY`, `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | heatmap images rendered per UTC day (unset = 10 / 30 / 300; cached images are free). Browser Rendering bills browser time: about 2-5 s per image, so 300 a day is at most ~12 browser hours a month |
 | `MAX_CHUNK_BYTES` | compressed bytes per ingest request, below the built-in 1 MB (unset = 1 MB) |
 | `MAX_SESSION_BYTES` | stored bytes per session, below the built-in 20 MB (unset = 20 MB) |
 | `MAX_CHUNKS_PER_SESSION` | chunks per session, below the built-in 2,000 |
@@ -358,10 +392,10 @@ replay. Links of suspended accounts stop working.
 | `MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY` | new sessions `afsr('upgrade')` may start per site per day (unset = 50) |
 | `MAX_SEGMENTS_PER_SITE` | saved segments (unset = 50) |
 | `MAX_EVENT_DEFINITIONS_PER_SITE` | event definitions (unset = 20) |
-| `MAX_STARRED_SESSIONS_PER_SITE`, `MAX_STARRED_RETENTION_DAYS` | starred sessions at once (unset = 100) and how long they outlive `retention_days` (unset = 90 days; not a count cap). On a deployment whose R2 bucket has a lifecycle rule, chunks still expire with it: starred transcripts stay, playback doesn't |
+| `MAX_STARRED_SESSIONS_PER_SITE`, `MAX_STARRED_RETENTION_DAYS`, `MAX_STARRED_BYTES_PER_SITE` | starred sessions at once (unset = 100), how long they outlive `retention_days` (unset = 90 days; not a count cap) and the bytes a site may keep in their playback copies (unset = 200 MB). A starred session's chunks are copied to `starred/<site_id>/<session_id>/<seq>` (counted against the daily byte budgets) so its playback outlives an R2 lifecycle rule that covers only `rsite_` (the live chunks' prefix); the copy goes when the session is unstarred, deleted or past `MAX_STARRED_RETENTION_DAYS` |
 | `MAX_NOTES_PER_SESSION`, `MAX_NOTES_PER_SITE`, `MAX_LABELS_PER_SITE` | notes (unset = 50 / 2,000), distinct labels (unset = 1,000) |
 | `MAX_SURVEYS_PER_SITE`, `MAX_ACTIVE_SURVEYS_PER_SITE`, `MAX_QUESTIONS_PER_SURVEY`, `MAX_ANSWER_CHARS` | surveys (unset = 10 / 3 / 20 / 2,000; the last two can only go lower) |
-| `MAX_RESPONSES_PER_SITE_PER_DAY`, `MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY`, `MAX_TEST_RESPONSES_PER_SITE_PER_DAY`, `MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY` | survey responses and impressions (unset = 500 / 5 / 20 / 50); a response also counts 1 derived row and its bytes against the account and deployment budgets |
+| `MAX_RESPONSES_PER_SITE_PER_DAY`, `MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY`, `MAX_TEST_RESPONSES_PER_SITE_PER_DAY`, `MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY` | survey responses and impressions (unset = 500 / 5 / 20 / 50); a response also counts 1 derived row and its bytes, an impression 1 derived row, against the account and deployment budgets |
 | `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_DELIVERIES_PER_ACCOUNT_PER_DAY`, `MAX_WEBHOOK_TESTS_PER_DAY` | webhooks (unset = 10 / 1,000 / 50) |
 | `MAX_EXPORT_ROWS`, `MAX_EXPORT_BYTES_PER_DAY` | rows per session export (unset = 10,000, at most 100,000), recorded bytes raw event exports read per site per day (unset = 100 MB) |
 
@@ -382,7 +416,7 @@ stored, not derived; the session's `limited` says why), 50 errors per page in th
 
 Bindings (`wrangler.jsonc`): D1 `DB` (`afs-replay`, placeholder id) and `AUTH_DB` (`afs-identity`),
 R2 `CHUNKS` (`afs-replay-chunks`), Durable Object `SITE` (`ReplaySiteDO`, SQLite, migration `v1`),
-optional service `ANALYTICS` (`afs-analytics`), rate limits `SIGNUP_LIMITER` (namespace 41001,
+optional services `ANALYTICS` (`afs-analytics`) and `TAGS` (`afs-tags`), optional Browser Rendering `BROWSER` (heatmap images; local mode under `wrangler dev`), rate limits `SIGNUP_LIMITER` (namespace 41001,
 shared), `INGEST_IP_LIMITER` (42031, 600/min per client network, loader + ingest + survey widget and posts, before any D1 read),
 `INGEST_SITE_IP_LIMITER` (42032, 120/min per site and network), `INGEST_SITE_LIMITER` (42033,
 3,000/min per site), hourly cron `23 * * * *`, DO alarms (retention, signal spikes, webhook retries), observability on. No queues: webhook retries run on each site's DO alarm. `compatibility_date` 2026-08-01
@@ -438,7 +472,9 @@ BASE=http://localhost:8791 pnpm smoke   # when 8790 is taken: run `wrangler dev 
 
 - Analytics funnels linking to sessions from the analytics side: needs changes in `analytics/`.
 - Link surveys on a hosted page (`/f/<token>`): a form on this service's domain is a phishing surface until user content
-  has its own domain. IAB TCF consent, GA4 through a tags container, heatmap PNGs through Browser Rendering.
+  has its own domain.
+- Heatmap images of SPA route changes (only page loads carry a full snapshot) and of pages whose images or fonts are
+  served from hosts outside the site's domain and `allowed_hostnames` (the render doesn't fetch them).
 - Web Vitals per session (analytics owns them), canvas, cross-origin iframes.
 - A duplicated browser tab shares its sessionStorage, so both tabs send the same session id and
   seq numbers; the second tab's chunks are dropped as duplicates.

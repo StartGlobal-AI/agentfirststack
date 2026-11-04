@@ -1,3 +1,4 @@
+import { renderHeatmapImage } from "../service/heatmap-image";
 import { parse, publicBaseUrl, readJson } from "@afs/shared";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
@@ -96,6 +97,18 @@ r.get("/sites/:id/summary", async (c) => c.json(await summarize(ctxOf(c), c.req.
 r.get("/sites/:id/heatmap", async (c) => {
   const res = await getHeatmap(ctxOf(c), c.req.param("id"), c.req.query());
   return isRaw(res) ? rawExport(res) : c.json(res);
+});
+r.get("/sites/:id/heatmap/image", async (c) => {
+  const img = await renderHeatmapImage(ctxOf(c), c.req.param("id"), c.req.query());
+  return new Response(img.png, {
+    headers: {
+      "content-type": "image/png",
+      "cache-control": "private, max-age=3600",
+      "x-afs-heatmap-cache": img.cached ? "hit" : "miss",
+      "x-afs-heatmap-rendered-at": img.meta.rendered_at ?? "",
+      "x-afs-heatmap-snapshot-session": img.meta.snapshot_session_id ?? "",
+    },
+  });
 });
 r.get("/sites/:id/errors", async (c) => c.json(await listErrors(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/sites/:id/funnel", async (c) => c.json(await getFunnelDropoffs(ctxOf(c), c.req.param("id"), c.req.query())));

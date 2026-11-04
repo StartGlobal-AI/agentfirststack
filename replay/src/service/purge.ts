@@ -110,6 +110,7 @@ export async function runPurge(env: Bindings, now = Date.now(), budgetMs = PURGE
   out.links_deleted = links.meta.changes ?? 0;
   await env.DB.batch([
     env.DB.prepare("DELETE FROM account_usage WHERE day < ?").bind(new Date(now - 7 * DAY).toISOString().slice(0, 10)),
+    env.DB.prepare("DELETE FROM heatmap_image_usage WHERE day < ?").bind(new Date(now - 7 * DAY).toISOString().slice(0, 10)),
     env.DB.prepare("DELETE FROM verify_log WHERE created_at < ?").bind(now - 3_600_000),
   ]);
   await purgeWebhookLogs(env, now).catch((e) => console.error(JSON.stringify({ event: "cron.webhook_logs_failed", error: String(e) })));

@@ -47,6 +47,8 @@ interface Cfg {
   site: string;
   base: string;
   s: PS[];
+  /** 1 = a tags container is linked: completed answers carry the tags visitor id (afst.visitorId()) */
+  tg?: 1;
 }
 /** What the loader shares (window.__afsrSv): tags, identified, the recorded session, survey commands. */
 interface Shared {
@@ -179,6 +181,8 @@ label.ck{display:flex;gap:6px;font-size:12px;margin-top:10px;align-items:flex-st
     const host = el("div");
     host.setAttribute("data-afsr-block", "");
     host.setAttribute("data-afsr-ignore", "");
+    // the recorder drops pointer positions over this host (an answer's position would show in a replay)
+    host.setAttribute("data-afsr-survey", "");
     hosts.add(host);
     if (accent && /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(accent)) host.style.setProperty("--a", accent);
     const root = host.attachShadow({ mode: "closed" });
@@ -288,6 +292,13 @@ label.ck{display:flex;gap:6px;font-size:12px;margin-top:10px;align-items:flex-st
       for (const k in answers) if (isAnswered(answers[k])) a[k] = answers[k];
       if (!done && !Object.keys(a).length) return;
       const sid = share ? boot.sid() : null;
+      let tv: unknown = null;
+      try {
+        const t = w.afst as { visitorId?: () => unknown } | undefined;
+        tv = done && C.tg && t && t.visitorId ? t.visitorId() : null;
+      } catch {
+        /* no tags runtime */
+      }
       post({
         sv: sv.id,
         ver: sv.v,
@@ -296,6 +307,7 @@ label.ck{display:flex;gap:6px;font-size:12px;margin-top:10px;align-items:flex-st
         d: done ? 1 : 0,
         p: location.pathname,
         ...(sid ? { sid } : {}),
+        ...(typeof tv === "string" && tv ? { tv: tv.slice(0, 64) } : {}),
         ...(picked ? { el: picked } : {}),
         ...(sv.test ? { t: sv.pt } : {}),
       });
@@ -409,6 +421,27 @@ label.ck{display:flex;gap:6px;font-size:12px;margin-top:10px;align-items:flex-st
             const a = d.activeElement;
             if (!a || a === d.body || a === m.host) t.focus({ preventScroll: true });
           }, 0);
+      }
+      if (q.type === "email") {
+        // Opt-in: the address is sent only with this box ticked; the line is the survey's consent_text.
+        const t = el("input", "tx");
+        t.type = "email";
+        t.autocomplete = "email";
+        t.maxLength = 254;
+        if (q.placeholder) t.placeholder = q.placeholder;
+        const lab = el("label", "ck");
+        const cb = el("input");
+        cb.type = "checkbox";
+        const sync = () => {
+          const v = t.value.trim();
+          if (cb.checked && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) answers[q.id] = { email: v, consent: true };
+          else delete answers[q.id];
+          ok();
+        };
+        t.addEventListener("input", sync);
+        cb.addEventListener("change", sync);
+        lab.append(cb, el("span", "", q.consent_text || ""));
+        body.push(t, lab);
       }
       if (sv.ls === "ask") {
         const lab = el("label", "ck");

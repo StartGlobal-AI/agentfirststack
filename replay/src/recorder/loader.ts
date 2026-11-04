@@ -151,6 +151,31 @@ type Afsr = ((cmd: string, ...a: unknown[]) => void) & { q?: IArguments[]; sessi
       return r;
     };
   }
+  // consent_source tcf: an IAB TCF v2 CMP decides through __tcfapi (CMP API v2). Recording needs consent,
+  // not legitimate interest, for every purpose in C.tcf (default 1 "Store and/or access information on a
+  // device" and 8 "Measure content performance"), in the purpose consents or the publisher's own; GDPR
+  // not applying is consent. Acts on tcloaded and useractioncomplete only (the CMP's UI may be showing
+  // otherwise); a later refusal stops. The CMP's stub is usually there first; else retried for 10 s.
+  if (C.tcf && C.consent) {
+    type TC = {
+      gdprApplies?: boolean;
+      eventStatus?: string;
+      purpose?: { consents?: Record<string, boolean> };
+      publisher?: { consents?: Record<string, boolean> };
+    };
+    let n = 0;
+    const tc = () => {
+      const f = (w as unknown as { __tcfapi?: (c: string, v: number, cb: (t: TC, ok: boolean) => void) => void }).__tcfapi;
+      if (!f) return void (n++ < 20 && setTimeout(tc, 500));
+      f("addEventListener", 2, (t, ok) => {
+        const has = (o?: { consents?: Record<string, boolean> }) => !!(o && o.consents) && C.tcf!.every((p) => o!.consents![p] === true);
+        if (!ok || !t) return;
+        if (t.gdprApplies === false) api("consent", true, 1);
+        else if (/^(tcloaded|useractioncomplete)$/.test(t.eventStatus || "")) api("consent", has(t.purpose) || has(t.publisher), 1);
+      });
+    };
+    tc();
+  }
   // Calls queued before load, in order: consent decides, survey commands wait for the widget, the rest for the recorder.
   for (const q of boot.queue.splice(0)) api(...(q as [string, ...unknown[]]));
 

@@ -12,6 +12,8 @@ import {
   sessionMinutesCap,
 } from "../lib/limits";
 import { consentRequiredIn, parseCidr } from "../lib/ip";
+import { TAGS_SIGNALS, tagsSignalsOf } from "../lib/tags";
+import { checkTagsContainer, tagsAvailable } from "./tags";
 import { MASK_MODES, pathHash } from "../lib/mask-rules";
 import type { LoaderConfig } from "../lib/protocol";
 import { joinSelectors, selectorListProblems } from "../lib/selectors";
@@ -138,10 +140,19 @@ export const settingsShape = {
       'true: record only after consent; "eea": only visitors from the EEA, the UK and Switzerland (Cloudflare\'s country; unknown countries too) wait for it, the rest record at once; false (default).',
     ),
   consent_source: z
-    .enum(["api", "gcm"])
+    .enum(["api", "gcm", "tcf"])
     .optional()
     .describe(
-      "Where consent comes from when it is required: api (default) = the page calls afsr('consent', true); gcm = the loader follows Google Consent Mode's analytics_storage in dataLayer (gtag('consent', 'default' | 'update', ...)); afsr('consent') still works.",
+      "Where consent comes from when it is required: api (default) = the page calls afsr('consent', true); gcm = the loader follows Google Consent Mode's analytics_storage in dataLayer (gtag('consent', 'default' | 'update', ...)); tcf = an IAB TCF v2 CMP on the page (__tcfapi): consent, not legitimate interest, for every purpose in tcf_purposes; afsr('consent') still works.",
+    ),
+  tcf_purposes: z
+    .array(z.union([z.literal(1), z.literal(8), z.literal(9), z.literal(10)]))
+    .min(1)
+    .max(4)
+    .nullable()
+    .optional()
+    .describe(
+      "consent_source tcf: the IAB TCF v2.2 purposes that all need the visitor's consent before recording. Must include 1 (Store and/or access information on a device) and one more: 8 (Measure content performance; the default is [1, 8]), 9 (Understand audiences through statistics or combinations of data from different sources) or 10 (Develop and improve services), to match how your CMP describes session replay. null = [1, 8].",
     ),
   exclude_ip_ranges: z
     .array(z.string().min(1).max(50))
@@ -164,6 +175,23 @@ export const settingsShape = {
     .optional()
     .describe(
       "Link an AgentFirstStack analytics site (site_...) on the same account: its tracker then loads this site's recorder by itself (no second snippet; see loads_with_analytics), and signals and JS errors are forwarded there as events. Passing the same id again re-asserts the link. null unlinks. Needs the deployment's ANALYTICS binding.",
+    ),
+  tags_container_id: z
+    .string()
+    .max(40)
+    .nullable()
+    .optional()
+    .describe(
+      "Link an AgentFirstStack tags container (ctr_...) on the same account: the signals in tags_signals and survey scores are sent there as server events (its POST /v1/containers/:id/events, batched), and its config routes them to GA4 and ad platforms. Verified sites only; needs the deployment's TAGS binding. null unlinks (queued events are dropped).",
+    ),
+  tags_signals: z
+    .array(z.enum(TAGS_SIGNALS))
+    .min(1)
+    .max(TAGS_SIGNALS.length)
+    .nullable()
+    .optional()
+    .describe(
+      "What goes to the tags container: rage_click, dead_click, js_error, api_error (a failed fetch/XHR, with capture_network_errors), survey_response (completed responses with an NPS or rating score: nps_score, nps_group, rating_score, rating_max; never text). null = all.",
     ),
 };
 
@@ -244,11 +272,21 @@ export function siteJson(s: SiteRow, baseUrl: string, env: Bindings) {
     auto_events: s.auto_events === undefined ? true : !!s.auto_events,
     require_consent: s.require_consent === 2 ? "eea" : !!s.require_consent,
     consent_source: s.consent_source ?? "api",
+    tcf_purposes: tcfPurposes(s),
     exclude_ip_ranges: s.exclude_ip_ranges ? jsonList(s.exclude_ip_ranges) : [],
     hash_user_ids: !!s.hash_user_ids,
     analytics_site_id: s.analytics_site_id,
     // The analytics site confirmed its tracker loads this recorder: no snippet needed where it runs.
     loads_with_analytics: loadsWithAnalytics(s),
+    tags_container_id: s.tags_container_id ?? null,
+    tags_signals: tagsSignalsOf(s.tags_signals),
+    tags_forwarding: s.tags_container_id
+      ? !tagsAvailable(env)
+        ? "unavailable_on_this_deployment"
+        : isVerified(s)
+          ? "on"
+          : "waiting_for_domain_verification"
+      : "off",
     analytics_forwarding: s.analytics_site_id
       ? !analyticsAvailable(env)
         ? "unavailable_on_this_deployment"
@@ -323,6 +361,17 @@ async function apply(ctx: Ctx, row: SiteRow, input: Settings): Promise<string[]>
   if (input.auto_events !== undefined) row.auto_events = input.auto_events ? 1 : 0;
   if (input.require_consent !== undefined) row.require_consent = input.require_consent === "eea" ? 2 : input.require_consent ? 1 : 0;
   if (input.consent_source !== undefined) row.consent_source = input.consent_source;
+  if (input.tcf_purposes !== undefined) {
+    const list = [...new Set(input.tcf_purposes ?? [])].sort((a, b) => a - b);
+    if (list.length && (!list.includes(1) || list.length === 1))
+      throw badRequest(
+        "tcf_purposes must include purpose 1 (Store and/or access information on a device: the recorder keeps its session in sessionStorage) and a measurement purpose (8, 9 or 10): purpose 1 alone doesn't cover recording what the visitor does.",
+        "Pass [1, 8] (the default), or 1 with any of 8, 9, 10; null resets to [1, 8].",
+      );
+    row.tcf_purposes = list.length ? JSON.stringify(list) : null;
+  }
+  if (input.consent_source === "tcf" && !row.require_consent)
+    notes.push('consent_source tcf only applies with require_consent true or "eea": recording doesn\'t wait for consent now.');
   if (input.exclude_ip_ranges !== undefined) {
     const list = (input.exclude_ip_ranges ?? []).map((x) => x.trim());
     const bad = list.filter((x) => !parseCidr(x));
@@ -348,6 +397,19 @@ async function apply(ctx: Ctx, row: SiteRow, input: Settings): Promise<string[]>
         isVerified(row)
           ? "Linked to analytics: rage_click, dead_click, error_click, js_error, quick_back and excessive_scroll events will appear there as they are detected."
           : "Linked to analytics; signals are forwarded once the site's domain is verified (POST /v1/sites/:id/verify).",
+      );
+    }
+  }
+  if (input.tags_signals !== undefined) row.tags_signals = input.tags_signals ? JSON.stringify([...new Set(input.tags_signals)]) : null;
+  if (input.tags_container_id !== undefined) {
+    if (input.tags_container_id === null || input.tags_container_id === "") row.tags_container_id = null;
+    else if (input.tags_container_id !== row.tags_container_id) {
+      await checkTagsContainer(ctx.env, ctx.accountId, input.tags_container_id);
+      row.tags_container_id = input.tags_container_id;
+      notes.push(
+        isVerified(row)
+          ? `Linked to tags container ${input.tags_container_id}: ${tagsSignalsOf(row.tags_signals).join(", ")} are sent there as server events in batches (within about 15 s of being detected). Check with tags GET /v1/containers/${input.tags_container_id}/events?source=server, and data.tags_forwarding in GET /v1/sites/${row.id}. Map them in the container's conversions to route them to GA4 or ad platforms.`
+          : `Linked to tags container ${input.tags_container_id}; signals are sent once the site's domain is verified (POST /v1/sites/${row.id}/verify).`,
       );
     }
   }
@@ -437,9 +499,12 @@ const COLUMNS = [
   "auto_events",
   "require_consent",
   "consent_source",
+  "tcf_purposes",
   "exclude_ip_ranges",
   "hash_user_ids",
   "analytics_site_id",
+  "tags_container_id",
+  "tags_signals",
   "created_at",
   "updated_at",
 ] as const;
@@ -511,9 +576,12 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     auto_events: 1,
     require_consent: 0,
     consent_source: "api",
+    tcf_purposes: null,
     exclude_ip_ranges: null,
     hash_user_ids: 0,
     analytics_site_id: null,
+    tags_container_id: null,
+    tags_signals: null,
     analytics_linked_at: null,
     purged_at: null,
     verified_at: null,
@@ -556,6 +624,7 @@ export async function getSite(ctx: Ctx, siteId: string) {
       forced_sessions_per_day: caps.forced_daily,
       sessions_per_network_per_day: caps.net_daily,
       forwarded_events_per_day: caps.forward_daily,
+      tags_events_per_day: caps.tags_daily,
       account_per_day: caps.account,
     },
     untrusted: {
@@ -595,6 +664,13 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
     .bind(...cols.map((c) => next[c]), s.id, ctx.accountId)
     .run();
   forgetSite(s.id);
+  // Unlinked or moved to another container: what was queued for the old one isn't sent anywhere.
+  if (s.tags_container_id && next.tags_container_id !== s.tags_container_id)
+    ctx.waitUntil(
+      siteStub(ctx.env, s.id)
+        .tagsUnlink()
+        .catch((e) => console.error("replay tags unlink failed", e)),
+    );
   if (next.retention_days !== s.retention_days || next.heatmap_retention_days !== s.heatmap_retention_days)
     ctx.waitUntil(
       siteStub(ctx.env, s.id)
@@ -620,6 +696,9 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
     ...SITE_TABLES.map((t) => ctx.env.DB.prepare(`DELETE FROM ${t} WHERE site_id = ?`).bind(s.id)),
     ctx.env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, ctx.accountId),
     ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`${s.id}/`, Date.now()),
+    // starred sessions' playback copies and cached heatmap images
+    ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`starred/${s.id}/`, Date.now()),
+    ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`heatmaps/${s.id}/`, Date.now()),
   ]);
   forgetSite(s.id);
   await siteStub(ctx.env, s.id).destroy();
@@ -640,6 +719,18 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
 export async function getInstall(ctx: Ctx, siteId: string, framework?: Framework) {
   const s = await loadSite(ctx, siteId);
   return installInstructions(s, ctx.baseUrl, framework ?? "html", await suggestionFor(ctx, s));
+}
+
+/** The IAB TCF v2 purposes recording needs consent for (consent_source tcf); default 1 and 8. */
+export const TCF_DEFAULT_PURPOSES = [1, 8];
+export function tcfPurposes(s: Pick<SiteRow, "tcf_purposes">): number[] {
+  try {
+    const v = s.tcf_purposes ? (JSON.parse(s.tcf_purposes) as unknown) : null;
+    if (Array.isArray(v) && v.length && v.every((x) => Number.isInteger(x))) return v as number[];
+  } catch {
+    /* default */
+  }
+  return [...TCF_DEFAULT_PURPOSES];
 }
 
 /**
@@ -683,6 +774,7 @@ export function loaderConfig(
     idleMs: DEFAULTS.IDLE_MS,
     consent: s.require_consent === 2 ? consentRequiredIn(country) : !!s.require_consent,
     ...(s.consent_source === "gcm" ? { gcm: 1 as const } : {}),
+    ...(s.consent_source === "tcf" ? { tcf: tcfPurposes(s) } : {}),
     errors: !!s.capture_console_errors,
     on: !!s.enabled,
     ...(s.hash_user_ids ? { hu: 1 as const } : {}),
@@ -691,6 +783,7 @@ export function loaderConfig(
     ...(s.auto_events !== 0 ? { ae: 1 as const } : {}),
     ...(jsonList(s.zones).length ? { zn: jsonList(s.zones) } : {}),
     ...(verified && s.enabled && s.surveys_rev ? { sv: s.surveys_rev } : {}),
+    ...(verified && s.tags_container_id && tagsAvailable(env) ? { tg: 1 as const } : {}),
     base,
   };
 }
