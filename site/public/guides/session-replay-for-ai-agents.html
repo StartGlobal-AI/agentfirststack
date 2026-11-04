@@ -79,7 +79,7 @@
           "name": "Is AgentFirstStack Replay open source?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. The whole service is MIT licensed and runs on Cloudflare Workers, and the recorder is built on rrweb. The hosted version at replay.agentfirststack.com is free with fair-use limits."
+            "text": "Yes. The whole service is open source (AGPL-3.0) and runs on Cloudflare Workers, and the recorder is built on rrweb. The hosted version at replay.agentfirststack.com is free with fair-use limits."
           }
         },
         {
@@ -247,11 +247,11 @@ curl -s "$R/v1/sites/$RSITE/summary?page=/checkout*&amp;period=7d" -H "$H"</code
 <li>Recordings kept up to 14 days; daily heatmap aggregates longer.</li>
 <li>5 active share links per site.</li>
 </ul>
-<p>Need different limits? Self-host it: every service is an MIT-licensed Cloudflare Worker.</p>
+<p>Need different limits? Self-host it: every service is an open-source (AGPL-3.0) Cloudflare Worker.</p>
 
 <h2 id="faq">Questions</h2>
 <h3>Is AgentFirstStack Replay open source?</h3>
-<p>Yes. The whole service is MIT licensed and runs on Cloudflare Workers, and the recorder is built on rrweb. The hosted version at replay.agentfirststack.com is free with fair-use limits.</p>
+<p>Yes. The whole service is open source (AGPL-3.0) and runs on Cloudflare Workers, and the recorder is built on rrweb. The hosted version at replay.agentfirststack.com is free with fair-use limits.</p>
 <h3>What is a session replay API?</h3>
 <p>An API that returns recorded sessions as data instead of only as video. Here, one call lists sessions by signal or frustration score, and another returns a session as a text transcript of pages, clicks, inputs, scrolling and errors.</p>
 <h3>Does it record passwords or what visitors type?</h3>
@@ -284,7 +284,7 @@ curl -s "$R/v1/sites/$RSITE/summary?page=/checkout*&amp;period=7d" -H "$H"</code
 
 <footer class="footer">
   <div class="wrap footer-inner">
-    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
     <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
   </div>
 </footer>

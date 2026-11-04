@@ -30,7 +30,7 @@ own, so the bar for a change is: an agent can use it from the API and MCP, disco
 
 - Keep each PR to one change, and explain the why in the description.
 - CI must pass. A maintainer reviews within a few days.
-- By contributing you agree your work is released under the [MIT license](LICENSE).
+- By contributing you agree your work is released under this repository's licenses: [AGPL-3.0](LICENSE), and [MIT](LICENSE-MIT) for the browser scripts ([LICENSING.md](LICENSING.md)).
 
 ## Code of conduct
 

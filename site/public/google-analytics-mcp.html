@@ -103,7 +103,7 @@
           "name": "What does AgentFirstStack cost?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed, so you can also run it yourself on Cloudflare Workers."
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can also run it yourself on Cloudflare Workers."
           }
         }
       ]
@@ -209,7 +209,7 @@ curl -s "$A/v1/sites/$SITE/stats?period=7d&amp;breakdown=channel" -H "$H"</code>
 <tr><th scope="row">Writes</th><td>None, per Google's page</td><td>Sites, goals, funnels, annotations, server events, payments</td></tr>
 <tr><th scope="row">Install check</th><td>The Realtime report, or <code>run_realtime_report</code></td><td><code>analytics_verify_install</code>, with fixes</td></tr>
 <tr><th scope="row">Data</th><td>GA4's reports, history and Google Ads links</td><td>Cookieless counts, channels including AI assistants, UTM tags, goals, funnels, revenue from Stripe or any provider</td></tr>
-<tr><th scope="row">License</th><td>Apache-2.0 (the MCP server)</td><td>MIT (the whole service)</td></tr>
+<tr><th scope="row">License</th><td>Apache-2.0 (the MCP server)</td><td>AGPL-3.0 (the whole service; the browser scripts are MIT)</td></tr>
 </tbody>
 </table>
 </div>
@@ -242,7 +242,7 @@ curl -s "$A/v1/sites/$SITE/stats?period=7d&amp;breakdown=channel" -H "$H"</code>
 <h3>Can AgentFirstStack import my GA4 history?</h3>
 <p>No. It counts from the moment its snippet is live. If you need the history, keep GA4 running; both scripts can be on the same page.</p>
 <h3>What does AgentFirstStack cost?</h3>
-<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is MIT licensed, so you can also run it yourself on Cloudflare Workers.</p>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can also run it yourself on Cloudflare Workers.</p>
 
 <p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, Plausible or Sentry.</p>
 
@@ -277,7 +277,7 @@ curl -s "$A/v1/sites/$SITE/stats?period=7d&amp;breakdown=channel" -H "$H"</code>
 
 <footer class="footer">
   <div class="wrap footer-inner">
-    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
     <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
   </div>
 </footer>

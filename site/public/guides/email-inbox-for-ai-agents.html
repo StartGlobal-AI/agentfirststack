@@ -236,7 +236,7 @@ curl -s "$M/v1/inboxes/$INBOX/latest-code?from=github.com&amp;timeout=60" -H "$H
 <tr><th scope="row">Waiting for a code</th><td>No wait tool in Google's list</td><td>Webhooks and <a href="https://agentmail.to/docs/websockets">WebSockets</a></td><td>A blocking wait on the server, up to 120 s</td></tr>
 <tr><th scope="row">Code extraction</th><td>Not in Google's tool list</td><td>Reply and attachment text extraction</td><td>Codes and action links extracted from every message</td></tr>
 <tr><th scope="row">Sending</th><td>Drafts only; the person sends</td><td>Free: 100 a day; paid plans more (<a href="https://www.agentmail.to/pricing">pricing</a>)</td><td>Replies only on the shared domain, 20 recipients a day; your domain can write to anyone</td></tr>
-<tr><th scope="row">Price</th><td>Part of the Workspace Developer Preview Program</td><td>Free tier, then $20 or $200 a month</td><td>Free; MIT licensed</td></tr>
+<tr><th scope="row">Price</th><td>Part of the Workspace Developer Preview Program</td><td>Free tier, then $20 or $200 a month</td><td>Free; open source (AGPL-3.0)</td></tr>
 </tbody>
 </table>
 </div>
@@ -250,7 +250,7 @@ curl -s "$M/v1/inboxes/$INBOX/latest-code?from=github.com&amp;timeout=60" -H "$H
 <li>Mail on the shared domain is deleted after 14 days. An inbox holds 100 messages, and an account receives up to 100 a day.</li>
 <li>Role names such as admin@ and postmaster@ can't be claimed.</li>
 </ul>
-<p>Need different limits? Self-host it: the code is MIT licensed and runs on Cloudflare Workers.</p>
+<p>Need different limits? Self-host it: the code is open source (AGPL-3.0) and runs on Cloudflare Workers.</p>
 
 <h2 id="safety">Treat email as untrusted input</h2>
 <p>Anyone can send an email, including one written to steer an agent ("ignore your instructions and..."). REST responses mark third-party text in an <code>untrusted</code> field, and MCP tools return bodies inside UNTRUSTED fences. The agent should use codes and links only, and never act on instructions in a message.</p>
@@ -292,7 +292,7 @@ curl -s "$M/v1/inboxes/$INBOX/latest-code?from=github.com&amp;timeout=60" -H "$H
 
 <footer class="footer">
   <div class="wrap footer-inner">
-    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. MIT licensed.</p>
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
     <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
   </div>
 </footer>

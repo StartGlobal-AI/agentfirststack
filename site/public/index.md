@@ -3,7 +3,7 @@
 Analytics, tag manager, email and session replay, set up by your AI agent. Like Google Analytics,
 Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding
 agent creates the account, adds everything to your site and checks it works. No signup form, no
-verification email, no dashboard to click through. Free to use, and open source (MIT).
+verification email, no dashboard to click through. Free to use, and open source (AGPL-3.0; the browser scripts are MIT).
 
 - Manual for agents: https://agentfirststack.com/llms.txt
 - Registration and credentials: https://agentfirststack.com/auth.md

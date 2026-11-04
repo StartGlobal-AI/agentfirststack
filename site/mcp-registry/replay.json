@@ -15,7 +15,7 @@
   ],
   "name": "com.agentfirststack/replay",
   "title": "AgentFirstStack Replay",
-  "description": "Session replay as readable transcripts: rage and dead clicks, JS errors and heatmaps. Free, MIT.",
+  "description": "Session replay as readable transcripts: rage and dead clicks, JS errors and heatmaps. Free, open source.",
   "remotes": [
     {
       "type": "streamable-http",

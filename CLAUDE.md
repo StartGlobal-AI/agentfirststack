@@ -1,7 +1,7 @@
 # AgentFirstStack: agent-native infrastructure
 
 Infrastructure every website needs, built so an AI agent can set it up and operate it end to
-end with no human signup, email verification, dashboard clicking or waiting. Open source (MIT),
+end with no human signup, email verification, dashboard clicking or waiting. Open source (AGPL-3.0; the browser scripts are MIT, see LICENSING.md),
 and hosted for free at https://agentfirststack.com.
 
 | App | What it replaces | Hosted at | Local port |

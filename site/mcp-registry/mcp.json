@@ -15,7 +15,7 @@
   ],
   "name": "com.agentfirststack/mcp",
   "title": "AgentFirstStack",
-  "description": "Analytics, tag manager, email inboxes and session replay an AI agent sets up by itself. Free, MIT.",
+  "description": "Analytics, tag manager, email inboxes and session replay an AI agent sets up by itself. Free, open source.",
   "remotes": [
     {
       "type": "streamable-http",

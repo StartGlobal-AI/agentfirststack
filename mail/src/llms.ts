@@ -76,6 +76,7 @@ export function llmsTxt(base: string, sharedDomain: string, env?: AppEnv): strin
 > bring your own domain, get signed webhooks. Runs on Cloudflare Workers + Email Service.
 
 Base URL: ${base}
+Source (AGPL-3.0): https://github.com/StartGlobal-AI/agentfirststack
 Shared domain (works instantly for every account): ${sharedDomain}
 Auth: \`Authorization: Bearer <api_key>\` (or \`x-api-key\`). Keys are "*" (full) or "read" (GET + read-only tools).
 Errors: \`{ "error": { "code", "message", "hint", "details"? } }\`. The hint says how to recover.

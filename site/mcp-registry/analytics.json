@@ -15,7 +15,7 @@
   ],
   "name": "com.agentfirststack/analytics",
   "title": "AgentFirstStack Analytics",
-  "description": "Cookieless web analytics an agent creates and queries: goals, funnels, revenue, SQL. Free, MIT.",
+  "description": "Cookieless web analytics an agent creates and queries: goals, funnels, revenue, SQL. Free, open source.",
   "remotes": [
     {
       "type": "streamable-http",

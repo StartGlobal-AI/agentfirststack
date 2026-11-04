@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="https://github.com/StartGlobal-AI/agentfirststack/actions/workflows/ci.yml"><img src="https://github.com/StartGlobal-AI/agentfirststack/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="AGPL-3.0 license"></a>
 </p>
 
 ---
@@ -137,4 +137,4 @@ Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE). Built and hosted by [StartGlobal](https://startglobal.co).
+The services are [AGPL-3.0](LICENSE); the browser scripts websites load (the analytics tracker, the tag manager runtime, the replay recorder and survey widget) are [MIT](LICENSE-MIT), so adding them to a site puts no obligations on it. Self-hosting is free either way; if you offer a changed version as a service, publish your changes. Details: [LICENSING.md](LICENSING.md). Built and hosted by [StartGlobal](https://startglobal.co).

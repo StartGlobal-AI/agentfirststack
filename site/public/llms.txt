@@ -7,7 +7,7 @@
 > give the owner a claim link so they can see it all in a dashboard (section 8).
 
 - Hosted (free): https://agentfirststack.com
-- Source (MIT): https://github.com/StartGlobal-AI/agentfirststack
+- Source (AGPL-3.0; the browser scripts are MIT): https://github.com/StartGlobal-AI/agentfirststack
 - This file is the overview. Each service has its own complete manual (linked below); read the
   manual of a service before you use it.
 
