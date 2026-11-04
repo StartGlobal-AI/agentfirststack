@@ -38,13 +38,14 @@ In `<head>`, after the analytics snippet:
 ```html
 <script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
 <script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
-<script>if(!navigator.globalPrivacyControl&&navigator.doNotTrack!=="1")document.head.appendChild(Object.assign(document.createElement("script"),{async:true,src:"https://tags.agentfirststack.com/c/ctr_6znmv02cawfa9pb9.js"}))</script>
+<script async src="https://tags.agentfirststack.com/c/ctr_6znmv02cawfa9pb9.js"></script>
 ```
 
-The tag container is loaded by that one-line loader instead of a plain `<script src>` because the
-tags runtime doesn't honour Global Privacy Control / Do Not Track, and the privacy page promises
-that nothing is recorded for those browsers (analytics and replay drop them themselves). The
-replay recorder needs no snippet: the analytics tracker loads it (linked sites).
+The tag container is the plain snippet: with its `settings.respect_dnt` (the default) the runtime
+does nothing in a browser that sends Global Privacy Control or Do Not Track, as the privacy page
+promises (analytics and replay drop those browsers too). New pages built from
+`site/templates/page.html` get both snippets. The replay recorder needs no snippet: the analytics
+tracker loads it (linked sites).
 
 `app.js` and `content.js` no longer call `afsa("event","copy_prompt")`: the tag container sends
 it, so a copy counts once. The two home copy buttons carry `data-cta="hero"` / `data-cta="closing"`.
