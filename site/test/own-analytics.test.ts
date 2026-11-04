@@ -41,7 +41,7 @@ describe("own analytics", () => {
     expect(sent[0]?.internal).toBe(env.INTERNAL_TOKEN);
     expect(sent[0]?.authorization).toBeNull();
     expect(JSON.parse(sent[0]?.body ?? "{}")).toEqual({
-      events: [{ name: "signup", user_id: s.json.account_id, url: "https://afs.test/v1/signup" }],
+      events: [{ name: "signup", user_id: s.json.account_id, url: "https://afs.test/v1/signup", visit: false }],
     });
     // A refused signup is not a conversion.
     const n = serviceCalls.length;

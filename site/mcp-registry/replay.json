@@ -10,9 +10,7 @@
     {
       "src": "https://agentfirststack.com/brand/logo-512.png",
       "mimeType": "image/png",
-      "sizes": [
-        "512x512"
-      ]
+      "sizes": ["512x512"]
     }
   ],
   "name": "com.agentfirststack/replay",

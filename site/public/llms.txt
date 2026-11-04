@@ -92,14 +92,14 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
 8. **Verify like a visitor.** Use a real browser if you have one (a browser tool, Playwright,
    Puppeteer); otherwise fetch the pages. Open each main page, click each main action, and submit a
    form only where it's harmless (a test-mode checkout, a newsletter form you can unsubscribe).
-   Mark your visits as test traffic so the owner's reports stay clean: run `afsa('debug')` on each
-   page before you click (it lasts until the next page load). Then check each service:
+   Mark your visits as test traffic so the owner's reports stay clean: open the first page with
+   `?afsa_debug=1&afsr=1` (test traffic for the rest of the tab, and a forced replay recording that
+   is marked as a test too). Then check each service:
    - analytics: `verify` passes, `realtime?debug=only` shows your visit, and each goal you created
      has counted (stats with `goal==<name>` and `debug=include`);
    - tags: the event log (`GET /v1/containers/:id/events?since=1h`) shows each event with every
      destination's answer, `tag-stats` shows each tag firing, `test` passes for each destination;
-   - replay: `verify` passes; open a page with `?afsr=1`, click around, and the session's transcript
-     shows those clicks;
+   - replay: `verify` passes, and the transcript of your recorded session shows your clicks;
    - inbox: `GET /v1/inboxes/:id` returns it; the first real email to it shows up in its messages.
    Fix what fails and check it again.
 9. **Write it down.** Update `AGENTFIRSTSTACK.md`: the ids, which env vars hold keys (never the

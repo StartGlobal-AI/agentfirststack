@@ -53,6 +53,8 @@ export function trackOwn(c: Context<SiteEnv>, ev: OwnEvent): void {
     url: new URL(ev.path, siteBase(c)).href,
   };
   if (ev.props) event.props = ev.props;
+  // An agent signing up with curl isn't a visit: count the event, not a visitor or session.
+  if (!ev.visitor) event.visit = false;
   if (ev.visitor) {
     const ip = h.get("cf-connecting-ip");
     const ua = h.get("user-agent");
