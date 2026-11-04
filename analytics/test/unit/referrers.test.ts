@@ -42,7 +42,8 @@ describe("ignored referrers (engine): a visitor back from checkout keeps its sou
   });
 
   const channels = () =>
-    (engine.breakdown(db, settings(), { ...q({ metrics: ["visitors", "revenue"] }), breakdown: "channel" }) as Rows).results;
+    // NOW pins the "24h" window to the fixtures' clock; without it the window follows the wall clock.
+    (engine.breakdown(db, settings(), { ...q({ metrics: ["visitors", "revenue"] }), breakdown: "channel" }, NOW) as Rows).results;
 
   it("a Direct session that comes back from checkout.stripe.com stays Direct, and so does its payment", () => {
     engine.configure(db, settings());
