@@ -406,7 +406,7 @@ describe("Google sign-in", () => {
     expect(q.get("redirect_uri")).toBe("https://afs.test/auth/google/callback");
     expect(q.get("code_challenge_method")).toBe("S256");
     expect(q.get("state")).toMatch(/^[0-9a-z]{32}$/);
-    expect(b.jar.has("afs_google")).toBe(true);
+    expect(b.jar.has("__Host-afs_google")).toBe(true);
 
     let sent: URLSearchParams | null = null;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -420,7 +420,7 @@ describe("Google sign-in", () => {
     expect(sent!.get("code_verifier")).toMatch(/^[0-9a-z]{64}$/);
     expect(sent!.get("client_secret")).toBe(E.GOOGLE_CLIENT_SECRET);
     expect(b.jar.has(SESSION)).toBe(true);
-    expect(b.jar.has("afs_google")).toBe(false);
+    expect(b.jar.has("__Host-afs_google")).toBe(false);
     const session = cb.cookies.find((c) => c.startsWith(`${SESSION}=`))!;
     // __Host-: Secure, Path=/ and no Domain, so no subdomain can plant or overwrite it.
     expect(session).toContain("Path=/;");

@@ -8,7 +8,7 @@ writes a `wrangler.deploy.json` for each app from that app's generic `wrangler.j
 |---|---|---|
 | `<name>.json` | your choice | Your deployment, created by `pnpm afs init <name> ...` |
 | `hosted.json` | no (git-ignored) | The official deployment at agentfirststack.com. Its exact budgets and resource ids stay private; the operator keeps it in a private backup |
-| `<name>.secrets.json` | **never** (git-ignored) | `ADMIN_TOKEN` and `INTERNAL_TOKEN` (top level, every app), `SALT_SECRET`, `ENCRYPTION_KEY`s, optional `site.GOOGLE_CLIENT_ID` / `site.GOOGLE_CLIENT_SECRET`. Back it up somewhere safe |
+| `<name>.secrets.json` | **never** (git-ignored) | `INTERNAL_TOKEN` (top level, every app), `ADMIN_TOKEN` (top level; deployed to the site and mail only), `SALT_SECRET`, `ENCRYPTION_KEY`s, optional `site.GOOGLE_CLIENT_ID` / `site.GOOGLE_CLIENT_SECRET`. Back it up somewhere safe |
 
 ## Format
 

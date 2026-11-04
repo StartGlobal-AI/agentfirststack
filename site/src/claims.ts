@@ -129,10 +129,15 @@ async function findClaim(db: D1Database, token: string): Promise<ClaimRow | null
   if (!TOKEN.test(token)) return null;
   return db
     .prepare(
+      // A link an agent's key asked for lives only as long as that key: revoke the key (it leaked,
+      // or the agent rotated it) and its unused links stop working too.
       `SELECT l.hash, l.account_id, l.expires_at, l.used_at, a.name, a.created_at AS account_created_at
-         FROM claim_links l JOIN accounts a ON a.id = l.account_id WHERE l.hash = ?`,
+         FROM claim_links l JOIN accounts a ON a.id = l.account_id
+         LEFT JOIN api_keys k ON k.id = l.created_by_key_id
+        WHERE l.hash = ?
+          AND (l.created_by_key_id IS NULL OR (k.id IS NOT NULL AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?)))`,
     )
-    .bind(await sha256Hex(token))
+    .bind(await sha256Hex(token), Date.now())
     .first<ClaimRow>();
 }
 

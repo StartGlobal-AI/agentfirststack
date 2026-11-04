@@ -1,4 +1,4 @@
-import { type AuthBindings, identityDb } from "./auth";
+import { type AuthBindings, identityDb, isSchemaError } from "./auth";
 
 /**
  * An account's standing, for every app's hot paths (public ingest keyed by a site or container id,
@@ -35,7 +35,8 @@ export async function accountStanding(env: AuthBindings, accountId: string): Pro
       .bind(accountId)
       .first<{ suspended_at: number | null; claimed: number }>();
     if (row) standing = { suspended: row.suspended_at != null, claimed: !!row.claimed };
-  } catch {
+  } catch (e) {
+    if (!isSchemaError(e)) return unreadable(e);
     // No memberships table (a single app self-hosted without the site): suspension only.
     try {
       const row = await db
@@ -43,13 +44,23 @@ export async function accountStanding(env: AuthBindings, accountId: string): Pro
         .bind(accountId)
         .first<{ suspended_at: number | null }>();
       if (row) standing = { suspended: row.suspended_at != null, claimed: true };
-    } catch {
+    } catch (e2) {
       // Older schema without suspended_at: nothing to enforce.
+      if (!isSchemaError(e2)) return unreadable(e2);
     }
   }
   if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
   cache.set(accountId, { at: now, standing });
   return standing;
+}
+
+/**
+ * The identity DB couldn't be read (not an old schema: an outage). Hot paths keep working, but with
+ * the lower unclaimed caps, and nothing is cached, so the real standing applies once D1 answers.
+ */
+function unreadable(e: unknown): Standing {
+  console.error("account standing unreadable", e);
+  return { suspended: false, claimed: false };
 }
 
 /** Forget a cached standing (after suspending or claiming, in the same isolate). */

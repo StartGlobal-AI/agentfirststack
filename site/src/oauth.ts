@@ -1,4 +1,14 @@
-import { authIssuer, cleanName, clientNetwork, createApiKey, newId, randomString, sha256Hex, timingSafeEqual } from "@afs/shared";
+import {
+  authIssuer,
+  cleanName,
+  clientNetwork,
+  createApiKey,
+  newId,
+  randomString,
+  reserveNewAccount,
+  sha256Hex,
+  timingSafeEqual,
+} from "@afs/shared";
 import { type Context, Hono } from "hono";
 import { DAY, type Session, type SiteEnv } from "./env";
 import { pkceChallenge, siteBase } from "./google";
@@ -52,7 +62,12 @@ async function loadClient(db: D1Database, clientId: string | undefined): Promise
 }
 
 /** https anywhere, or plain http on this machine only; no fragments, no credentials. */
-export function validRedirectUri(raw: unknown): raw is string {
+/**
+ * `platformHost` (the issuer's host): redirect URIs may not point at the platform itself or any
+ * of its subdomains. Nothing legitimate lives there, and the consent page would read "you'll be
+ * sent back to agentfirststack.com".
+ */
+export function validRedirectUri(raw: unknown, platformHost?: string): raw is string {
   if (typeof raw !== "string" || raw.length > 2000 || raw.includes("#")) return false;
   let u: URL;
   try {
@@ -61,6 +76,9 @@ export function validRedirectUri(raw: unknown): raw is string {
     return false;
   }
   if (u.username || u.password) return false;
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  const apex = platformHost?.toLowerCase().replace(/^www\./, "");
+  if (apex && apex !== "localhost" && (host === apex || host.endsWith(`.${apex}`))) return false;
   if (u.protocol === "https:") return !!u.hostname;
   if (u.protocol === "http:") return u.hostname === "localhost" || u.hostname === "127.0.0.1";
   return false;
@@ -129,12 +147,13 @@ oauthApi.post("/oauth/register", async (c) => {
   if (!Array.isArray(uris) || uris.length < 1 || uris.length > 10) {
     return oauthError(c, 400, "invalid_redirect_uri", "redirect_uris must list 1 to 10 URIs.");
   }
-  if (!uris.every(validRedirectUri)) {
+  const platformHost = new URL(issuerOf(c)).hostname;
+  if (!uris.every((u) => validRedirectUri(u, platformHost))) {
     return oauthError(
       c,
       400,
       "invalid_redirect_uri",
-      "Each redirect URI must be https, or http on localhost or 127.0.0.1, without a fragment.",
+      `Each redirect URI must be https, or http on localhost or 127.0.0.1, without a fragment, and not on ${platformHost}.`,
     );
   }
   const grantTypes = body.grant_types ?? ["authorization_code", "refresh_token"];
@@ -670,7 +689,14 @@ oauthPages.post("/oauth/authorize", async (c) => {
   let accountId = form.project ?? "";
   if (accountId === "new") {
     const name = cleanName(form.project_name, 200) ?? cleanName(`${r.client.name} project`, 200);
-    accountId = await createProject(db, session.user.id, name);
+    // A new project is a new account: the same signup gate as POST /v1/signup, plus a per-person cap.
+    const release = await reserveNewAccount(c.env, c.req.raw, session.user.id);
+    try {
+      accountId = await createProject(db, session.user.id, name);
+    } catch (e) {
+      await release().catch(() => {});
+      throw e;
+    }
   } else if (!(await getProject(db, session.user.id, accountId))) {
     return messagePage({ title: "Not found", message: "Project not found.", status: 404, session });
   }

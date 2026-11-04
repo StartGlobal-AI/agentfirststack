@@ -32,6 +32,7 @@ export default defineConfig({
           UNCLAIMED_MAX_KEYS_PER_ACCOUNT: "",
           KEYS_HOURLY_LIMIT: "",
           OAUTH_REGISTER_HOURLY_LIMIT: "",
+          PROJECTS_PER_USER_DAILY_LIMIT: "0",
           DEV_MODE: "true",
           INTERNAL_TOKEN: "test-internal-token-0123456789",
           GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",

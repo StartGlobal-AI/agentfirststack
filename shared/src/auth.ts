@@ -138,6 +138,9 @@ export function extractKey(req: Request): string | null {
   return req.headers.get("x-api-key")?.trim() || null;
 }
 
+/** "no such column/table": an older schema, the only error a fallback query may answer for. */
+export const isSchemaError = (e: unknown) => /no such (column|table)/i.test(String((e as Error)?.message ?? e));
+
 export async function authenticate(db: D1Database, token: string, waitUntil?: (p: Promise<unknown>) => void): Promise<AuthContext | null> {
   const hash = await sha256Hex(token);
   // k.*: the optional columns (expires_at, oauth_grant_id) exist in the identity DB, and only some
@@ -159,8 +162,10 @@ export async function authenticate(db: D1Database, token: string, waitUntil?: (p
       )
       .bind(hash)
       .first<KeyRow>();
-  } catch {
+  } catch (e) {
     // A database that hasn't run the account_standing migration yet: no suspension to check.
+    // Any other error (D1 unavailable) fails closed instead of skipping the suspension check.
+    if (!isSchemaError(e)) throw e;
     row = await db.prepare("SELECT * FROM api_keys WHERE hash = ? AND revoked_at IS NULL").bind(hash).first<KeyRow>();
   }
   if (!row) return null;
@@ -216,8 +221,18 @@ export async function internalAuth(env: AuthBindings, req: Request): Promise<Aut
   if (!timingSafeEqual(presented, secret)) return false;
   const accountId = req.headers.get("x-afs-account") ?? "";
   if (!ACCOUNT_ID.test(accountId)) return false;
-  const row = await identityDb(env).prepare("SELECT id FROM accounts WHERE id = ?").bind(accountId).first();
+  const idb = identityDb(env);
+  let row: { id: string; suspended_at?: number | null } | null;
+  try {
+    row = await idb.prepare("SELECT id, suspended_at FROM accounts WHERE id = ?").bind(accountId).first();
+  } catch (e) {
+    if (!isSchemaError(e)) throw e;
+    row = await idb.prepare("SELECT id FROM accounts WHERE id = ?").bind(accountId).first();
+  }
   if (!row) return false;
+  // A suspended account stays readable to the deployment's own Workers (the dashboard's
+  // inventory), but nothing may change it on its behalf.
+  if (row.suspended_at != null && req.method !== "GET" && req.method !== "HEAD") throw accountSuspended();
   await ensureLocalAccount(env, accountId);
   return { accountId, keyId: INTERNAL_KEY_ID, scopes: ["*"] };
 }
@@ -504,6 +519,36 @@ async function takeSignupSlot(db: D1Database, limits: SignupLimit[]): Promise<()
   return release;
 }
 
+/** New projects one signed-in person may create per day (OAuth consent "new project"). */
+export const DEFAULT_PROJECTS_PER_USER_DAILY = 5;
+
+/**
+ * The signup gate for an account created some other way than POST /v1/signup (a person creating
+ * a project while connecting an app over OAuth): the deployment's SIGNUP_MODE, the same
+ * per-network, per-provider and deployment-wide counts, and a per-person daily count
+ * (PROJECTS_PER_USER_DAILY_LIMIT, default 5; "0" = off). Returns a release function for an
+ * account that then fails to be created.
+ */
+export async function reserveNewAccount(env: AuthBindings, req: Request, userId: string): Promise<() => Promise<void>> {
+  const mode = (env.SIGNUP_MODE || "open").toLowerCase();
+  if (mode !== "open")
+    throw forbidden("New projects can't be created on this deployment.", "Connect an existing project, or ask the operator for one.");
+  // No SIGNUP_LIMITER burst check here: a signed-in person is already capped per day below.
+  const limits = await signupLimits(env, req);
+  const raw = (env as unknown as Record<string, unknown>).PROJECTS_PER_USER_DAILY_LIMIT;
+  const perUser = raw === undefined || raw === "" ? DEFAULT_PROJECTS_PER_USER_DAILY : limitOf(String(raw));
+  if (perUser) {
+    limits.push({
+      key: await signupKey(`signup-user|${userId}|${env.KEY_PREFIX ?? ""}`),
+      windowMs: DAY_MS,
+      max: perUser,
+      error: () =>
+        tooManyRequests(`At most ${perUser} new projects a day for one person. Connect an existing project, or try again tomorrow.`),
+    });
+  }
+  return takeSignupSlot(identityDb(env), limits);
+}
+
 /**
  * Delete signup_log rows older than the longest window (a day), with a margin. The site's daily
  * cron calls it for the identity DB; a standalone app can call it from its own scheduled handler.
@@ -554,6 +599,17 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
   const app = new Hono<{ Bindings: B; Variables: { auth: AuthContext } }>();
 
   app.post("/v1/signup", async (c) => {
+    // Agents sign up from a terminal or a server, which send neither header. A browser on some
+    // other page does (a no-cors POST needs no preflight), and enough visitors to such a page
+    // would use up the deployment-wide hourly signups for everyone.
+    const fetchSite = c.req.header("sec-fetch-site");
+    const origin = c.req.header("origin");
+    if ((fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") || (origin && origin !== new URL(c.req.url).origin)) {
+      throw forbidden(
+        "Signup isn't available to scripts on other websites.",
+        "Call POST /v1/signup from your agent, a terminal or a server (curl, fetch in Node), not from browser JavaScript.",
+      );
+    }
     const body = await readJson(c, signupBody);
     const env = c.env;
     const idb = identityDb(env);
@@ -647,15 +703,39 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
     assertPermanentKey(auth, "create API keys");
     const body = await readJson(c, createKeyBody);
     await assertCanCreateKey(c.env, auth.accountId);
-    const k = await createApiKey(identityDb(c.env), auth.accountId, {
+    const idb = identityDb(c.env);
+    // A key made with a person's dashboard key belongs to that person too: removing them from
+    // the project revokes it with theirs.
+    let createdByUserId: string | undefined;
+    try {
+      const parent = await idb
+        .prepare("SELECT created_by_user_id FROM api_keys WHERE id = ?")
+        .bind(auth.keyId)
+        .first<{ created_by_user_id: string | null }>();
+      createdByUserId = parent?.created_by_user_id ?? undefined;
+    } catch (e) {
+      if (!isSchemaError(e)) throw e; // a standalone app's DB has no people columns
+    }
+    const k = await createApiKey(idb, auth.accountId, {
       keyPrefix: c.env.KEY_PREFIX || opts.keyPrefix,
       name: cleanName(body.name, 200),
       scope: body.scope,
+      createdByUserId,
     });
     return c.json({ id: k.id, api_key: k.key, scopes: k.scopes, note: "Store api_key now; it is not shown again." }, 201);
   });
 
   app.delete("/v1/keys/:id", async (c) => {
+    const auth = c.var.auth;
+    // A connected app (an OAuth access token, perhaps a member's) may end its own tokens, not
+    // the project's keys: in the dashboard that is the owner's call.
+    if (isTemporaryCredential(auth)) {
+      const target = await identityDb(c.env)
+        .prepare("SELECT oauth_grant_id FROM api_keys WHERE id = ? AND account_id = ?")
+        .bind(c.req.param("id"), auth.accountId)
+        .first<{ oauth_grant_id: string | null }>();
+      if (target && target.oauth_grant_id !== auth.oauthGrantId) assertPermanentKey(auth, "revoke the project's API keys");
+    }
     const res = await identityDb(c.env)
       .prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND account_id = ? AND revoked_at IS NULL")
       .bind(Date.now(), c.req.param("id"), c.var.auth.accountId)

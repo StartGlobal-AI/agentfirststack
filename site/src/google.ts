@@ -26,7 +26,12 @@ import {
 export const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 const GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
-const STATE_COOKIE = "afs_google";
+/**
+ * The sign-in state (state, nonce, PKCE verifier) lives in a `__Host-` cookie like the session:
+ * Secure, Path=/, no Domain, so no sibling subdomain can plant its own state and log a visitor in
+ * as someone else (login CSRF). Plain-http local dev keeps the bare name.
+ */
+const stateCookie = (c: Parameters<typeof secureCookies>[0]) => (secureCookies(c) ? "__Host-afs_google" : "afs_google");
 const STATE_TTL_S = 600;
 
 export const googleConfigured = (env: SiteEnv["Bindings"]) => !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
@@ -140,7 +145,7 @@ authRoutes.get("/auth/google", async (c) => {
   }).toString();
   return redirect(url.toString(), {
     status: 302,
-    cookies: [serializeCookie(STATE_COOKIE, cookie, { maxAge: STATE_TTL_S, path: "/auth/google", secure: secureCookies(c) })],
+    cookies: [serializeCookie(stateCookie(c), cookie, { maxAge: STATE_TTL_S, path: "/", secure: secureCookies(c) })],
   });
 });
 
@@ -153,12 +158,12 @@ const signinFailed = (reason: string) =>
   });
 
 authRoutes.get("/auth/google/callback", async (c) => {
-  const clear = serializeCookie(STATE_COOKIE, "", { maxAge: 0, path: "/auth/google", secure: secureCookies(c) });
+  const clear = serializeCookie(stateCookie(c), "", { maxAge: 0, path: "/", secure: secureCookies(c) });
   if (!googleConfigured(c.env)) return signinFailed("Google sign-in isn't configured on this deployment.");
   if (c.req.query("error")) return signinFailed("Google sign-in was cancelled or refused.");
   let saved: { s?: string; n?: string; v?: string; next?: string } = {};
   try {
-    saved = JSON.parse(new TextDecoder().decode(fromBase64(getCookie(c, STATE_COOKIE) ?? "")));
+    saved = JSON.parse(new TextDecoder().decode(fromBase64(getCookie(c, stateCookie(c)) ?? "")));
   } catch {
     /* missing or garbled */
   }

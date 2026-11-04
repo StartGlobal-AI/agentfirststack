@@ -133,6 +133,10 @@ export function buildConfig(profile, app, template) {
           { pattern: `www.${profile.domain}`, custom_domain: true },
         ]
       : [{ pattern: hostOf(profile, app), custom_domain: true }];
+  // Only the custom domains: a *.workers.dev or preview URL would skip the zone's WAF and
+  // rate-limit rules.
+  cfg.workers_dev = false;
+  cfg.preview_urls = false;
 
   cfg.d1_databases = (template.d1_databases ?? []).map((db) => {
     const key = app === "site" || db.binding === "AUTH_DB" ? "identity" : app;
@@ -190,12 +194,16 @@ function writeConfigs(profile, apps = APPS) {
 }
 
 /**
- * The secrets one app gets: ADMIN_TOKEN and INTERNAL_TOKEN (top level, every app), the site's
- * GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (top level or under "site"), then the app's own block.
+ * The secrets one app gets: INTERNAL_TOKEN (top level, every app); ADMIN_TOKEN (top level) only
+ * where an operator uses it (the site: admin API and signups past the limits; mail: domain
+ * auto-configure), so a leak from another app exposes less; the site's GOOGLE_CLIENT_ID /
+ * GOOGLE_CLIENT_SECRET (top level or under "site"); then the app's own block.
  */
+export const ADMIN_APPS = ["site", "mail"];
 export function secretsFor(secrets, app) {
   const out = {};
-  for (const k of ["ADMIN_TOKEN", "INTERNAL_TOKEN"]) if (secrets[k]) out[k] = secrets[k];
+  if (secrets.INTERNAL_TOKEN) out.INTERNAL_TOKEN = secrets.INTERNAL_TOKEN;
+  if (secrets.ADMIN_TOKEN && ADMIN_APPS.includes(app)) out.ADMIN_TOKEN = secrets.ADMIN_TOKEN;
   if (app === "site") for (const k of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) if (secrets[k]) out[k] = secrets[k];
   return { ...out, ...(secrets[app] ?? {}) };
 }
