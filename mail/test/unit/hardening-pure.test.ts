@@ -57,7 +57,8 @@ const HOSTILE: Record<string, string> = {
   "ics attendee flood": `BEGIN:VEVENT\n${rep("ATTENDEE;CN=a;ROLE=b:mailto:a@b.example\n")}`,
   "ics escapes": `BEGIN:VEVENT\nSUMMARY:${rep("\\n\\,")}`,
 };
-const BUDGET_MS = 500; // measured 10-60 ms; the old code took minutes on these
+// Measured 10-60 ms locally, up to ~560 ms on a busy CI runner; the old (quadratic) code took minutes.
+const BUDGET_MS = 2000;
 
 function ms(f: () => unknown): number {
   const t = performance.now();
@@ -67,7 +68,7 @@ function ms(f: () => unknown): number {
 
 describe("1. extraction is linear on hostile input", () => {
   for (const [name, input] of Object.entries(HOSTILE)) {
-    it(`${name}: each extractor handles ${SIZE / 1000} KB well under a second`, () => {
+    it(`${name}: each extractor handles ${SIZE / 1000} KB in bounded time`, () => {
       const runs: Record<string, () => unknown> = {
         htmlToText: () => htmlToText(input),
         "codes (text)": () => extractCodes({ text: input }),
