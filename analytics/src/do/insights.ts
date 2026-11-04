@@ -68,10 +68,10 @@ function headline(db: Db, ctx: QueryCtx, cond: Frag) {
 
 export function insights(db: Db, settings: SiteSettings, q: InsightsRequest, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters) ?? (q.goal ? unknownGoals(db, [q.goal]) : null);
+    const ge = checkGoalFilters(db, q.filters, q.where) ?? (q.goal ? unknownGoals(db, [q.goal]) : null);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
-    const ctx = ctxFor(db, r, q.filters);
+    const ctx = ctxFor(db, r, q);
     const cond = targetCond(q.goal);
     const head = headline(db, ctx, cond);
     const prevRange = comparisonRange(r, { mode: "previous" }, now);
@@ -79,7 +79,7 @@ export function insights(db: Db, settings: SiteSettings, q: InsightsRequest, now
     const days = Math.max(1, buckets(r, "day").filter((b) => b.start <= now).length);
 
     // daily visitors (distinct per day, averaged), not distinct visitors over the whole range / days
-    const segs = offsetSegments(r.start, r.end, settings.timezone);
+    const segs = offsetSegments(r.start, r.end, r.timezone);
     const local = localTsExpr(segs);
     const daily = all(
       db,
@@ -201,7 +201,7 @@ export function insights(db: Db, settings: SiteSettings, q: InsightsRequest, now
         ),
       },
       top_converting_events: events,
-      heatmap: { metric: "visitors", timezone: settings.timezone, days: WEEKDAYS, hours: [...Array(24).keys()], values: grid, peak },
+      heatmap: { metric: "visitors", timezone: r.timezone, days: WEEKDAYS, hours: [...Array(24).keys()], values: grid, peak },
       ...(notes.length ? { notes } : {}),
     };
   });

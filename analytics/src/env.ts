@@ -54,6 +54,26 @@ export interface Bindings extends AuthBindings {
   MAX_SHARE_LINKS_PER_SITE?: string;
   /** SQL wall time a site may use per 10 minutes, in ms. Default 60000. */
   SQL_TIME_BUDGET_MS?: string;
+  /** Alert rules per site. Default 20. */
+  MAX_ALERTS_PER_SITE?: string;
+  /** Alert / report destinations (webhook, Slack, email) per site. Default 5. */
+  MAX_ALERT_DESTINATIONS_PER_SITE?: string;
+  /** Scheduled reports per site. Default 5. */
+  MAX_REPORTS_PER_SITE?: string;
+  /** Alert, report and test deliveries (one per destination) per site per UTC day. Default 100. */
+  MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY?: string;
+  /** Of those, emails per site per UTC day. Default 10. */
+  MAX_ALERT_EMAILS_PER_SITE_PER_DAY?: string;
+  /** Saved segments per site. Default 50. */
+  MAX_SEGMENTS_PER_SITE?: string;
+
+  /**
+   * Optional Cloudflare Email Service binding (send_email in wrangler.jsonc) plus the sender
+   * address on a domain onboarded for Email Sending: with both, alerts and reports can go to the
+   * project's members by email. Without either, email destinations are refused (503 not_configured).
+   */
+  EMAIL?: SendEmail;
+  ALERT_EMAIL_FROM?: string;
 
   // Workers rate-limit bindings (wrangler.jsonc "ratelimits"); each is optional (absent = no limit).
   /** POST /e per client network (networkKey: an IPv4 address or an IPv6 prefix; the forwarded visitor IP behind a keyed proxy). */

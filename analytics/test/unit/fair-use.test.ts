@@ -269,7 +269,7 @@ describe("browser revenue and browser user ids (finding 5)", () => {
       { id: "s2", user_source: "browser" },
       { id: "s3", user_source: null },
     ]);
-    expect(engine.schemaVersion(old)).toBe(3);
+    expect(engine.schemaVersion(old)).toBe(engine.SCHEMA_VERSION);
     expect(old.all("SELECT name FROM sqlite_master WHERE name = 'usage'")).toHaveLength(1);
   });
 });

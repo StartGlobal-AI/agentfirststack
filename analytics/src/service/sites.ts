@@ -1,7 +1,8 @@
 import { ApiError, INTERNAL_KEY_ID, type Standing, accountStanding, badRequest, capFor, newId, parse } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
-import { isPublicSuffix, isPublicSuffixWildcard, normalizeDomain } from "../lib/url";
+import type { EnrichedEvent, PathRule } from "../lib/types";
+import { isPublicSuffix, isPublicSuffixWildcard, normalizeDomain, parsePage, parseReferrer } from "../lib/url";
 import {
   DEFAULT_MAX_GOALS_PER_SITE,
   DEFAULT_MAX_SHARE_LINKS_PER_SITE,
@@ -23,7 +24,10 @@ import {
   normalizeExclusions,
 } from "../lib/exclusions";
 import { isValidTimezone } from "../lib/time";
-import { type Ctx, type SiteRow, isVerified, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
+import { DEFAULT_IGNORED_REFERRERS, MAX_IGNORED_REFERRERS, normalizeHostList, referrerIgnoredBy, spamReferrer } from "../lib/referrers";
+import { cleanEvent } from "../lib/ingest-rules";
+import { MAX_PATH_RULES, normalizePathRules } from "../lib/pathrules";
+import { type Ctx, type SiteRow, isVerified, jsonList, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
 import { REPLAY_SITE_RE, proxyKeyFor } from "./ingest";
 import { type Framework, installInstructions, scriptSnippet } from "./install";
 
@@ -71,6 +75,44 @@ const settingsShape = {
     .describe(
       "Let user ids from afsa('identify', id) link payments that carry only a user id (metadata.afs_user_id / client_reference_id). Default false: only user ids sent by your server (track_events user_id) link payments, so nobody can pre-seed another user's attribution.",
     ),
+  ignored_referrers: z
+    .array(z.string().max(253))
+    .max(MAX_IGNORED_REFERRERS)
+    .nullable()
+    .optional()
+    .describe(
+      `Referrer hosts treated as no referrer (a host covers its subdomains; *.example.com allowed), on top of the built-in hosted-checkout and sign-in hosts (${DEFAULT_IGNORED_REFERRERS.slice(0, 6).join(", ")}, ...): a visitor coming back from them keeps the source they came with. Replaces the list; null clears it.`,
+    ),
+  path_rules: z
+    .array(z.object({ match: z.string().min(1).max(500), replace: z.string().min(1).max(500) }))
+    .max(MAX_PATH_RULES)
+    .nullable()
+    .optional()
+    .describe(
+      'Path cleaning at ingest, first match wins: [{"match":"/users/*","replace":"/users/:id"}] (* = one path segment, ** = anything). Applies from now on to page paths, entry/exit pages and URLs. Test with GET /v1/sites/:id/exclusions?url=. Replaces the list; null clears it.',
+    ),
+  redact_pii: z
+    .boolean()
+    .optional()
+    .describe(
+      "Replace email addresses and phone numbers (international +... or formatted like (415) 555-0123) in paths, URLs, referrers, UTM tags, titles and props with [email] / [phone] before storing. Default true. user_id is never changed.",
+    ),
+  search_params: z
+    .array(z.string().regex(/^[A-Za-z0-9_.-]{1,40}$/))
+    .max(5)
+    .nullable()
+    .optional()
+    .describe(
+      'Site search: query parameters that carry a search term, e.g. ["q","s"]. A pageview carrying one also records a site_search event {term} (lowercased, 100 characters, redacted); the rest of the query string is still never stored. null or [] = off (default).',
+    ),
+  content_groups: z
+    .array(z.object({ name: z.string().min(1).max(100), match: z.string().min(1).max(500) }))
+    .max(50)
+    .nullable()
+    .optional()
+    .describe(
+      'Content groups, first match wins: [{"name":"Blog","match":"/blog/*"}] (* = anything). Evaluated when you query, so they apply to stored data too: breakdown=content_group, filters=content_group==Blog.',
+    ),
   exclusions: z
     .object({
       ips: z
@@ -85,11 +127,16 @@ const settingsShape = {
         .optional()
         .describe("Hostnames or *.example.com (e.g. staging.example.com)."),
       countries: z.array(z.string().max(8)).max(250).optional().describe("ISO 3166-1 alpha-2 codes."),
+      referrers: z
+        .array(z.string().max(253))
+        .max(MAX_EXCLUSION_RULES)
+        .optional()
+        .describe("Referrer hosts to drop (a host covers its subdomains), on top of the built-in referrer-spam list."),
     })
     .nullable()
     .optional()
     .describe(
-      "Drop matching events at ingest (from now on; stored data is not changed). Replaces the whole set; null clears it. Drops are counted per reason (excluded_ip, excluded_path, excluded_hostname, excluded_country); IPs are compared in memory, never stored.",
+      "Drop matching events at ingest (from now on; stored data is not changed). Replaces the whole set; null clears it. Drops are counted per reason (excluded_ip, excluded_path, excluded_hostname, excluded_country, excluded_referrer); IPs are compared in memory, never stored.",
     ),
 };
 
@@ -151,6 +198,11 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     browser_revenue: !!s.browser_revenue,
     trust_browser_user_id: !!s.trust_browser_user_id,
     replay_site_id: s.replay_site_id ?? null,
+    ignored_referrers: jsonList<string>(s.ignored_referrers) ?? [],
+    path_rules: jsonList<PathRule>(s.path_rules) ?? [],
+    redact_pii: s.redact_pii !== 0,
+    search_params: jsonList<string>(s.search_params) ?? [],
+    content_groups: jsonList<{ name: string; match: string }>(s.content_groups) ?? [],
     verification: verificationJson(s),
     created_at: s.created_at,
     updated_at: s.updated_at,
@@ -194,6 +246,57 @@ function exclusionsColumn(input: z.infer<typeof updateSiteInput>["exclusions"]):
   if (problems.length) throw badRequest("Invalid exclusions.", problems.join(" "), problems);
   return isEmptyExclusions(value) ? null : JSON.stringify(value);
 }
+
+function ignoredReferrersColumn(input: string[] | null | undefined): string | null {
+  if (!input?.length) return null;
+  const { value, problems } = normalizeHostList(input, "ignored_referrers");
+  if (problems.length) throw badRequest("Invalid ignored_referrers.", problems.join(" "), problems);
+  return value.length ? JSON.stringify(value) : null;
+}
+
+function pathRulesColumn(input: PathRule[] | null | undefined): string | null {
+  if (!input?.length) return null;
+  const { value, problems } = normalizePathRules(input);
+  if (problems.length) throw badRequest("Invalid path_rules.", problems.join(" "), problems);
+  return value.length ? JSON.stringify(value) : null;
+}
+
+function searchParamsColumn(input: string[] | null | undefined): string | null {
+  const v = [...new Set(input ?? [])];
+  return v.length ? JSON.stringify(v) : null;
+}
+
+function contentGroupsColumn(input: { name: string; match: string }[] | null | undefined): string | null {
+  if (!input?.length) return null;
+  const bad = input.filter((g) => !g.match.startsWith("/"));
+  if (bad.length)
+    throw badRequest(
+      "Invalid content_groups.",
+      `match must be a path starting with "/" (got ${bad.map((g) => JSON.stringify(g.match)).join(", ")}).`,
+    );
+  return JSON.stringify(input.map((g) => ({ name: g.name.trim(), match: g.match.trim() })));
+}
+
+/** The settings columns of `sites` that create and update write, in order (besides id, account_id, timestamps). */
+const SETTING_COLUMNS = [
+  "domain",
+  "name",
+  "timezone",
+  "visitor_id_mode",
+  "retention_days",
+  "allowed_hostnames",
+  "respect_dnt",
+  "exclusions",
+  "browser_revenue",
+  "trust_browser_user_id",
+  "ignored_referrers",
+  "path_rules",
+  "redact_pii",
+  "search_params",
+  "content_groups",
+] as const satisfies readonly (keyof SiteRow)[];
+
+const columnValues = (row: SiteRow) => SETTING_COLUMNS.map((c) => (row[c] ?? null) as string | number | null);
 
 function cleanDomain(input: string): string {
   let d: string;
@@ -272,32 +375,23 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     exclusions: exclusionsColumn(input.exclusions),
     browser_revenue: input.browser_revenue ? 1 : 0,
     trust_browser_user_id: input.trust_browser_user_id ? 1 : 0,
+    ignored_referrers: ignoredReferrersColumn(input.ignored_referrers),
+    path_rules: pathRulesColumn(input.path_rules),
+    redact_pii: input.redact_pii === false ? 0 : 1,
+    search_params: searchParamsColumn(input.search_params),
+    content_groups: contentGroupsColumn(input.content_groups),
     created_at: now,
     updated_at: now,
   };
   try {
     await db
       .prepare(
-        `INSERT INTO sites (id, account_id, domain, name, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions,
-           browser_revenue, trust_browser_user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sites (id, account_id, ${SETTING_COLUMNS.join(", ")}, created_at, updated_at)
+         VALUES (${Array(SETTING_COLUMNS.length + 4)
+           .fill("?")
+           .join(", ")})`,
       )
-      .bind(
-        row.id,
-        row.account_id,
-        row.domain,
-        row.name,
-        row.timezone,
-        row.visitor_id_mode,
-        row.retention_days,
-        row.allowed_hostnames,
-        row.respect_dnt,
-        row.exclusions ?? null,
-        row.browser_revenue ?? 0,
-        row.trust_browser_user_id ?? 0,
-        now,
-        now,
-      )
+      .bind(row.id, row.account_id, ...columnValues(row), now, now)
       .run();
   } catch (e) {
     // Concurrent create of the same domain: the unique index wins, return the other one.
@@ -384,6 +478,11 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.exclusions !== undefined) next.exclusions = exclusionsColumn(input.exclusions);
   if (input.browser_revenue !== undefined) next.browser_revenue = input.browser_revenue ? 1 : 0;
   if (input.trust_browser_user_id !== undefined) next.trust_browser_user_id = input.trust_browser_user_id ? 1 : 0;
+  if (input.ignored_referrers !== undefined) next.ignored_referrers = ignoredReferrersColumn(input.ignored_referrers);
+  if (input.path_rules !== undefined) next.path_rules = pathRulesColumn(input.path_rules);
+  if (input.redact_pii !== undefined) next.redact_pii = input.redact_pii ? 1 : 0;
+  if (input.search_params !== undefined) next.search_params = searchParamsColumn(input.search_params);
+  if (input.content_groups !== undefined) next.content_groups = contentGroupsColumn(input.content_groups);
   if (replayChange) next.replay_site_id = replaySiteColumn(input.replay_site_id ?? null);
   // A new domain has to be proven again (share pages show the domain only while it is).
   const domainChanged = next.domain !== s.domain;
@@ -392,26 +491,10 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
     next.verify_method = null;
   }
   await ctx.env.DB.prepare(
-    `UPDATE sites SET domain = ?, name = ?, timezone = ?, visitor_id_mode = ?, retention_days = ?, allowed_hostnames = ?, respect_dnt = ?, exclusions = ?,
-       browser_revenue = ?, trust_browser_user_id = ?, replay_site_id = ?, updated_at = ?${domainChanged ? ", verified_at = NULL, verify_method = NULL" : ""}
+    `UPDATE sites SET ${SETTING_COLUMNS.map((c) => `${c} = ?`).join(", ")}, replay_site_id = ?, updated_at = ?${domainChanged ? ", verified_at = NULL, verify_method = NULL" : ""}
      WHERE id = ? AND account_id = ?`,
   )
-    .bind(
-      next.domain,
-      next.name,
-      next.timezone,
-      next.visitor_id_mode,
-      next.retention_days,
-      next.allowed_hostnames,
-      next.respect_dnt,
-      next.exclusions ?? null,
-      next.browser_revenue ?? 0,
-      next.trust_browser_user_id ?? 0,
-      next.replay_site_id ?? null,
-      next.updated_at,
-      s.id,
-      ctx.accountId,
-    )
+    .bind(...columnValues(next), next.replay_site_id ?? null, next.updated_at, s.id, ctx.accountId)
     .run();
   await pushSettings(ctx.env, next);
   const linked = replayChange && next.replay_site_id;
@@ -448,12 +531,17 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
     ctx.env.DB.prepare("DELETE FROM share_links WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM funnels WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM integrations WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM alerts WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM reports WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM alert_destinations WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM alert_events WHERE site_id = ?").bind(s.id),
+    ctx.env.DB.prepare("DELETE FROM segments WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, ctx.accountId),
   ]);
   await siteStub(ctx.env, s.id).destroy();
   return {
     deleted: s.id,
-    note: "The site, its goals, funnels, share links, Stripe connection, annotations, payments and all stored events are gone.",
+    note: "The site, its goals, funnels, share links, Stripe connection, alerts, reports, destinations and their history, segments, annotations, payments and all stored events are gone.",
   };
 }
 
@@ -468,6 +556,7 @@ export const exclusionsQuery = z.object({
   ip: z.string().max(64).optional().describe("Test: would an event from this IP be dropped?"),
   url: z.string().max(2000).optional().describe("Test: a page URL (hostname + path rules)."),
   country: z.string().max(8).optional().describe("Test: an ISO country code."),
+  referrer: z.string().max(2000).optional().describe("Test: a referrer URL or host (ignored back-from-checkout host, spam, excluded)."),
 });
 
 /**
@@ -477,42 +566,62 @@ export const exclusionsQuery = z.object({
 export async function getExclusions(ctx: Ctx, siteId: string, raw: unknown, callerIp: string | null) {
   const q = parse(exclusionsQuery, raw);
   const site = await loadSite(ctx, siteId);
-  const ex = parseExclusions(site.exclusions) ?? { ips: [], paths: [], hostnames: [], countries: [] };
+  const ex = parseExclusions(site.exclusions) ?? { ips: [], paths: [], hostnames: [], countries: [], referrers: [] };
   const summary = await siteStub(ctx.env, site.id).summary();
   const drops = "error" in summary ? {} : summary.dropped_last_7d;
   let test: Record<string, unknown> | undefined;
-  if (q.ip || q.url || q.country) {
+  if (q.ip || q.url || q.country || q.referrer) {
     let host: string | null = null;
     let path: string | null = null;
     if (q.url) {
-      try {
-        const u = new URL(q.url);
-        host = u.hostname.toLowerCase();
-        path = u.pathname;
-      } catch {
-        throw badRequest("`url` is not a valid URL.", `Example: url=https://${site.domain}/admin/login`);
-      }
+      const page = parsePage(q.url);
+      if (!page.hostname) throw badRequest("`url` is not a valid URL.", `Example: url=https://${site.domain}/admin/login`);
+      host = page.hostname;
+      path = page.pathname;
     }
-    const hit = excludedBy(compileExclusions(ex), { ip: q.ip ?? null, hostname: host, pathname: path, country: q.country ?? null });
+    const refHost = q.referrer
+      ? (parseReferrer(/^[a-z]+:\/\//i.test(q.referrer) ? q.referrer : `https://${q.referrer}`).referrer_host ?? null)
+      : null;
+    const spam = spamReferrer(refHost);
+    const hit =
+      excludedBy(compileExclusions(ex), {
+        ip: q.ip ?? null,
+        hostname: host,
+        pathname: path,
+        country: q.country ?? null,
+        referrer_host: refHost,
+      }) ?? (spam ? { reason: "referrer_spam" as const, rule: spam } : null);
+    const settings = { redact_pii: site.redact_pii !== 0, path_rules: jsonList<PathRule>(site.path_rules) };
+    const cleaned = path ? cleanEvent({ pathname: path, url: null } as unknown as EnrichedEvent, settings) : null;
     test = {
       ip: q.ip ?? null,
       url: q.url ?? null,
       country: q.country ?? null,
+      referrer: q.referrer ?? null,
       excluded: !!hit,
       reason: hit?.reason ?? null,
       rule: hit?.rule ?? null,
+      ...(cleaned ? { stored_path: cleaned.ev.pathname, path_rule: cleaned.path_rule, redacted: cleaned.redacted } : {}),
+      ...(refHost
+        ? {
+            referrer_host: refHost,
+            referrer_ignored: referrerIgnoredBy(refHost, jsonList<string>(site.ignored_referrers)),
+            referrer_spam: !!spam,
+          }
+        : {}),
     };
   }
   return {
     site_id: site.id,
     exclusions: ex,
-    dropped_last_7d: Object.fromEntries(EXCLUSION_REASONS.map((r) => [r, drops[r]?.count ?? 0])),
+    dropped_last_7d: Object.fromEntries([...EXCLUSION_REASONS, "referrer_spam"].map((r) => [r, drops[r]?.count ?? 0])),
     your_ip: callerIp,
     ...(test ? { test } : {}),
     notes: [
       'Change the rules with PATCH /v1/sites/:id {"exclusions": {"ips": [...], "paths": [...], "hostnames": [...], "countries": [...]}} (the whole set is replaced).',
       "your_ip is the address this API request came from (an agent's machine may differ from your browser). To exclude only your own browser, set localStorage.afsa_ignore = 1 on the site.",
-      "Exclusions apply from now on; stored events are not changed.",
+      "Exclusions apply from now on; stored events are not changed (purge old ones with POST /v1/sites/:id/purge).",
+      "The test also runs the site's other ingest rules: stored_path is the path after PII redaction and path_rules; referrer_ignored says whether a referrer counts as none (default = a built-in checkout / sign-in host, site = ignored_referrers); referrer_spam = the built-in spam list.",
     ],
   };
 }

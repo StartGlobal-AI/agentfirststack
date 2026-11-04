@@ -252,7 +252,15 @@ export function installInstructions(site: SiteLike, baseUrl: string, framework: 
       not_found_pages:
         'opt-in: data-404="true" on the script tag sends a "404" event (props.from = the linking page) on pages served with HTTP 404 or carrying <meta name="afsa-404">; in a client-rendered 404 call afsa(\'404\'). Broken links: GET /v1/sites/:id/breakdown?breakdown=page&filters=event_name==404',
       form_submits:
-        'opt-in: data-forms="true" sends "form_submit" with props.form = the form\'s id, name or action path (never field values) on every submit',
+        'opt-in: data-forms="true" sends "form_start" (first input) and "form_submit" with props.form = the form\'s id, name or action path (never field values)',
+      click_events:
+        '<button data-afsa-event="signup" data-afsa-prop-plan="pro">: a click sends event "signup" {plan: "pro"} (data-afsa-prop-* keys go kebab-case to snake_case)',
+      element_views:
+        '<section data-afsa-view="pricing_table" data-afsa-view-threshold="0.5">: "element_view" {name} once per pageview when that share of it is visible',
+      props:
+        "data-props='{\"variant\":\"b\"}' on the script tag, or afsa('props', {variant: 'b'}): props on every following event; afsa('pageview', {url: '/users/:id', props: {...}}) for a manual pageview with its own URL",
+      other_options:
+        'data-hash="true" (hash-routed SPAs), data-title="true" (page titles), data-before-send="fn" (window.fn(name, payload) returns the payload or null to drop it), data-downloads="pdf,zip" (download extensions), data-link-paths="/go/*" (same-host redirect links count as outbound), afsa(\'event\', name, props, {interactive: false}) (does not un-bounce), afsa(\'debug\') or data-debug="true" (test traffic, kept out of reports)',
       checkout_link:
         "revenue attribution: pass afsa.visitorId() to your server and put it in the Stripe Checkout Session's metadata.afs_visitor_id (subscriptions: also subscription_data.metadata.afs_visitor_id) or client_reference_id; Payment Links: append ?client_reference_id=<afsa.visitorId()>",
       visitor_id_mode:

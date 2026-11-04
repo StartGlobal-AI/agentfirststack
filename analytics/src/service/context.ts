@@ -7,6 +7,7 @@ import type {
   FunnelRequest,
   Goal,
   IngestResponse,
+  PathRule,
   PaymentInput,
   PaymentOutcome,
   SiteSettings,
@@ -53,6 +54,16 @@ export interface SiteRow {
   verified_at?: number | null;
   /** homepage | dns_txt | dev_localhost */
   verify_method?: string | null;
+  /** JSON array of referrer host patterns (migration 0010; NULL = none of the site's own) */
+  ignored_referrers?: string | null;
+  /** JSON PathRule[] (migration 0010; NULL = none) */
+  path_rules?: string | null;
+  /** 1 = redact emails and phone numbers at ingest (migration 0010; default 1) */
+  redact_pii?: number;
+  /** JSON array of query parameter names that carry a site search term (migration 0013) */
+  search_params?: string | null;
+  /** JSON [{name, match}] content groups (migration 0013) */
+  content_groups?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -67,9 +78,9 @@ export interface SiteStub {
   ingest(events: EnrichedEvent[], policy?: IngestPolicy): Promise<IngestResponse>;
   recordDrop(reason: string, sample: string | null): Promise<{ replay_site_id: string | null } | null>;
   stats(q: StatsRequest): Promise<Obj | DoError>;
-  breakdown(q: StatsRequest & { breakdown: Breakdown }): Promise<Obj | DoError>;
+  breakdown(q: StatsRequest & { breakdown: Breakdown | Breakdown[] }): Promise<Obj | DoError>;
   timeseries(q: TimeseriesRequest): Promise<Obj | DoError>;
-  realtime(): Promise<Obj | DoError>;
+  realtime(q?: Obj): Promise<Obj | DoError>;
   funnel(q: FunnelRequest): Promise<Obj | DoError>;
   sql(q: string, opts?: { budgetMs?: number }): Promise<Obj | DoError>;
   chargeSql(ms: number, budgetMs: number): Promise<void>;
@@ -77,6 +88,15 @@ export interface SiteStub {
   destroy(): Promise<{ ok: true }>;
   movers(q: Obj): Promise<Obj | DoError>;
   insights(q: Obj): Promise<Obj | DoError>;
+  schema(q: Obj): Promise<Obj | DoError>;
+  deleteVisitor(key: string, opts?: Obj): Promise<Obj | DoError>;
+  purge(q: Obj): Promise<Obj | DoError>;
+  alertNumbers(q: Obj): Promise<Obj | DoError>;
+  digest(q: Obj): Promise<Obj | DoError>;
+  retention(q: Obj): Promise<Obj | DoError>;
+  paths(q: Obj): Promise<Obj | DoError>;
+  attribution(q: Obj): Promise<Obj | DoError>;
+  props(q: Obj): Promise<Obj | DoError>;
   visitors(q: Obj): Promise<Obj | DoError>;
   visitor(key: string, limit?: number): Promise<Obj | DoError>;
   session(id: string): Promise<Obj | DoError>;
@@ -141,13 +161,21 @@ export async function loadSite(ctx: Ctx, siteId: string): Promise<SiteRow> {
   return row;
 }
 
+type GoalRow = Omit<Goal, "props"> & { props: string | null };
+
+export const goalFromRow = (g: GoalRow): Goal => ({
+  ...g,
+  props: g.props ? (JSON.parse(g.props) as Record<string, string>) : null,
+  counting: g.counting === "once_per_visit" ? "once_per_visit" : "every",
+});
+
 export async function loadGoals(env: Bindings, siteId: string): Promise<Goal[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, name, type, match, value, threshold, created_at FROM goals WHERE site_id = ? ORDER BY created_at",
+    "SELECT id, name, type, match, value, threshold, props, counting, created_at FROM goals WHERE site_id = ? ORDER BY created_at",
   )
     .bind(siteId)
-    .all<Goal>();
-  return results;
+    .all<GoalRow>();
+  return results.map(goalFromRow);
 }
 
 export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
@@ -165,16 +193,38 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     browser_revenue: !!site.browser_revenue,
     trust_browser_user_id: !!site.trust_browser_user_id,
     replay_site_id: site.replay_site_id ?? null,
+    ignored_referrers: jsonList<string>(site.ignored_referrers),
+    path_rules: jsonList<PathRule>(site.path_rules),
+    redact_pii: site.redact_pii !== 0,
+    search_params: jsonList<string>(site.search_params),
+    content_groups: jsonList<{ name: string; match: string }>(site.content_groups),
     created_at: site.created_at,
     goals,
   };
+}
+
+/** A JSON array column, or null when empty / unset / unreadable. */
+export function jsonList<T>(v: string | null | undefined): T[] | null {
+  if (!v) return null;
+  try {
+    const x = JSON.parse(v) as unknown;
+    return Array.isArray(x) && x.length ? (x as T[]) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseExclusions(v: string | null | undefined): Exclusions | null {
   if (!v) return null;
   try {
     const x = JSON.parse(v) as Partial<Exclusions>;
-    return { ips: x.ips ?? [], paths: x.paths ?? [], hostnames: x.hostnames ?? [], countries: x.countries ?? [] };
+    return {
+      ips: x.ips ?? [],
+      paths: x.paths ?? [],
+      hostnames: x.hostnames ?? [],
+      countries: x.countries ?? [],
+      referrers: x.referrers ?? [],
+    };
   } catch {
     return null;
   }

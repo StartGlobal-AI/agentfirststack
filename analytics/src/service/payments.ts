@@ -1,6 +1,7 @@
 import { ApiError, assertPermanentKey, decryptSecret, encryptSecret, newId, notFound, parse, sha256Hex } from "@afs/shared";
 import { allow, enforce, limitVars } from "../lib/limits";
 import { z } from "zod";
+import { periodOf } from "./stats";
 import type { Bindings } from "../env";
 import { readTextCapped } from "../lib/body";
 import { STRIPE_EVENTS, STRIPE_OPTIONAL_EVENTS, STRIPE_TOLERANCE_S, normalizeStripeEvent, verifyStripeSignature } from "../lib/stripe";
@@ -460,7 +461,7 @@ export const listPaymentsInput = z.object({
 export async function listPayments(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(listPaymentsInput, raw);
   const site = await loadSite(ctx, siteId);
-  const req = { period: q.period, from: q.from, to: q.to, type: q.type, limit: q.limit ?? 50, offset: q.offset ?? 0 };
+  const req = { ...periodOf(q), type: q.type, limit: q.limit ?? 50, offset: q.offset ?? 0 };
   return { site_id: site.id, ...(await callSite(ctx.env, site, (s) => s.listPayments(req))) };
 }
 

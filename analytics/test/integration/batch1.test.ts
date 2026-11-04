@@ -1,6 +1,7 @@
 import { SELF, createExecutionContext, env, runDurableObjectAlarm, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
+import { SCHEMA_VERSION } from "../../src/do/engine";
 import { stripeSignatureHeader } from "../../src/lib/stripe";
 import { expireStatusThrottle } from "../../src/service/payments";
 
@@ -508,6 +509,7 @@ describe("exclusions at ingest", () => {
       paths: ["/admin/*"],
       hostnames: ["staging.excl.test"],
       countries: ["RU"],
+      referrers: [],
     });
     const r = await Promise.all([
       beacon(proxyKey, { s: site, u: "https://excl.test/" }, "10.9.3.4"),
@@ -526,7 +528,14 @@ describe("exclusions at ingest", () => {
       "kept",
     ]);
     const ex = await call(`/v1/sites/${site}/exclusions?ip=10.9.200.1`, { key, headers: { "cf-connecting-ip": "198.51.100.77" } });
-    expect(ex.body.dropped_last_7d).toEqual({ excluded_ip: 2, excluded_path: 1, excluded_hostname: 1, excluded_country: 1 });
+    expect(ex.body.dropped_last_7d).toEqual({
+      excluded_ip: 2,
+      excluded_path: 1,
+      excluded_hostname: 1,
+      excluded_country: 1,
+      excluded_referrer: 0,
+      referrer_spam: 0,
+    });
     expect(ex.body.test).toMatchObject({ excluded: true, reason: "excluded_ip", rule: "10.9.0.0/16" });
     expect(ex.body.your_ip).toBe("198.51.100.77");
     const info = await call(`/v1/sites/${site}`, { key });
@@ -712,7 +721,7 @@ describe("scopes, schema and docs", () => {
   it("the site's Durable Object is on the current schema; llms.txt documents the new routes and tools", async () => {
     const { site } = await newSite("schema.test");
     const stub = env.SITE.get(env.SITE.idFromName(site));
-    expect(await stub.schemaVersion()).toBe(3);
+    expect(await stub.schemaVersion()).toBe(SCHEMA_VERSION);
     const llms = (await call("/llms.txt")).body as string;
     for (const s of [
       "/webhooks/stripe/:site_id",

@@ -25,6 +25,11 @@ function browser(
     referrer?: string;
     /** window.afsr before the tracker runs (the replay snippet installed directly) */
     afsr?: unknown;
+    /** elements with data-afsa-view, and whether each is visible */
+    views?: { attrs: Record<string, string>; visible: boolean }[];
+    title?: string;
+    innerWidth?: number;
+    hash?: string;
   } = {},
 ) {
   const sent: Sent[] = [];
@@ -32,7 +37,10 @@ function browser(
   const listeners: Record<string, ((e: unknown) => void)[]> = {};
   const docListeners: Record<string, ((e: unknown) => void)[]> = {};
   let clock = 1_000_000;
-  const url = new URL("https://example.com/?utm_source=x");
+  const url = new URL(`https://example.com/?utm_source=x${opts.hash ?? ""}`);
+  const timers: (() => void)[] = [];
+  const formEls: Record<string, unknown> = {};
+  const observers: { threshold: number; el: unknown }[] = [];
   const location = {
     get href() {
       return url.href;
@@ -45,6 +53,9 @@ function browser(
     },
     get host() {
       return url.host;
+    },
+    get hash() {
+      return url.hash;
     },
   };
   const attrs: Record<string, string> = { "data-site": "site_0123456789abcdef", ...(opts.attrs ?? {}) };
@@ -59,9 +70,24 @@ function browser(
     Date: { now: () => clock },
     scrollY: 0,
     innerHeight: 500,
+    innerWidth: opts.innerWidth,
+    setTimeout: (f: () => void) => timers.push(f),
+    IntersectionObserver: function (
+      this: { cb: (es: unknown[]) => void; o: { threshold: number } },
+      cb: (es: unknown[]) => void,
+      o: { threshold: number },
+    ) {
+      this.cb = cb;
+      this.o = o;
+    },
     document: {
       currentScript: script,
       documentElement: doc,
+      title: opts.title ?? "Home",
+      querySelectorAll: (sel: string) =>
+        sel === "[data-afsa-view]"
+          ? (opts.views ?? []).map((v) => ({ visible: v.visible, getAttribute: (k: string) => v.attrs[k] ?? null }))
+          : [],
       querySelector: (sel: string) => (sel.startsWith("meta") ? (opts.meta404 ? {} : null) : script),
       referrer: opts.referrer ?? "https://www.google.com/",
       visibilityState: "visible",
@@ -99,6 +125,12 @@ function browser(
     addEventListener: (t: string, f: (e: unknown) => void) => (listeners[t] ||= []).push(f),
   };
   ctx.window = ctx;
+  const IO = ctx.IntersectionObserver as unknown as { prototype: Record<string, unknown> };
+  IO.prototype.observe = function (this: { cb: (es: unknown[]) => void; o: { threshold: number } }, el: { visible: boolean }) {
+    observers.push({ threshold: this.o.threshold, el });
+    this.cb([{ isIntersecting: el.visible, target: el }]);
+  };
+  IO.prototype.disconnect = () => {};
   if (opts.afsr) ctx.afsr = opts.afsr;
   if (opts.perf) {
     const perf = opts.perf;
@@ -137,7 +169,34 @@ function browser(
     ctx,
     tick: (ms: number) => (clock += ms),
     fire: (t: string, e: unknown = {}) => [...(listeners[t] ?? []), ...(docListeners[t] ?? [])].forEach((f) => f(e)),
-    click: (href: string) => docListeners.click?.forEach((f) => f({ target: { closest: () => ({ href }) } })),
+    click: (href: string) =>
+      docListeners.click?.forEach((f) => f({ type: "click", target: { closest: (sel: string) => (sel === "a" ? { href } : null) } })),
+    /** a click on an element with data-afsa-* attributes (and optionally inside a link) */
+    clickEl: (attrs: Record<string, string>, href?: string) =>
+      docListeners.click?.forEach((f) =>
+        f({
+          type: "click",
+          target: {
+            closest: (sel: string) =>
+              sel === "a"
+                ? href
+                  ? { href }
+                  : null
+                : {
+                    attributes: Object.entries(attrs).map(([name, value]) => ({ name, value })),
+                    getAttribute: (k: string) => attrs[k] ?? null,
+                  },
+          },
+        }),
+      ),
+    /** an input event in a form (the same id = the same form element) */
+    input: (form: Record<string, string> | null) => {
+      const el = form && (formEls[form.id ?? ""] ??= { id: form.id ?? "", getAttribute: (k: string) => form[k] ?? null });
+      docListeners.input?.forEach((f) => f({ target: { form: el } }));
+    },
+    runTimers: () => timers.splice(0).forEach((f) => f()),
+    observers,
+    location: url,
     submit: (form: Record<string, string>) =>
       docListeners.submit?.forEach((f) => f({ target: { id: form.id ?? "", getAttribute: (k: string) => form[k] ?? null } })),
     scroll: (y: number) => {
@@ -155,10 +214,14 @@ function browser(
 describe("tracker (/s.js)", () => {
   it("is small and carries the verify marker", () => {
     expect(TRACKER.startsWith("/*! afs-analytics */")).toBe(true);
-    // Budget: 3.6 KB minified, 2 KB gzip (scroll depth, Web Vitals, 404 and form tracking took it
-    // from 2.2 KB to 3.4 KB; loading the replay recorder of linked sites added 0.2 KB).
-    expect(TRACKER.length).toBeLessThan(3600);
-    expect(gzipSync(TRACKER).length).toBeLessThan(2000);
+    // Budget: 5.1 KB minified, 2.75 KB gzip. Scroll depth, Web Vitals, 404 and form tracking took it
+    // from 2.2 KB to 3.4 KB; loading the replay recorder of linked sites added 0.2 KB; the wave-1
+    // pack (debug flag, hash routing, attribute click events, element visibility, global and
+    // per-pageview props, beforeSend, download extensions, redirect links, non-interactive events,
+    // form_start, page title, viewport width) 1.5 KB minified / 0.7 KB gzip. Language, extra UTM
+    // tags, site search and content groups are read on the server and cost the tracker nothing.
+    expect(TRACKER.length).toBeLessThan(5100);
+    expect(gzipSync(TRACKER).length).toBeLessThan(2750);
   });
 
   it("exposes window.afsa and nothing under the old sga name", () => {
@@ -256,6 +319,17 @@ describe("tracker (/s.js)", () => {
     expect(c.store.afsa_vid).toBeUndefined();
   });
 
+  it("afsa('debug') and data-debug=\"true\" mark events as test traffic (dbg: 1), also when queued before load", () => {
+    const b = browser({ attrs: { "data-debug": "true" } });
+    expect(b.sent[0]!.body.dbg).toBe(1);
+    const q = browser({ preload: [["debug"], ["event", "x"]] });
+    expect(q.sent.map((s) => s.body.dbg)).toEqual([1, 1]);
+    q.afsa("debug", false);
+    q.afsa("event", "y");
+    expect(q.sent[2]!.body.dbg).toBeUndefined();
+    expect(browser().sent[0]!.body.dbg).toBeUndefined();
+  });
+
   it("flags webdriver and GPC, honours afsa_ignore", () => {
     const b = browser();
     (b.ctx.navigator as Record<string, unknown>).webdriver = true;
@@ -342,6 +416,98 @@ describe("tracker: scroll depth, Web Vitals, 404 and forms", () => {
     const off = browser();
     off.submit({ id: "contact" });
     expect(off.sent).toHaveLength(1);
+  });
+});
+
+describe("tracker: wave-1 collection pack", () => {
+  it("hash routing: #/routes are pageviews (h: 1), plain anchors are not new pages", () => {
+    const b = browser({ attrs: { "data-hash": "true" }, hash: "#/inbox" });
+    expect(b.sent[0]!.body).toMatchObject({ n: "pageview", h: 1, u: "https://example.com/?utm_source=x#/inbox" });
+    b.location.hash = "#/settings";
+    b.fire("hashchange");
+    expect(b.sent.filter((s) => s.body.n === "pageview")).toHaveLength(2);
+    b.fire("hashchange");
+    expect(b.sent.filter((s) => s.body.n === "pageview")).toHaveLength(2);
+    const off = browser({ hash: "#x" });
+    expect(off.sent[0]!.body.h).toBeUndefined();
+  });
+
+  it("data-afsa-event clicks send the event with data-afsa-prop-* (kebab to snake case)", () => {
+    const b = browser();
+    b.clickEl({ "data-afsa-event": "signup", "data-afsa-prop-plan": "pro", "data-afsa-prop-billing-cycle": "yearly", class: "btn" });
+    expect(b.sent[1]).toMatchObject({ via: "beacon", body: { n: "signup", p: { plan: "pro", billing_cycle: "yearly" } } });
+  });
+
+  it("element_view once per pageview per name, with the element's threshold", () => {
+    const b = browser({
+      views: [
+        { attrs: { "data-afsa-view": "pricing_table", "data-afsa-view-threshold": "0.8" }, visible: true },
+        { attrs: { "data-afsa-view": "footer" }, visible: false },
+      ],
+    });
+    b.runTimers();
+    expect(b.sent.filter((s) => s.body.n === "element_view").map((s) => s.body.p)).toEqual([{ name: "pricing_table" }]);
+    expect(b.observers.map((o) => o.threshold)).toEqual([0.8, 0.5]);
+    b.runTimers();
+    expect(b.sent.filter((s) => s.body.n === "element_view")).toHaveLength(1);
+    b.history.pushState({}, "", "/next");
+    b.runTimers();
+    expect(b.sent.filter((s) => s.body.n === "element_view")).toHaveLength(2);
+  });
+
+  it("global props (data-props, afsa('props')) ride on every event; pageview props and a custom URL", () => {
+    const b = browser({ attrs: { "data-props": '{"variant":"b"}' }, preload: [["props", { plan: "pro" }]] });
+    expect(b.sent[0]!.body.p).toEqual({ variant: "b", plan: "pro" });
+    b.afsa("event", "x", { a: 1 });
+    expect(b.sent[1]!.body.p).toEqual({ variant: "b", plan: "pro", a: 1 });
+    b.afsa("pageview", { url: "/users/:id", props: { section: "account" } });
+    expect(b.sent[2]!.body).toMatchObject({
+      n: "pageview",
+      u: "https://example.com/users/:id",
+      p: { variant: "b", plan: "pro", section: "account" },
+    });
+    b.tick(2000);
+    b.fire("pagehide");
+    expect(b.sent[3]!.body).toMatchObject({ n: "engagement", u: "https://example.com/users/:id" });
+    expect(b.sent[3]!.body.p).toBeUndefined();
+  });
+
+  it("data-before-send can rewrite or drop a payload", () => {
+    const b = browser({ attrs: { "data-before-send": "scrub" } });
+    expect(b.sent).toHaveLength(1);
+    const c = browser({ attrs: { "data-before-send": "scrub" } });
+    (c.ctx as Record<string, unknown>).scrub = (n: string, p: Record<string, unknown>) =>
+      n === "secret" ? null : { ...p, u: "https://example.com/redacted" };
+    c.afsa("event", "secret");
+    c.afsa("event", "fine");
+    expect(c.sent.map((s) => [s.body.n, s.body.u])).toEqual([
+      ["pageview", "https://example.com/?utm_source=x"],
+      ["fine", "https://example.com/redacted"],
+    ]);
+  });
+
+  it("custom download extensions and same-host redirect paths as outbound clicks", () => {
+    const b = browser({ attrs: { "data-downloads": "pdf,sketch", "data-link-paths": "/go/*,/out/*" } });
+    b.click("https://example.com/a.sketch");
+    b.click("https://example.com/a.zip");
+    b.click("https://example.com/go/partner?x=1");
+    b.click("https://example.com/internal");
+    expect(b.sent.slice(1).map((s) => [s.body.n, s.body.p])).toEqual([
+      ["file_download", { url: "https://example.com/a.sketch" }],
+      ["outbound_click", { url: "https://example.com/go/partner" }],
+    ]);
+  });
+
+  it("non-interactive events, form_start once per form, title and viewport width on pageviews", () => {
+    const b = browser({ attrs: { "data-forms": "true", "data-title": "true" }, title: "Pricing | Example", innerWidth: 1280 });
+    expect(b.sent[0]!.body).toMatchObject({ t: "Pricing | Example", w: 1280 });
+    b.afsa("event", "impression", { slot: "hero" }, { interactive: false });
+    expect(b.sent[1]!.body).toMatchObject({ n: "impression", ni: 1 });
+    b.input({ id: "contact" });
+    b.input({ id: "contact" });
+    b.input(null);
+    expect(b.sent.filter((s) => s.body.n === "form_start").map((s) => s.body.p)).toEqual([{ form: "contact" }]);
+    expect(browser().sent[0]!.body.t).toBeUndefined();
   });
 });
 

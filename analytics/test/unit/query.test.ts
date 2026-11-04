@@ -54,7 +54,10 @@ describe("SQL building is parameterised", () => {
   });
   it("where clause binds the range", () => {
     const w = whereFrag({ ...ctx, filters: [] });
-    expect(w).toEqual({ sql: "e.ts >= ? AND e.ts < ?", args: [1, 2] });
+    // debug (test) events are left out unless asked for
+    expect(w).toEqual({ sql: "e.ts >= ? AND e.ts < ? AND e.debug = 0", args: [1, 2] });
+    expect(whereFrag({ ...ctx, filters: [], debug: "include" })).toEqual({ sql: "e.ts >= ? AND e.ts < ?", args: [1, 2] });
+    expect(whereFrag({ ...ctx, filters: [], debug: "only" }).sql).toContain("e.debug = 1");
   });
   it("glob escaping keeps * as the only wildcard", () => {
     expect(toGlob("/a?b[c]/*")).toBe("/a[?]b[[]c]/*");

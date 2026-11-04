@@ -11,6 +11,8 @@ export type Interval = (typeof INTERVALS)[number];
 export interface Range {
   period: Period;
   timezone: string;
+  /** from/to were timestamps: an exact [start, end), not whole local days */
+  exact?: boolean;
   /** local YYYY-MM-DD of the first and last day covered */
   from: string;
   to: string;
@@ -154,12 +156,47 @@ export class PeriodError extends Error {}
  *   all                         from the first stored event
  *   from + to (YYYY-MM-DD)      inclusive local days ("custom")
  */
+/** An ISO timestamp (2026-11-03T09:30:00Z, offset allowed) as unix ms, floored to the minute; null if not one. */
+export function parseInstant(s: string | undefined): number | null {
+  if (!s || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return null;
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? Math.floor(ms / 60_000) * 60_000 : null;
+}
+
+/** An exact range between two instants (the end exclusive), labelled with its local days. */
+function instantRange(start: number, end: number, tz: string): Range {
+  const days = (end - start) / DAY;
+  return {
+    period: "custom",
+    timezone: tz,
+    exact: true,
+    from: ymdString(localDay(start, tz)),
+    to: ymdString(localDay(end - 1, tz)),
+    start,
+    end,
+    interval: days <= 2 ? "hour" : days <= 92 ? "day" : "month",
+  };
+}
+
 export function resolvePeriod(input: PeriodInput, tz: string, now: number, firstEventMs?: number | null): Range {
   const today = localDay(now, tz);
+  const fromTs = parseInstant(input.from);
+  const toTs = parseInstant(input.to);
+  if (fromTs != null || toTs != null) {
+    const start = fromTs ?? (input.from ? midnight(parseYmd(input.from) ?? today, tz) : null);
+    const end = toTs ?? (input.to ? midnight(addDays(parseYmd(input.to) ?? today, 1), tz) : Math.floor(now / 60_000) * 60_000 + 60_000);
+    if (start == null) throw new PeriodError("`to` as a timestamp needs `from` too.");
+    if (end <= start) throw new PeriodError("`from` must be before `to`.");
+    if (end - start > 3660 * DAY) throw new PeriodError("Custom ranges are limited to 10 years.");
+    return instantRange(start, end, tz);
+  }
   if (input.from || input.to) {
     const f = input.from ? parseYmd(input.from) : null;
     const t = input.to ? parseYmd(input.to) : input.from ? today : null;
-    if (!f || !t) throw new PeriodError("`from` and `to` must be dates as YYYY-MM-DD (to defaults to today).");
+    if (!f || !t)
+      throw new PeriodError(
+        "`from` and `to` must be dates as YYYY-MM-DD or ISO timestamps like 2026-11-03T09:30:00Z (to defaults to today / now).",
+      );
     if (dayDiff(f, t) < 0) throw new PeriodError("`from` must be on or before `to`.");
     if (dayDiff(f, t) > 3660) throw new PeriodError("Custom ranges are limited to 10 years.");
     return dayRange("custom", f, t, tz);
@@ -223,6 +260,7 @@ export function previousRange(r: Range, now: number): (Range & { partial: boolea
 /** The whole range before `r` (no truncation for in-progress periods). */
 function previousFull(r: Range): Range {
   const tz = r.timezone;
+  if (r.exact) return instantRange(r.start - (r.end - r.start), r.start, tz);
   if (r.period === "24h") return hourRange(r, r.start - 24 * HOUR);
   const from = parseYmd(r.from)!;
   const to = parseYmd(r.to)!;
@@ -265,6 +303,7 @@ const weekday = (v: Ymd) => new Date(Date.UTC(v.y, v.m - 1, v.d)).getUTCDay();
 /** Move a range by whole days (local calendar days for day ranges). */
 function shiftDays(r: Range, days: number): Range {
   if (!days) return r;
+  if (r.exact) return instantRange(r.start + days * DAY, r.end + days * DAY, r.timezone);
   if (r.period === "24h") return hourRange(r, r.start + days * DAY);
   return dayRange(r.period, addDays(parseYmd(r.from)!, days), addDays(parseYmd(r.to)!, days), r.timezone, r.interval);
 }
@@ -304,23 +343,27 @@ export function comparisonRange(r: Range, spec: CompareSpec, now: number): Compa
     return { ...dayRange("custom", f, t, tz, r.interval), partial: false, mode: "custom", match_weekday: false };
   }
   if (r.period === "all") return null;
-  const curStart = r.period === "24h" ? localDay(r.start, tz) : parseYmd(r.from)!;
+  const curStart = r.period === "24h" || r.exact ? localDay(r.start, tz) : parseYmd(r.from)!;
   let cmp: Range;
   if (spec.mode === "previous") {
     cmp = previousFull(r);
     if (mw) {
-      const cs = r.period === "24h" ? localDay(cmp.start, tz) : parseYmd(cmp.from)!;
+      const cs = r.period === "24h" || r.exact ? localDay(cmp.start, tz) : parseYmd(cmp.from)!;
       cmp = shiftDays(cmp, -((weekday(cs) - weekday(curStart) + 7) % 7));
     }
   } else {
-    if (r.period === "24h") {
+    if (r.exact) {
+      const p = localParts(r.start, tz);
+      const s0 = zonedToUtc(p.y - 1, p.m, Math.min(p.d, daysInMonth(p.y - 1, p.m)), p.h, tz) + p.min * 60_000;
+      cmp = instantRange(s0, s0 + (r.end - r.start), tz);
+    } else if (r.period === "24h") {
       const p = localParts(r.start, tz);
       cmp = hourRange(r, zonedToUtc(p.y - 1, p.m, Math.min(p.d, daysInMonth(p.y - 1, p.m)), p.h, tz));
     } else {
       cmp = dayRange(r.period, addMonths(parseYmd(r.from)!, -12), addMonths(parseYmd(r.to)!, -12), tz, r.interval);
     }
     if (mw) {
-      const cs = r.period === "24h" ? localDay(cmp.start, tz) : parseYmd(cmp.from)!;
+      const cs = r.period === "24h" || r.exact ? localDay(cmp.start, tz) : parseYmd(cmp.from)!;
       let k = (weekday(curStart) - weekday(cs) + 7) % 7;
       if (k > 3) k -= 7;
       cmp = shiftDays(cmp, k);

@@ -1,5 +1,5 @@
-import type { Breakdown, Filter, Metric } from "./filters";
-import type { FunnelStep } from "./query";
+import type { Breakdown, Filter, FilterExpr, Metric } from "./filters";
+import type { DebugMode, FunnelMode, FunnelStep, FunnelWindow } from "./query";
 import type { CompareSpec, Interval, Period } from "./time";
 import type { Geo } from "./geo";
 import type { DeviceInfo } from "./ua";
@@ -7,6 +7,12 @@ import type { Channel, ClickIdType } from "./channel";
 import type { Exclusions } from "./exclusions";
 
 export type VisitorIdMode = "cookieless" | "persistent";
+
+/** A path cleaning rule: `*` matches one path segment, `**` any run of characters. */
+export interface PathRule {
+  match: string;
+  replace: string;
+}
 export type GoalType = "event" | "pageview" | "scroll";
 
 export interface Goal {
@@ -17,6 +23,10 @@ export interface Goal {
   value: number | null;
   /** scroll goals: minimum max-scroll % of the page (1-100); null for other types */
   threshold?: number | null;
+  /** prop conditions: every key must equal the event's prop (strings); null = none */
+  props?: Record<string, string> | null;
+  /** every matching event counts (default), or only the first per visit */
+  counting?: "every" | "once_per_visit";
   created_at: number;
 }
 
@@ -40,6 +50,16 @@ export interface SiteSettings {
   trust_browser_user_id?: boolean;
   /** linked replay site (rsite_...): the tracker loads its recorder. Older copies have no field: null. */
   replay_site_id?: string | null;
+  /** referrer hosts treated as no referrer, on top of DEFAULT_IGNORED_REFERRERS (older copies: none) */
+  ignored_referrers?: string[] | null;
+  /** path cleaning rules applied at ingest, in order (older copies: none) */
+  path_rules?: PathRule[] | null;
+  /** replace emails and phone numbers before storing; older copies have no field: treated as true */
+  redact_pii?: boolean;
+  /** query parameters that carry a site search term (older copies: none) */
+  search_params?: string[] | null;
+  /** content groups, first match wins, evaluated at query time (older copies: none) */
+  content_groups?: { name: string; match: string }[] | null;
   created_at: number;
   goals: Goal[];
 }
@@ -54,6 +74,10 @@ export interface Attribution {
   utm_campaign: string | null;
   utm_term: string | null;
   utm_content: string | null;
+  utm_id?: string | null;
+  utm_source_platform?: string | null;
+  utm_creative_format?: string | null;
+  utm_marketing_tactic?: string | null;
   click_id_type: ClickIdType | null;
   click_id: string | null;
 }
@@ -89,6 +113,20 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   ip?: string | null;
   /** engagement beacon: max scroll depth of the page, 0-100 */
   scroll_depth?: number | null;
+  /** test traffic (afsa('debug') / data-debug, debug: true on server events): kept out of reports by default */
+  debug?: boolean;
+  /** primary language subtag (Accept-Language, or the server event's language) */
+  language?: string | null;
+  /** viewport class xs | sm | md | lg (browser pageviews) */
+  screen?: string | null;
+  /** document.title (browser pageviews with data-title="true"), 200 chars */
+  title?: string | null;
+  /** false: a non-interactive event (doesn't un-bounce a session) */
+  interactive?: boolean;
+  /** the page URL's query string, only so the DO can read site_search params; never stored */
+  search_query?: string | null;
+  /** the site_search term the DO extracted (set in the DO, redacted) */
+  search_term?: string | null;
   /** engagement beacon: Core Web Vitals of the page load (ms, ms, unitless) */
   lcp?: number | null;
   inp?: number | null;
@@ -100,6 +138,16 @@ export interface IngestOutcome {
   visitor_id?: string;
   session_id?: string;
   reason?: string;
+  /** the event opened a new session */
+  new_session?: boolean;
+  /** an engagement beacon (it updates its pageview, it doesn't add a row) */
+  engagement?: boolean;
+  /** validate_only: the row that would have been stored */
+  stored?: Record<string, unknown> | null;
+  /** validate_only: problems with a kept event (browser_revenue_ignored, ...) */
+  warnings?: string[];
+  /** events stored along with this one (a site_search event), counted against the daily budget */
+  extra_events?: number;
 }
 
 export interface IngestResponse {
@@ -117,21 +165,33 @@ export interface PeriodParams {
   period?: Period;
   from?: string;
   to?: string;
+  /** debug events: exclude (default), include, or only them */
+  debug?: DebugMode;
+  /** a nested and / or / not filter group (filters_json, segments), ANDed with `filters` */
+  where?: FilterExpr | null;
+  /** IANA timezone for this query's periods and buckets (default: the site's) */
+  timezone?: string;
 }
 
 export interface StatsRequest extends PeriodParams {
   metrics: Metric[];
   filters: Filter[];
-  breakdown?: Breakdown;
+  /** one property, or 2-3 for a multi-dimension breakdown */
+  breakdown?: Breakdown | Breakdown[];
   breakdown_metrics?: Metric[];
   compare?: CompareSpec;
-  /** breakdown order: a metric (desc), or change[:metric] (largest absolute change; needs compare) */
+  /** breakdown order: a metric, the value, or change[:metric] (largest absolute change; needs compare) */
   sort?: SortSpec;
   limit?: number;
+  /** breakdown rows to skip (pagination) */
+  offset?: number;
 }
 
 /** Breakdown order. `change` ranks by the absolute change of `metric` against the comparison. */
-export type SortSpec = { by: "metric"; metric: Metric } | { by: "change"; metric: Metric };
+export type SortSpec =
+  | { by: "metric"; metric: Metric; dir?: "asc" | "desc" }
+  | { by: "value"; dir?: "asc" | "desc" }
+  | { by: "change"; metric: Metric };
 
 export interface TimeseriesRequest extends PeriodParams {
   metrics: Metric[];
@@ -143,6 +203,14 @@ export interface TimeseriesRequest extends PeriodParams {
 export interface FunnelRequest extends PeriodParams {
   filters: Filter[];
   steps: FunnelStep[];
+  /** ordered (default) or any order */
+  mode?: FunnelMode;
+  /** session (default), or a duration from step 1 across sessions (the same person) */
+  window?: FunnelWindow;
+  /** a comparison period: steps get comparison {visitors, conversion_rate, revenue, change_percent} */
+  compare?: CompareSpec;
+  /** side by side: the funnel within each saved segment */
+  segments?: { id: string; name: string; filters: Filter[]; where: FilterExpr | null }[];
 }
 
 // ------------------------------------------------------------------ payments

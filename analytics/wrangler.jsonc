@@ -53,6 +53,14 @@
     { "name": "SHARE_LIMITER", "namespace_id": "42007", "simple": { "limit": 120, "period": 60 } }
   ],
 
+  // Alerts, scheduled reports, delivery retries and history purges (src/service/cron.ts; bounded per run).
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  // Optional: Cloudflare Email Service, so alerts and reports can go to the project's members by
+  // email. Email destinations also need the ALERT_EMAIL_FROM var (an address on a domain onboarded
+  // for Email Sending); without either, they are refused and webhooks / Slack still work.
+  "send_email": [{ "name": "EMAIL" }],
+
   // One SQLite-backed Durable Object per site: its events, sessions, settings copy and queries.
   "durable_objects": { "bindings": [{ "name": "SITE", "class_name": "SiteDO" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteDO"] }],
@@ -72,8 +80,12 @@
   // MAX_ANNOTATIONS_PER_SITE, MAX_FUNNELS_PER_SITE (unset = no cap), MAX_GOALS_PER_SITE (default 100),
   // MAX_SHARE_LINKS_PER_SITE (default 10), MAX_EVENTS_PER_SITE_PER_DAY, MAX_EVENTS_PER_ACCOUNT_PER_DAY,
   // DAILY_EVENT_BUDGET, MAX_SITE_STORAGE_MB, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS (unset = off),
-  // SQL_TIME_BUDGET_MS (default 60000 per 10 minutes). Each also has an UNCLAIMED_<NAME> form for
-  // accounts no person has claimed (see README "Config").
+  // SQL_TIME_BUDGET_MS (default 60000 per 10 minutes), MAX_ALERTS_PER_SITE (default 20),
+  // MAX_ALERT_DESTINATIONS_PER_SITE (default 5), MAX_REPORTS_PER_SITE (default 5),
+  // MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY (default 100), MAX_ALERT_EMAILS_PER_SITE_PER_DAY (default 10),
+  // MAX_SEGMENTS_PER_SITE (default 50). Each also has an UNCLAIMED_<NAME> form for accounts no
+  // person has claimed (see README "Config"). ALERT_EMAIL_FROM: the sender of alert and report
+  // emails (with the EMAIL binding below); unset = no email.
   // REPLAY_BASE_URL: the replay service's public URL; the tracker of a site with replay_site_id then
   // loads <REPLAY_BASE_URL>/r/<replay_site_id>.js by itself. Unset = off. `pnpm afs config` derives
   // it from the profile's replay host; locally, .dev.vars can point it at http://localhost:8790.

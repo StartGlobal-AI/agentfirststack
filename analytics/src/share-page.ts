@@ -2,7 +2,22 @@
  * The public share dashboard: one self-contained HTML page, no framework, no external assets.
  * Reads GET /share/:token/data. Every data value is written with textContent (page paths and
  * referrers are visitor-controlled), and the inline SVG chart is built with createElementNS.
+ * Its inline style and script carry a per-response nonce; routes/share.ts sends the matching CSP
+ * (sharePageCsp), which also forbids framing.
  */
+
+/** The share page's Content-Security-Policy: only its own nonce'd code, reads from its own origin, never framed. */
+export const sharePageCsp = (nonce: string) =>
+  [
+    "default-src 'none'",
+    `script-src 'nonce-${nonce}'`,
+    `style-src 'nonce-${nonce}'`,
+    "connect-src 'self'",
+    "img-src 'self' data:",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -11,7 +26,7 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
  * site's free-form name is never shown: anyone can call a site "Stripe", only the owner of a
  * domain can verify it.
  */
-export function sharePage(token: string, domain: string | null): string {
+export function sharePage(token: string, domain: string | null, nonce: string): string {
   const heading = domain ? esc(domain) : "Unverified site";
   const title = domain ? `${esc(domain)} · analytics` : "Shared analytics (unverified site)";
   const source = domain
@@ -24,7 +39,7 @@ export function sharePage(token: string, domain: string | null): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${title}</title>
-<style>
+<style nonce="${nonce}">
 .viz-root{color-scheme:light;--surface-0:#f4f4f2;--surface-1:#fcfcfb;--grid:#e6e5e1;--text-primary:#0b0b0b;--text-secondary:#52514e;--text-muted:#7a7974;--series-1:#2a78d6;--series-1-wash:rgba(42,120,214,.10);--bar-track:#e9eef6}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{color-scheme:dark;--surface-0:#111110;--surface-1:#1a1a19;--grid:#2c2c2a;--text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#8f8e86;--series-1:#3987e5;--series-1-wash:rgba(57,135,229,.14);--bar-track:#22303f}}
 :root[data-theme="dark"] .viz-root{color-scheme:dark;--surface-0:#111110;--surface-1:#1a1a19;--grid:#2c2c2a;--text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#8f8e86;--series-1:#3987e5;--series-1-wash:rgba(57,135,229,.14);--bar-track:#22303f}
@@ -83,7 +98,7 @@ details{margin-top:8px;color:var(--text-secondary);font-size:12px}
 </section>
 <footer>${source} Cookieless analytics; aggregate numbers only.</footer>
 </div></div>
-<script>
+<script nonce="${nonce}">
 (function(){
 var TOKEN=${JSON.stringify(token)};
 var period=new URLSearchParams(location.search).get("period")||"30d";

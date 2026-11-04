@@ -1,5 +1,6 @@
 import { type IpRule, matchIp, parseCidr } from "./cidr";
 import { matchesHostPattern } from "./url";
+import { hostUnder, normalizeHostList } from "./referrers";
 
 /**
  * Ingest exclusions: drop events from the owner's own IPs (CIDR, v4 and v6), paths, hostnames
@@ -12,9 +13,11 @@ export interface Exclusions {
   paths: string[];
   hostnames: string[];
   countries: string[];
+  /** referrer hosts to drop (the site's additions to the built-in referrer-spam list); older copies: none */
+  referrers?: string[];
 }
 
-export const EXCLUSION_REASONS = ["excluded_ip", "excluded_path", "excluded_hostname", "excluded_country"] as const;
+export const EXCLUSION_REASONS = ["excluded_ip", "excluded_path", "excluded_hostname", "excluded_country", "excluded_referrer"] as const;
 export type ExclusionReason = (typeof EXCLUSION_REASONS)[number];
 
 export const MAX_EXCLUSION_RULES = 100;
@@ -24,6 +27,7 @@ export interface CompiledExclusions {
   paths: { text: string; re: RegExp }[];
   hostnames: string[];
   countries: Set<string>;
+  referrers: string[];
 }
 
 /** `*` matches any run of characters (including "/"); everything else is literal. */
@@ -62,11 +66,13 @@ export function normalizeExclusions(input: Partial<Exclusions>): { value: Exclus
     if (!/^[A-Z]{2}$/.test(c)) problems.push(`countries: "${raw}" must be an ISO 3166-1 alpha-2 code like US or DE.`);
     else if (!countries.includes(c)) countries.push(c);
   }
-  return { value: { ips, paths, hostnames, countries }, problems };
+  const refs = normalizeHostList(input.referrers ?? [], "referrers");
+  problems.push(...refs.problems);
+  return { value: { ips, paths, hostnames, countries, referrers: refs.value }, problems };
 }
 
 export const isEmptyExclusions = (x: Exclusions | null | undefined) =>
-  !x || (!x.ips.length && !x.paths.length && !x.hostnames.length && !x.countries.length);
+  !x || (!x.ips.length && !x.paths.length && !x.hostnames.length && !x.countries.length && !x.referrers?.length);
 
 export function compileExclusions(x: Exclusions | null | undefined): CompiledExclusions | null {
   if (!x || isEmptyExclusions(x)) return null;
@@ -75,6 +81,7 @@ export function compileExclusions(x: Exclusions | null | undefined): CompiledExc
     paths: x.paths.map((p) => ({ text: p, re: globToRegExp(p) })),
     hostnames: x.hostnames,
     countries: new Set(x.countries),
+    referrers: x.referrers ?? [],
   };
 }
 
@@ -83,6 +90,7 @@ export interface ExclusionTarget {
   pathname?: string | null;
   hostname?: string | null;
   country?: string | null;
+  referrer_host?: string | null;
 }
 
 /** Which rule drops this event, if any. `rule` is safe to store (never the IP itself). */
@@ -99,5 +107,9 @@ export function excludedBy(c: CompiledExclusions | null, t: ExclusionTarget): { 
     if (p) return { reason: "excluded_path", rule: p.text };
   }
   if (t.country && c.countries.has(t.country.toUpperCase())) return { reason: "excluded_country", rule: t.country.toUpperCase() };
+  if (t.referrer_host) {
+    const r = c.referrers.find((p) => hostUnder(t.referrer_host!, p));
+    if (r) return { reason: "excluded_referrer", rule: r };
+  }
   return null;
 }

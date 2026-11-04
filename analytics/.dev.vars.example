@@ -5,15 +5,25 @@ SALT_SECRET=change-me-to-a-long-random-string
 DEV_MODE=true
 # Optional: rows a /sql query may read after its first result row before it is stopped (default 1000000)
 # SQL_MAX_ROWS_READ=1000000
-# Optional: seals the Stripe webhook signing secret (32 bytes, base64): openssl rand -base64 32.
-# Without it POST /v1/sites/:id/integrations/stripe returns 503 not_configured.
+# Optional: seals the Stripe webhook signing secret and alert destinations' webhook / Slack URLs
+# (32 bytes, base64): openssl rand -base64 32. Without it connecting Stripe or adding a webhook /
+# Slack destination returns 503 not_configured.
 # ENCRYPTION_KEY=
+# Optional: sender of alert and report emails (with the EMAIL send_email binding; an address on a
+# domain onboarded for Cloudflare Email Sending). Unset = email destinations are refused.
+# ALERT_EMAIL_FROM=alerts@example.com
 # Optional fair-use caps (unset = no cap). Each also reads UNCLAIMED_<NAME> for accounts nobody has claimed.
 # MAX_SITES_PER_ACCOUNT=
 # MAX_ANNOTATIONS_PER_SITE=
 # MAX_FUNNELS_PER_SITE=
 # MAX_GOALS_PER_SITE=100
 # MAX_SHARE_LINKS_PER_SITE=10
+# MAX_SEGMENTS_PER_SITE=50
+# MAX_ALERTS_PER_SITE=20
+# MAX_ALERT_DESTINATIONS_PER_SITE=5
+# MAX_REPORTS_PER_SITE=5
+# MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY=100
+# MAX_ALERT_EMAILS_PER_SITE_PER_DAY=10
 # Daily (UTC) event caps per site / per account, and for the whole deployment (unset = off)
 # MAX_EVENTS_PER_SITE_PER_DAY=
 # MAX_EVENTS_PER_ACCOUNT_PER_DAY=

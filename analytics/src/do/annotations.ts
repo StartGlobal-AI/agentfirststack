@@ -139,14 +139,14 @@ export function evaluateSpikes(db: Db, settings: SiteSettings, now = Date.now())
   const day = bucketKey("day", offsetSegments(windowStart, windowEnd, tz));
   const totals = new Map(
     all(db, {
-      sql: `SELECT ${day.sql} AS day, COUNT(DISTINCT e.visitor_id) AS v FROM events e WHERE e.ts >= ? AND e.ts < ? AND e.origin != 'payment' GROUP BY day`,
+      sql: `SELECT ${day.sql} AS day, COUNT(DISTINCT e.visitor_id) AS v FROM events e WHERE e.ts >= ? AND e.ts < ? AND e.origin != 'payment' AND e.debug = 0 GROUP BY day`,
       args: [...day.args, windowStart, windowEnd],
     }).map((r) => [String(r.day), num(r.v)]),
   );
   const bySource = new Map<string, Map<string, number>>();
   for (const r of all(db, {
     sql: `SELECT ${day.sql} AS day, COALESCE(e.source, e.channel) AS src, COUNT(DISTINCT e.visitor_id) AS v
-          FROM events e WHERE e.ts >= ? AND e.ts < ? AND e.origin != 'payment' GROUP BY day, src`,
+          FROM events e WHERE e.ts >= ? AND e.ts < ? AND e.origin != 'payment' AND e.debug = 0 GROUP BY day, src`,
     args: [...day.args, windowStart, windowEnd],
   })) {
     const m = bySource.get(String(r.day)) ?? new Map<string, number>();

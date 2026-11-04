@@ -420,7 +420,7 @@ describe("engine", () => {
       [ev({ ts: NOW - 2 * MIN, visitor_hash: "a", country: "US" }), ev({ ts: NOW - 20 * MIN, visitor_hash: "b", pathname: "/x" })],
       NOW,
     );
-    const r = engine.realtime(db, NOW);
+    const r = engine.realtime(db, { filters: [] }, NOW) as any;
     expect(r).toMatchObject({ visitors_last_5m: 1, visitors_last_30m: 2, pageviews_last_30m: 2 });
     expect(r.recent_events).toHaveLength(2);
     expect(r.top_pages_last_30m).toHaveLength(2);

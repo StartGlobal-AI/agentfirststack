@@ -3,11 +3,11 @@ import { z } from "zod";
 import { VISITOR_SORTS } from "../do/people";
 import { SESSION_ID_RE } from "../lib/visitor";
 import { type Ctx, callSite, loadSite } from "./context";
-import { filtersField, filtersOf, periodShape } from "./stats";
+import { filterShape, periodShape, periodOf, resolveFilters } from "./stats";
 
 export const visitorsInput = z.object({
   ...periodShape,
-  filters: filtersField,
+  ...filterShape,
   type: z
     .enum(["all", "identified", "customers"])
     .optional()
@@ -24,7 +24,7 @@ export const visitorInput = z.object({
 
 export const journeysInput = z.object({
   ...periodShape,
-  filters: filtersField,
+  ...filterShape,
   goal: z
     .string()
     .max(120)
@@ -40,11 +40,10 @@ const VISITOR_KEY_RE = /^(user:.{1,200}|[A-Za-z0-9_-]{1,64})$/s;
 export async function listVisitors(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(visitorsInput, raw);
   const site = await loadSite(ctx, siteId);
+  const { segment: _seg, ...f } = await resolveFilters(ctx, site.id, q);
   const req = {
-    period: q.period,
-    from: q.from,
-    to: q.to,
-    filters: filtersOf(q.filters),
+    ...periodOf(q),
+    ...f,
     type: q.type ?? "all",
     search: q.search,
     sort: q.sort ?? "last_seen",
@@ -75,11 +74,10 @@ export async function getSession(ctx: Ctx, siteId: string, sessionId: string) {
 export async function getJourneys(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(journeysInput, raw);
   const site = await loadSite(ctx, siteId);
+  const { segment: _seg, ...f } = await resolveFilters(ctx, site.id, q);
   const req = {
-    period: q.period,
-    from: q.from,
-    to: q.to,
-    filters: filtersOf(q.filters),
+    ...periodOf(q),
+    ...f,
     goal: q.goal,
     limit: q.limit ?? 20,
     offset: q.offset ?? 0,

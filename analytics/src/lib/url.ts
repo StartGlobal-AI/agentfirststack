@@ -15,6 +15,10 @@ export interface ParsedPage {
   utm_campaign: string | null;
   utm_term: string | null;
   utm_content: string | null;
+  utm_id: string | null;
+  utm_source_platform: string | null;
+  utm_creative_format: string | null;
+  utm_marketing_tactic: string | null;
   click_id_type: ClickIdType | null;
   click_id: string | null;
 }
@@ -35,6 +39,10 @@ export function parsePage(raw: string | null | undefined): ParsedPage {
     utm_campaign: null,
     utm_term: null,
     utm_content: null,
+    utm_id: null,
+    utm_source_platform: null,
+    utm_creative_format: null,
+    utm_marketing_tactic: null,
     click_id_type: null,
     click_id: null,
   };
@@ -78,6 +86,10 @@ export function parsePage(raw: string | null | undefined): ParsedPage {
     utm_campaign: clip(q.get("utm_campaign"), 200),
     utm_term: clip(q.get("utm_term"), 200),
     utm_content: clip(q.get("utm_content"), 200),
+    utm_id: clip(q.get("utm_id"), 200),
+    utm_source_platform: clip(q.get("utm_source_platform"), 200),
+    utm_creative_format: clip(q.get("utm_creative_format"), 200),
+    utm_marketing_tactic: clip(q.get("utm_marketing_tactic"), 200),
     click_id_type: clickType,
     click_id: clickId,
   };
@@ -106,6 +118,37 @@ export function parseReferrer(raw: string | null | undefined): ParsedReferrer {
       ? { referrer: host.replace(/^www\./, ""), referrer_host: host }
       : { referrer: null, referrer_host: null };
   }
+}
+
+/**
+ * The route of a hash-routed SPA (data-hash="true"): "#/settings/team?tab=x" -> "#/settings/team".
+ * A plain anchor ("#pricing") is not a route: null. The query part is dropped like any query string.
+ */
+export function hashRoute(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const i = raw.indexOf("#");
+  if (i < 0) return null;
+  const h = raw.slice(i).split("?")[0]!;
+  return /^#!?\//.test(h) ? h.slice(0, 500) : null;
+}
+
+/** The query string of a URL ("?a=1&b=2"), or "" (only read for site search; never stored). */
+export function queryOf(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const q = raw.split("#")[0]!.indexOf("?");
+  return q < 0 ? "" : raw.split("#")[0]!.slice(q, q + 2000);
+}
+
+/** Viewport width -> a coarse class (no exact sizes: they help fingerprinting). */
+export function screenClass(w: unknown): string | null {
+  if (typeof w !== "number" || !Number.isFinite(w) || w <= 0 || w > 20_000) return null;
+  return w < 576 ? "xs" : w < 992 ? "sm" : w < 1440 ? "md" : "lg";
+}
+
+/** Accept-Language -> the primary language subtag ("en-US,en;q=0.9" -> "en"). */
+export function primaryLanguage(header: string | null | undefined): string | null {
+  const m = /^\s*([A-Za-z]{2,3})(?:[-_][A-Za-z0-9]{1,8})*\s*(?:[;,]|$)/.exec(header ?? "");
+  return m ? m[1]!.toLowerCase() : null;
 }
 
 /** "https://WWW.Example.com:443/x" -> "example.com". Throws on junk. */

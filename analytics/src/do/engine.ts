@@ -6,8 +6,21 @@
 
 import { randomString } from "@afs/shared";
 import { browserHostAllowed } from "../lib/url";
+import { classifyChannel } from "../lib/channel";
+import { referrerIgnoredBy, spamReferrer } from "../lib/referrers";
+import { cleanEvent } from "../lib/ingest-rules";
+import { IDENTITIES_SQL, backfillIdentities, linkIdentity, retouchSession, touchIdentity } from "./identities";
 import { type CompiledExclusions, compileExclusions, excludedBy } from "../lib/exclusions";
-import { type Breakdown, type Metric, SESSION_METRICS, SORTABLE_METRICS, VISITOR_TYPE_METRICS, VITALS_METRICS } from "../lib/filters";
+import {
+  type Breakdown,
+  type Filter,
+  type FilterExpr,
+  type Metric,
+  SESSION_METRICS,
+  SORTABLE_METRICS,
+  VISITOR_TYPE_METRICS,
+  VITALS_METRICS,
+} from "../lib/filters";
 import {
   type GroupOpts,
   type GroupSpec,
@@ -16,11 +29,16 @@ import {
   type SqlValue,
   aggregateQuery,
   bucketKey,
+  columnFor,
+  type DebugMode,
+  type Frag,
   funnelQuery,
   goalBreakdownQuery,
   groupSpecFor,
   groupedQuery,
+  raw,
   toGlob,
+  whereFrag,
 } from "../lib/query";
 import { changePercent } from "../lib/stats-math";
 import { type ComparisonRange, buckets, comparisonRange, offsetSegments } from "../lib/time";
@@ -48,6 +66,7 @@ import {
   ctxFor,
   err,
   guard,
+  parseProps,
   identityNote,
   num,
   periodOut,
@@ -60,6 +79,11 @@ import {
 export type { Db, Row, SqlCursor } from "./common";
 
 export const SESSION_TIMEOUT_MS = 30 * 60_000;
+/**
+ * A visitor back from an ignored referrer (a hosted checkout, a sign-in page) after the session
+ * timeout continues the attribution of their latest session within this window.
+ */
+export const RETURN_WINDOW_MS = 24 * 3_600_000;
 
 // ------------------------------------------------------------------ schema
 
@@ -69,7 +93,7 @@ export const SESSION_TIMEOUT_MS = 30 * 60_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 7;
 
 export const ATTR_COLS = [
   "referrer",
@@ -81,6 +105,10 @@ export const ATTR_COLS = [
   "utm_campaign",
   "utm_term",
   "utm_content",
+  "utm_id",
+  "utm_source_platform",
+  "utm_creative_format",
+  "utm_marketing_tactic",
   "click_id_type",
   "click_id",
 ] as const;
@@ -96,7 +124,9 @@ export const GEO_COLS = [
   "asn",
   "as_org",
 ] as const;
-export const DEVICE_COLS = ["browser", "browser_version", "os", "os_version", "device"] as const;
+export const DEVICE_COLS = ["browser", "browser_version", "os", "os_version", "device", "language", "screen"] as const;
+/** Attribution, geo and device columns added after the first release (migration 6). */
+const V6_COLS = ["utm_id", "utm_source_platform", "utm_creative_format", "utm_marketing_tactic", "language", "screen"] as const;
 
 /** Exported for the migration test, which builds a DO exactly as the first release left it. */
 export const SCHEMA_V1 = `
@@ -224,21 +254,65 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       );
     },
   },
+  {
+    // Wave 1, verifiable setup: test traffic marked debug (afsa('debug'), debug: true on server
+    // events) is stored but left out of reports unless asked for. The partial index keeps the
+    // debug view and the 7-day debug purge cheap (debug rows are few).
+    version: 4,
+    up: (db) => {
+      addColumn(db, "events", "debug", "INTEGER NOT NULL DEFAULT 0");
+      db.run("CREATE INDEX IF NOT EXISTS events_debug ON events(ts) WHERE debug = 1");
+    },
+  },
+  {
+    // Wave 1, goals: property conditions ({"plan":"pro"}, all must match) and counting
+    // (every matching event, or once per visit). The goals table is a copy pushed from D1.
+    version: 5,
+    up: (db) => {
+      addColumn(db, "goals", "props", "TEXT");
+      addColumn(db, "goals", "counting", "TEXT NOT NULL DEFAULT 'every'");
+    },
+  },
+  {
+    // Wave 1, collection: the extra UTM tags, browser language, viewport class (events and
+    // sessions), the page title and non-interactive events (which don't un-bounce a session).
+    version: 6,
+    up: (db) => {
+      for (const t of ["events", "sessions"]) for (const c of V6_COLS) addColumn(db, t, c, "TEXT");
+      addColumn(db, "events", "title", "TEXT");
+      addColumn(db, "events", "non_interactive", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    // Wave 1, first touch: one row per identity (visitor id or user:<id>) with its first session's
+    // attribution, kept at ingest; backfilled once from the stored sessions.
+    version: 7,
+    up: (db) => {
+      db.run(IDENTITIES_SQL);
+      db.run("CREATE INDEX IF NOT EXISTS identities_first_seen ON identities(first_seen)");
+      db.run("CREATE INDEX IF NOT EXISTS identities_last_seen ON identities(last_seen)");
+      backfillIdentities(db);
+    },
+  },
 ];
 
 /** Columns and their meaning, for llms.txt / the query_sql tool description. */
-export const SCHEMA_DOC = `events(id, ts unix ms, name ['pageview', 'engagement' never stored, custom names, and from payments 'payment' | 'renewal' | 'refund'], visitor_id, session_id, user_id, origin [browser|server|payment],
+export const SCHEMA_DOC = `events(id, ts unix ms, name ['pageview', 'engagement' never stored, custom names, 'site_search', and from payments 'payment' | 'renewal' | 'refund'], visitor_id, session_id, user_id, origin [browser|server|payment],
   hostname, pathname, url, referrer, referrer_host, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content,
+  utm_id, utm_source_platform, utm_creative_format, utm_marketing_tactic,
   click_id_type, click_id, country, region, region_code, city, continent, timezone, latitude, longitude, asn, as_org,
-  browser, browser_version, os, os_version, device, props [JSON text], revenue [refunds negative], currency,
-  revenue_type [new|renewal|refund|NULL], engagement_ms, scroll_depth [0-100, pageviews], lcp [ms], inp [ms], cls)
+  browser, browser_version, os, os_version, device, language, screen [xs|sm|md|lg], title, props [JSON text], revenue [refunds negative], currency,
+  revenue_type [new|renewal|refund|NULL], engagement_ms, scroll_depth [0-100, pageviews], lcp [ms], inp [ms], cls,
+  debug [1 = test traffic, left out of reports by default], non_interactive [1 = doesn't un-bounce])
 sessions(id, visitor_id, user_id, user_source [server|browser: who sent the user id], started_at, last_seen_at, hostname, entry_page,
   exit_page, pageviews, custom_events, engagement_ms, + the same attribution, geo and device columns as events)
-goals(id, name, type [event|pageview|scroll], match, glob, value, threshold, created_at)
+goals(id, name, type [event|pageview|scroll], match, glob, value, threshold, props [JSON: every key must match], counting [every|once_per_visit], created_at)
 payments(id, ref [provider:external_id], provider, external_id, type [new|renewal|refund], amount, currency, ts, customer [salted hash],
   event_rowid [events.id], linked_by [session|visitor|user|customer|original_payment|NULL], livemode, created_at, updated_at)
 annotations(id, kind [note|traffic_spike], ts, end_ts, title, description, source [api|auto], details [JSON], created_at, updated_at)
-usage(day [UTC YYYY-MM-DD], events [accepted events + engagement beacons], bytes, refused, flushed)`;
+usage(day [UTC YYYY-MM-DD], events [accepted events + engagement beacons], bytes, refused, flushed)
+identities(ident [visitor id or user:<user_id>], canonical [user:<id> for an identified visitor id], first_seen, last_seen, first_session_id,
+  channel, source, referrer, utm_source, utm_medium, utm_campaign, entry_page [the identity's first session])`;
 
 export function migrate(db: Db): void {
   for (const stmt of statements(SCHEMA_V1)) db.run(stmt);
@@ -280,16 +354,21 @@ export function configure(db: Db, settings: SiteSettings): void {
     ]);
     db.run("DELETE FROM goals");
     for (const g of settings.goals) {
-      db.run("INSERT INTO goals (id, name, type, match, glob, value, threshold, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
-        g.id,
-        g.name,
-        g.type,
-        g.match,
-        g.type === "pageview" || g.type === "scroll" ? toGlob(g.match) : null,
-        g.value,
-        g.type === "scroll" ? (g.threshold ?? 75) : null,
-        g.created_at,
-      ]);
+      db.run(
+        "INSERT INTO goals (id, name, type, match, glob, value, threshold, props, counting, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          g.id,
+          g.name,
+          g.type,
+          g.match,
+          g.type === "pageview" || g.type === "scroll" ? toGlob(g.match) : null,
+          g.value,
+          g.type === "scroll" ? (g.threshold ?? 75) : null,
+          g.props && Object.keys(g.props).length ? JSON.stringify(g.props) : null,
+          g.counting ?? "every",
+          g.created_at,
+        ],
+      );
     }
   });
 }
@@ -383,6 +462,8 @@ export interface IngestOptions {
   storageFull?: boolean;
   /** where drop and warning counts go (SiteDO coalesces them); default: written at once */
   drop?: (reason: string, sample: string | null) => void;
+  /** validate_only: run every check and report what would be stored, then roll it all back */
+  dryRun?: boolean;
 }
 
 /** The daily cap an event would break with `used` events already counted today, or null. */
@@ -435,18 +516,30 @@ function exclusionsOf(settings: SiteSettings): CompiledExclusions | null {
   return compiled;
 }
 
+/** Thrown inside a validate_only transaction so everything it wrote is rolled back. */
+class DryRunRollback extends Error {}
+
 export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: IngestOptions = {}): IngestResponse {
   const settings = getSettings(db);
   if (!settings) return { known_site: false, persistent: false, results: events.map(() => ({ ok: false, reason: "unknown_site" })) };
   const persistent = settings.visitor_id_mode === "persistent";
   const results: IngestOutcome[] = [];
   const day = utcDay(now);
-  const drop = opts.drop ?? ((reason: string, sample: string | null) => recordDrop(db, reason, sample, now));
-  db.transaction(() => {
+  const dry = !!opts.dryRun;
+  // validate_only: the same code path runs inside a transaction that is always rolled back; drops
+  // are not counted, and warnings are reported per event instead.
+  let warnings: string[] = [];
+  const drop = dry
+    ? (reason: string) => {
+        if (reason.startsWith(WARN_PREFIX)) warnings.push(reason.slice(WARN_PREFIX.length));
+      }
+    : (opts.drop ?? ((reason: string, sample: string | null) => recordDrop(db, reason, sample, now)));
+  const run = () => {
     let used = usageOn(db, day).events;
     let accepted = 0;
     let bytes = 0;
     for (const ev of events) {
+      warnings = [];
       const refusal: string | null = opts.storageFull ? "storage_full" : capRefusal(opts, used);
       if (refusal) {
         results.push({ ok: false, reason: refusal });
@@ -457,19 +550,67 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
         results.push({ ok: false, reason: "event_too_large" });
         continue;
       }
-      const r = ingestOne(db, settings, ev, now, { dev: !!opts.dev, drop });
+      // A site_search event rides along only while the daily caps leave room for a second event.
+      const room = () => capRefusal(opts, used + 1) === null;
+      const before = dry ? num(db.all("SELECT MAX(id) AS m FROM events")[0]?.m) : 0;
+      const r = ingestOne(db, settings, ev, now, { dev: !!opts.dev, drop, room });
+      if (dry) {
+        r.warnings = warnings;
+        if (r.ok)
+          r.stored = r.engagement ? null : storedEventOut(db.all("SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 1", [before])[0]);
+      }
       results.push(r);
       if (r.ok) {
-        used++;
-        accepted++;
-        bytes += size;
+        const n = 1 + (r.extra_events ?? 0);
+        used += n;
+        accepted += n;
+        bytes += size * n;
       }
     }
-    addUsage(db, day, { events: accepted, bytes });
-  });
+    if (!dry) addUsage(db, day, { events: accepted, bytes });
+  };
+  if (dry) {
+    try {
+      db.transaction(() => {
+        run();
+        throw new DryRunRollback();
+      });
+    } catch (e) {
+      if (!(e instanceof DryRunRollback)) throw e;
+    }
+  } else db.transaction(run);
   const first = results[0]?.reason;
   const refused = isBudgetReason(first) && results.every((r) => r.reason === first) ? first : undefined;
   return { known_site: true, persistent, results, ...(refused ? { refused } : {}) };
+}
+
+/** A stored event row as validate_only reports it. */
+export function storedEventOut(r: Row | undefined): Record<string, unknown> | null {
+  if (!r) return null;
+  const out: Record<string, unknown> = {};
+  for (const k of [
+    "name",
+    "ts",
+    "origin",
+    "visitor_id",
+    "user_id",
+    "hostname",
+    "pathname",
+    "url",
+    "title",
+    ...ATTR_COLS,
+    ...GEO_COLS,
+    ...DEVICE_COLS,
+  ])
+    out[k] = r[k] ?? null;
+  return {
+    ...out,
+    time: new Date(Number(r.ts)).toISOString(),
+    props: parseProps(r.props),
+    revenue: r.revenue ?? null,
+    currency: r.currency ?? null,
+    debug: !!r.debug,
+  };
 }
 
 /** Prefix of `drops` rows that count a problem with an event that was kept, not a dropped one. */
@@ -480,7 +621,7 @@ function ingestOne(
   settings: SiteSettings,
   input: EnrichedEvent,
   now: number,
-  o: { dev: boolean; drop: (reason: string, sample: string | null) => void },
+  o: { dev: boolean; drop: (reason: string, sample: string | null) => void; room: () => boolean },
 ): IngestOutcome {
   let ev = input;
   const drop = o.drop;
@@ -501,11 +642,31 @@ function ingestOne(
     hostname: ev.hostname,
     pathname: ev.url || ev.origin === "browser" ? ev.pathname : null,
     country: ev.country,
+    referrer_host: ev.referrer_host,
   });
   if (ex) {
     if (ev.name !== "engagement") drop(ex.reason, ex.rule);
     return { ok: false, reason: ex.reason };
   }
+  // Referrer spam from the built-in list (the site's own additions are exclusions.referrers).
+  const spam = spamReferrer(ev.referrer_host);
+  if (spam) {
+    if (ev.name !== "engagement") drop("referrer_spam", spam);
+    return { ok: false, reason: "referrer_spam" };
+  }
+  // Site search: only the configured parameters are read from the query string, which is then
+  // dropped like every query string.
+  if (ev.search_query) {
+    const term = ev.name === "pageview" ? searchTerm(ev.search_query, settings.search_params) : null;
+    ev = { ...ev, search_query: null, search_term: term };
+  }
+  // Redaction (emails, phone numbers) and path rules, before anything is stored. Engagement beacons
+  // go through the same rules, so they still find their (cleaned) pageview.
+  ev = cleanEvent(ev, settings).ev;
+  // A referrer the site ignores (hosted checkouts, sign-in pages, its own list) counts as none, so
+  // a visitor back from paying keeps the source they came with.
+  const ignoredReferrer = !!ev.referrer_host && referrerIgnoredBy(ev.referrer_host, settings.ignored_referrers) !== null;
+  if (ignoredReferrer) ev = withoutReferrer(ev);
   // Anyone can send revenue from a browser: it counts only when the site opted in.
   if (ev.origin === "browser" && ev.revenue != null && !settings.browser_revenue) {
     drop(WARN_PREFIX + "browser_revenue_ignored", null);
@@ -514,18 +675,28 @@ function ingestOne(
   const visitorId =
     ev.explicit_visitor_id ?? (settings.visitor_id_mode === "persistent" && ev.client_visitor_id ? ev.client_visitor_id : ev.visitor_hash);
 
-  if (ev.name === "engagement") return engagement(db, visitorId, ev);
+  if (ev.name === "engagement") return { ...engagement(db, visitorId, ev), engagement: true };
 
   const isPageview = ev.name === "pageview";
   let sess = findSession(db, visitorId, ev.ts);
-  const evAttr = pick(ev as unknown as Record<string, unknown>, ATTR_COLS);
+  let evAttr = pick(ev as unknown as Record<string, unknown>, ATTR_COLS);
   let attr: Record<string, SqlValue>;
   let geo = pick(ev as unknown as Record<string, unknown>, GEO_COLS);
   let device = pick(ev as unknown as Record<string, unknown>, DEVICE_COLS);
   let userId = ev.user_id;
+  const newSession = !sess;
 
   if (!sess) {
     const id = `s${randomString(15)}`;
+    if (ignoredReferrer && evAttr.channel === "Direct") {
+      // Back from a checkout after the session timed out: continue the visitor's latest attribution.
+      const prev = db.all(
+        `SELECT ${ATTR_COLS.join(", ")} FROM sessions WHERE visitor_id = ? AND last_seen_at >= ? AND last_seen_at <= ?
+         ORDER BY last_seen_at DESC LIMIT 1`,
+        [visitorId, ev.ts - RETURN_WINDOW_MS, ev.ts],
+      )[0];
+      if (prev && prev.channel !== "Direct") evAttr = pick(prev, ATTR_COLS);
+    }
     attr = evAttr;
     db.run(
       `INSERT INTO sessions (id, visitor_id, user_id, user_source, started_at, last_seen_at, hostname, entry_page, exit_page,
@@ -548,6 +719,13 @@ function ingestOne(
         ...DEVICE_COLS.map((c) => device[c]),
       ],
     );
+    // First touch: the visitor's (and the user's) identity row learns about this session.
+    const touch = { session_id: id, ts: ev.ts, attr: { ...evAttr, entry_page: isPageview ? ev.pathname : null } };
+    touchIdentity(db, visitorId, touch);
+    if (userId) {
+      touchIdentity(db, `user:${userId}`, touch);
+      linkIdentity(db, visitorId, userId);
+    }
     sess = {
       id,
       started_at: ev.ts,
@@ -577,6 +755,7 @@ function ingestOne(
         ...ATTR_COLS.map((c) => evAttr[c]),
         sess.id,
       ]);
+      retouchSession(db, [visitorId, ...(sess.user_id ? [`user:${sess.user_id}`] : [])], sess.id, evAttr);
     }
     // Geo and device: an event without them (typical server event) inherits the session's; a
     // session without them (opened by a server event) learns them from the first event that has.
@@ -603,18 +782,33 @@ function ingestOne(
     if (userId && (!sess.user_id || (ev.origin === "server" && sess.user_source !== "server"))) {
       sets.push("user_id = ?", "user_source = ?");
       args.push(userId, ev.origin);
+      if (sess.user_id !== userId) {
+        touchIdentity(db, `user:${userId}`, {
+          session_id: sess.id,
+          ts: Number(sess.started_at),
+          attr: { ...pick(sess, ATTR_COLS), entry_page: sess.entry_page },
+        });
+        linkIdentity(db, visitorId, userId);
+      }
     } else if (!userId && sess.user_id) userId = sess.user_id;
     if (isPageview && (!sess.entry_page || ev.ts < Number(sess.started_at))) {
       sets.push("entry_page = ?");
       args.push(ev.pathname);
+      // a session opened by a server event learns its landing page now; so does its first touch
+      db.run("UPDATE identities SET entry_page = ? WHERE ident IN (?, ?) AND first_session_id = ? AND entry_page IS NULL", [
+        ev.pathname,
+        visitorId,
+        `user:${userId ?? sess.user_id ?? ""}`,
+        sess.id,
+      ]);
     }
     if (sets.length) db.run(`UPDATE sessions SET ${sets.join(", ")} WHERE id = ?`, [...args, sess.id]);
   }
 
   db.run(
     `INSERT INTO events (ts, name, visitor_id, session_id, user_id, origin, hostname, pathname, url,
-       ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, revenue, currency, engagement_ms)
-     VALUES (${Array(9 + ATTR_COLS.length + GEO_COLS.length + DEVICE_COLS.length + 4)
+       ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, revenue, currency, engagement_ms, debug, title, non_interactive)
+     VALUES (${Array(9 + ATTR_COLS.length + GEO_COLS.length + DEVICE_COLS.length + 7)
        .fill("?")
        .join(", ")})`,
     [
@@ -634,6 +828,9 @@ function ingestOne(
       ev.revenue,
       ev.currency,
       ev.engagement_ms || 0,
+      ev.debug ? 1 : 0,
+      isPageview ? (ev.title ?? null) : null,
+      !isPageview && ev.interactive === false ? 1 : 0,
     ],
   );
   db.run(
@@ -643,9 +840,63 @@ function ingestOne(
        last_pageview_at = CASE WHEN ? = 1 THEN MAX(COALESCE(last_pageview_at, 0), ?) ELSE last_pageview_at END,
        last_seen_at = MAX(last_seen_at, ?), started_at = MIN(started_at, ?)
      WHERE id = ?`,
-    [isPageview ? 1 : 0, isPageview ? 0 : 1, isPageview ? 1 : 0, ev.ts, ev.pathname, isPageview ? 1 : 0, ev.ts, ev.ts, ev.ts, sess.id],
+    [
+      isPageview ? 1 : 0,
+      isPageview || ev.interactive === false ? 0 : 1,
+      isPageview ? 1 : 0,
+      ev.ts,
+      ev.pathname,
+      isPageview ? 1 : 0,
+      ev.ts,
+      ev.ts,
+      ev.ts,
+      sess.id,
+    ],
   );
-  return { ok: true, visitor_id: visitorId, session_id: sess.id };
+  // Site search: a pageview whose URL carries one of the site's search_params also records a
+  // site_search event {term} (an event of its own, within the daily budget).
+  let extra = 0;
+  if (isPageview && ev.search_term && o.room()) {
+    db.run(
+      `INSERT INTO events (ts, name, visitor_id, session_id, user_id, origin, hostname, pathname, url,
+         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, debug, non_interactive)
+       SELECT ts, 'site_search', visitor_id, session_id, user_id, origin, hostname, pathname, url,
+         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, ?, debug, 1
+       FROM events WHERE id = last_insert_rowid()`,
+      [JSON.stringify({ term: ev.search_term })],
+    );
+    extra = 1;
+  }
+  return { ok: true, visitor_id: visitorId, session_id: sess.id, new_session: newSession, ...(extra ? { extra_events: extra } : {}) };
+}
+
+/** The first configured search parameter's value: trimmed, lowercased, 100 characters; null if none. */
+export function searchTerm(query: string, params: readonly string[] | null | undefined): string | null {
+  if (!params?.length || !query) return null;
+  let q: URLSearchParams;
+  try {
+    q = new URLSearchParams(query);
+  } catch {
+    return null;
+  }
+  for (const p of params) {
+    const v = q.get(p)?.trim().toLowerCase();
+    if (v) return v.slice(0, 100);
+  }
+  return null;
+}
+
+/** The event's attribution as if it had no referrer (UTM tags and click ids still count). */
+function withoutReferrer(ev: EnrichedEvent): EnrichedEvent {
+  const ch = classifyChannel({
+    referrerHost: null,
+    pageHost: ev.hostname,
+    utmSource: ev.utm_source,
+    utmMedium: ev.utm_medium,
+    utmCampaign: ev.utm_campaign,
+    clickIdType: ev.click_id_type,
+  });
+  return { ...ev, referrer: null, referrer_host: null, source: ch.source, channel: ch.channel };
 }
 
 /**
@@ -683,7 +934,11 @@ export type MetricValues = Record<string, number | null>;
 
 const nullable = (v: SqlValue | undefined, d: number) => (v == null ? null : round(Number(v), d));
 
-export function shapeMetrics(row: Row | undefined, metrics: Metric[]): MetricValues {
+/**
+ * Metric values from a query row. `totalVisitors`: the visitors of the whole period and filters,
+ * for `percentage` (a row's share); without it percentage is 100 for a non-empty row.
+ */
+export function shapeMetrics(row: Row | undefined, metrics: Metric[], totalVisitors?: number): MetricValues {
   const r = row ?? {};
   const visitors = num(r.visitors);
   const visits = num(r.visits);
@@ -718,6 +973,15 @@ export function shapeMetrics(row: Row | undefined, metrics: Metric[]): MetricVal
     lcp_p75: nullable(r.lcp_p75, 0),
     inp_p75: nullable(r.inp_p75, 0),
     cls_p75: nullable(r.cls_p75, 3),
+    engaged_visits: num(r.engaged_visits),
+    engagement_rate: round(num(r.engagement_rate), 1),
+    engagement_time: Math.round(num(r.engagement_time)),
+    visits_per_visitor: visitors ? round(visits / visitors, 2) : 0,
+    events_per_visit: visits ? round(num(r.events) / visits, 2) : 0,
+    visit_conversion_rate: visits ? round((num(r.converted_sessions) / visits) * 100, 1) : 0,
+    average_order_value: num(r.purchases) ? round(num(r.purchase_revenue) / num(r.purchases), 2) : 0,
+    revenue_per_customer: customers ? round(revenue / customers, 2) : 0,
+    percentage: totalVisitors === undefined ? (visitors ? 100 : 0) : totalVisitors ? round((visitors / totalVisitors) * 100, 1) : 0,
   };
   const out: MetricValues = {};
   for (const k of metrics) out[k] = m[k];
@@ -749,9 +1013,20 @@ export function totals(db: Db, ctx: QueryCtx, metrics: Metric[]): MetricValues {
 
 const comparisonOut = (p: ComparisonRange) => ({ ...periodOut(p), partial: p.partial, mode: p.mode, match_weekday: p.match_weekday });
 
-function notes(db: Db, settings: SiteSettings, metrics: Metric[]): string[] {
+const usesFirstTouch = (dims: unknown[]) => dims.some((d) => typeof d === "string" && d.startsWith("first_"));
+
+function notes(db: Db, settings: SiteSettings, metrics: Metric[], dims: unknown[] = []): string[] {
   const out: string[] = [];
-  if ((metrics.includes("conversions") || metrics.includes("conversion_rate")) && !num(db.all("SELECT COUNT(*) AS n FROM goals")[0]?.n)) {
+  if (usesFirstTouch(dims)) {
+    const n = identityNote(settings);
+    out.push(
+      `first_* dimensions are each identity's first session (identified users across devices and days${settings.visitor_id_mode === "persistent" ? ", and persistent visitor ids" : ""}).${n ? ` ${n} So for anonymous visitors here, first touch is that day's first session.` : ""}`,
+    );
+  }
+  if (
+    (metrics.includes("conversions") || metrics.includes("conversion_rate") || metrics.includes("visit_conversion_rate")) &&
+    !num(db.all("SELECT COUNT(*) AS n FROM goals")[0]?.n)
+  ) {
     out.push("No goals defined, so conversions are 0. Create one: POST /v1/sites/:id/goals {name, type: event|pageview|scroll, match}.");
   }
   if (metrics.some((m) => VISITOR_TYPE_METRICS.includes(m))) {
@@ -765,10 +1040,10 @@ function notes(db: Db, settings: SiteSettings, metrics: Metric[]): string[] {
 
 export function stats(db: Db, settings: SiteSettings, q: StatsRequest, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters);
+    const ge = checkGoalFilters(db, q.filters, q.where);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
-    const ctx = ctxFor(db, r, q.filters);
+    const ctx = ctxFor(db, r, q);
     const cur = totals(db, ctx, q.metrics);
     const out: Record<string, unknown> = { period: periodOut(r), filters: q.filters, metrics: cur };
     const p = q.compare ? comparisonRange(r, q.compare, now) : null;
@@ -781,39 +1056,64 @@ export function stats(db: Db, settings: SiteSettings, q: StatsRequest, now = Dat
     }
     if (q.breakdown) {
       const metrics = q.breakdown_metrics ?? q.metrics;
-      out.breakdown = {
-        property: q.breakdown,
-        sort: sortOut(q.sort),
-        results: breakdownRows(db, ctx, q.breakdown, metrics, q.limit ?? 20, { sort: q.sort, cmp: cmpCtx }),
-      };
+      const page = breakdownPage(db, ctx, q.breakdown, metrics, q.limit ?? 20, { sort: q.sort, cmp: cmpCtx, offset: q.offset });
+      out.breakdown = { ...propertyOut(q.breakdown), sort: sortOut(q.sort), ...page };
     }
-    const n = notes(db, settings, q.metrics);
+    const n = notes(db, settings, q.metrics, [
+      ...(Array.isArray(q.breakdown) ? q.breakdown : [q.breakdown]),
+      ...q.filters.map((f) => f.key),
+    ]);
     if (n.length) out.notes = n;
     return out;
   });
 }
 
-const sortOut = (s: SortSpec | undefined) => (s ? (s.by === "change" ? `change:${s.metric}` : s.metric) : "visitors");
+const sortOut = (s: SortSpec | undefined) =>
+  !s
+    ? "visitors"
+    : s.by === "change"
+      ? `change:${s.metric}`
+      : s.by === "value"
+        ? `value:${s.dir ?? "asc"}`
+        : `${s.metric}${s.dir === "asc" ? ":asc" : ""}`;
+
+/** `property` as requested (a name, or "a,b" for several), plus `properties` for several. */
+const propertyOut = (b: Breakdown | Breakdown[]) => (Array.isArray(b) ? { property: b.join(","), properties: b } : { property: b });
 
 type BreakdownRow = Record<string, unknown> & { value: SqlValue };
 
-function compositeKey(row: Row | BreakdownRow, spec: GroupSpec): string {
-  return [row.value, ...(spec.extra ?? []).map((x) => row[x.name])].map((v) => String(v ?? "")).join(KEY_SEP);
+/** A row's group: its value and extra columns, from a SQL row (aliases) or a shaped row (labels). */
+function compositeKey(row: Row | BreakdownRow, spec: GroupSpec, shaped = false): string {
+  return [row.value, ...(spec.extra ?? []).map((x) => (row as Record<string, unknown>)[shaped ? (x.label ?? x.name) : x.name])]
+    .map((v) => String(v ?? ""))
+    .join(KEY_SEP);
 }
 
-function shapeRow(r: Row, spec: GroupSpec, metrics: Metric[]): BreakdownRow {
-  return {
+function shapeRow(r: Row, spec: GroupSpec, metrics: Metric[], total?: number, dims?: Breakdown[]): BreakdownRow {
+  const out: BreakdownRow = {
     value: r.value ?? null,
-    ...(spec.extra ? Object.fromEntries(spec.extra.map((x) => [x.name, r[x.name]])) : {}),
-    ...shapeMetrics(r, metrics),
+    ...(spec.extra ? Object.fromEntries(spec.extra.map((x) => [x.label ?? x.name, r[x.name]])) : {}),
   };
+  // several dimensions: each under its own name too (value is the first one asked for)
+  if (dims && dims.length > 1) {
+    const first = spec.sessionScoped ? "page" : dims[0]!;
+    out[first] = r.value ?? null;
+    if (first !== dims[0]) out.value = out[dims[0]!] as SqlValue;
+  }
+  return { ...out, ...shapeMetrics(r, metrics, total) };
 }
 
 interface RowOpts {
   sort?: SortSpec;
   /** comparison period: rows get comparison {metrics, change_percent} */
   cmp?: QueryCtx | null;
+  /** rows to skip (pagination) */
+  offset?: number;
 }
+
+/** Total visitors of a period, for `percentage` (only computed when asked for). */
+const totalVisitorsFor = (db: Db, ctx: QueryCtx | null | undefined, metrics: Metric[]) =>
+  ctx && metrics.includes("percentage") ? Number(totals(db, ctx, ["visitors"]).visitors ?? 0) : undefined;
 
 const GOAL_ROW_METRICS = ["visitors", "conversions", "conversion_rate", "revenue"] as const;
 
@@ -833,10 +1133,36 @@ function goalRows(db: Db, ctx: QueryCtx, limit: number) {
   });
 }
 
-export function breakdownRows(db: Db, ctx: QueryCtx, dim: Breakdown, metrics: Metric[], limit: number, o: RowOpts = {}): BreakdownRow[] {
-  if (dim === "goal") {
+export function breakdownRows(
+  db: Db,
+  ctx: QueryCtx,
+  dim: Breakdown | Breakdown[],
+  metrics: Metric[],
+  limit: number,
+  o: RowOpts = {},
+): BreakdownRow[] {
+  return breakdownPage(db, ctx, dim, metrics, limit, o).results;
+}
+
+/** A page of breakdown rows with total_rows, offset and next_offset. */
+export function breakdownPage(
+  db: Db,
+  ctx: QueryCtx,
+  dimIn: Breakdown | Breakdown[],
+  metrics: Metric[],
+  limit: number,
+  o: RowOpts = {},
+): { results: BreakdownRow[]; total_rows: number; offset: number; next_offset: number | null } {
+  const offset = o.offset ?? 0;
+  const page = (results: BreakdownRow[], total: number) => ({
+    results,
+    total_rows: total,
+    offset,
+    next_offset: offset + results.length < total ? offset + results.length : null,
+  });
+  const dims = Array.isArray(dimIn) ? dimIn : [dimIn];
+  if (dims.length === 1 && dims[0] === "goal") {
     let rows = goalRows(db, ctx, 1000);
-    const sm = o.sort?.metric;
     if (o.cmp) {
       const prev = new Map(goalRows(db, o.cmp, 1000).map((r) => [String(r.value), r]));
       rows = rows.map((r) => {
@@ -846,36 +1172,69 @@ export function breakdownRows(db: Db, ctx: QueryCtx, dim: Breakdown, metrics: Me
         return { ...r, comparison: { metrics: pm, change_percent: changes(cm, pm, [...GOAL_ROW_METRICS] as Metric[]) } };
       });
     }
-    if (sm && (GOAL_ROW_METRICS as readonly string[]).includes(sm)) {
-      const key = sm as (typeof GOAL_ROW_METRICS)[number];
+    const s = o.sort;
+    if (s?.by === "value") {
+      const d = s.dir === "desc" ? -1 : 1;
+      rows = [...rows].sort((a, b) => d * String(a.value).localeCompare(String(b.value)));
+    } else if (s && (GOAL_ROW_METRICS as readonly string[]).includes(s.metric)) {
+      const key = s.metric as (typeof GOAL_ROW_METRICS)[number];
+      const d = s.by === "metric" && s.dir === "asc" ? -1 : 1;
       const delta = (r: (typeof rows)[number]) =>
-        o.sort?.by === "change"
+        s.by === "change"
           ? Math.abs(Number(r[key]) - Number((r.comparison as { metrics: Record<string, number> } | undefined)?.metrics[key] ?? 0))
           : Number(r[key]);
-      rows = [...rows].sort((a, b) => delta(b) - delta(a) || String(a.value).localeCompare(String(b.value)));
+      rows = [...rows].sort((a, b) => d * (delta(b) - delta(a)) || String(a.value).localeCompare(String(b.value)));
     }
-    return rows.slice(0, limit);
+    return page(rows.slice(offset, offset + limit), rows.length);
   }
-  const spec: GroupSpec = { ...groupSpecFor(dim), limit };
-  if (o.sort?.by === "change" && o.cmp) return changeRanked(db, ctx, o.cmp, spec, metrics, o.sort.metric).rows.slice(0, limit);
-  if (o.sort?.by === "metric") spec.sortBy = o.sort.metric;
+  const spec: GroupSpec = { ...groupSpecFor(dimIn, ctx), limit, offset, withTotal: true };
+  if (o.sort?.by === "change" && o.cmp) {
+    const ranked = changeRanked(db, ctx, o.cmp, spec, metrics, o.sort.metric, dims).rows;
+    return page(ranked.slice(offset, offset + limit), ranked.length);
+  }
+  if (o.sort?.by === "metric") {
+    spec.sortBy = o.sort.metric;
+    spec.sortDir = o.sort.dir;
+  } else if (o.sort?.by === "value") {
+    spec.sortByValue = true;
+    spec.sortDir = o.sort.dir;
+  }
   const opts = optsFor(metrics);
-  const rows = all(db, groupedQuery(ctx, spec, opts)).map((r) => shapeRow(r, spec, metrics));
-  if (!o.cmp || !rows.length) return rows;
-  const keys = rows.map((r) => compositeKey(r, spec));
+  const total = totalVisitorsFor(db, ctx, metrics);
+  const raw = all(db, groupedQuery(ctx, spec, opts));
+  const totalRows = raw.length
+    ? num(raw[0]!.total_rows)
+    : offset
+      ? num(all(db, groupedQuery(ctx, { ...spec, limit: 1, offset: 0 }, {}))[0]?.total_rows)
+      : 0;
+  const rows = raw.map((r) => shapeRow(r, spec, metrics, total, dims));
+  if (!o.cmp || !rows.length) return page(rows, totalRows);
+  const prevTotal = totalVisitorsFor(db, o.cmp, metrics);
+  const keys = raw.map((r) => compositeKey(r, spec));
   const prev = new Map(
-    all(db, groupedQuery(o.cmp, { ...spec, limit: undefined, sortBy: undefined, only: keys }, opts)).map((r) => [compositeKey(r, spec), r]),
+    all(
+      db,
+      groupedQuery(
+        o.cmp,
+        { ...spec, limit: undefined, offset: undefined, sortBy: undefined, sortByValue: undefined, withTotal: false, only: keys },
+        opts,
+      ),
+    ).map((r) => [compositeKey(r, spec), r]),
   );
-  return rows.map((r) => {
-    const pm = shapeMetrics(prev.get(compositeKey(r, spec)), metrics);
-    return { ...r, comparison: { metrics: pm, change_percent: changes(r as unknown as MetricValues, pm, metrics) } };
-  });
+  return page(
+    rows.map((r, i) => {
+      const pm = shapeMetrics(prev.get(keys[i]!), metrics, prevTotal);
+      return { ...r, comparison: { metrics: pm, change_percent: changes(r as unknown as MetricValues, pm, metrics) } };
+    }),
+    totalRows,
+  );
 }
 
 /** Candidates = the top values of either period by the metric; ranked by absolute change. */
 export const MOVER_CANDIDATES = 50;
 
-function changeRanked(db: Db, ctx: QueryCtx, cmp: QueryCtx, base: GroupSpec, metrics: Metric[], metric: Metric) {
+function changeRanked(db: Db, ctx: QueryCtx, cmp: QueryCtx, baseIn: GroupSpec, metrics: Metric[], metric: Metric, dims?: Breakdown[]) {
+  const base: GroupSpec = { ...baseIn, offset: undefined, withTotal: false, sortDir: undefined, sortByValue: undefined };
   const all_ = [...new Set<Metric>([metric, ...metrics])];
   const opts = optsFor(all_);
   const sortBy = SORTABLE_METRICS.includes(metric) ? metric : "visitors";
@@ -891,12 +1250,14 @@ function changeRanked(db: Db, ctx: QueryCtx, cmp: QueryCtx, base: GroupSpec, met
   const prev = new Map(
     all(db, groupedQuery(cmp, { ...base, limit: undefined, sortBy: undefined, only }, opts)).map((r) => [compositeKey(r, base), r]),
   );
+  const curTotal = totalVisitorsFor(db, ctx, all_);
+  const prevTotal = totalVisitorsFor(db, cmp, all_);
   const rows = only.map((key) => {
     const c = cur.get(key);
     const p = prev.get(key);
-    const shaped = shapeRow((c ?? p)!, base, all_);
-    const cm = shapeMetrics(c, all_);
-    const pm = shapeMetrics(p, all_);
+    const shaped = shapeRow((c ?? p)!, base, all_, undefined, dims);
+    const cm = shapeMetrics(c, all_, curTotal);
+    const pm = shapeMetrics(p, all_, prevTotal);
     const delta = Number(cm[metric] ?? 0) - Number(pm[metric] ?? 0);
     const out: BreakdownRow = {
       ...shaped,
@@ -909,45 +1270,49 @@ function changeRanked(db: Db, ctx: QueryCtx, cmp: QueryCtx, base: GroupSpec, met
   return { rows: rows.map((x) => ({ ...x.row, change: round(x.delta, 3) })), deltas: rows, candidates: candidates.size };
 }
 
-export function breakdown(db: Db, settings: SiteSettings, q: StatsRequest & { breakdown: Breakdown }, now = Date.now()) {
+export function breakdown(db: Db, settings: SiteSettings, q: StatsRequest & { breakdown: Breakdown | Breakdown[] }, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters);
+    const ge = checkGoalFilters(db, q.filters, q.where);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
-    const ctx = ctxFor(db, r, q.filters);
+    const ctx = ctxFor(db, r, q);
     const p = q.compare ? comparisonRange(r, q.compare, now) : null;
     const out: Record<string, unknown> = {
       period: periodOut(r),
       ...(q.compare ? { comparison: p ? { period: comparisonOut(p) } : null } : {}),
       filters: q.filters,
-      property: q.breakdown,
+      ...propertyOut(q.breakdown),
       sort: sortOut(q.sort),
-      results: breakdownRows(db, ctx, q.breakdown, q.metrics, q.limit ?? 20, {
+      ...breakdownPage(db, ctx, q.breakdown, q.metrics, q.limit ?? 20, {
         sort: q.sort,
         cmp: p ? { ...ctx, start: p.start, end: p.end } : null,
+        offset: q.offset,
       }),
     };
-    const n = notes(db, settings, q.metrics);
+    const n = notes(db, settings, q.metrics, [
+      ...(Array.isArray(q.breakdown) ? q.breakdown : [q.breakdown]),
+      ...q.filters.map((f) => f.key),
+    ]);
     if (n.length) out.notes = n;
     return out;
   });
 }
 
 export interface MoversRequest extends StatsRequest {
-  breakdown: Breakdown;
+  breakdown: Breakdown | Breakdown[];
   metric: Metric;
 }
 
 /** The values of a property whose metric rose or fell the most against the comparison period. */
 export function movers(db: Db, settings: SiteSettings, q: MoversRequest, now = Date.now()) {
   return guard(() => {
-    if (q.breakdown === "goal")
+    if (q.breakdown === "goal" || (Array.isArray(q.breakdown) && q.breakdown.includes("goal")))
       return err(
         "bad_request",
         "Top movers work on event properties, not goals.",
         "For goals use GET /v1/sites/:id/breakdown?breakdown=goal&compare=previous.",
       );
-    const ge = checkGoalFilters(db, q.filters);
+    const ge = checkGoalFilters(db, q.filters, q.where);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
     const p = comparisonRange(r, q.compare ?? { mode: "previous" }, now);
@@ -957,17 +1322,25 @@ export function movers(db: Db, settings: SiteSettings, q: MoversRequest, now = D
         "period=all has nothing before it to compare with.",
         "Use a bounded period (e.g. 30d) or compare=custom with compare_from/compare_to.",
       );
-    const ctx = ctxFor(db, r, q.filters);
-    const spec: GroupSpec = { ...groupSpecFor(q.breakdown), limit: q.limit ?? 10 };
+    const ctx = ctxFor(db, r, q);
+    const spec: GroupSpec = { ...groupSpecFor(q.breakdown, ctx), limit: q.limit ?? 10 };
     const metrics = [...new Set<Metric>([q.metric, ...q.metrics])];
-    const ranked = changeRanked(db, ctx, { ...ctx, start: p.start, end: p.end }, spec, metrics, q.metric);
+    const ranked = changeRanked(
+      db,
+      ctx,
+      { ...ctx, start: p.start, end: p.end },
+      spec,
+      metrics,
+      q.metric,
+      Array.isArray(q.breakdown) ? q.breakdown : undefined,
+    );
     const limit = q.limit ?? 10;
     const rows = ranked.rows as (BreakdownRow & { change: number })[];
     return {
       period: periodOut(r),
       comparison: { period: comparisonOut(p) },
       filters: q.filters,
-      property: q.breakdown,
+      ...propertyOut(q.breakdown),
       metric: q.metric,
       gainers: rows
         .filter((x) => x.change > 0)
@@ -984,35 +1357,33 @@ export function movers(db: Db, settings: SiteSettings, q: MoversRequest, now = D
 
 export function timeseries(db: Db, settings: SiteSettings, q: TimeseriesRequest, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters);
+    const ge = checkGoalFilters(db, q.filters, q.where);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
     const interval = q.interval ?? r.interval;
     // Buckets up to now: an in-progress period has no rows for the future.
     const bs = buckets(r, interval).filter((b, i) => i === 0 || b.start <= now);
-    const ctx = ctxFor(db, r, q.filters);
+    const ctx = ctxFor(db, r, q);
     const opts = optsFor(q.metrics);
-    const key = bucketKey(interval, offsetSegments(r.start, r.end, settings.timezone));
+    const key = bucketKey(interval, offsetSegments(r.start, r.end, r.timezone));
     const rows = all(db, groupedQuery(ctx, { key, orderByKey: true }, opts));
     const byLabel = new Map(rows.map((x) => [String(x.value), x]));
-    let results: Record<string, unknown>[] = bs.map((b) => ({ date: b.label, ...shapeMetrics(byLabel.get(b.label), q.metrics) }));
+    const total = totalVisitorsFor(db, ctx, q.metrics);
+    let results: Record<string, unknown>[] = bs.map((b) => ({ date: b.label, ...shapeMetrics(byLabel.get(b.label), q.metrics, total) }));
     const out: Record<string, unknown> = { period: periodOut(r), interval, filters: q.filters };
     if (q.compare) {
       const p = comparisonRange(r, q.compare, now);
       if (p) {
         const cbs = buckets(p, interval);
-        const ckey = bucketKey(interval, offsetSegments(p.start, p.end, settings.timezone));
-        const crows = new Map(
-          all(db, groupedQuery({ ...ctx, start: p.start, end: p.end }, { key: ckey, orderByKey: true }, opts)).map((x) => [
-            String(x.value),
-            x,
-          ]),
-        );
+        const ckey = bucketKey(interval, offsetSegments(p.start, p.end, r.timezone));
+        const cctx = { ...ctx, start: p.start, end: p.end };
+        const ctotal = totalVisitorsFor(db, cctx, q.metrics);
+        const crows = new Map(all(db, groupedQuery(cctx, { key: ckey, orderByKey: true }, opts)).map((x) => [String(x.value), x]));
         // Buckets are paired by position: day 1 with day 1 of the comparison range, and so on.
         results = results.map((row, i) => {
           const cb = cbs[i];
           if (!cb || cb.start >= p.end) return { ...row, comparison: null };
-          const pm = shapeMetrics(crows.get(cb.label), q.metrics);
+          const pm = shapeMetrics(crows.get(cb.label), q.metrics, ctotal);
           return { ...row, comparison: { date: cb.label, metrics: pm, change_percent: changes(row as MetricValues, pm, q.metrics) } };
         });
         out.comparison = { period: comparisonOut(p) };
@@ -1020,7 +1391,12 @@ export function timeseries(db: Db, settings: SiteSettings, q: TimeseriesRequest,
     }
     out.results = results;
     out.annotations = annotationsIn(db, settings, r.start, r.end);
-    const n = notes(db, settings, q.metrics);
+    const n = notes(
+      db,
+      settings,
+      q.metrics,
+      q.filters.map((f) => f.key),
+    );
     if (n.length) out.notes = n;
     return out;
   });
@@ -1028,79 +1404,183 @@ export function timeseries(db: Db, settings: SiteSettings, q: TimeseriesRequest,
 
 // ------------------------------------------------------------------ realtime, funnel, sql, summary
 
-export function realtime(db: Db, now = Date.now()) {
-  const t5 = now - 5 * 60_000;
-  const t30 = now - 30 * 60_000;
-  const top = (col: string, extra = "") =>
-    db
-      .all(
-        `SELECT COALESCE(${col}, '(none)') AS value, COUNT(DISTINCT visitor_id) AS visitors FROM events
-         WHERE ts >= ? AND origin != 'payment' ${extra} GROUP BY value ORDER BY visitors DESC, value LIMIT 10`,
-        [t30],
-      )
-      .map((r) => ({ value: r.value, visitors: num(r.visitors) }));
-  const head = db.all(
-    `SELECT COUNT(DISTINCT CASE WHEN ts >= ? AND origin != 'payment' THEN visitor_id END) AS v5,
-            COUNT(DISTINCT CASE WHEN origin != 'payment' THEN visitor_id END) AS v30,
-            COALESCE(SUM(name = 'pageview'), 0) AS pv30, COUNT(*) AS ev30
-     FROM events WHERE ts >= ?`,
-    [t5, t30],
-  )[0];
-  const recent = db.all(
-    `SELECT ts, name, origin, hostname, pathname, channel, source, country, region, city, device, browser, os,
-            visitor_id, session_id, user_id, props, revenue, currency
-     FROM events ORDER BY ts DESC, id DESC LIMIT 50`,
-  );
-  return {
-    visitors_last_5m: num(head?.v5),
-    visitors_last_30m: num(head?.v30),
-    pageviews_last_30m: num(head?.pv30),
-    events_last_30m: num(head?.ev30),
-    top_pages_last_30m: top("pathname", "AND name = 'pageview'"),
-    top_countries_last_30m: top("country"),
-    top_sources_last_30m: top("source"),
-    recent_events: recent.map((r) => ({
-      ...r,
-      time: new Date(Number(r.ts)).toISOString(),
-      props: r.props ? JSON.parse(String(r.props)) : null,
-    })),
-  };
+export interface RealtimeRequest {
+  /** window for `window` (1-60, default 30) */
+  minutes?: number;
+  /** top values of this property in the window */
+  breakdown?: Breakdown;
+  filters: Filter[];
+  where?: FilterExpr | null;
+  /** recent events after this unix ms timestamp (tail a live stream) */
+  since?: number;
+  /** recent events to return (default 50, max 200) */
+  limit?: number;
+  debug?: DebugMode;
 }
+
+export function realtime(db: Db, q: RealtimeRequest = { filters: [] }, now = Date.now()) {
+  return guard(() => {
+    const ge = checkGoalFilters(db, q.filters, q.where);
+    if (ge) return ge;
+    const minutes = Math.min(60, Math.max(1, Math.round(q.minutes ?? 30)));
+    // A minute of slack past now: browser clocks and server timestamps can run slightly ahead.
+    const where = (start: number) => whereFrag(ctxFor(db, { start, end: now + 60_000 }, q));
+    const t5 = now - 5 * 60_000;
+    const t30 = now - 30 * 60_000;
+    const tw = now - minutes * 60_000;
+    const top = (col: Frag, start: number, extra = "") => {
+      const w = where(start);
+      return all(db, {
+        sql: `SELECT COALESCE(${col.sql}, '(none)') AS value, COUNT(DISTINCT e.visitor_id) AS visitors FROM events e LEFT JOIN sessions s ON s.id = e.session_id
+              WHERE ${w.sql} AND e.origin != 'payment' ${extra} GROUP BY value ORDER BY visitors DESC, value LIMIT 10`,
+        args: [...col.args, ...w.args],
+      }).map((r) => ({ value: r.value, visitors: num(r.visitors) }));
+    };
+    const counts = (start: number) => {
+      const w = where(start);
+      const r = all(db, {
+        sql: `SELECT COUNT(DISTINCT CASE WHEN e.origin != 'payment' THEN e.visitor_id END) AS visitors,
+                COALESCE(SUM(e.name = 'pageview'), 0) AS pageviews, COUNT(*) AS events FROM events e WHERE ${w.sql}`,
+        args: w.args,
+      })[0];
+      return { visitors: num(r?.visitors), pageviews: num(r?.pageviews), events: num(r?.events) };
+    };
+    const c5 = counts(t5);
+    const c30 = counts(t30);
+    const cw = minutes === 30 ? c30 : counts(tw);
+    const limit = Math.min(200, Math.max(1, Math.round(q.limit ?? 50)));
+    const rw = where(q.since != null ? q.since + 1 : 0);
+    const recent = all(db, {
+      sql: `SELECT e.ts, e.name, e.origin, e.hostname, e.pathname, e.channel, e.source, e.country, e.region, e.city, e.device, e.browser, e.os,
+              e.visitor_id, e.session_id, e.user_id, e.props, e.revenue, e.currency, e.debug
+            FROM events e WHERE ${rw.sql} ORDER BY e.ts DESC, e.id DESC LIMIT ${limit}`,
+      args: rw.args,
+    });
+    const pageCol = raw("e.pathname");
+    const rctx = ctxFor(db, { start: tw, end: now }, q);
+    const breakdownCol = (dim: Breakdown) =>
+      dim === "entry_page" ? raw("s.entry_page") : dim === "exit_page" ? raw("s.exit_page") : columnFor(dim, rctx);
+    return {
+      visitors_last_5m: c5.visitors,
+      visitors_last_30m: c30.visitors,
+      pageviews_last_30m: c30.pageviews,
+      events_last_30m: c30.events,
+      top_pages_last_30m: top(pageCol, t30, "AND e.name = 'pageview'"),
+      top_countries_last_30m: top(raw("e.country"), t30),
+      top_sources_last_30m: top(raw("e.source"), t30),
+      window: {
+        minutes,
+        start: tw,
+        end: now,
+        ...cw,
+        ...(q.breakdown ? { breakdown: { property: q.breakdown, results: top(breakdownCol(q.breakdown), tw) } } : {}),
+      },
+      filters: q.filters,
+      debug: q.debug ?? "exclude",
+      recent_events: recent.map((r) => ({
+        ...r,
+        debug: !!r.debug,
+        time: new Date(Number(r.ts)).toISOString(),
+        props: r.props ? JSON.parse(String(r.props)) : null,
+      })),
+      next_since: recent.length ? Number(recent[0]!.ts) : (q.since ?? null),
+    };
+  });
+}
+
+interface FunnelStepOut {
+  step: number;
+  label: string;
+  visitors: number;
+  sessions?: number;
+  conversion_rate: number;
+  dropoff: number;
+  dropoff_rate: number;
+  revenue: number;
+  revenue_per_visitor: number;
+}
+
+function funnelSteps(db: Db, ctx: QueryCtx, q: FunnelRequest): FunnelStepOut[] {
+  const bySession = !q.window || q.window === "session";
+  const rows = all(db, funnelQuery(ctx, q.steps, { mode: q.mode, window: q.window }));
+  const first = num(rows.find((x) => num(x.step) === 1)?.visitors);
+  let prev = first;
+  return q.steps.map((s, i) => {
+    const row = rows.find((x) => num(x.step) === i + 1);
+    const visitors = num(row?.visitors);
+    const revenue = round(num(row?.revenue), 2);
+    const out: FunnelStepOut = {
+      step: i + 1,
+      label: s.type === "page" ? s.pattern : `${s.type}:${s.name}`,
+      visitors,
+      ...(bySession ? { sessions: num(row?.sessions) } : {}),
+      conversion_rate: first ? round((visitors / first) * 100, 1) : 0,
+      dropoff: i === 0 ? 0 : prev - visitors,
+      dropoff_rate: i === 0 || !prev ? 0 : round(((prev - visitors) / prev) * 100, 1),
+      revenue,
+      revenue_per_visitor: visitors ? round(revenue / visitors, 2) : 0,
+    };
+    prev = visitors;
+    return out;
+  });
+}
+
+const FUNNEL_CMP = ["visitors", "conversion_rate", "revenue"] as const;
 
 export function funnel(db: Db, settings: SiteSettings, q: FunnelRequest, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters);
+    const ge = checkGoalFilters(db, q.filters, q.where);
     if (ge) return ge;
     const goalSteps = q.steps.filter((s) => s.type === "goal").map((s) => (s as { name: string }).name);
     const gs = unknownGoals(db, goalSteps, "goal(s) in steps");
     if (gs) return gs;
     const r = rangeFor(db, settings, q, now);
-    const ctx = ctxFor(db, r, q.filters);
-    const rows = all(db, funnelQuery(ctx, q.steps));
-    const first = num(rows[0]?.visitors);
-    let prev = first;
-    const steps = q.steps.map((s, i) => {
-      const row = rows.find((x) => num(x.step) === i + 1);
-      const visitors = num(row?.visitors);
-      const out = {
-        step: i + 1,
-        label: s.type === "page" ? s.pattern : `${s.type}:${s.name}`,
-        visitors,
-        sessions: num(row?.sessions),
-        conversion_rate: first ? round((visitors / first) * 100, 1) : 0,
-        dropoff: i === 0 ? 0 : prev - visitors,
-        dropoff_rate: i === 0 || !prev ? 0 : round(((prev - visitors) / prev) * 100, 1),
-      };
-      prev = visitors;
-      return out;
-    });
-    return {
+    const ctx = ctxFor(db, r, q);
+    const steps = funnelSteps(db, ctx, q);
+    const mode = q.mode ?? "ordered";
+    const window = q.window ?? "session";
+    const out: Record<string, unknown> = {
       period: periodOut(r),
       filters: q.filters,
+      mode,
+      window,
       steps,
       overall_conversion_rate: steps.length ? steps[steps.length - 1]!.conversion_rate : 0,
-      note: "Steps must happen in order within one session (30 minutes of inactivity ends a session). Counts are unique visitors.",
     };
+    const p = q.compare ? comparisonRange(r, q.compare, now) : null;
+    if (q.compare) {
+      if (p) {
+        const prev = funnelSteps(db, { ...ctx, start: p.start, end: p.end }, q);
+        out.comparison = { period: comparisonOut(p), overall_conversion_rate: prev.at(-1)?.conversion_rate ?? 0 };
+        out.steps = steps.map((st, i) => {
+          const pm = Object.fromEntries(FUNNEL_CMP.map((k) => [k, prev[i]?.[k] ?? 0]));
+          const cm = Object.fromEntries(FUNNEL_CMP.map((k) => [k, st[k]]));
+          return { ...st, comparison: { ...pm, change_percent: changes(cm, pm, [...FUNNEL_CMP] as unknown as Metric[]) } };
+        });
+      } else out.comparison = null;
+    }
+    if (q.segments?.length) {
+      out.segments = q.segments.map((sg) => {
+        const sctx = ctxFor(db, r, {
+          filters: [...q.filters, ...sg.filters],
+          where: sg.where && q.where ? { and: [q.where, sg.where] } : (sg.where ?? q.where),
+          debug: q.debug,
+        });
+        const st = funnelSteps(db, sctx, q);
+        return { segment: { id: sg.id, name: sg.name }, steps: st, overall_conversion_rate: st.at(-1)?.conversion_rate ?? 0 };
+      });
+    }
+    out.note =
+      mode === "any"
+        ? window === "session"
+          ? "Any order: a step counts when the session did it and every step before it in the list, in any order."
+          : "Any order across sessions: a person counts at a step when they did it and every step before it in the list, in any order, in the period."
+        : window === "session"
+          ? "Steps must happen in order within one session (30 minutes of inactivity ends a session). Counts are unique visitors; revenue is that of the sessions that reached the step."
+          : `Steps must happen in order by the same person within ${window} of step 1, across sessions. ${identityNote(settings) ?? ""} Revenue is that of the people who reached the step, in the period.`.trim();
+    if (window !== "session" && settings.visitor_id_mode !== "persistent")
+      out.identity = { mode: settings.visitor_id_mode, note: identityNote(settings) };
+    return out;
   });
 }
 
@@ -1124,6 +1604,7 @@ const PLAN_TABLES = new Set([
   "drops",
   "meta",
   "usage",
+  "identities",
 ]);
 
 function tableBounds(db: Db): { rows: (t: string) => number; max: number } {
@@ -1368,6 +1849,9 @@ export function summary(db: Db, now = Date.now()) {
   };
 }
 
+/** Debug events are kept this long, whatever the site's retention. */
+export const DEBUG_RETENTION_DAYS = 7;
+
 /** Delete raw data older than the retention window. Returns rows deleted. */
 export function purge(db: Db, retentionDays: number, now = Date.now()): { events: number; sessions: number } {
   const cutoff = now - retentionDays * DAY;
@@ -1381,6 +1865,10 @@ export function purge(db: Db, retentionDays: number, now = Date.now()): { events
   // Stripe retries a delivery for up to 3 days; 30 days of event ids is plenty for dedupe.
   db.run("DELETE FROM provider_events WHERE received_at < ?", [now - 30 * DAY]);
   db.run("DELETE FROM annotations WHERE kind != 'note' AND ts < ?", [cutoff]);
+  // Test traffic is for checking a setup, not for history: a week is enough (indexed: events_debug).
+  db.run("DELETE FROM events WHERE debug = 1 AND ts < ?", [now - DEBUG_RETENTION_DAYS * DAY]);
+  // First-touch rows of identities not seen within retention.
+  db.run("DELETE FROM identities WHERE last_seen < ?", [cutoff]);
   // Daily counters are only needed for today; keep a few weeks for operators.
   db.run("DELETE FROM usage WHERE day < ?", [utcDay(now - 40 * DAY)]);
   return { events: ev, sessions: se };

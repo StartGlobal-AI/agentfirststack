@@ -7,6 +7,13 @@ import type { AnnotationInput, AnnotationPatch } from "./annotations";
 import * as payments from "./payments";
 import * as people from "./people";
 import { insights, type InsightsRequest } from "./insights";
+import * as schema from "./schema";
+import * as privacy from "./privacy";
+import { type AlertCheckRequest, alertNumbers } from "./alerts";
+import { type DigestRequest, digest } from "./digest";
+import { type RetentionRequest, retention } from "./retention";
+import { type PathsRequest, paths } from "./paths";
+import { type AttributionRequest, attribution } from "./attribution";
 import { err, guard, rangeFor, utcDay } from "./common";
 import type { SqlValue } from "../lib/query";
 import type { Breakdown } from "../lib/filters";
@@ -45,6 +52,8 @@ const PAYMENT_BYTES = 256;
 /** How the Worker asks for ingest: the limit vars of its env (so tests can change them per call). */
 export interface IngestPolicy {
   vars?: LimitVars;
+  /** validate_only: run every check, store and count nothing */
+  dryRun?: boolean;
 }
 
 const CLAIMED: Standing = { suspended: false, claimed: true };
@@ -266,7 +275,9 @@ export class SiteDO extends DurableObject<Bindings> {
       // Drops cost nothing else, so under a flood they are coalesced.
       drop: (reason, sample) =>
         reason.startsWith(engine.WARN_PREFIX) ? engine.recordDrop(this.db, reason, sample) : this.queueDrop(reason, sample),
+      dryRun: !!policy.dryRun,
     });
+    if (policy.dryRun) return { ...res, replay_site_id: s.replay_site_id ?? null };
     this.pendingRefused += res.results.filter((r) => (engine.BUDGET_REASONS as readonly string[]).includes(r.reason ?? "")).length;
     this.writeDrops();
     if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
@@ -287,7 +298,7 @@ export class SiteDO extends DurableObject<Bindings> {
     return this.withSettings((s) => engine.stats(this.db, s, q));
   }
 
-  breakdown(q: StatsRequest & { breakdown: Breakdown }) {
+  breakdown(q: StatsRequest & { breakdown: Breakdown | Breakdown[] }) {
     return this.withSettings((s) => engine.breakdown(this.db, s, q));
   }
 
@@ -295,8 +306,8 @@ export class SiteDO extends DurableObject<Bindings> {
     return this.withSettings((s) => engine.timeseries(this.db, s, q));
   }
 
-  realtime() {
-    return this.withSettings(() => engine.realtime(this.db));
+  realtime(q: engine.RealtimeRequest = { filters: [] }) {
+    return this.withSettings(() => engine.realtime(this.db, q));
   }
 
   funnel(q: FunnelRequest) {
@@ -309,6 +320,14 @@ export class SiteDO extends DurableObject<Bindings> {
 
   insights(q: InsightsRequest) {
     return this.withSettings((s) => insights(this.db, s, q));
+  }
+
+  schema(q: schema.SchemaRequest) {
+    return this.withSettings((s) => schema.siteSchema(this.db, s, q));
+  }
+
+  props(q: schema.SchemaRequest & { limit?: number }) {
+    return this.withSettings((s) => schema.listProps(this.db, s, q));
   }
 
   // ---------------------------------------------------------------- visitors, sessions, journeys
@@ -327,6 +346,38 @@ export class SiteDO extends DurableObject<Bindings> {
 
   journeys(q: people.JourneysRequest) {
     return this.withSettings((s) => people.journeys(this.db, s, q));
+  }
+
+  attribution(q: AttributionRequest) {
+    return this.withSettings((s) => attribution(this.db, s, q));
+  }
+
+  paths(q: PathsRequest) {
+    return this.withSettings((s) => paths(this.db, s, q));
+  }
+
+  retention(q: RetentionRequest) {
+    return this.withSettings((s) => retention(this.db, s, q));
+  }
+
+  digest(q: DigestRequest) {
+    return this.withSettings((s) => digest(this.db, s, q));
+  }
+
+  /** The numbers an alert rule needs (read-only). */
+  alertNumbers(q: AlertCheckRequest) {
+    return this.withSettings((s) => alertNumbers(this.db, s, q));
+  }
+
+  // ---------------------------------------------------------------- erasure and purges
+
+  /** Delete one identity's data (visitor id, user:<id>, or a customer's, by its salted hash). */
+  deleteVisitor(key: string, opts: privacy.DeleteIdentityOptions = {}) {
+    return this.withSettings(() => privacy.deleteIdentity(this.db, key, opts) ?? privacy.notFoundIdentity(key));
+  }
+
+  purge(q: privacy.PurgeRequest) {
+    return this.withSettings((s) => privacy.purgeEvents(this.db, s, q));
   }
 
   // ---------------------------------------------------------------- payments

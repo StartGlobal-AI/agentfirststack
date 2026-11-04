@@ -8,6 +8,7 @@ import { ingestRoutes } from "./routes/ingest";
 import { shareRoutes } from "./routes/share";
 import { webhookRoutes } from "./routes/webhooks";
 import { siteRoutes } from "./routes/sites";
+import { runCron } from "./service/cron";
 
 export { SiteDO } from "./do/site-do";
 
@@ -69,4 +70,10 @@ app.route(
 app.use("/v1/*", requireAuth<AppEnv>());
 app.route("/v1/sites", siteRoutes);
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Alerts, scheduled reports, delivery retries and history purges (wrangler.jsonc triggers).
+  scheduled(controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+    ctx.waitUntil(runCron(env, controller.scheduledTime));
+  },
+} satisfies ExportedHandler<Bindings>;

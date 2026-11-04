@@ -4,7 +4,7 @@ import { type Bindings, isDev } from "../env";
 import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/channel";
 import { EMPTY_GEO, type Geo, PROXY_KEY_HEADER, geoFromFields, geoFromRequest, requestIp } from "../lib/geo";
 import { botReason, parseUserAgent } from "../lib/ua";
-import { parsePage, parseReferrer } from "../lib/url";
+import { hashRoute, parsePage, parseReferrer, primaryLanguage, queryOf, screenClass } from "../lib/url";
 import { proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
 import type { Attribution, EnrichedEvent, IngestResponse } from "../lib/types";
 import { allow, enforce, limitVars } from "../lib/limits";
@@ -137,6 +137,10 @@ function attribution(pageHost: string | null, page: ReturnType<typeof parsePage>
     utm_campaign: page.utm_campaign,
     utm_term: page.utm_term,
     utm_content: page.utm_content,
+    utm_id: page.utm_id,
+    utm_source_platform: page.utm_source_platform,
+    utm_creative_format: page.utm_creative_format,
+    utm_marketing_tactic: page.utm_marketing_tactic,
     click_id_type: page.click_id_type,
     click_id: page.click_id,
   };
@@ -161,7 +165,9 @@ function revenueOf(v: unknown): { revenue: number | null; currency: string | nul
  * Tracker payload (text/plain JSON, so no CORS preflight):
  *   s site id · n event name (default "pageview"; "engagement" = visible-time beacon) · u page URL
  *   r referrer · p props · $ [amount, currency] · i user id · id persistent visitor id
- *   e engagement ms · b 1 when navigator.webdriver · d 1 when GPC/DNT
+ *   e engagement ms · b 1 when navigator.webdriver · d 1 when GPC/DNT · dbg 1 = test traffic (afsa('debug'))
+ *   pageviews: t document.title (data-title="true") · w viewport width (stored as a class) · h 1 = hash routing
+ *   custom events: ni 1 = non-interactive (doesn't un-bounce the session)
  *   engagement only: sd max scroll depth % · v [LCP ms, INP ms, CLS x 1000] of the page load
  */
 
@@ -266,13 +272,16 @@ export async function ingestBrowser(
   }
   const viaProxy = new URL(req.url).pathname !== "/e";
   const geo = geoFromRequest(req, { devMode: isDev(env), trustForwarded: trusted });
+  // Hash-routed SPAs (data-hash="true"): the route after # is part of the page path.
+  const route = p.h === 1 ? hashRoute(p.u) : null;
+  const pathname = route ? `${page.pathname}${route}`.slice(0, 1000) : page.pathname;
   const ev: EnrichedEvent = {
     ts: now,
     name,
     origin: "browser",
     hostname: page.hostname,
-    pathname: page.pathname,
-    url: page.url,
+    pathname,
+    url: route && page.url ? `${page.url}${route}`.slice(0, 1500) : page.url,
     user_id: clip(p.i, 200),
     props: cleanProps(p.p),
     ...revenueOf(p.$),
@@ -281,6 +290,13 @@ export async function ingestBrowser(
     client_visitor_id: typeof p.id === "string" && VISITOR_ID_RE.test(p.id) ? p.id : null,
     explicit_visitor_id: null,
     dnt: p.d === 1 || p.d === true || req.headers.get("sec-gpc") === "1" || req.headers.get("dnt") === "1",
+    debug: p.dbg === 1 || p.dbg === true,
+    language: primaryLanguage(req.headers.get("accept-language")),
+    screen: name === "pageview" ? screenClass(p.w) : null,
+    title: name === "pageview" ? clip(p.t, 200) : null,
+    interactive: !(p.ni === 1 || p.ni === true),
+    // Read by the DO for the site's search_params only, then dropped.
+    search_query: name === "pageview" ? queryOf(clip(p.u, 2000)) || null : null,
     proxy_warning: viaProxy && !trusted ? (presented ? "proxy_key_invalid" : "proxy_key_missing") : null,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip,
@@ -333,6 +349,10 @@ export const serverEventSchema = z.object({
   utm_campaign: z.string().max(200).optional(),
   utm_term: z.string().max(200).optional(),
   utm_content: z.string().max(200).optional(),
+  utm_id: z.string().max(200).optional(),
+  utm_source_platform: z.string().max(200).optional(),
+  utm_creative_format: z.string().max(200).optional(),
+  utm_marketing_tactic: z.string().max(200).optional(),
   click_id_type: z.enum(CLICK_ID_PARAMS).optional().describe("e.g. gclid, with click_id."),
   click_id: z.string().max(500).optional(),
   props: z
@@ -341,12 +361,34 @@ export const serverEventSchema = z.object({
     .optional()
     .describe("String / number / boolean values. Kept: 30 keys of 64 characters, values of 500, 2 KB in all."),
   revenue: z.object({ amount: z.number(), currency: z.string().regex(/^[A-Za-z]{3}$/) }).optional(),
+  debug: z
+    .boolean()
+    .optional()
+    .describe("Test traffic: stored (and counted against budgets) but left out of reports unless debug=include|only; purged after 7 days."),
+  interactive: z
+    .boolean()
+    .optional()
+    .describe("false: a non-interactive event (a background job, an impression): it doesn't un-bounce the session."),
+  language: z
+    .string()
+    .max(35)
+    .optional()
+    .describe("The visitor's language (an Accept-Language value or a tag like en-US); the primary subtag is kept."),
+  title: z.string().max(500).optional().describe("pageview: the page title (200 characters kept)."),
 });
 export type ServerEvent = z.infer<typeof serverEventSchema>;
 
+const boolish = z.union([z.boolean(), z.enum(["true", "false", "1", "0"])]).optional();
+const truthy = (v: z.infer<typeof boolish>) => v === true || v === "true" || v === "1";
+
 export const serverIngestInput = z.union([
-  z.object({ events: z.array(serverEventSchema).min(1).max(100) }),
-  serverEventSchema.transform((e) => ({ events: [e] })),
+  z.object({
+    events: z.array(serverEventSchema).min(1).max(100),
+    validate_only: boolish.describe(
+      "Check the batch without storing or counting anything: per event, what would be stored or why it would be dropped.",
+    ),
+  }),
+  serverEventSchema.transform((e) => ({ events: [e], validate_only: undefined as z.infer<typeof boolish> })),
 ]);
 
 function eventTs(t: ServerEvent["timestamp"], now: number): number | string {
@@ -367,7 +409,18 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
   }
   const page = parsePage(e.url ?? null);
   // Explicit UTM / click id fields override what the URL carries.
-  for (const k of ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"] as const) if (e[k]) page[k] = e[k]!;
+  for (const k of [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "utm_id",
+    "utm_source_platform",
+    "utm_creative_format",
+    "utm_marketing_tactic",
+  ] as const)
+    if (e[k]) page[k] = e[k]!;
   if (e.click_id_type && e.click_id) {
     page.click_id_type = e.click_id_type as ClickIdType;
     page.click_id = e.click_id;
@@ -395,14 +448,28 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
     dnt: false,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip: e.ip ?? null,
+    debug: !!e.debug,
+    interactive: e.interactive !== false,
+    language: e.language ? primaryLanguage(e.language) : null,
+    title: e.name === "pageview" ? clip(e.title, 200) : null,
+    search_query: e.name === "pageview" && e.url ? queryOf(e.url) || null : null,
     ...attribution(page.hostname, page, e.referrer),
     ...geo,
     ...parseUserAgent(e.user_agent),
   };
 }
 
-export async function ingestServer(ctx: Ctx, siteId: string, raw: unknown) {
-  const { events } = parse(serverIngestInput, raw);
+/** Prop keys a server event sent that won't be kept (non-string-like values, bad keys, past the caps). */
+function droppedProps(e: ServerEvent, kept: string | null): string[] {
+  if (!e.props) return [];
+  const keep = new Set(kept ? Object.keys(JSON.parse(kept) as object) : []);
+  return Object.keys(e.props).filter((k) => !keep.has(k.trim().slice(0, MAX_PROP_KEY)));
+}
+
+export async function ingestServer(ctx: Ctx, siteId: string, raw: unknown, opts: { validateOnly?: boolean } = {}) {
+  const input = parse(serverIngestInput, raw);
+  const { events } = input;
+  const validateOnly = !!opts.validateOnly || truthy(input.validate_only);
   await enforce(
     [[ctx.env.API_INGEST_LIMITER, `acct:${ctx.accountId}`]],
     "ingest requests",
@@ -414,25 +481,41 @@ export async function ingestServer(ctx: Ctx, siteId: string, raw: unknown) {
   const enriched = await Promise.all(events.map((e) => enrichServerEvent(site.id, e, salt, now)));
   const valid = enriched.filter((e): e is EnrichedEvent => typeof e !== "string");
   const stub: SiteStub = siteStub(ctx.env, site.id);
-  const policy = { vars: limitVars(ctx.env) };
+  const policy = { vars: limitVars(ctx.env), dryRun: validateOnly };
   let res: IngestResponse = valid.length ? await stub.ingest(valid, policy) : { known_site: true, persistent: false, results: [] };
   if (!res.known_site) {
     await pushSettings(ctx.env, site);
     res = await stub.ingest(valid, policy);
   }
   // Every event refused for one reason (and none rejected for its own): answer with that error.
-  if (res.refused && valid.length === enriched.length) throw refusalError(ctx.env, res.refused);
+  if (res.refused && valid.length === enriched.length && !validateOnly) throw refusalError(ctx.env, res.refused);
   let vi = 0;
   const results = enriched.map((e, index) => {
     if (typeof e === "string") return { index, ok: false, reason: e };
     const r = res.results[vi++];
-    return {
+    const base = {
       index,
       ok: !!r?.ok,
       ...(r?.ok ? { visitor_id: r.visitor_id, session_id: r.session_id } : { reason: r?.reason ?? "rejected" }),
     };
+    if (!validateOnly) return base;
+    return {
+      ...base,
+      ...(r?.ok ? { new_session: !!r.new_session, stored: r.stored ?? null } : {}),
+      dropped_props: droppedProps(events[index]!, e.props),
+      warnings: r?.warnings ?? [],
+    };
   });
   const accepted = results.filter((r) => r.ok).length;
+  if (validateOnly)
+    return {
+      validate_only: true,
+      would_accept: accepted,
+      would_reject: results.length - accepted,
+      results,
+      note: "Nothing was stored or counted. stored is the exact row each accepted event would write (after redaction, path rules, attribution and session joining); session ids of new sessions are not kept.",
+      next_steps: accepted ? [`Send the same body without validate_only to store it.`] : [],
+    };
   return {
     accepted,
     rejected: results.length - accepted,

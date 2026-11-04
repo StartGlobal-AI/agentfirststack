@@ -71,6 +71,7 @@ describe("exclusions", () => {
       paths: ["/admin/*"],
       hostnames: ["staging.example.com", "*.preview.example.com"],
       countries: ["DE"],
+      referrers: [],
     });
     expect(problems).toHaveLength(4);
   });

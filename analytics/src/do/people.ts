@@ -83,6 +83,7 @@ function eventOut(e: Row) {
     revenue_type: e.revenue_type ?? null,
     engagement_s: e.engagement_ms ? round(num(e.engagement_ms) / 1000, 1) : null,
     scroll_depth: e.scroll_depth ?? null,
+    ...(e.debug ? { debug: true } : {}),
   };
 }
 
@@ -110,10 +111,10 @@ const VISITOR_ORDER: Record<VisitorSort, string> = {
 
 export function listVisitors(db: Db, settings: SiteSettings, q: VisitorsRequest, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters);
+    const ge = checkGoalFilters(db, q.filters, q.where);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
-    const ctx = ctxFor(db, r, q.filters);
+    const ctx = ctxFor(db, r, q);
     const conds: Frag[] = [raw("1 = 1")];
     if (q.type === "identified") conds.push(raw("v.user_id IS NOT NULL"));
     if (q.type === "customers") conds.push(raw("v.revenue > 0"));
@@ -336,10 +337,10 @@ export const MAX_TOUCHPOINTS = 20;
 
 export function journeys(db: Db, settings: SiteSettings, q: JourneysRequest, now = Date.now()) {
   return guard(() => {
-    const ge = checkGoalFilters(db, q.filters) ?? (q.goal ? unknownGoals(db, [q.goal]) : null);
+    const ge = checkGoalFilters(db, q.filters, q.where) ?? (q.goal ? unknownGoals(db, [q.goal]) : null);
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
-    const ctx = ctxFor(db, r, q.filters);
+    const ctx = ctxFor(db, r, q);
     const stats = converterStats(db, ctx, targetCond(q.goal)).sort((a, b) => b.t - a.t || a.ident.localeCompare(b.ident));
     const page = stats.slice(q.offset, q.offset + q.limit);
     const ids = JSON.stringify(page.map((p) => p.ident));

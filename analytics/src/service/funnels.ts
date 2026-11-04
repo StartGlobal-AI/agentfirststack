@@ -1,7 +1,15 @@
 import { ApiError, accountStanding, badRequest, newId, notFound, parse } from "@afs/shared";
 import { quotaExceeded, siteCap } from "../lib/limits";
 import { z } from "zod";
-import { FunnelError, type FunnelStep, parseFunnelSteps } from "../lib/query";
+import {
+  FUNNEL_MODES,
+  FUNNEL_WINDOWS,
+  FunnelError,
+  type FunnelMode,
+  type FunnelStep,
+  type FunnelWindow,
+  parseFunnelSteps,
+} from "../lib/query";
 import { type Ctx, loadGoals, loadSite } from "./context";
 
 /**
@@ -13,17 +21,37 @@ const stepsField = z
   .union([z.string(), z.array(z.string())])
   .describe('2-8 ordered steps: "/pricing" (path, * wildcard), "page:/x", "event:signup", "goal:Purchase". Comma list or array.');
 
+export const funnelModeField = z
+  .enum(FUNNEL_MODES)
+  .optional()
+  .describe("ordered (default): each step after the previous one; any: every step, in any order.");
+export const funnelWindowField = z
+  .enum(FUNNEL_WINDOWS)
+  .optional()
+  .describe(
+    "session (default): within one visit; 1h, 1d, 7d, 30d: by the same person within that time of step 1, across sessions (needs identified users or persistent mode to cross days).",
+  );
+
 export const createFunnelInput = z.object({
   name: z.string().min(1).max(120).describe('Unique per site, e.g. "Signup flow".'),
   steps: stepsField,
+  mode: funnelModeField,
+  window: funnelWindowField,
 });
-export const updateFunnelInput = z.object({ name: z.string().min(1).max(120).optional(), steps: stepsField.optional() });
+export const updateFunnelInput = z.object({
+  name: z.string().min(1).max(120).optional(),
+  steps: stepsField.optional(),
+  mode: funnelModeField,
+  window: funnelWindowField,
+});
 
 interface FunnelRow {
   id: string;
   site_id: string;
   name: string;
   steps: string;
+  mode?: FunnelMode;
+  window?: FunnelWindow;
   created_at: number;
   updated_at: number;
 }
@@ -31,7 +59,15 @@ interface FunnelRow {
 const stepText = (s: FunnelStep) => (s.type === "page" ? s.pattern : `${s.type}:${s.name}`);
 
 export function funnelJson(r: FunnelRow) {
-  return { id: r.id, name: r.name, steps: JSON.parse(r.steps) as string[], created_at: r.created_at, updated_at: r.updated_at };
+  return {
+    id: r.id,
+    name: r.name,
+    steps: JSON.parse(r.steps) as string[],
+    mode: r.mode ?? "ordered",
+    window: r.window ?? "session",
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
 }
 
 async function validSteps(ctx: Ctx, siteId: string, input: string | string[]): Promise<string[]> {
@@ -71,11 +107,16 @@ export async function createFunnel(ctx: Ctx, siteId: string, raw: unknown) {
   const steps = await validSteps(ctx, site.id, input.steps);
   const next = [`Drop-off per step: GET /v1/sites/${site.id}/funnels/{id}?period=30d (MCP: get_funnel with funnel_id).`];
   if (existing) {
-    const same = JSON.stringify(steps) === existing.steps;
+    const same =
+      JSON.stringify(steps) === existing.steps &&
+      (input.mode ?? "ordered") === (existing.mode ?? "ordered") &&
+      (input.window ?? "session") === (existing.window ?? "session");
     return {
       funnel: funnelJson(existing),
       existing: true,
-      ...(same ? {} : { note: "A funnel with this name exists with different steps; returned unchanged. PATCH it to change the steps." }),
+      ...(same
+        ? {}
+        : { note: "A funnel with this name exists with different steps, mode or window; returned unchanged. PATCH it to change them." }),
       next_steps: next.map((s) => s.replace("{id}", existing.id)),
     };
   }
@@ -94,13 +135,15 @@ export async function createFunnel(ctx: Ctx, siteId: string, raw: unknown) {
     site_id: site.id,
     name: input.name,
     steps: JSON.stringify(steps),
+    mode: input.mode ?? "ordered",
+    window: input.window ?? "session",
     created_at: now,
     updated_at: now,
   };
   try {
     await db
-      .prepare("INSERT INTO funnels (id, site_id, name, steps, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(row.id, row.site_id, row.name, row.steps, now, now)
+      .prepare("INSERT INTO funnels (id, site_id, name, steps, mode, window, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(row.id, row.site_id, row.name, row.steps, row.mode, row.window, now, now)
       .run();
   } catch (e) {
     // A concurrent create with the same name: the unique index wins; return that one.
@@ -138,10 +181,12 @@ export async function updateFunnel(ctx: Ctx, siteId: string, funnelId: string, r
       );
   }
   const now = Date.now();
-  await ctx.env.DB.prepare("UPDATE funnels SET name = ?, steps = ?, updated_at = ? WHERE id = ? AND site_id = ?")
-    .bind(name, JSON.stringify(steps), now, cur.id, site.id)
+  const mode = input.mode ?? cur.mode;
+  const window = input.window ?? cur.window;
+  await ctx.env.DB.prepare("UPDATE funnels SET name = ?, steps = ?, mode = ?, window = ?, updated_at = ? WHERE id = ? AND site_id = ?")
+    .bind(name, JSON.stringify(steps), mode, window, now, cur.id, site.id)
     .run();
-  return { funnel: { ...cur, name, steps, updated_at: now } };
+  return { funnel: { ...cur, name, steps, mode, window, updated_at: now } };
 }
 
 export async function deleteFunnel(ctx: Ctx, siteId: string, funnelId: string) {

@@ -9,7 +9,7 @@
  * Schema (see do/schema.ts): events e, sessions s, goals g (synced copy of the site's goals).
  */
 
-import { DIMENSION_SQL, type Breakdown, type Filter, type FilterOp, NONE, PROP_KEY_RE } from "./filters";
+import { DIMENSION_SQL, type Breakdown, type Filter, type FilterExpr, type FilterOp, NONE, PROP_KEY_RE, isLeaf } from "./filters";
 
 export type SqlValue = string | number | null;
 export interface Frag {
@@ -59,18 +59,45 @@ export function toGlob(pattern: string): string {
 
 // ---------------------------------------------------------------- goals
 
-/** A goal matches an event: by name, by page path, or by page path once scrolled past its threshold. */
-export const GOAL_MATCH =
-  "((g.type = 'event' AND e.name = g.match) OR (g.type = 'pageview' AND e.name = 'pageview' AND e.pathname GLOB g.glob) OR (g.type = 'scroll' AND e.name = 'pageview' AND e.pathname GLOB g.glob AND e.scroll_depth >= g.threshold))";
-const goalValue = raw(`(SELECT g.value FROM goals g WHERE ${GOAL_MATCH} AND g.value IS NOT NULL ORDER BY g.created_at LIMIT 1)`);
+/**
+ * A goal matches an event `a`: by name, by page path, or by page path once scrolled past its
+ * threshold; and when the goal has props, every one of them equals the event's prop (keys are
+ * validated [A-Za-z0-9_.-], values compared as the strings props are stored as).
+ */
+export const goalMatch = (a: string) =>
+  `(((g.type = 'event' AND ${a}.name = g.match) OR (g.type = 'pageview' AND ${a}.name = 'pageview' AND ${a}.pathname GLOB g.glob) OR (g.type = 'scroll' AND ${a}.name = 'pageview' AND ${a}.pathname GLOB g.glob AND ${a}.scroll_depth >= g.threshold))` +
+  ` AND (g.props IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(g.props) gp WHERE json_extract(${a}.props, '$."' || gp.key || '"') IS NOT gp.value)))`;
+export const GOAL_MATCH = goalMatch("e");
+
+/**
+ * Goals counted once per visit: an event counts only if no earlier event of its session matched
+ * the same goal (events_session index; only added when the site has such goals).
+ */
+const ONCE_FIRST = `(g.counting IS NOT 'once_per_visit' OR NOT EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = e.session_id AND (e2.ts < e.ts OR (e2.ts = e.ts AND e2.id < e.id)) AND ${goalMatch("e2")}))`;
+
+const goalValueFrag = (ctx: QueryCtx) =>
+  raw(
+    `(SELECT g.value FROM goals g WHERE ${GOAL_MATCH} AND g.value IS NOT NULL${ctx.hasOnceGoals ? ` AND ${ONCE_FIRST}` : ""} ORDER BY g.created_at LIMIT 1)`,
+  );
+
+/** Events marked debug (afsa('debug'), debug: true on server events): left out unless asked for. */
+export type DebugMode = "exclude" | "include" | "only";
 
 export interface QueryCtx {
   start: number;
   end: number;
   filters: Filter[];
+  /** debug events: exclude (default), include, or only them (the debug view) */
+  debug?: DebugMode;
+  /** a nested and / or / not group (filters_json, a segment's groups), ANDed with `filters` */
+  where?: FilterExpr | null;
+  /** the site's content groups, for the content_group dimension */
+  contentGroups?: { name: string; match: string }[];
   /** site has at least one goal / at least one goal with a value (lets us skip subqueries) */
   hasGoals: boolean;
   hasGoalValues: boolean;
+  /** some goal counts once per visit (conversions then skip a session's repeat matches) */
+  hasOnceGoals?: boolean;
 }
 
 /** Goal names named by `goal==...` filters: conversions then count only those goals. */
@@ -82,12 +109,29 @@ export function goalFilterNames(filters: Filter[]): string[] | null {
 
 export function conversionCond(ctx: QueryCtx): Frag {
   const names = goalFilterNames(ctx.filters);
-  return sql`EXISTS (SELECT 1 FROM goals g WHERE ${raw(GOAL_MATCH)}${names ? sql` AND g.name IN (${list(names)})` : EMPTY})`;
+  return sql`EXISTS (SELECT 1 FROM goals g WHERE ${raw(GOAL_MATCH)}${names ? sql` AND ${valueCond(raw("g.name"), "==", names)}` : EMPTY}${
+    ctx.hasOnceGoals ? raw(` AND ${ONCE_FIRST}`) : EMPTY
+  })`;
 }
 
 // ---------------------------------------------------------------- filters
 
-export function columnFor(key: string): Frag {
+/**
+ * content_group: the site's content_groups (path patterns, first match wins) as a CASE over the
+ * page path, every pattern and name a bound parameter. Evaluated at query time, so a new group
+ * applies to stored data too.
+ */
+function contentGroupFrag(ctx: Pick<QueryCtx, "contentGroups"> | undefined): Frag {
+  const groups = ctx?.contentGroups ?? [];
+  if (!groups.length) return raw("NULL");
+  return sql`(CASE ${join(
+    groups.map((g) => sql`WHEN e.pathname GLOB ${toGlob(g.match)} THEN ${g.name}`),
+    " ",
+  )} END)`;
+}
+
+export function columnFor(key: string, ctx?: Pick<QueryCtx, "contentGroups">): Frag {
+  if (key === "content_group") return contentGroupFrag(ctx);
   if (key.startsWith("prop:")) {
     const k = key.slice(5);
     if (!PROP_KEY_RE.test(k)) throw new Error("bad prop key");
@@ -98,25 +142,60 @@ export function columnFor(key: string): Frag {
   return raw(col);
 }
 
+/** Has an unescaped `*` (a wildcard); `\*` is a literal star. */
+export const isWildcard = (v: string) => /(^|[^\\])\*/.test(v);
+
+/**
+ * A filter value as SQL: an unescaped `*` is a wildcard (SQLite GLOB, so case-sensitive like ==);
+ * every other GLOB metacharacter ([, ?) and an escaped \* match themselves. No regex: SQLite in a
+ * Durable Object has no REGEXP, and GLOB can't backtrack badly. Values are always bound parameters.
+ */
+export function wildcardGlob(v: string): string {
+  let g = "";
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i]!;
+    if (ch === "\\" && v[i + 1] === "*") {
+      g += "[*]";
+      i++;
+    } else if (ch === "*") g += "*";
+    else if (ch === "[") g += "[[]";
+    else if (ch === "?") g += "[?]";
+    else g += ch;
+  }
+  return g;
+}
+
+const literal = (v: string) => v.replace(/\\\*/g, "*");
+
 export function valueCond(col: Frag, op: FilterOp, values: string[]): Frag {
   const hasNone = values.includes(NONE);
   const vals = values.filter((v) => v !== NONE);
   const contains = () =>
     join(
-      vals.map((v) => sql`instr(lower(${col}), lower(${v})) > 0`),
+      vals.map((v) => sql`instr(lower(${col}), lower(${literal(v)})) > 0`),
       " OR ",
     );
+  const lits = vals.filter((v) => !isWildcard(v)).map(literal);
+  const globs = vals.filter(isWildcard).map(wildcardGlob);
+  /** col equals one of the values (or matches one of the patterns) */
+  const anyOf = (): Frag => {
+    const parts: Frag[] = [];
+    if (lits.length) parts.push(sql`${col} IN (${list(lits)})`);
+    for (const g of globs) parts.push(sql`${col} GLOB ${g}`);
+    return parts.length === 1 ? parts[0]! : sql`(${join(parts, " OR ")})`;
+  };
   switch (op) {
     case "==": {
       const parts: Frag[] = [];
-      if (vals.length) parts.push(sql`${col} IN (${list(vals)})`);
+      if (vals.length) parts.push(anyOf());
       if (hasNone) parts.push(sql`${col} IS NULL`);
       return sql`(${join(parts, " OR ")})`;
     }
     case "!=": {
       if (!vals.length) return sql`${col} IS NOT NULL`;
-      if (hasNone) return sql`(${col} IS NOT NULL AND ${col} NOT IN (${list(vals)}))`;
-      return sql`(${col} IS NULL OR ${col} NOT IN (${list(vals)}))`;
+      const none = globs.length ? sql`NOT ${anyOf()}` : sql`${col} NOT IN (${list(lits)})`;
+      if (hasNone) return sql`(${col} IS NOT NULL AND ${none})`;
+      return sql`(${col} IS NULL OR ${none})`;
     }
     case "~": {
       const parts: Frag[] = [];
@@ -147,11 +226,36 @@ function filterFrag(f: Filter, ctx: QueryCtx): Frag {
     const col = raw(f.key === "entry_page" ? "s.entry_page" : "s.exit_page");
     return sql`e.session_id IN (SELECT s.id FROM sessions s WHERE ${valueCond(col, f.op, f.values)})`;
   }
-  return valueCond(columnFor(f.key), f.op, f.values);
+  return valueCond(columnFor(f.key, ctx), f.op, f.values);
+}
+
+export function debugFrag(mode: DebugMode | undefined, alias = "e"): Frag | null {
+  if (mode === "include") return null;
+  return raw(`${alias}.debug = ${mode === "only" ? 1 : 0}`);
+}
+
+/** A nested and / or / not group (filters_json, segments) as SQL over events e. */
+export function exprFrag(e: FilterExpr, ctx: QueryCtx): Frag {
+  if (isLeaf(e)) return filterFrag(e, ctx);
+  if ("not" in e) return sql`NOT (${exprFrag(e.not, ctx)})`;
+  const items = "and" in e ? e.and : e.or;
+  return sql`(${join(
+    items.map((x) => exprFrag(x, ctx)),
+    "and" in e ? " AND " : " OR ",
+  )})`;
 }
 
 export function whereFrag(ctx: QueryCtx): Frag {
-  return join([sql`e.ts >= ${ctx.start} AND e.ts < ${ctx.end}`, ...ctx.filters.map((f) => filterFrag(f, ctx))], " AND ");
+  const dbg = debugFrag(ctx.debug);
+  return join(
+    [
+      sql`e.ts >= ${ctx.start} AND e.ts < ${ctx.end}`,
+      ...(dbg ? [dbg] : []),
+      ...ctx.filters.map((f) => filterFrag(f, ctx)),
+      ...(ctx.where ? [exprFrag(ctx.where, ctx)] : []),
+    ],
+    " AND ",
+  );
 }
 
 export const evCte = (ctx: QueryCtx) => sql`ev AS (SELECT e.* FROM events e WHERE ${whereFrag(ctx)})`;
@@ -173,7 +277,7 @@ const NEW_PURCHASE = "e.revenue > 0 AND e.revenue_type IS NOT 'renewal' AND e.re
  */
 function countCols(ctx: QueryCtx, pv: Frag = raw("e.name = 'pageview'"), pageScoped = false): Frag {
   const conv = ctx.hasGoals ? conversionCond(ctx) : null;
-  const revenue = ctx.hasGoalValues ? sql`COALESCE(e.revenue, ${goalValue})` : raw("e.revenue");
+  const revenue = ctx.hasGoalValues ? sql`COALESCE(e.revenue, ${goalValueFrag(ctx)})` : raw("e.revenue");
   const pvCount = sql`COALESCE(SUM(CASE WHEN ${pv} THEN 1 ELSE 0 END), 0)`;
   return sql`COUNT(DISTINCT CASE WHEN ${raw(NOT_PAYMENT)} THEN e.visitor_id END) AS visitors,
     COUNT(DISTINCT CASE WHEN ${raw(NOT_PAYMENT)} THEN e.session_id END) AS visits,
@@ -186,11 +290,21 @@ function countCols(ctx: QueryCtx, pv: Frag = raw("e.name = 'pageview'"), pageSco
     COALESCE(SUM(CASE WHEN e.revenue_type = 'refund' THEN e.revenue END), 0) AS refund_revenue,
     COALESCE(SUM(CASE WHEN ${raw(NEW_PURCHASE)} THEN 1 ELSE 0 END), 0) AS purchases,
     COUNT(DISTINCT CASE WHEN ${raw(NEW_PURCHASE)} THEN e.visitor_id END) AS customers,
+    COALESCE(SUM(CASE WHEN ${raw(NEW_PURCHASE)} THEN e.revenue END), 0) AS purchase_revenue,
+    ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} THEN e.session_id END)` : raw("0")} AS converted_sessions,
+    COALESCE(SUM(CASE WHEN ${pv} THEN e.engagement_ms END), 0) / 1000.0 AS engagement_time,
     AVG(CASE WHEN ${pv} AND e.engagement_ms > 0 THEN e.engagement_ms END) / 1000.0 AS time_on_page,
     AVG(CASE WHEN ${pv} THEN e.scroll_depth END) AS scroll_depth`;
 }
 
+/** Sessions that converted (any goal), for the engaged-session test. Only when the site has goals. */
+const convertedCte = (ctx: QueryCtx): Frag | null =>
+  ctx.hasGoals ? sql`cvs AS (SELECT DISTINCT e.session_id FROM ev e WHERE ${conversionCond(ctx)})` : null;
+
 const BOUNCE = "CASE WHEN s.pageviews <= 1 AND s.custom_events = 0 THEN 100.0 ELSE 0.0 END";
+/** GA4's engaged session: at least 10 s visible, 2+ pageviews, or a conversion (cvs). */
+const engaged = (withConversions: boolean) =>
+  `CASE WHEN s.engagement_ms >= 10000 OR s.pageviews >= 2${withConversions ? " OR s.id IN (SELECT session_id FROM cvs)" : ""} THEN 1 ELSE 0 END`;
 /** seconds: first to last activity, or total visible (engaged) time when that is longer */
 const DURATION = "MAX(s.last_seen_at - s.started_at, s.engagement_ms) / 1000.0";
 
@@ -206,12 +320,16 @@ export interface GroupOpts {
 /** One row of totals for the range + filters. */
 export function aggregateQuery(ctx: QueryCtx, withSessions: boolean, opts: GroupOpts = {}): Frag {
   if (opts.visitorTypes || opts.vitals) return groupedQuery(ctx, { key: raw("'all'") }, { ...opts, sessions: withSessions });
+  const cvs = withSessions ? convertedCte(ctx) : null;
+  const inRange = "FROM sessions s WHERE s.id IN (SELECT session_id FROM ev WHERE origin != 'payment')";
   const sessionCols = withSessions
     ? raw(`,
-    (SELECT AVG(${BOUNCE}) FROM sessions s WHERE s.id IN (SELECT session_id FROM ev WHERE origin != 'payment')) AS bounce_rate,
-    (SELECT AVG(${DURATION}) FROM sessions s WHERE s.id IN (SELECT session_id FROM ev WHERE origin != 'payment')) AS visit_duration`)
+    (SELECT AVG(${BOUNCE}) ${inRange}) AS bounce_rate,
+    (SELECT AVG(${DURATION}) ${inRange}) AS visit_duration,
+    (SELECT SUM(${engaged(!!cvs)}) ${inRange}) AS engaged_visits,
+    (SELECT AVG(${engaged(!!cvs)}) * 100.0 ${inRange}) AS engagement_rate`)
     : EMPTY;
-  return sql`WITH ${evCte(ctx)}
+  return sql`WITH ${evCte(ctx)}${cvs ? sql`, ${cvs}` : EMPTY}
   SELECT ${countCols(ctx)}${sessionCols}
   FROM ev e`;
 }
@@ -232,13 +350,24 @@ const SORT_SQL: Record<string, string> = {
   purchases: "{p}purchases",
   customers: "{p}customers",
   purchase_rate: "{p}customers * 1.0 / MAX({p}visitors, 1)",
+  engagement_time: "{p}engagement_time",
+  visits_per_visitor: "{p}visits * 1.0 / MAX({p}visitors, 1)",
+  events_per_visit: "{p}events * 1.0 / MAX({p}visits, 1)",
+  visit_conversion_rate: "{p}converted_sessions * 1.0 / MAX({p}visits, 1)",
+  average_order_value: "{p}purchase_revenue * 1.0 / MAX({p}purchases, 1)",
+  revenue_per_customer: "{p}revenue * 1.0 / MAX({p}customers, 1)",
+  percentage: "{p}visitors",
 };
 
 export interface GroupSpec {
   /** SQL for the group key (already COALESCEd) */
   key: Frag;
-  /** extra grouped columns, e.g. country for region/city */
-  extra?: { name: string; expr: Frag }[];
+  /**
+   * extra grouped columns, e.g. country for region/city, or the 2nd and 3rd dimension of a
+   * multi-dimension breakdown. `name` is the SQL alias (a fixed identifier), `label` the key rows
+   * carry it under (default: name).
+   */
+  extra?: { name: string; expr: Frag; label?: string }[];
   joinSessions?: boolean;
   /**
    * page rows: a row is every event of the sessions that viewed the page, so revenue and
@@ -249,8 +378,16 @@ export interface GroupSpec {
   limit?: number;
   /** order rows by key ascending (timeseries) instead of by visitors */
   orderByKey?: boolean;
-  /** order by this metric (desc) instead of visitors; one of SORT_SQL's keys */
+  /** order by this metric instead of visitors; one of SORT_SQL's keys */
   sortBy?: string;
+  /** direction of sortBy (default desc), or of the value when sortByValue */
+  sortDir?: "asc" | "desc";
+  /** order by the group key (alphabetical) */
+  sortByValue?: boolean;
+  /** rows to skip (pagination) */
+  offset?: number;
+  /** add total_rows (the number of groups before LIMIT) to every row */
+  withTotal?: boolean;
   /**
    * Only these groups (composite keys: value, or value + "\u001f" + extra columns): looks up the
    * comparison period's numbers for exactly the rows already shown. One bound JSON parameter.
@@ -260,13 +397,33 @@ export interface GroupSpec {
 
 export const KEY_SEP = "\u001f";
 
-export function groupSpecFor(dim: Breakdown): GroupSpec {
-  if (dim === "goal") throw new Error("use goalBreakdownQuery");
-  const col = columnFor(dim);
-  const spec: GroupSpec = { key: sql`COALESCE(${col}, ${NONE})` };
-  if (dim === "entry_page" || dim === "exit_page") spec.joinSessions = true;
-  if (dim === "page") spec.sessionScoped = true;
-  if (dim === "region" || dim === "city") spec.extra = [{ name: "country", expr: sql`COALESCE(e.country, ${NONE})` }];
+const dimExpr = (dim: Breakdown, ctx?: Pick<QueryCtx, "contentGroups">): Frag => {
+  if (dim === "entry_page") return raw("s.entry_page");
+  if (dim === "exit_page") return raw("s.exit_page");
+  return columnFor(dim, ctx);
+};
+
+/**
+ * The grouping for one dimension, or 2-3 (a multi-dimension breakdown: the first is the key, the
+ * others extra columns; a page dimension goes first so it stays session-scoped). region and city
+ * rows always carry country.
+ */
+export function groupSpecFor(dimIn: Breakdown | Breakdown[], ctx?: Pick<QueryCtx, "contentGroups">): GroupSpec {
+  const dims = Array.isArray(dimIn) ? [...dimIn] : [dimIn];
+  if (dims.includes("goal")) throw new Error("use goalBreakdownQuery");
+  if (dims.length > 1 && dims.includes("page")) dims.splice(0, dims.length, "page", ...dims.filter((d) => d !== "page"));
+  const [first, ...rest] = dims as [Breakdown, ...Breakdown[]];
+  const spec: GroupSpec = { key: sql`COALESCE(${columnFor(first, ctx)}, ${NONE})` };
+  if (dims.some((d) => d === "entry_page" || d === "exit_page")) spec.joinSessions = true;
+  if (first === "page") spec.sessionScoped = true;
+  const extra: NonNullable<GroupSpec["extra"]> = rest.map((d, i) => ({
+    name: `d${i + 2}`,
+    label: d,
+    expr: sql`COALESCE(${dimExpr(d, ctx)}, ${NONE})`,
+  }));
+  if (dims.some((d) => d === "region" || d === "city") && !dims.includes("country"))
+    extra.push({ name: "country", expr: sql`COALESCE(e.country, ${NONE})` });
+  if (extra.length) spec.extra = extra;
   return spec;
 }
 
@@ -302,15 +459,19 @@ export function groupedQuery(ctx: QueryCtx, g: GroupSpec, optsIn: GroupOpts | bo
   );
   const extraNames = extras.map((x) => `, ${x.name}`).join("");
   const groupBy = raw(`value${extraNames}`);
+  const dir = g.sortDir === "asc" ? "ASC" : "DESC";
   const order = (p: string) => {
     if (g.orderByKey) return raw(`${p}value`);
-    const tie = `${p}visitors DESC, ${p}events DESC, ${p}value${extras.map((x) => `, ${p}${x.name}`).join("")}`;
-    const by = g.sortBy && g.sortBy !== "visitors" ? SORT_SQL[g.sortBy] : null;
-    return raw(by ? `${by.replaceAll("{p}", p)} DESC, ${tie}` : tie);
+    const keys = `${p}value${extras.map((x) => `, ${p}${x.name}`).join("")}`;
+    if (g.sortByValue) return raw(`${p}value ${g.sortDir === "desc" ? "DESC" : "ASC"}${extras.map((x) => `, ${p}${x.name}`).join("")}`);
+    const tie = `${p}visitors DESC, ${p}events DESC, ${keys}`;
+    const by = g.sortBy ? SORT_SQL[g.sortBy] : null;
+    if (g.sortBy === "visitors" && dir === "ASC") return raw(`${p}visitors ASC, ${p}events DESC, ${keys}`);
+    return raw(by && g.sortBy !== "visitors" ? `${by.replaceAll("{p}", p)} ${dir}, ${tie}` : tie);
   };
-  const limit = g.limit != null ? sql` LIMIT ${g.limit}` : EMPTY;
+  const limit = g.limit != null ? sql` LIMIT ${g.limit}${g.offset ? sql` OFFSET ${g.offset}` : EMPTY}` : EMPTY;
   ctes.push(sql`top AS (
-    SELECT ${key} AS value${extraSel}, ${countCols(ctx, pv, !!g.sessionScoped)}
+    SELECT ${key} AS value${extraSel}, ${countCols(ctx, pv, !!g.sessionScoped)}${g.withTotal ? raw(", COUNT(*) OVER () AS total_rows") : EMPTY}
     ${from}${where()}
     GROUP BY ${groupBy}
     ORDER BY ${order("")}${limit})`);
@@ -329,14 +490,17 @@ export function groupedQuery(ctx: QueryCtx, g: GroupSpec, optsIn: GroupOpts | bo
   const cols: string[] = ["top.*"];
   const joins: Frag[] = [];
   if (opts.sessions) {
+    const cvs = convertedCte(ctx);
+    if (cvs) ctes.push(cvs);
     ctes.push(sql`grp AS (
     SELECT DISTINCT ${key} AS value${extraSel}, e.session_id AS sid
     ${from}${where([raw(NOT_PAYMENT), inTop])})`);
     ctes.push(sql`sm AS (
-    SELECT g.value${aExtra("g")}, AVG(${raw(BOUNCE)}) AS bounce_rate, AVG(${raw(DURATION)}) AS visit_duration
+    SELECT g.value${aExtra("g")}, AVG(${raw(BOUNCE)}) AS bounce_rate, AVG(${raw(DURATION)}) AS visit_duration,
+      SUM(${raw(engaged(!!cvs))}) AS engaged_visits, AVG(${raw(engaged(!!cvs))}) * 100.0 AS engagement_rate
     FROM grp g JOIN sessions s ON s.id = g.sid
     GROUP BY g.value${aExtra("g")})`);
-    cols.push("sm.bounce_rate", "sm.visit_duration");
+    cols.push("sm.bounce_rate", "sm.visit_duration", "sm.engaged_visits", "sm.engagement_rate");
     joins.push(sql` LEFT JOIN sm ON ${matchTop("sm")}`);
   }
   if (opts.visitorTypes) {
@@ -377,17 +541,23 @@ export function groupedQuery(ctx: QueryCtx, g: GroupSpec, optsIn: GroupOpts | bo
   ORDER BY ${order("top.")}`;
 }
 
-/** Per-goal conversions (every goal, including ones with zero conversions). */
+/**
+ * Per-goal conversions (every goal, including ones with zero conversions). A goal counted once per
+ * visit keeps only the first matching event of each session (its value counts once too).
+ */
 export function goalBreakdownQuery(ctx: QueryCtx, limit: number): Frag {
   const names = goalFilterNames(ctx.filters);
-  return sql`WITH ${evCte(ctx)}
-  SELECT g.name AS value, g.type AS goal_type, g.match AS goal_match,
-    COUNT(DISTINCT e.visitor_id) AS visitors,
-    COUNT(e.id) AS conversions,
-    COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN COALESCE(e.revenue, g.value) END), 0) AS revenue,
+  return sql`WITH ${evCte(ctx)},
+  gm AS (SELECT g.id AS gid, e.id AS eid, e.visitor_id, COALESCE(e.revenue, g.value) AS rev,
+           ${raw(ctx.hasOnceGoals ? "CASE WHEN g.counting = 'once_per_visit' THEN ROW_NUMBER() OVER (PARTITION BY g.id, e.session_id ORDER BY e.ts, e.id) ELSE 1 END" : "1")} AS rn
+         FROM goals g JOIN ev e ON ${raw(GOAL_MATCH)})
+  SELECT g.name AS value, g.type AS goal_type, g.match AS goal_match, g.counting AS goal_counting,
+    COUNT(DISTINCT m.visitor_id) AS visitors,
+    COUNT(m.eid) AS conversions,
+    COALESCE(SUM(m.rev), 0) AS revenue,
     (SELECT COUNT(DISTINCT visitor_id) FROM ev WHERE origin != 'payment') AS total_visitors
-  FROM goals g LEFT JOIN ev e ON ${raw(GOAL_MATCH)}
-  ${names ? sql`WHERE g.name IN (${list(names)})` : EMPTY}
+  FROM goals g LEFT JOIN gm m ON m.gid = g.id AND m.rn = 1
+  ${names ? sql`WHERE ${valueCond(raw("g.name"), "==", names)}` : EMPTY}
   GROUP BY g.name
   ORDER BY visitors DESC, conversions DESC, g.name
   LIMIT ${limit}`;
@@ -403,15 +573,17 @@ export interface OffsetSegment {
 }
 
 /** Local wall-clock ms for e.ts, as SQL, given the timezone's offset segments over the range. */
-export function localTsExpr(segments: OffsetSegment[]): Frag {
-  if (!segments.length) return raw("e.ts");
-  if (segments.length === 1) return sql`(e.ts + ${int(segments[0]!.offset)})`;
-  const whens = segments.slice(1).map((s, i) => sql`WHEN e.ts < ${int(s.from)} THEN ${int(segments[i]!.offset)}`);
-  return sql`(e.ts + CASE ${join(whens, " ")} ELSE ${int(segments[segments.length - 1]!.offset)} END)`;
+/** `col` is a fixed column expression from this codebase (e.ts, s.started_at), never user input. */
+export function localTsExpr(segments: OffsetSegment[], col = "e.ts"): Frag {
+  if (!/^[a-z]\.[a-z_]+$/.test(col)) throw new Error("bad column");
+  if (!segments.length) return raw(col);
+  if (segments.length === 1) return sql`(${raw(col)} + ${int(segments[0]!.offset)})`;
+  const whens = segments.slice(1).map((s, i) => sql`WHEN ${raw(col)} < ${int(s.from)} THEN ${int(segments[i]!.offset)}`);
+  return sql`(${raw(col)} + CASE ${join(whens, " ")} ELSE ${int(segments[segments.length - 1]!.offset)} END)`;
 }
 
-export function bucketKey(interval: "hour" | "day" | "week" | "month", segments: OffsetSegment[]): Frag {
-  const secs = sql`${localTsExpr(segments)} / 1000`;
+export function bucketKey(interval: "hour" | "day" | "week" | "month", segments: OffsetSegment[], col = "e.ts"): Frag {
+  const secs = sql`${localTsExpr(segments, col)} / 1000`;
   switch (interval) {
     case "hour":
       return sql`strftime('%Y-%m-%d %H:00', ${secs}, 'unixepoch')`;
@@ -435,14 +607,18 @@ export function parseFunnelSteps(input: string | string[]): FunnelStep[] {
   const parts = (Array.isArray(input) ? input : input.split(",")).map((s) => s.trim()).filter(Boolean);
   if (parts.length < 2) throw new FunnelError("A funnel needs at least 2 steps.");
   if (parts.length > 8) throw new FunnelError("A funnel can have at most 8 steps.");
-  return parts.map((p) => {
-    if (p.startsWith("/")) return { type: "page", pattern: p };
-    const m = /^(page|event|goal):(.+)$/s.exec(p);
-    if (!m) throw new FunnelError(`Bad funnel step "${p}". Use /path (with * wildcards), page:/path, event:<name> or goal:<goal name>.`);
-    const v = m[2]!.trim();
-    if (m[1] === "page") return { type: "page", pattern: v.startsWith("/") ? v : `/${v}` };
-    return { type: m[1] as "event" | "goal", name: v };
-  });
+  return parts.map(parseFunnelStep);
+}
+
+/** One step: "/pricing" or page:/x (pageview, * wildcard), event:<name>, goal:<goal name>. */
+export function parseFunnelStep(raw: string): FunnelStep {
+  const p = raw.trim();
+  if (p.startsWith("/")) return { type: "page", pattern: p };
+  const m = /^(page|event|goal):(.+)$/s.exec(p);
+  if (!m) throw new FunnelError(`Bad funnel step "${p}". Use /path (with * wildcards), page:/path, event:<name> or goal:<goal name>.`);
+  const v = m[2]!.trim();
+  if (m[1] === "page") return { type: "page", pattern: v.startsWith("/") ? v : `/${v}` };
+  return { type: m[1] as "event" | "goal", name: v };
 }
 
 function stepCond(step: FunnelStep): Frag {
@@ -456,21 +632,69 @@ function stepCond(step: FunnelStep): Frag {
   }
 }
 
-/** Ordered steps within one session; each step must happen after the previous one. */
-export function funnelQuery(ctx: QueryCtx, steps: FunnelStep[]): Frag {
-  const ctes: Frag[] = [evCte(ctx)];
-  steps.forEach((step, i) => {
-    if (i === 0) {
+export const FUNNEL_MODES = ["ordered", "any"] as const;
+export type FunnelMode = (typeof FUNNEL_MODES)[number];
+/** session: steps within one visit; a duration: steps by the same person within that time of step 1. */
+export const FUNNEL_WINDOWS = ["session", "1h", "1d", "7d", "30d"] as const;
+export type FunnelWindow = (typeof FUNNEL_WINDOWS)[number];
+export const WINDOW_MS: Record<Exclude<FunnelWindow, "session">, number> = {
+  "1h": 3_600_000,
+  "1d": 86_400_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+};
+
+/** The identity of an event across sessions: its user, an identified visitor's user, or the visitor id. */
+const EVENT_PERSON = "COALESCE('user:' || e.user_id, (SELECT i.canonical FROM identities i WHERE i.ident = e.visitor_id), e.visitor_id)";
+
+export interface FunnelOptions {
+  mode?: FunnelMode;
+  window?: FunnelWindow;
+}
+
+/**
+ * Funnel steps per actor (a session, or a person when the window is a duration). Ordered: each
+ * step after the previous one (and, with a duration, within it of step 1); any: every step done,
+ * in any order, by the actor (in the session, or in the period). Per step: actors, visitors and
+ * the revenue of those actors (their events and payments in the period or session).
+ */
+export function funnelQuery(ctx: QueryCtx, steps: FunnelStep[], o: FunnelOptions = {}): Frag {
+  const bySession = !o.window || o.window === "session";
+  const w = bySession ? null : WINDOW_MS[o.window as Exclude<FunnelWindow, "session">];
+  const ctes: Frag[] = [evCte(ctx), raw(`eva AS (SELECT e.*, ${bySession ? "e.session_id" : EVENT_PERSON} AS aid FROM ev e)`)];
+  if ((o.mode ?? "ordered") === "any") {
+    steps.forEach((step, i) =>
+      ctes.push(sql`${raw(`d${i + 1}`)} AS (SELECT DISTINCT e.aid, e.visitor_id AS vid FROM eva e WHERE ${stepCond(step)})`),
+    );
+    steps.forEach((_, i) =>
       ctes.push(
-        sql`s1 AS (SELECT e.session_id AS sid, e.visitor_id AS vid, MIN(e.ts) AS t, e.id AS eid FROM ev e WHERE ${stepCond(step)} GROUP BY e.session_id)`,
-      );
-    } else {
-      ctes.push(
-        sql`${raw(`s${i + 1}`)} AS (SELECT p.sid, p.vid, MIN(e.ts) AS t, e.id AS eid FROM ${raw(`s${i}`)} p JOIN ev e ON e.session_id = p.sid AND (e.ts > p.t OR (e.ts = p.t AND e.id > p.eid)) WHERE ${stepCond(step)} GROUP BY p.sid)`,
-      );
-    }
-  });
-  const selects = steps.map((_, i) => raw(`SELECT ${i + 1} AS step, COUNT(*) AS sessions, COUNT(DISTINCT vid) AS visitors FROM s${i + 1}`));
+        raw(
+          i === 0
+            ? "s1 AS (SELECT aid, MIN(vid) AS vid FROM d1 GROUP BY aid)"
+            : `s${i + 1} AS (SELECT aid, vid FROM s${i} WHERE aid IN (SELECT aid FROM d${i + 1}))`,
+        ),
+      ),
+    );
+  } else {
+    steps.forEach((step, i) => {
+      if (i === 0) {
+        ctes.push(
+          sql`s1 AS (SELECT e.aid, e.visitor_id AS vid, MIN(e.ts) AS t, e.id AS eid, MIN(e.ts) AS t0 FROM eva e WHERE ${stepCond(step)} GROUP BY e.aid)`,
+        );
+      } else {
+        const within = w ? raw(` AND e.ts <= p.t0 + ${w}`) : EMPTY;
+        ctes.push(
+          sql`${raw(`s${i + 1}`)} AS (SELECT p.aid, p.vid, p.t0, MIN(e.ts) AS t, e.id AS eid FROM ${raw(`s${i}`)} p JOIN eva e ON e.aid = p.aid AND (e.ts > p.t OR (e.ts = p.t AND e.id > p.eid))${within} WHERE ${stepCond(step)} GROUP BY p.aid)`,
+        );
+      }
+    });
+  }
+  ctes.push(raw("rev AS (SELECT aid, SUM(revenue) AS r FROM eva WHERE revenue IS NOT NULL GROUP BY aid)"));
+  const selects = steps.map((_, i) =>
+    raw(
+      `SELECT ${i + 1} AS step, COUNT(*) AS sessions, COUNT(DISTINCT ${bySession ? "x.vid" : "x.aid"}) AS visitors, COALESCE(SUM(rv.r), 0) AS revenue FROM s${i + 1} x LEFT JOIN rev rv ON rv.aid = x.aid`,
+    ),
+  );
   return sql`WITH ${join(ctes, ",\n")}
   ${join(selects, " UNION ALL ")}`;
 }

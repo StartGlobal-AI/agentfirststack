@@ -3,8 +3,8 @@
  * Storage-agnostic like the engine: everything takes the tiny `Db` interface.
  */
 
-import { FilterError, type Filter } from "../lib/filters";
-import { type Frag, type QueryCtx, type SqlValue } from "../lib/query";
+import { FilterError, type Filter, type FilterExpr, filterLeaves } from "../lib/filters";
+import { type DebugMode, type Frag, type QueryCtx, type SqlValue, isWildcard } from "../lib/query";
 import { type Range, PeriodError, resolvePeriod } from "../lib/time";
 import type { DoError, PeriodParams, SiteSettings } from "../lib/types";
 
@@ -56,12 +56,32 @@ export function firstEventTs(db: Db): number | null {
 }
 
 export function rangeFor(db: Db, settings: SiteSettings, p: PeriodParams, now: number): Range {
-  return resolvePeriod(p, settings.timezone, now, p.period === "all" ? firstEventTs(db) : null);
+  return resolvePeriod(p, p.timezone || settings.timezone, now, p.period === "all" ? firstEventTs(db) : null);
 }
 
-export function ctxFor(db: Db, range: { start: number; end: number }, filters: Filter[]): QueryCtx {
-  const g = db.all("SELECT COUNT(*) AS n, COUNT(value) AS v FROM goals")[0];
-  return { start: range.start, end: range.end, filters, hasGoals: num(g?.n) > 0, hasGoalValues: num(g?.v) > 0 };
+/** What a request filters on: its filters, and which debug events count. */
+export interface FilterSpec {
+  filters: Filter[];
+  debug?: DebugMode;
+  where?: FilterExpr | null;
+}
+
+export function ctxFor(db: Db, range: { start: number; end: number }, spec: Filter[] | FilterSpec): QueryCtx {
+  const q: FilterSpec = Array.isArray(spec) ? { filters: spec } : spec;
+  const g = db.all("SELECT COUNT(*) AS n, COUNT(value) AS v, COALESCE(SUM(counting = 'once_per_visit'), 0) AS o FROM goals")[0];
+  const st = db.all("SELECT value FROM meta WHERE key = 'settings'")[0]?.value;
+  const contentGroups = st ? ((JSON.parse(String(st)) as SiteSettings).content_groups ?? []) : [];
+  return {
+    start: range.start,
+    end: range.end,
+    filters: q.filters,
+    debug: q.debug,
+    where: q.where ?? null,
+    hasGoals: num(g?.n) > 0,
+    hasGoalValues: num(g?.v) > 0,
+    hasOnceGoals: num(g?.o) > 0,
+    contentGroups,
+  };
 }
 
 export function goalNames(db: Db): Set<string> {
@@ -80,10 +100,14 @@ export function unknownGoals(db: Db, names: string[], what = "goal(s)"): DoError
   );
 }
 
-export function checkGoalFilters(db: Db, filters: Filter[]): DoError | null {
+/** Goal names a filter set names (wildcard patterns aside) must exist. */
+export function checkGoalFilters(db: Db, filters: Filter[], where?: FilterExpr | null): DoError | null {
   return unknownGoals(
     db,
-    filters.filter((f) => f.key === "goal" && (f.op === "==" || f.op === "!=")).flatMap((f) => f.values),
+    [...filters, ...filterLeaves(where)]
+      .filter((f) => f.key === "goal" && (f.op === "==" || f.op === "!="))
+      .flatMap((f) => f.values)
+      .filter((v) => !isWildcard(v)),
   );
 }
 
