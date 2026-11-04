@@ -184,7 +184,16 @@ claude mcp add --transport http afs-replay https://replay.agentfirststack.com/mc
     }
   }
 }</code></pre>
-<p>Keep the key out of files you commit.</p>
+<p>Keep the key out of files you commit. In Claude Code, a project <code>.mcp.json</code> can name the environment variable instead, and it's expanded when Claude Code starts, so the file is safe to commit (start Claude Code with the variable exported):</p>
+<pre><code>{
+  "mcpServers": {
+    "afs": {
+      "type": "http",
+      "url": "https://agentfirststack.com/mcp",
+      "headers": { "Authorization": "Bearer ${AGENTFIRSTSTACK_API_KEY}" }
+    }
+  }
+}</code></pre>
 
 <h2 id="servers">Servers</h2>
 <p>Every server is stateless Streamable HTTP and accepts the same key. The gateway forwards each call to the service that owns the tool, with your key, so scopes and errors behave exactly as on the service.</p>

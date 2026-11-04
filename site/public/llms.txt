@@ -284,6 +284,22 @@ One MCP server for every service (235 tools, prefixed `analytics_`, `tags_`, `ma
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
 ```
 
+That stores the key itself in your local Claude Code config (not in the repo). In a shared repo,
+commit a project `.mcp.json` that names the environment variable instead; Claude Code expands it
+when it starts, so the key never lands in a file (start Claude Code with the variable exported):
+
+```json
+{
+  "mcpServers": {
+    "afs": {
+      "type": "http",
+      "url": "https://agentfirststack.com/mcp",
+      "headers": { "Authorization": "Bearer ${AGENTFIRSTSTACK_API_KEY}" }
+    }
+  }
+}
+```
+
 Or one server per service (stateless Streamable HTTP, same key):
 
 ```sh
