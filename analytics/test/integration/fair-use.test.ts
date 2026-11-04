@@ -111,10 +111,14 @@ describe("edge rate limits (findings 1, 2, 4)", () => {
 
   it("the real SQL_LIMITER binding (30 a minute per account) stops the 31st query", async () => {
     const { key, site } = await newSite("sqlrate.test", {}, await newAccount());
+    // The limiter counts in fixed 60 s windows, so a slow runner can straddle a boundary: keep
+    // querying until it refuses, which must happen within two windows (at most 60 successes).
     const codes: number[] = [];
-    for (let i = 0; i < 31; i++) codes.push((await call(`/v1/sites/${site}/sql?q=SELECT%201`, { key })).status);
-    expect(codes.slice(0, 30).every((c) => c === 200)).toBe(true);
-    expect(codes[30]).toBe(429);
+    for (let i = 0; i < 61 && codes.at(-1) !== 429; i++) codes.push((await call(`/v1/sites/${site}/sql?q=SELECT%201`, { key })).status);
+    expect(codes.at(-1)).toBe(429);
+    expect(codes.slice(0, -1).every((c) => c === 200)).toBe(true);
+    expect(codes.length - 1).toBeGreaterThanOrEqual(30);
+    expect(codes.length - 1).toBeLessThanOrEqual(60);
   });
 });
 
