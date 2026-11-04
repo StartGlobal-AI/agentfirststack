@@ -91,6 +91,15 @@ function publicFields(connector: Connector, creds: Record<string, unknown>) {
   return out;
 }
 
+/**
+ * What an OAuth access token may not do (assertPermanentKey in @afs/shared): a destination keeps
+ * receiving conversion data, hashed PII included, after the token that pointed it somewhere expires.
+ */
+export const DESTINATION_ACTIONS = {
+  add: "add destinations",
+  change: "change a destination's URL or credentials",
+} as const;
+
 /** Circuit breaker state, as GET /destinations and the test show it. */
 export function destinationHealth(row: DestinationRow, now = Date.now()) {
   const open = !!row.circuit_open_until && row.circuit_open_until > now;

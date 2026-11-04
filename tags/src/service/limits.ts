@@ -70,7 +70,7 @@ export function limits(env: object, standing: Standing = CLAIMED) {
   };
 }
 
-/** Data-plane caps a ContainerDO enforces (per container, per UTC day where it says so). */
+/** Data-plane caps a ContainerDO enforces (per container, per UTC day where it says so; see also eventBudgets). */
 export function containerCaps(env: object, standing: Standing = CLAIMED) {
   const cap = (name: string, fallback: number) => standingCap(env, standing, name, fallback);
   return {
@@ -90,6 +90,24 @@ export function deliveryBudgets(env: object, standing: Standing = CLAIMED) {
     platform: standingCap(env, standing, "MAX_DELIVERIES_PER_DAY", Number.POSITIVE_INFINITY),
   };
 }
+
+/**
+ * Account and platform-wide daily event budgets (each ContainerDO reports its counts to D1, see
+ * budget.ts). Browser hits and backend events are counted, and capped, separately, like
+ * MAX_EVENTS_PER_CONTAINER_PER_DAY.
+ */
+export function eventBudgets(env: object, standing: Standing = CLAIMED) {
+  return {
+    /** Summed over the account's containers. */
+    perAccount: standingCap(env, standing, "MAX_EVENTS_PER_ACCOUNT_PER_DAY", Number.POSITIVE_INFINITY),
+    // One platform counter; unclaimed accounts stop at UNCLAIMED_MAX_EVENTS_PER_DAY, claimed ones at the full budget.
+    platform: standingCap(env, standing, "MAX_EVENTS_PER_DAY", Number.POSITIVE_INFINITY),
+  };
+}
+export type EventBudgets = ReturnType<typeof eventBudgets>;
+
+/** Do the budgets need the account / platform totals (a D1 aggregate)? No budget = no D1 call. */
+export const needsAggregate = (b: EventBudgets) => Number.isFinite(b.perAccount) || Number.isFinite(b.platform);
 
 /** CIRCUIT_BREAKER_FAILURES "0" turns the breaker off; CIRCUIT_BREAKER_MINUTES is how long it stays open. */
 export function circuitBreaker(env: { CIRCUIT_BREAKER_FAILURES?: string; CIRCUIT_BREAKER_MINUTES?: string }) {

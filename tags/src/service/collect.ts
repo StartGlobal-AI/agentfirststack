@@ -4,6 +4,7 @@ import type { ContainerConfig } from "../config/schema";
 import type { CollectResult } from "../do/container-do";
 import type { Bindings } from "../env";
 import { CLICK_ID_DAYS, clickCookieName, VISITOR_COOKIE } from "../lib/clickids";
+import { eventQuotaError } from "./budget";
 import { containerStub, resyncById } from "./containers";
 import { type CollectHit, cleanClickIds, cleanCollectPayload, type Enrichment } from "./ingest";
 import { collectSchema } from "./ingest-schema";
@@ -188,13 +189,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
     }
     if (!result.ok) {
       if (result.error === "suspended") throw accountSuspended();
-      if (result.error === "quota")
-        throw new ApiError(
-          429,
-          "quota_exceeded",
-          `This container received its ${result.limit} browser events for today; hits are dropped until 00:00 UTC.`,
-          "GET /v1/containers/:id shows stats.today. Backend events (POST /v1/containers/:id/events) have their own daily quota.",
-        );
+      if (result.error === "quota") throw eventQuotaError(env, { scope: result.scope, kind: "browser", limit: result.limit });
       if (result.error === "storage_full")
         throw new ApiError(
           507,

@@ -94,7 +94,7 @@ export interface DeliveryResult {
 export interface SendContext {
   test: boolean;
   fetch: typeof fetch;
-  env: { DEV_MODE?: string; ANALYTICS_BASE_URL?: string; PUBLIC_BASE_URL?: string };
+  env: { DEV_MODE?: string; ANALYTICS_BASE_URL?: string; PUBLIC_BASE_URL?: string; AUTH_ISSUER?: string };
   /** Destination id + container id, for webhooks and token caching. */
   destinationId: string;
   containerId: string;

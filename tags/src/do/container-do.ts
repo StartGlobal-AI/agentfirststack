@@ -3,10 +3,10 @@ import { accountStanding, randomString, type Standing } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { DispatchEvent } from "../destinations/types";
 import type { Bindings } from "../env";
-import { reserveDeliveries } from "../service/budget";
+import { type EventCounts, type EventScope, NO_EVENTS, reportEventUsage, reserveDeliveries } from "../service/budget";
 import { aggregateStatus, type DestinationInfo, planDispatch, type PlannedTarget, type TargetResult } from "../service/dispatch-plan";
 import { mergeVisitor, type VisitorData, type VisitorUpdate } from "../service/identity";
-import { containerCaps, shownCap, utcDay } from "../service/limits";
+import { containerCaps, type EventBudgets, eventBudgets, needsAggregate, shownCap, utcDay } from "../service/limits";
 import {
   browserDispatchEvent,
   type CollectHit,
@@ -25,6 +25,12 @@ export const VISITOR_RETENTION_DAYS = 180;
 const DAY = 86_400_000;
 /** Backend events keep working past MAX_CONTAINER_DB_BYTES up to this factor, so a /collect flood can't block them. */
 export const SERVER_STORAGE_HEADROOM = 1.25;
+/** Report this container's daily event counts to the account / platform aggregate (D1) at most this often... */
+const AGGREGATE_EVERY_MS = 60_000;
+/** ...or after 1% of the smaller budget in new events (at most 1,000), whichever comes first. */
+const AGGREGATE_EVERY_EVENTS = 1_000;
+const aggregateEvery = (b: EventBudgets) =>
+  Math.max(1, Math.min(AGGREGATE_EVERY_EVENTS, Math.floor(Math.min(b.perAccount, b.platform) / 100)));
 
 export interface ContainerState {
   id: string;
@@ -45,12 +51,16 @@ export interface DispatchMessage {
 export type CollectResult =
   | { ok: true; event_id: string; duplicate?: boolean; visitor_id?: string; destinations?: PlannedTarget[]; note?: string }
   | { ok: false; error: "not_synced" | "origin_not_allowed" | "suspended"; host?: string }
-  | { ok: false; error: "quota" | "storage_full"; limit: number };
+  | { ok: false; error: "quota"; scope: EventScope; limit: number }
+  | { ok: false; error: "storage_full"; limit: number };
 
 export type IngestRefusal =
   | { error: "not_synced" | "suspended" }
-  | { error: "quota"; limit: number; used: number }
+  | { error: "quota"; scope: EventScope; limit: number; used: number }
   | { error: "storage_full"; limit: number };
+
+/** Today's events on the account's other containers and on the rest of the platform (from D1). */
+type Others = { account: EventCounts; platform: EventCounts };
 
 export interface ServerIngestResult {
   event_id: string;
@@ -113,11 +123,19 @@ const EVENT_COLS =
  * Storage is only created by `sync()`, which only the control plane calls (container create,
  * publish, rollback, destination changes, or a resync of a container that exists in D1). An id
  * nobody created answers `not_synced` and writes nothing, so /collect can't mint objects.
+ *
+ * Daily event caps live here too: the container's own (`usage` table, only ever incremented) and,
+ * when MAX_EVENTS_PER_ACCOUNT_PER_DAY or MAX_EVENTS_PER_DAY is set, the account's and platform's
+ * totals: this container's counts are reported to D1 at most once a minute or per 1% of the
+ * smaller budget, and the totals come back with each report.
  */
 export class ContainerDO extends DurableObject<Bindings> {
   private sql: SqlStorage;
   /** Tables exist. False for an id that was never initialised through the API. */
   private ready: boolean;
+  /** The last report to the D1 aggregate today: when, this container's counts then, and the totals it read back. */
+  private agg = { day: "", at: 0, flushed: NO_EVENTS, account: NO_EVENTS, platform: NO_EVENTS };
+  private aggInflight: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
@@ -216,11 +234,14 @@ export class ContainerDO extends DurableObject<Bindings> {
     return this.sql.exec("SELECT 1 FROM meta WHERE k = 'container'").toArray().length === 0;
   }
 
+  /** Delete everything this container stored. Its counts for today stay in the account / platform aggregate. */
   async destroy() {
+    await this.flushEventUsage();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.ready = false;
     this.visitorCount = null;
+    this.agg = { day: "", at: 0, flushed: NO_EVENTS, account: NO_EVENTS, platform: NO_EVENTS };
     return { ok: true };
   }
 
@@ -441,6 +462,111 @@ export class ContainerDO extends DurableObject<Bindings> {
       );
   }
 
+  private eventsOn(day: string): EventCounts {
+    return { browser: this.usage(day, "browser_events"), server: this.usage(day, "server_events") };
+  }
+
+  /** This container's counts as of its last report to D1 today, or null if it hasn't reported today (budgets off). */
+  private reportedOn(day: string): EventCounts | null {
+    const rows = this.sql
+      .exec<{ kind: string; n: number }>(
+        "SELECT kind, n FROM usage WHERE day = ? AND kind IN ('browser_events_reported', 'server_events_reported')",
+        day,
+      )
+      .toArray();
+    if (!rows.length) return null;
+    const n = (kind: string) => rows.find((r) => r.kind === kind)?.n ?? 0;
+    return { browser: n("browser_events_reported"), server: n("server_events_reported") };
+  }
+
+  private setReported(day: string, c: EventCounts) {
+    for (const [kind, n] of [
+      ["browser_events_reported", c.browser],
+      ["server_events_reported", c.server],
+    ] as const)
+      this.sql.exec(
+        "INSERT INTO usage (day, kind, n) VALUES (?, ?, ?) ON CONFLICT(day, kind) DO UPDATE SET n = MAX(n, excluded.n)",
+        day,
+        kind,
+        n,
+      );
+  }
+
+  /** The aggregate state for `day` (a new day starts from what this container last reported). */
+  private aggFor(day: string) {
+    if (this.agg.day !== day)
+      this.agg = { day, at: 0, flushed: this.reportedOn(day) ?? NO_EVENTS, account: NO_EVENTS, platform: NO_EVENTS };
+    return this.agg;
+  }
+
+  /**
+   * Today's events on the account's other containers and on the rest of the platform, from the
+   * last report to the D1 aggregate (made now if this instance hasn't reported today yet).
+   */
+  private async othersToday(state: ContainerState, day: string): Promise<Others> {
+    if (this.aggFor(day).at === 0) await this.reportOnce(state, day);
+    const { flushed, account, platform } = this.agg;
+    const minus = (t: EventCounts) => ({
+      browser: Math.max(0, t.browser - flushed.browser),
+      server: Math.max(0, t.server - flushed.server),
+    });
+    return { account: minus(account), platform: minus(platform) };
+  }
+
+  /** After an ingest: report this container's counts when due (a minute passed, or enough new events). */
+  private async reportIfDue(state: ContainerState, budgets: EventBudgets, day: string): Promise<void> {
+    if (this.agg.day !== day) return;
+    const local = this.eventsOn(day);
+    const { flushed, at } = this.agg;
+    const fresh = Math.max(local.browser - flushed.browser, local.server - flushed.server);
+    if (fresh >= aggregateEvery(budgets) || (fresh > 0 && Date.now() - at >= AGGREGATE_EVERY_MS)) await this.reportOnce(state, day);
+  }
+
+  private reportOnce(state: ContainerState, day: string): Promise<void> {
+    this.aggInflight ??= this.report(state, day, this.eventsOn(day)).finally(() => {
+      this.aggInflight = null;
+    });
+    return this.aggInflight;
+  }
+
+  /**
+   * Report this container's counts (absolute and non-decreasing, so a repeat is harmless) and read
+   * back the account's and platform's totals; the platform's grows by the delta since the last report.
+   */
+  private async report(state: ContainerState, day: string, local: EventCounts): Promise<void> {
+    const now = Date.now();
+    const { flushed } = this.aggFor(day);
+    const delta = { browser: Math.max(0, local.browser - flushed.browser), server: Math.max(0, local.server - flushed.server) };
+    const totals = await reportEventUsage(this.env.DB, { containerId: state.id, accountId: state.account_id, day, local, delta, now });
+    if (!totals) {
+      this.agg.at = now; // D1 failed (logged): keep the last totals, try again in a minute
+      return;
+    }
+    this.agg = { day, at: now, flushed: local, ...totals };
+    if (this.ready) this.setReported(day, local);
+  }
+
+  /** Before deleting: report counts not yet in D1, so re-creating the container frees nothing. No D1 call if it never reported today. */
+  private async flushEventUsage() {
+    const state = this.getMeta<ContainerState>("container");
+    const day = utcDay(Date.now());
+    if (!state || !this.reportedOn(day)) return;
+    await this.aggInflight;
+    const { flushed } = this.aggFor(day);
+    const local = this.eventsOn(day);
+    if (local.browser > flushed.browser || local.server > flushed.server) await this.reportOnce(state, day);
+  }
+
+  /** The account and platform budget `n` more events of `kind` would pass, if any (`used`: this container's today). */
+  private overBudget(others: Others | null, b: EventBudgets, kind: keyof EventCounts, used: number, n: number) {
+    if (!others) return null;
+    const account = others.account[kind] + used;
+    if (account + n > b.perAccount) return { scope: "account" as const, limit: b.perAccount, used: account };
+    const platform = others.platform[kind] + used;
+    if (platform + n > b.platform) return { scope: "platform" as const, limit: b.platform, used: platform };
+    return null;
+  }
+
   /** Skip queued targets past the first `granted`, with `reason` (logged on the event). */
   private limitTargets(targets: PlannedTarget[], granted: number, reason: string): PlannedTarget[] {
     let n = 0;
@@ -496,17 +622,23 @@ export class ContainerDO extends DurableObject<Bindings> {
     const standing = await accountStanding(this.env, state.account_id);
     if (standing.suspended) return { ok: false, error: "suspended" };
     const caps = containerCaps(this.env, standing);
+    const budgets = eventBudgets(this.env, standing);
     const now = hit.enrich.received_at;
     const day = utcDay(now);
     const eventId = p.event_id ?? `${p.type === "visit" ? "v" : "e"}_${randomString(20)}`;
     const duplicate: CollectResult = { ok: true, event_id: eventId, duplicate: true };
+    // The account's and platform's totals, only when a budget is set (the D1 call, if any, is here).
+    const others = needsAggregate(budgets) ? await this.othersToday(state, day) : null;
 
     // Dedupe among browser rows first (retried beacons, double-fired triggers) so counters don't
     // move. Everything from here to insertEvent is synchronous, so the check can't be raced.
     if (this.eventRow("browser", eventId)) return duplicate;
-    // Public ingest stops writing when the database or today's event quota is full.
+    // Public ingest stops writing when the database or today's event quota (or budget) is full.
     if (this.sql.databaseSize > caps.dbBytes) return { ok: false, error: "storage_full", limit: caps.dbBytes };
-    if (this.usage(day, "browser_events") >= caps.eventsPerDay) return { ok: false, error: "quota", limit: caps.eventsPerDay };
+    const used = this.usage(day, "browser_events");
+    if (used >= caps.eventsPerDay) return { ok: false, error: "quota", scope: "container", limit: caps.eventsPerDay };
+    const over = this.overBudget(others, budgets, "browser", used, 1);
+    if (over) return { ok: false, error: "quota", scope: over.scope, limit: over.limit };
     const visitor = p.visitor_id ? this.upsertVisitor(p.visitor_id, visitorUpdateFromHit(hit), now, caps.visitors) : null;
 
     if (p.type === "visit") {
@@ -533,8 +665,10 @@ export class ContainerDO extends DurableObject<Bindings> {
         results: {},
         note: null,
       });
-      if (inserted) this.bump(day, "browser_events", 1);
-      return inserted ? { ok: true, event_id: eventId, visitor_id: p.visitor_id } : duplicate;
+      if (!inserted) return duplicate;
+      this.bump(day, "browser_events", 1);
+      if (others) await this.reportIfDue(state, budgets, day);
+      return { ok: true, event_id: eventId, visitor_id: p.visitor_id };
     }
 
     const config = hit.preview_config ?? this.getMeta<ContainerConfig>("config");
@@ -580,6 +714,7 @@ export class ContainerDO extends DurableObject<Bindings> {
     this.bump(day, "deliveries", targets.filter((t) => t.status === "queued").length);
     ({ targets, results: planned } = await this.accountBudget(event, targets, planned, state.account_id, standing, now));
     await this.enqueue(event, targets, planned, state.id, now);
+    if (others) await this.reportIfDue(state, budgets, day);
     await this.ensureAlarm();
     return { ok: true, event_id: eventId, visitor_id: p.visitor_id, destinations: targets, ...(note ? { note } : {}) };
   }
@@ -598,10 +733,14 @@ export class ContainerDO extends DurableObject<Bindings> {
     const standing = await accountStanding(this.env, state.account_id);
     if (standing.suspended) return { error: "suspended" };
     const caps = containerCaps(this.env, standing);
+    const budgets = eventBudgets(this.env, standing);
     const day = utcDay(opts.now);
+    const others = needsAggregate(budgets) ? await this.othersToday(state, day) : null;
     if (this.sql.databaseSize > caps.dbBytes * SERVER_STORAGE_HEADROOM) return { error: "storage_full", limit: caps.dbBytes };
     const used = this.usage(day, "server_events");
-    if (used + events.length > caps.eventsPerDay) return { error: "quota", limit: caps.eventsPerDay, used };
+    if (used + events.length > caps.eventsPerDay) return { error: "quota", scope: "container", limit: caps.eventsPerDay, used };
+    const over = this.overBudget(others, budgets, "server", used, events.length);
+    if (over) return { error: "quota", ...over };
     const config = this.getMeta<ContainerConfig>("config");
     const destinations = this.getMeta<DestinationInfo[]>("destinations") ?? [];
     const phoneCc = config?.settings?.phone_country_code;
@@ -722,6 +861,7 @@ export class ContainerDO extends DurableObject<Bindings> {
         ...(note ? { note } : {}),
       });
     }
+    if (others) await this.reportIfDue(state, budgets, day);
     await this.ensureAlarm();
     return out;
   }
@@ -839,14 +979,22 @@ export class ContainerDO extends DurableObject<Bindings> {
     const visitors = one<{ n: number }>("SELECT COUNT(*) AS n FROM visitors");
     const config = this.getMeta<ContainerConfig>("config");
     const state = this.getMeta<ContainerState>("container");
-    const caps = containerCaps(this.env, state ? await accountStanding(this.env, state.account_id) : undefined);
+    const standing = state ? await accountStanding(this.env, state.account_id) : undefined;
+    const caps = containerCaps(this.env, standing);
+    const budgets = eventBudgets(this.env, standing);
     const day = utcDay(Date.now());
+    const totals = state && needsAggregate(budgets) ? await this.totalsToday(state, day) : null;
+    const reached = (t: EventCounts | undefined, cap: number) => !!t && (t.browser >= cap || t.server >= cap);
     const bytes = this.sql.databaseSize;
     const today = {
       day,
       browser_events: this.usage(day, "browser_events"),
       server_events: this.usage(day, "server_events"),
       deliveries: this.usage(day, "deliveries"),
+      // Summed over the account's containers (up to a minute behind for the others).
+      ...(totals && Number.isFinite(budgets.perAccount)
+        ? { account: { browser_events: totals.account.browser, server_events: totals.account.server } }
+        : {}),
     };
     return {
       synced: !!state,
@@ -862,12 +1010,34 @@ export class ContainerDO extends DurableObject<Bindings> {
       today,
       limits: {
         events_per_day: shownCap(caps.eventsPerDay),
+        events_per_account_per_day: shownCap(budgets.perAccount),
+        platform_events_per_day: shownCap(budgets.platform),
         deliveries_per_day: shownCap(caps.deliveriesPerDay),
         visitors: shownCap(caps.visitors),
         db_bytes: shownCap(caps.dbBytes),
       },
       storage: { bytes, limit: shownCap(caps.dbBytes), full: bytes > caps.dbBytes },
       quota_reached: today.browser_events >= caps.eventsPerDay,
+      // Browser hits or backend events refused by the account's or the platform's daily budget.
+      account_quota_reached: reached(totals?.account, budgets.perAccount),
+      platform_quota_reached: reached(totals?.platform, budgets.platform),
     };
+  }
+
+  /** The account's and platform's events today, this container's included (reported first if behind or over a minute old). */
+  private async totalsToday(state: ContainerState, day: string): Promise<Others> {
+    const agg = this.aggFor(day);
+    const local = this.eventsOn(day);
+    if (
+      agg.at === 0 ||
+      Date.now() - agg.at >= AGGREGATE_EVERY_MS ||
+      local.browser > agg.flushed.browser ||
+      local.server > agg.flushed.server
+    )
+      await this.reportOnce(state, day);
+    const others = await this.othersToday(state, day);
+    const mine = this.eventsOn(day);
+    const plus = (t: EventCounts) => ({ browser: t.browser + mine.browser, server: t.server + mine.server });
+    return { account: plus(others.account), platform: plus(others.platform) };
   }
 }

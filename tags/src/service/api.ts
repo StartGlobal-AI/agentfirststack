@@ -1,4 +1,4 @@
-import { type AuthContext, badRequest } from "@afs/shared";
+import { type AuthContext, assertPermanentKey, badRequest } from "@afs/shared";
 import { z } from "zod";
 import { schemaDocument } from "../config/catalog";
 import type { EventFilter } from "../do/container-do";
@@ -18,6 +18,7 @@ import {
 } from "./containers";
 import {
   createDestination,
+  DESTINATION_ACTIONS,
   deleteDestination,
   destinationSettings,
   getDestination,
@@ -130,11 +131,19 @@ export const ops = {
     const stats = (await containerStats(o.env, id)) as Record<string, unknown> & {
       storage?: { full: boolean };
       quota_reached?: boolean;
+      account_quota_reached?: boolean;
+      platform_quota_reached?: boolean;
     };
     const warnings: string[] = [];
     if (stats.storage?.full)
       warnings.push("The container's event store is full: /collect hits aren't stored until old rows are purged (daily).");
     if (stats.quota_reached) warnings.push("Today's browser event quota is used up: /collect hits are dropped until 00:00 UTC.");
+    if (stats.account_quota_reached)
+      warnings.push(
+        "The account's daily event budget (across its containers) is used up for browser hits or backend events (stats.today.account): they're refused until 00:00 UTC.",
+      );
+    if (stats.platform_quota_reached)
+      warnings.push("This service's daily event budget is used up for browser hits or backend events: they're refused until 00:00 UTC.");
     for (const d of dest.map(presentDestination))
       if (d.health.circuit === "open")
         warnings.push(`Destination ${d.id} (${d.type}) has an open circuit after repeated failures; fix it and run its test.`);
@@ -312,6 +321,8 @@ export const ops = {
   },
 
   async addDestination(o: OpCtx, id: string, input: z.infer<typeof destinationInput>) {
+    // A destination keeps receiving conversion data (hashed PII included) after an OAuth token expires.
+    assertPermanentKey(o.auth, DESTINATION_ACTIONS.add);
     const { row, existing } = await createDestination(o.env, o.auth.accountId, id, input, o.origins);
     return {
       status: existing ? 200 : 201,
@@ -339,6 +350,7 @@ export const ops = {
   },
 
   async updateDestination(o: OpCtx, id: string, did: string, input: z.infer<typeof destinationPatch>) {
+    if (input.credentials) assertPermanentKey(o.auth, DESTINATION_ACTIONS.change);
     return { destination: presentDestination(await updateDestination(o.env, o.auth.accountId, id, did, input, o.origins)) };
   },
 
@@ -374,7 +386,7 @@ export const ops = {
   },
 
   async setup(o: OpCtx, id: string, input: RecipeInput) {
-    return applyRecipe(o.env, o.auth.accountId, id, input, o.origins);
+    return applyRecipe(o.env, o.auth, id, input, o.origins);
   },
 
   async currentDraft(o: OpCtx, id: string) {

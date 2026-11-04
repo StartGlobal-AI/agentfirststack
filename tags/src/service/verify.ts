@@ -2,7 +2,7 @@ import { ApiError, hmacSha256Hex, type Standing } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import { readTextBounded } from "../lib/http";
 import { limits, standingFlag } from "./limits";
-import { fetchPage, hasSnippet } from "./scan";
+import { fetchPage, hasSnippet, homepageProof, isHomepage } from "./scan";
 
 export { hasSnippet };
 
@@ -14,7 +14,8 @@ export { hasSnippet };
  *     UNCLAIMED_ALLOW_CUSTOM_CODE (default false) for agent-only ones;
  *   - the container's domain is verified: a DNS TXT record `_afs-verify.<domain>` with the value
  *     from GET /v1/containers/:id (checked over DNS-over-HTTPS), or this container's snippet in a
- *     <script src> on https://<domain>/ (found by scan or verify);
+ *     real <script src> on https://<domain>/ itself (or www.; no query string, answered 2xx; found
+ *     by scan or verify);
  *   - its size is within MAX_CUSTOM_CODE_BYTES (when set).
  * Preview links of an unverified draft are served without the custom code.
  */
@@ -195,7 +196,7 @@ export async function checkDomain(
   if (method !== "dns") {
     const home = `https://${row.domain}/`;
     const page = await fetchPage(home, row.domain, fetchImpl);
-    const ok = !!page.html && new URL(page.url).protocol === "https:" && hasSnippet(page.html, row.id);
+    const ok = homepageProof(page, row.domain, row.id);
     checks.push({
       method: "snippet",
       ok,
@@ -203,7 +204,9 @@ export async function checkDomain(
         ? `The snippet for ${row.id} is on ${page.url}.`
         : page.error
           ? `Couldn't read ${home}: ${page.error}`
-          : `No <script src=".../c/${row.id}.js"> on ${page.url} (status ${page.status}).`,
+          : !isHomepage(page.url, row.domain)
+            ? `${home} redirected to ${page.url}; only https://${row.domain}/ or https://www.${row.domain}/ itself counts (or use the DNS TXT record).`
+            : `No <script src=".../c/${row.id}.js"> in a script tag on ${page.url} (status ${page.status}).`,
     });
     if (ok) return { verified: "snippet", checks };
   }

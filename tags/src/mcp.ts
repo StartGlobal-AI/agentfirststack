@@ -66,7 +66,7 @@ function registerTools(t: ToolRegistrar, o: OpCtx) {
     {
       title: "Get container",
       description:
-        "One container: settings, live version, domain verification (with the DNS TXT record to add), destinations (credentials redacted, circuit-breaker health), last-24h stats, today's usage against daily limits and storage. Use it to verify the snippet is sending hits.",
+        "One container: settings, live version, domain verification (with the DNS TXT record to add), destinations (credentials redacted, circuit-breaker health), last-24h stats, today's usage against daily limits (the container's, and the account's and platform's event budgets when set) and storage. Use it to verify the snippet is sending hits.",
       input: { container_id: id },
     },
     async (a) => ops.getContainer(o, a.container_id),
@@ -234,7 +234,7 @@ function registerTools(t: ToolRegistrar, o: OpCtx) {
     {
       title: "Add destination",
       description:
-        "Add a server-side destination: ga4 (Measurement Protocol), meta (Conversions API), google_ads (offline click conversions via Data Manager API or Google Ads API), tiktok (Events API), analytics (this platform's analytics app), webhook (signed POST; not to this deployment's own host; redirects aren't followed). Credentials are encrypted and never returned. Idempotent per platform id. At most MAX_DESTINATIONS_PER_CONTAINER (default 10) per container. Webhooks get conversions defined in the config (settings.all_events: true for every backend event) with 3 attempts; analytics base_url must be this platform's analytics host. Repeated failures open a circuit (deliveries skipped) until a test passes. Then run test_destination.",
+        "Add a server-side destination: ga4 (Measurement Protocol), meta (Conversions API), google_ads (offline click conversions via Data Manager API or Google Ads API), tiktok (Events API), analytics (this platform's analytics app), webhook (signed POST to a public https host; never this platform's domain or its subdomains; redirects aren't followed). Credentials are encrypted and never returned. Idempotent per platform id. At most MAX_DESTINATIONS_PER_CONTAINER (default 10) per container. Webhooks get conversions defined in the config (settings.all_events: true for every backend event) with 3 attempts; analytics base_url must be this platform's analytics host. Repeated failures open a circuit (deliveries skipped) until a test passes. Needs the project's own API key: a connected app's OAuth access token gets temporary_credential (a destination outlives it). Then run test_destination.",
       input: { container_id: id, ...destinationInput.shape },
       openWorld: true,
     },
@@ -253,7 +253,8 @@ function registerTools(t: ToolRegistrar, o: OpCtx) {
     "update_destination",
     {
       title: "Update destination",
-      description: "Change name, enabled, settings.conversions filter, or credentials (send only the fields that change; they're merged).",
+      description:
+        "Change name, enabled, settings.conversions filter, or credentials (send only the fields that change; they're merged). Changing credentials (a webhook url included) needs the project's own API key, not an OAuth access token.",
       input: { container_id: id, destination_id: did, ...destinationPatch.shape },
     },
     async ({ container_id, destination_id, ...rest }) => ops.updateDestination(o, container_id, destination_id, rest),
@@ -323,7 +324,7 @@ function registerTools(t: ToolRegistrar, o: OpCtx) {
     {
       title: "Set up conversion tracking",
       description:
-        "Recipe: give the platforms you use (ids/credentials you have) and the conversions in plain terms (when: thank_you_path | form_selector | data_layer_event | click_selector, value, currency, email source). Writes a complete draft (base tags, triggers, variables, conversions with each platform's standard event names, consent), creates server destinations for platforms with credentials, validates, and returns what's still missing (with where to find each id) plus next_steps. Merges into the existing draft by default. Does not publish.",
+        "Recipe: give the platforms you use (ids/credentials you have) and the conversions in plain terms (when: thank_you_path | form_selector | data_layer_event | click_selector, value, currency, email source). Writes a complete draft (base tags, triggers, variables, conversions with each platform's standard event names, consent), creates server destinations for platforms with credentials (not with an OAuth access token: those are listed in destination_errors as temporary_credential), validates, and returns what's still missing (with where to find each id) plus next_steps. Merges into the existing draft by default. Does not publish.",
       input: { container_id: id, ...recipeInput.shape },
       openWorld: true,
     },

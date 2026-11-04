@@ -523,11 +523,129 @@ export function onDomain(u: URL, domain: string): boolean {
   return (h === domain || h.endsWith(`.${domain}`)) && fetchableHost(h);
 }
 
-/** This container's snippet in a <script src> (direct or through a first-party proxy prefix). */
+/** Elements whose content isn't markup, or never runs: a <script> inside one isn't a tag. */
+const RAW_TEXT = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "noscript", "template"]);
+const TAG_NAME = /[a-zA-Z][^\s/>]*/y;
+const ATTR_NAME = /[^\s/>=]+/y;
+const UNQUOTED = /[^\s>]*/y;
+const WS = /\s*/y;
+const WS_OR_SLASH = /[\s/]*/y;
+
+/**
+ * The src of each real <script> start tag, in order. Comments, attribute values and the content
+ * of raw-text elements (script, style, textarea, title, noscript, template...) are skipped, so
+ * text a page only echoes (a JSON blob, a comment, an attribute, a search box) is never a tag.
+ */
+export function scriptSrcs(html: string, max = 100): string[] {
+  const out: string[] = [];
+  const lower = html.toLowerCase();
+  const at = (re: RegExp, pos: number) => {
+    re.lastIndex = pos;
+    return re.exec(html)?.[0] ?? "";
+  };
+  let i = 0;
+  while (out.length < max) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) break;
+    if (html.startsWith("<!--", lt)) {
+      const end = html.indexOf("-->", lt + 4);
+      if (end < 0) break;
+      i = end + 3;
+      continue;
+    }
+    if (html[lt + 1] === "!" || html[lt + 1] === "?" || html[lt + 1] === "/") {
+      const end = html.indexOf(">", lt + 2);
+      if (end < 0) break;
+      i = end + 1;
+      continue;
+    }
+    const name = at(TAG_NAME, lt + 1).toLowerCase();
+    if (!name) {
+      i = lt + 1;
+      continue;
+    }
+    let j = lt + 1 + name.length;
+    let src: string | undefined;
+    for (;;) {
+      j += at(WS_OR_SLASH, j).length;
+      if (j >= html.length || html[j] === ">") break;
+      const attr = at(ATTR_NAME, j) || html[j]!;
+      j += attr.length;
+      j += at(WS, j).length;
+      let value = "";
+      if (html[j] === "=") {
+        j++;
+        j += at(WS, j).length;
+        const q = html[j];
+        if (q === '"' || q === "'") {
+          const end = html.indexOf(q, j + 1);
+          if (end < 0) {
+            j = html.length;
+            break;
+          }
+          value = html.slice(j + 1, end);
+          j = end + 1;
+        } else {
+          value = at(UNQUOTED, j);
+          j += value.length;
+        }
+      }
+      if (src === undefined && attr.toLowerCase() === "src") src = value;
+    }
+    i = j + 1;
+    if (name === "script" && src !== undefined) out.push(src.trim());
+    if (RAW_TEXT.has(name)) {
+      const close = lower.indexOf(`</${name}`, i);
+      if (close < 0) break;
+      i = close;
+    }
+  }
+  return out;
+}
+
+/** This container's snippet in a real <script src> (direct or through a first-party proxy prefix). */
 export function hasSnippet(html: string, containerId: string): boolean {
   if (!/^ctr_[a-z0-9]{8,32}$/.test(containerId)) return false;
-  const re = new RegExp(`<script\\b[^>]*\\bsrc\\s*=\\s*["']?[^"'\\s>]*/c/${containerId}\\.js(?:[?#][^"'\\s>]*)?["'\\s>]`, "i");
-  return re.test(html);
+  const path = `/c/${containerId}.js`;
+  return scriptSrcs(html).some((src) => {
+    try {
+      return new URL(src, "https://snippet.invalid/").pathname.endsWith(path);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Exactly https://<domain>/ or https://www.<domain>/: no path, query or fragment. */
+export function isHomepage(raw: string, domain: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  const h = u.hostname.toLowerCase();
+  return (
+    u.protocol === "https:" &&
+    (u.port === "" || u.port === "443") &&
+    !u.username &&
+    !u.password &&
+    u.pathname === "/" &&
+    !u.search &&
+    !u.hash &&
+    !/[?#]/.test(raw) &&
+    (h === domain || h === `www.${domain}`)
+  );
+}
+
+/**
+ * Does a fetched page prove control of `domain`? Only the homepage itself (after redirects, if
+ * any, that end on it or on www.), answered 2xx, with this container's snippet in a real
+ * <script src>. A query string, or text a page echoes back, never counts.
+ */
+export function homepageProof(page: FetchedPage, domain: string, containerId: string): boolean {
+  const ok = page.status !== null && page.status >= 200 && page.status < 300;
+  return ok && !!page.html && isHomepage(page.url, domain) && hasSnippet(page.html, containerId);
 }
 
 export interface FetchedPage {
@@ -651,11 +769,11 @@ export async function scanSite(
     );
   }
   const home = fetched[0]!;
-  const homepage = first.toString() === `https://${domain}/` && !!home.html && new URL(home.url).protocol === "https:";
+  const homepage = first.toString() === `https://${domain}/`;
   return {
     url: first.toString(),
     pages: fetched.map((p) => ({ url: p.url, status: p.status, bytes: p.html.length, ...(p.error ? { error: p.error } : {}) })),
-    snippet_on_homepage: homepage && hasSnippet(home.html, containerId),
+    snippet_on_homepage: homepage && homepageProof(home, domain, containerId),
     ...analyze(ok, containerId),
   };
 }

@@ -65,7 +65,9 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
   events after 7 days and visitors 180 days after they were last seen. Each row is written
   before its queue messages are sent, so concurrent copies of one event are delivered once.
   A `usage` table counts browser events, backend events and deliveries per UTC day (only ever
-  incremented) for the daily quotas and budgets; visitor rows are capped
+  incremented) for the daily quotas and budgets; when an account or platform event budget is set,
+  the object reports its counts to D1 at most once a minute and reads the totals back (see
+  "Abuse and cost controls"); visitor rows are capped
   (`MAX_VISITORS_PER_CONTAINER`, least recently seen evicted) and `/collect` stops writing when
   the database passes `MAX_CONTAINER_DB_BYTES` (see "Abuse and cost controls").
   Storage is created only when the control plane syncs a container (create, publish,
@@ -173,7 +175,10 @@ returns an error (`custom_code_not_allowed`, `domain_not_verified`, `custom_code
 and publish answers 422. Verification: a DNS TXT record `_afs-verify.<domain>` with the value
 from `GET /v1/containers/:id` (`verification.dns_record`, an HMAC of the container id), checked
 over DNS-over-HTTPS (cloudflare-dns.com) by `POST /v1/containers/:id/verify`, or this
-container's snippet in a `<script src>` on `https://<domain>/`, found by `verify` or `scan`.
+container's snippet in a real `<script src>` tag on `https://<domain>/` itself (or
+`https://www.<domain>/` after a redirect; answered 2xx; no query string or other page), found by
+`verify` or `scan`. Text a page only echoes (comments, attribute values, JSON in an inline script,
+textarea/title/noscript/template content) never counts.
 Preview links of a draft that may not run custom code are served without those tags.
 
 A **conversion** is defined once. When its trigger fires the runtime creates one `event_id`,
@@ -203,7 +208,7 @@ line in `src/destinations/index.ts`.
 | `google_ads` | offline click conversions: Data Manager API `events:ingest` (default) or Google Ads API v26 `uploadClickConversions` (`api: "google_ads_api"`); gclid/gbraid/wbraid + hashed email/phone | customer_id, conversion_action_id (an "Import from clicks" action), oauth client_id/client_secret/refresh_token, login_customer_id?, developer_token? (google_ads_api only), api? | `validateOnly: true` |
 | `tiktok` | Events API 2.0 | pixel_code, access_token, test_event_code? | `test_event_code` (required for `test`) |
 | `analytics` | our analytics app server ingest | site_id, api_key, base_url? (default `ANALYTICS_BASE_URL`; https, same host as `ANALYTICS_BASE_URL` when set, no query string, no IP literal, not this deployment; re-checked when sent) | none: sends one `tags_test` event |
-| `webhook` | POST JSON, `x-signature` HMAC-SHA256 | url (https; http://localhost only with `DEV_MODE=true`; not this deployment's own host), secret | `"test": true` in the payload |
+| `webhook` | POST JSON, `x-signature` HMAC-SHA256 | url (https on a public host name, no IP literal or local name; http://localhost only with `DEV_MODE=true`; never this platform's domain or a subdomain of it), secret | `"test": true` in the payload |
 
 - Platform destinations (`ga4`, `meta`, `google_ads`, `tiktok`) receive server conversions
   whose `send_to` has their type; `analytics` receives every server conversion and backend
@@ -218,12 +223,18 @@ line in `src/destinations/index.ts`.
   (`destination_circuit_open`) and the destination shows `health.circuit: "open"`. After the
   timeout deliveries flow again (one more failure re-opens it); a passing test closes it.
 - Webhooks retry at most 3 attempts (platforms 6), and only a short sanitized summary of their
-  answer is kept (at most 8 scalar JSON fields or 200 characters of text, tags stripped).
+  answer is kept (at most 8 scalar JSON fields or 200 characters of text, tags stripped, and
+  secret-named fields and key- or token-like strings replaced with `[redacted]`).
 - Deliveries never follow redirects (a 3xx is a failed delivery) and read at most 64 KB of the
-  answer. Webhook URLs can't point at this deployment's own host (`PUBLIC_BASE_URL` or the
-  host the API was called on), checked when saved and again when sent. Tests of webhook and
-  analytics destinations (URLs the account chooses) return the HTTP status and a short
-  sanitized summary, never the body.
+  answer. Webhook URLs can't point anywhere on this platform: its hosts (`PUBLIC_BASE_URL`,
+  `AUTH_ISSUER`, `ANALYTICS_BASE_URL`, the host the API was called on), the domain they share
+  and every subdomain of it (so not the site's `/v1/signup`, nor `mail.`), checked when saved
+  and again when sent. Tests of webhook and analytics destinations (URLs the account chooses)
+  return the HTTP status and a short, redacted summary, never the body.
+- Adding a destination, or changing a destination's credentials (a webhook URL included), needs
+  the project's own API key: an OAuth access token from a connected app gets
+  `403 temporary_credential`, since a destination keeps receiving conversion data after the
+  token expires (setup reports such destinations in `destination_errors`).
 - Consent: meta/tiktok/google_ads need `ad_user_data` granted, ga4 needs `analytics_storage`;
   otherwise the delivery is recorded as `skipped` with the reason. Google Ads also skips events
   with no click id and no hashed email/phone.
@@ -358,6 +369,18 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   same counter), both in D1 `delivery_usage`. Refused deliveries are logged as `skipped` with
   the reason; the event itself is still stored.
 - **Per-destination circuit breaker**, matched-only webhooks and fewer webhook retries (above).
+- **Daily event budgets across containers** (UTC day, counters only go up: deleting and
+  re-creating containers frees nothing): per account (`MAX_EVENTS_PER_ACCOUNT_PER_DAY`, summed over
+  its containers) and platform-wide (`MAX_EVENTS_PER_DAY`; unclaimed accounts stop at
+  `UNCLAIMED_MAX_EVENTS_PER_DAY` on the same counter), browser hits and backend events counted
+  separately. A D1 write per event would cost too much, so each ContainerDO reports its own
+  absolute counts to D1 `usage_daily` at most once a minute (or per 1% of the smaller budget, at
+  most 1,000 events) and reads the account's and the platform's (`usage_global`) totals back; a
+  container reports what's left when it's deleted. Past a budget `/collect` and
+  `POST /v1/containers/:id/events` answer `429 quota_exceeded` until 00:00 UTC, and
+  `GET /v1/containers/:id` shows `stats.today.account`, `account_quota_reached` and
+  `platform_quota_reached` with a warning. No budget set = no D1 call; a D1 failure fails open
+  (logged), and the per-container quota still applies.
 - **Storage**: per-account bytes of drafts + versions; per-container daily event quotas
   (`MAX_EVENTS_PER_CONTAINER_PER_DAY`, browser hits and backend events counted separately, 429
   past it); a visitor cap with eviction; a database-size threshold where `/collect` stops writing
@@ -365,9 +388,10 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   `/collect` stores (known click ids, utm_* and consent keys only, 25 scalar params, bounded
   first touch, id-shaped fbp/fbc/GA ids, 512-character user agent).
 - **Custom code** needs a verified domain and a claimed account (above).
-- **Outbound fetches** (scan, verify, destinations) go only to https hosts on the default port,
-  never IP literals, local names or this deployment; analytics destinations only to the
-  analytics app's host.
+- **Outbound fetches** (scan, verify, destinations) go only to https public host names (scan
+  and verify on the default port), never IP literals, local names or this platform (webhooks:
+  not its domain or any subdomain); analytics destinations only to the analytics app's host.
+  Destinations can't be added or re-pointed with an OAuth access token.
 - **Suspended accounts** (`accounts.suspended_at`, see `@afs/shared` `accountStanding`): their
   keys stop working, `/collect` and `/c/:id.js` answer 403 and queued deliveries are dropped.
 
@@ -390,6 +414,8 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
 | `ALLOW_CUSTOM_CODE`, `UNCLAIMED_ALLOW_CUSTOM_CODE` | optional vars; whether claimed (default `true`) and unclaimed (default `false`) accounts may publish custom code (a verified domain is always needed) |
 | `MAX_DELIVERIES_PER_CONTAINER_PER_DAY`, `MAX_DELIVERIES_PER_ACCOUNT_PER_DAY`, `MAX_DELIVERIES_PER_DAY` | optional vars; daily delivery budgets per container, per account and platform-wide (unset = off) |
 | `MAX_EVENTS_PER_CONTAINER_PER_DAY` | optional var; browser hits per container per UTC day, and separately backend events (unset = off) |
+| `MAX_EVENTS_PER_ACCOUNT_PER_DAY` | optional var; the same summed over an account's containers, counted in D1 (unset = off) |
+| `MAX_EVENTS_PER_DAY` | optional var; the same for the whole deployment; unclaimed accounts stop at `UNCLAIMED_MAX_EVENTS_PER_DAY` on the same counter (unset = off) |
 | `MAX_VISITORS_PER_CONTAINER` | optional var; visitor rows kept per container, least recently seen evicted, default `250000` |
 | `MAX_CONTAINER_DB_BYTES` | optional var; ContainerDO database size above which `/collect` stops writing (backend events up to 25% more), default `1073741824` (1 GiB) |
 | `CIRCUIT_BREAKER_FAILURES`, `CIRCUIT_BREAKER_MINUTES` | optional vars; consecutive failed attempts that open a destination's circuit (default `20`, `0` = off) and minutes it stays open (default `60`) |

@@ -6,13 +6,15 @@ import {
   adsDateTime,
   buildDataManagerBody,
   buildUploadClickConversionsBody,
+  googleAccessToken,
   googleAdsCredentials,
   rfc3339,
+  tokenCacheKey,
 } from "../src/destinations/google-ads";
 import { buildMetaRequest } from "../src/destinations/meta";
 import { buildTiktokBody } from "../src/destinations/tiktok";
 import type { DispatchEvent } from "../src/destinations/types";
-import { signWebhook, webhook } from "../src/destinations/webhook";
+import { signWebhook, webhook, webhookUrlProblem } from "../src/destinations/webhook";
 import { sha256HexSync } from "../src/lib/sha256";
 import { aggregateStatus, planDispatch } from "../src/service/dispatch-plan";
 
@@ -209,6 +211,38 @@ describe("Google Ads payloads", () => {
     expect(rfc3339(TS)).toBe("2026-11-03T12:30:45+00:00");
     expect(adsDateTime(TS)).toBe("2026-11-03 12:30:45+00:00");
   });
+  it("access tokens are cached by a hash of the whole credential tuple, never shared across credentials", async () => {
+    const base = googleAdsCredentials.parse({
+      customer_id: "1234567890",
+      conversion_action_id: "987654321",
+      client_id: "1234567890-abc.apps.googleusercontent.com",
+      client_secret: "GOCSPX-secret-one",
+      refresh_token: "1//0g-tenant-a-SAME-LAST-12",
+    });
+    // Same client id and the same last 12 characters of the refresh token (the old cache key).
+    const other = { ...base, refresh_token: "1//0g-tenant-b-SAME-LAST-12" };
+    expect(await tokenCacheKey(base)).toMatch(/^[a-f0-9]{64}$/);
+    expect(await tokenCacheKey(other)).not.toBe(await tokenCacheKey(base));
+    expect(await tokenCacheKey({ ...base, client_secret: "GOCSPX-secret-two" })).not.toBe(await tokenCacheKey(base));
+    expect(await tokenCacheKey({ ...base, login_customer_id: "1112223333" })).not.toBe(await tokenCacheKey(base));
+    expect(await tokenCacheKey({ ...base })).toBe(await tokenCacheKey(base));
+    let calls = 0;
+    const ctx = {
+      test: true,
+      env: {},
+      destinationId: "dst_x",
+      containerId: "ctr_x",
+      fetch: (async (_u: RequestInfo | URL, init?: RequestInit) => {
+        calls++;
+        const rt = new URLSearchParams(String(init?.body)).get("refresh_token");
+        return Response.json({ access_token: `token-for-${rt}`, expires_in: 3600 });
+      }) as typeof fetch,
+    };
+    expect((await googleAccessToken(base, ctx)).token).toBe(`token-for-${base.refresh_token}`);
+    expect((await googleAccessToken(other, ctx)).token).toBe(`token-for-${other.refresh_token}`);
+    expect((await googleAccessToken(base, ctx)).token).toBe(`token-for-${base.refresh_token}`);
+    expect(calls).toBe(2);
+  });
 });
 
 describe("TikTok Events API 2.0 payload", () => {
@@ -294,6 +328,82 @@ describe("webhook", () => {
     });
     expect(r).toMatchObject({ ok: false, retryable: false, error: expect.stringMatching(/this deployment/) });
     expect(called).toBe(0);
+  });
+  it("refuses the platform's apex and every subdomain, IP literals and local names", async () => {
+    const hosted = {
+      PUBLIC_BASE_URL: "https://tags.example.net",
+      AUTH_ISSUER: "https://example.net",
+      ANALYTICS_BASE_URL: "https://analytics.example.net",
+    };
+    const bad = [
+      "https://example.net/v1/signup",
+      "https://EXAMPLE.net./v1/signup",
+      "https://mail.example.net/v1/inboxes",
+      "https://replay.example.net/x",
+      "https://a.b.example.net/x",
+      "https://203.0.113.9/hook",
+      "https://[2001:db8::1]/hook",
+      "https://intranet.local/hook",
+      "https://localhost/hook",
+      "http://hooks.example.org/x",
+    ];
+    for (const url of bad) expect(webhookUrlProblem(url, hosted), url).not.toBeNull();
+    expect(webhookUrlProblem("https://example.net/v1/signup", hosted)).toMatch(/this deployment/);
+    for (const url of ["https://hooks.example.org/x", "https://example.net.hooks.example.org/x", "https://notexample.net/x"])
+      expect(webhookUrlProblem(url, hosted), url).toBeNull();
+    // Only the apex the hosts share: a single tags host blocks itself and its subdomains, not its parent.
+    expect(webhookUrlProblem("https://hooks.example.net/x", { PUBLIC_BASE_URL: "https://tags.example.net" })).toBeNull();
+    expect(webhookUrlProblem("https://x.tags.example.net/x", { PUBLIC_BASE_URL: "https://tags.example.net" })).not.toBeNull();
+    // Local dev: http to another localhost port (the smoke test's sink) is fine; the site's port isn't.
+    const dev = { DEV_MODE: "true", AUTH_ISSUER: "http://localhost:8786", ANALYTICS_BASE_URL: "http://localhost:8787" };
+    expect(webhookUrlProblem("http://127.0.0.1:9999/hook", dev)).toBeNull();
+    expect(webhookUrlProblem("http://localhost:8786/v1/signup", dev)).not.toBeNull();
+    // A destination saved before the platform's hosts were known is refused when it sends.
+    let called = 0;
+    const r = await webhook.send(
+      event(),
+      { url: "https://example.net/v1/signup", secret: "x".repeat(16) },
+      {
+        test: true,
+        fetch: (async () => (called++, new Response("{}"))) as typeof fetch,
+        env: hosted,
+        destinationId: "d",
+        containerId: "c",
+      },
+    );
+    expect(r).toMatchObject({ ok: false, retryable: false });
+    expect(called).toBe(0);
+  });
+  it("answers never relay anything that looks like a key or token", async () => {
+    const key = `afs_${"k3y".repeat(14)}`;
+    const send = (body: string) =>
+      webhook.send(
+        event(),
+        { url: "https://hooks.example.org/x", secret: "x".repeat(16) },
+        {
+          test: true,
+          fetch: (async () => new Response(body, { status: 201 })) as typeof fetch,
+          env: {},
+          destinationId: "d",
+          containerId: "c",
+        },
+      );
+    const json = await send(
+      JSON.stringify({ api_key: key, account_id: "acct_8f3k2m9x1q7w4e6r", note: `your key is ${key}`, ok: true, count: 3 }),
+    );
+    expect(json.http_status).toBe(201);
+    expect(json.response).toMatchObject({
+      api_key: "[redacted]",
+      account_id: "[redacted]",
+      note: "your key is [redacted]",
+      ok: true,
+      count: 3,
+    });
+    const text = await send(`created: ${key} (store it)`);
+    expect(text.response).toBe("created: [redacted] (store it)");
+    for (const r of [json, text]) expect(JSON.stringify(r.response)).not.toMatch(/afs_|k3y/);
+    // Short ordinary answers still come back.
+    expect((await send('{"received":true,"status":"ok"}')).response).toEqual({ received: true, status: "ok" });
   });
   it("doesn't follow redirects (3xx is a final failure) and reads a bounded response", async () => {
     const seen: RequestInit[] = [];

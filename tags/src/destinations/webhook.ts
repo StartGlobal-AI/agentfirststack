@@ -1,6 +1,7 @@
 import { hmacSha256Hex } from "@afs/shared";
 import { z } from "zod";
-import { deploymentOrigins, readTextBounded, targetsDeployment } from "../lib/http";
+import { fetchableHost } from "../lib/domain";
+import { readTextBounded, targetsPlatform } from "../lib/http";
 import { summarizeResponse } from "../service/sanitize";
 import { type Connector, type DispatchEvent, type SendContext } from "./types";
 
@@ -11,8 +12,8 @@ import { type Connector, type DispatchEvent, type SendContext } from "./types";
  *   x-signature: sha256=<hex HMAC-SHA256(secret, `${x-signature-timestamp}.${raw body}`)>
  *   x-signature-timestamp: unix seconds      x-event-id: the event_id (stable across retries)
  * Verify by recomputing the HMAC over the timestamp, a dot and the raw body; reject old timestamps.
- * Redirects are not followed (a 3xx is a failed delivery) and the URL can't point at this
- * deployment's own hosts. Only events that matched a conversion in the config are sent (every
+ * Redirects are not followed (a 3xx is a failed delivery) and the URL must be https on a public
+ * host name, never this platform (its hosts, the domain they share or any subdomain). Only events that matched a conversion in the config are sent (every
  * server event with settings.all_events), with 3 attempts at most, and only a short sanitized
  * summary of the answer is kept: the URL is the account's choice, so this is not a proxy.
  */
@@ -22,7 +23,9 @@ const WEBHOOK_READ_BYTES = 4096;
 export const webhookCredentials = z.strictObject({
   url: z
     .url()
-    .describe("https URL (http://localhost allowed only when DEV_MODE=true). Not this deployment's own host; redirects aren't followed."),
+    .describe(
+      "https URL on a public host name (http://localhost allowed only when DEV_MODE=true). Not this platform's domain or any subdomain of it; redirects aren't followed.",
+    ),
   secret: z.string().min(16).max(200).describe("Shared secret for x-signature. Generate one: openssl rand -hex 32."),
 });
 export type WebhookCredentials = z.infer<typeof webhookCredentials>;
@@ -39,9 +42,26 @@ export function isLocalUrl(u: URL) {
   return ["localhost", "127.0.0.1", "[::1]", "0.0.0.0"].includes(u.hostname) || u.hostname.endsWith(".localhost");
 }
 
-const selfTarget = (u: URL, env: SendContext["env"], origins: string[] = []) =>
-  targetsDeployment(u, deploymentOrigins(env, origins), String(env.DEV_MODE) === "true");
-const SELF_TARGET = "Webhook url points at this deployment itself; use your own endpoint.";
+/**
+ * Why a webhook URL can't be used, or null. Checked when it's saved and again before every send
+ * (the platform's hosts can change after a destination was saved).
+ */
+export function webhookUrlProblem(raw: string, env: SendContext["env"], origins: string[] = []): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "Webhook url is not a URL.";
+  }
+  const dev = String(env.DEV_MODE) === "true";
+  if (targetsPlatform(u, env, origins, dev))
+    return "Webhook url points at this deployment (its domain or a subdomain of it); use your own endpoint.";
+  if (dev && isLocalUrl(u) && (u.protocol === "http:" || u.protocol === "https:")) return null;
+  if (u.protocol !== "https:") return "Webhook url must be https (http://localhost is allowed only when DEV_MODE=true).";
+  if (!fetchableHost(u.hostname))
+    return "Webhook url must use a public host name: not an IP address, localhost, a local-only name or a bare public suffix.";
+  return null;
+}
 
 export const webhook: Connector<WebhookCredentials> = {
   type: "webhook",
@@ -58,11 +78,8 @@ export const webhook: Connector<WebhookCredentials> = {
   example: { url: "https://example.com/hooks/conversions", secret: "a-long-random-shared-secret" },
   docs: "Verify: hex(HMAC_SHA256(secret, timestamp + '.' + rawBody)) == x-signature minus the 'sha256=' prefix.",
   check(c, env, origins) {
-    const u = new URL(c.url);
-    if (selfTarget(u, env, origins)) throw new Error(SELF_TARGET);
-    if (u.protocol === "https:") return;
-    if (u.protocol === "http:" && isLocalUrl(u) && String(env.DEV_MODE) === "true") return;
-    throw new Error("Webhook url must be https (http://localhost is allowed only when DEV_MODE=true).");
+    const problem = webhookUrlProblem(c.url, env, origins);
+    if (problem) throw new Error(problem);
   },
   async send(e, c, ctx) {
     const test = ctx.test || !!e.test;
@@ -76,8 +93,9 @@ export const webhook: Connector<WebhookCredentials> = {
       "x-event-id": e.event_id,
     };
     const url = c.url.replace(/\?.*$/, "?...");
-    // Re-checked at send time: PUBLIC_BASE_URL may have changed since the destination was saved.
-    if (selfTarget(new URL(c.url), ctx.env)) return { ok: false, retryable: false, error: SELF_TARGET, request: { url } };
+    // Re-checked at send time: the platform's hosts may have changed since the destination was saved.
+    const problem = webhookUrlProblem(c.url, ctx.env);
+    if (problem) return { ok: false, retryable: false, error: problem, request: { url } };
     try {
       const res = await ctx.fetch(c.url, { method: "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(15_000) });
       const read = await readTextBounded(res, WEBHOOK_READ_BYTES);

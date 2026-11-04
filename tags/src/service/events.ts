@@ -1,22 +1,18 @@
 import { ApiError, accountSuspended, newId } from "@afs/shared";
 import type { EventFilter, IngestRefusal, ServerIngestResult } from "../do/container-do";
 import type { Bindings } from "../env";
+import { eventQuotaError } from "./budget";
 import { containerStub, getContainerRow, syncToDO } from "./containers";
 import { cleanServerEvent } from "./ingest";
 import type { ServerEvent } from "./ingest-schema";
 import { assertRate } from "./ratelimit";
 
-function refusal(r: IngestRefusal): ApiError {
+function refusal(env: Bindings, r: IngestRefusal): ApiError {
   switch (r.error) {
     case "suspended":
       return accountSuspended();
     case "quota":
-      return new ApiError(
-        429,
-        "quota_exceeded",
-        `This container accepts ${r.limit} backend events per UTC day; ${Math.max(0, r.limit - r.used)} are left today.`,
-        "Send fewer (or smaller batches) and retry after 00:00 UTC. GET /v1/containers/:id shows stats.today.",
-      );
+      return eventQuotaError(env, { scope: r.scope, kind: "server", limit: r.limit, used: r.used });
     case "storage_full":
       return new ApiError(
         507,
@@ -44,7 +40,7 @@ export async function ingestServerEvents(env: Bindings, accountId: string, conta
     await syncToDO(env, row);
     r = await stub.ingestServer(clean, { test, now: Date.now() });
   }
-  if (!Array.isArray(r)) throw refusal(r as IngestRefusal);
+  if (!Array.isArray(r)) throw refusal(env, r as IngestRefusal);
   const results = r as ServerIngestResult[];
   return {
     accepted: results.filter((x) => x.status === "accepted").length,

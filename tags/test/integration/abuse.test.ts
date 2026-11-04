@@ -1,4 +1,4 @@
-import { createAccount } from "@afs/shared";
+import { createAccount, createApiKey } from "@afs/shared";
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ContainerDO, DispatchMessage } from "../../src/do/container-do";
@@ -360,6 +360,195 @@ describe("finding 4: public ingest can't fill a container's database", () => {
   });
 });
 
+describe("daily event budgets across containers (account and platform-wide, counted in D1)", () => {
+  /** A fresh account with its own key (signup is rate limited in tests), claimed by a person if asked. */
+  async function freshAccount(claimed = false) {
+    const { accountId, apiKey } = await createAccount(E.AUTH_DB!, { keyPrefix: "afs" });
+    if (claimed) {
+      const now = Date.now();
+      const userId = `usr_${accountId.slice(5)}`;
+      await E.AUTH_DB!.batch([
+        E.AUTH_DB!.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)").bind(
+          userId,
+          `dev:${userId}`,
+          `${userId}@example.test`,
+          now,
+        ),
+        E.AUTH_DB!.prepare("INSERT INTO memberships (user_id, account_id, role, created_at) VALUES (?, ?, 'owner', ?)").bind(
+          userId,
+          accountId,
+          now,
+        ),
+      ]);
+    }
+    const H = { authorization: `Bearer ${apiKey.key}`, "content-type": "application/json" };
+    const api = async (method: string, path: string, body?: unknown) => {
+      const res = await SELF.fetch(`${B}${path}`, { method, headers: H, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: res.status, body: await json(res) };
+    };
+    const newContainer = async (domain: string) => {
+      const r = await api("POST", "/v1/containers", { domain });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.container.id as string;
+    };
+    return { api, accountId, newContainer };
+  }
+  const visits = (C: string, domain: string, vars: Record<string, string>, ids: string[]) =>
+    inDO(C, vars, async (i) => {
+      const out: string[] = [];
+      for (const id of ids) {
+        const r = await i.collect(hit(C, domain, { type: "visit", event_id: id }));
+        out.push(r.ok ? "ok" : r.error === "quota" ? `quota:${r.scope}:${r.limit}` : r.error);
+      }
+      return out;
+    });
+  const backend = (C: string, vars: Record<string, string>, n: number) =>
+    inDO(C, vars, (i) =>
+      i.ingestServer(
+        Array.from({ length: n }, () => ({ name: "purchase" })),
+        { test: false, now: Date.now() },
+      ),
+    );
+  const today = () => new Date().toISOString().slice(0, 10);
+  const accountToday = (accountId: string) =>
+    E.DB.prepare(
+      "SELECT COALESCE(SUM(browser_events), 0) AS browser, COALESCE(SUM(server_events), 0) AS server FROM usage_daily WHERE account_id = ? AND day = ?",
+    )
+      .bind(accountId, today())
+      .first<{ browser: number; server: number }>();
+  const platformToday = async () =>
+    (await E.DB.prepare("SELECT browser_events AS browser, server_events AS server FROM usage_global WHERE day = ?")
+      .bind(today())
+      .first<{ browser: number; server: number }>()) ?? { browser: 0, server: 0 };
+
+  it("MAX_EVENTS_PER_ACCOUNT_PER_DAY counts over all of an account's containers, browser hits and backend events separately", async () => {
+    const a = await freshAccount();
+    const [C1, C2, C3] = [await a.newContainer("acct-1.test"), await a.newContainer("acct-2.test"), await a.newContainer("acct-3.test")];
+    const vars = { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "3" };
+    expect(await visits(C1, "acct-1.test", vars, ["acct_v1", "acct_v2"])).toEqual(["ok", "ok"]);
+    expect(await visits(C2, "acct-2.test", vars, ["acct_v3", "acct_v4"])).toEqual(["ok", "quota:account:3"]);
+    expect(await accountToday(a.accountId)).toEqual({ browser: 3, server: 0 });
+    // Backend events have their own count against the same budget (refused per batch, like the container quota).
+    expect(await backend(C1, vars, 2)).toHaveLength(2);
+    expect(await backend(C3, vars, 2)).toMatchObject({ error: "quota", scope: "account", limit: 3, used: 2 });
+    expect(await backend(C3, vars, 1)).toHaveLength(1);
+    expect(await accountToday(a.accountId)).toEqual({ browser: 3, server: 3 });
+  });
+
+  it("MAX_EVENTS_PER_DAY is one counter for the whole deployment, across accounts", async () => {
+    const [a, b] = [await freshAccount(), await freshAccount()];
+    const [Ca, Cb] = [await a.newContainer("platform-a.test"), await b.newContainer("platform-b.test")];
+    const base = await platformToday(); // other tests' reports count too
+    const vars = { MAX_EVENTS_PER_DAY: String(base.browser + 3) };
+    expect(await visits(Ca, "platform-a.test", vars, ["plat_a1", "plat_a2"])).toEqual(["ok", "ok"]);
+    expect(await visits(Cb, "platform-b.test", vars, ["plat_b1", "plat_b2"])).toEqual(["ok", `quota:platform:${base.browser + 3}`]);
+    expect((await platformToday()).browser).toBe(base.browser + 3);
+    // The platform counter grows by each report's delta; a container's own row holds its absolute count.
+    expect(await accountToday(a.accountId)).toEqual({ browser: 2, server: 0 });
+    expect(await accountToday(b.accountId)).toEqual({ browser: 1, server: 0 });
+  });
+
+  it("unclaimed accounts are held to the lower UNCLAIMED_ values (account budget, and platform-wide on the same counter)", async () => {
+    const [u, c] = [await freshAccount(), await freshAccount(true)];
+    const [Cu, Cc] = [await u.newContainer("unclaimed-budget.test"), await c.newContainer("claimed-budget.test")];
+    const acct = { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "5", UNCLAIMED_MAX_EVENTS_PER_ACCOUNT_PER_DAY: "1" };
+    expect(await visits(Cu, "unclaimed-budget.test", acct, ["unc_v1", "unc_v2"])).toEqual(["ok", "quota:account:1"]);
+    expect(await visits(Cc, "claimed-budget.test", acct, ["cla_v1", "cla_v2"])).toEqual(["ok", "ok"]);
+
+    const [u2, c2] = [await freshAccount(), await freshAccount(true)];
+    const [Cu2, Cc2] = [await u2.newContainer("unclaimed-platform.test"), await c2.newContainer("claimed-platform.test")];
+    const base = await platformToday();
+    const platform = { MAX_EVENTS_PER_DAY: String(base.browser + 50), UNCLAIMED_MAX_EVENTS_PER_DAY: String(base.browser + 1) };
+    expect(await visits(Cu2, "unclaimed-platform.test", platform, ["uncp_v1", "uncp_v2"])).toEqual([
+      "ok",
+      `quota:platform:${base.browser + 1}`,
+    ]);
+    expect(await visits(Cc2, "claimed-platform.test", platform, ["clap_v1", "clap_v2"])).toEqual(["ok", "ok"]);
+  });
+
+  it("off when unset (or 0): no D1 call, no refusal", async () => {
+    const a = await freshAccount();
+    const C = await a.newContainer("budget-off.test");
+    expect(await visits(C, "budget-off.test", {}, ["off_v1", "off_v2"])).toEqual(["ok", "ok"]);
+    expect(await backend(C, {}, 2)).toHaveLength(2);
+    const zero = {
+      MAX_EVENTS_PER_ACCOUNT_PER_DAY: "0",
+      MAX_EVENTS_PER_DAY: "0",
+      UNCLAIMED_MAX_EVENTS_PER_ACCOUNT_PER_DAY: "0",
+      UNCLAIMED_MAX_EVENTS_PER_DAY: "0",
+    };
+    expect(await visits(C, "budget-off.test", zero, ["off_v3"])).toEqual(["ok"]);
+    // Every report writes this container's row: none means D1 was never asked.
+    const rows = await E.DB.prepare("SELECT COUNT(*) AS n FROM usage_daily WHERE container_id = ?").bind(C).first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+    const stats = (await a.api("GET", `/v1/containers/${C}`)).body.stats;
+    expect(stats.limits).toMatchObject({ events_per_account_per_day: null, platform_events_per_day: null });
+    expect(stats.today.account).toBeUndefined();
+    expect(stats).toMatchObject({ account_quota_reached: false, platform_quota_reached: false });
+  });
+
+  it("counters survive deleting and re-creating a container", async () => {
+    const a = await freshAccount();
+    const C1 = await a.newContainer("recreate-budget.test");
+    // A budget of 1,000 reports every 10 events (or a minute): these three are still only in the object.
+    expect(await visits(C1, "recreate-budget.test", { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "1000" }, ["rec_v1", "rec_v2", "rec_v3"])).toEqual([
+      "ok",
+      "ok",
+      "ok",
+    ]);
+    expect(await accountToday(a.accountId)).toEqual({ browser: 0, server: 0 });
+    expect((await a.api("DELETE", `/v1/containers/${C1}`)).status).toBe(200);
+    // destroy() reported them before deleting the object's storage; the deleted container's row stays.
+    expect(await accountToday(a.accountId)).toEqual({ browser: 3, server: 0 });
+    const C2 = await a.newContainer("recreate-budget.test");
+    expect(C2).not.toBe(C1);
+    expect(await visits(C2, "recreate-budget.test", { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "4" }, ["rec_v4", "rec_v5"])).toEqual([
+      "ok",
+      "quota:account:4",
+    ]);
+  });
+
+  it("refusals answer 429 quota_exceeded saying when they reset, and GET /v1/containers/:id says why", async () => {
+    const a = await freshAccount();
+    const [C1, C2] = [await a.newContainer("budget-http-1.test"), await a.newContainer("budget-http-2.test")];
+    const vars = { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "1" };
+    expect(await visits(C1, "budget-http-1.test", vars, ["http_v1"])).toEqual(["ok"]);
+    // Requests through the Worker reach C2's object with the budget set.
+    const setVars = (v: Record<string, string> | null) =>
+      runInDurableObject(E.CONTAINER.getByName(C2), async (instance) => {
+        const i = instance as unknown as { env: Bindings; savedEnv?: Bindings };
+        if (v) {
+          i.savedEnv = i.env;
+          i.env = { ...i.env, ...v } as Bindings;
+        } else if (i.savedEnv) i.env = i.savedEnv;
+      });
+    await setVars(vars);
+    try {
+      const res = await collect("budget-http-2.test", C2, { type: "visit", event_id: "http_v2" });
+      expect(res.status).toBe(429);
+      expect((await json(res)).error).toMatchObject({
+        code: "quota_exceeded",
+        message: expect.stringMatching(/This account received its 1 browser events .*across its containers.*until 00:00 UTC/),
+        hint: expect.stringMatching(/stats\.today\.account/),
+      });
+      const ev = await a.api("POST", `/v1/containers/${C2}/events`, { events: [{ name: "purchase" }, { name: "purchase" }] });
+      expect(ev.status).toBe(429);
+      expect(ev.body.error).toMatchObject({
+        code: "quota_exceeded",
+        message: "This account accepts 1 backend events per UTC day across its containers; 1 are left today.",
+        hint: expect.stringMatching(/retry after 00:00 UTC/),
+      });
+      const got = (await a.api("GET", `/v1/containers/${C2}`)).body;
+      expect(got.stats.limits).toMatchObject({ events_per_account_per_day: 1, platform_events_per_day: null });
+      expect(got.stats.today).toMatchObject({ browser_events: 0, account: { browser_events: 1, server_events: 0 } });
+      expect(got.stats).toMatchObject({ account_quota_reached: true, platform_quota_reached: false });
+      expect(got.warnings).toContainEqual(expect.stringMatching(/account's daily event budget .* refused until 00:00 UTC/));
+    } finally {
+      await setVars(null);
+    }
+  });
+});
+
 describe("finding 5: a forged browser hit can't claim a user", () => {
   it("user_id/email from /collect never join; backend-linked joins don't inherit consent or click ids", async () => {
     const t = await container("claim.test");
@@ -516,6 +705,77 @@ describe("finding 8: the event log labels third-party strings", () => {
     expect(destinations[0].response).toBeUndefined();
     expect(visit.page).toBeUndefined();
     expect(visit.untrusted.page.page_url).toContain("<script>");
+  });
+});
+
+describe("OAuth access tokens can't leave durable access behind", () => {
+  it("adding a destination or changing its URL/credentials needs a permanent key (REST, MCP, setup)", async () => {
+    const t = await container("oauth-dest.test", [hook("oauth-owner")]);
+    const [D] = t.ids as [string];
+    const { key: temp } = await createApiKey(E.AUTH_DB!, t.accountId, { keyPrefix: "afs", expiresAt: Date.now() + 8 * 3_600_000 });
+    const as = async (k: string, method: string, path: string, body?: unknown) => {
+      const res = await SELF.fetch(`${B}${path}`, {
+        method,
+        headers: { authorization: `Bearer ${k}`, "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      return { status: res.status, body: await json(res) };
+    };
+    const added = await as(temp, "POST", `/v1/containers/${t.C}/destinations`, hook("oauth-attacker"));
+    expect(added.status).toBe(403);
+    expect(added.body.error).toMatchObject({ code: "temporary_credential", message: expect.stringMatching(/add destinations/) });
+    const moved = await as(temp, "PATCH", `/v1/containers/${t.C}/destinations/${D}`, {
+      credentials: { url: "https://hooks.test/oauth-attacker" },
+    });
+    expect(moved.status).toBe(403);
+    expect(moved.body.error.code).toBe("temporary_credential");
+    // Changes that don't point data anywhere new still work with the token.
+    expect((await as(temp, "PATCH", `/v1/containers/${t.C}/destinations/${D}`, { name: "renamed", enabled: true })).status).toBe(200);
+    // MCP: the same rule.
+    const mcp = await json(
+      await SELF.fetch(`${B}/mcp`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${temp}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "add_destination", arguments: { container_id: t.C, ...hook("oauth-mcp") } },
+        }),
+      }),
+    );
+    expect(JSON.stringify(mcp)).toMatch(/temporary_credential/);
+    // setup writes the draft but creates no destination, and says why.
+    const setup = await as(temp, "POST", `/v1/containers/${t.C}/setup`, {
+      platforms: { webhook: { url: "https://hooks.test/oauth-setup", secret: "integration-secret-123" } },
+      conversions: [{ name: "purchase", when: { data_layer_event: "purchase" } }],
+    });
+    expect(setup.status).toBe(200);
+    expect(setup.body.destinations).toEqual([]);
+    expect(setup.body.destination_errors).toEqual([{ type: "webhook", error: expect.objectContaining({ code: "temporary_credential" }) }]);
+    const list = (await t.api("GET", `/v1/containers/${t.C}/destinations`)).body.destinations;
+    expect(list.map((d: { id: string }) => d.id)).toEqual([D]);
+    // The project's own key still can.
+    expect((await t.api("POST", `/v1/containers/${t.C}/destinations`, hook("oauth-owner-2"))).status).toBe(201);
+  });
+
+  it("webhooks can't point at the platform's apex or any subdomain of it", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "apex-hook.test" })).body.container.id as string;
+    const hosted = {
+      PUBLIC_BASE_URL: "https://tags.platform.example",
+      AUTH_ISSUER: "https://platform.example",
+      ANALYTICS_BASE_URL: "https://analytics.platform.example",
+    };
+    for (const url of ["https://platform.example/v1/signup", "https://mail.platform.example/v1/inboxes"])
+      await expect(
+        ops.addDestination(opCtx(a.accountId, hosted), C, { type: "webhook", credentials: { url, secret: "integration-secret-123" } }),
+      ).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/this deployment/) });
+    const ok = await ops.addDestination(opCtx(a.accountId, hosted), C, {
+      type: "webhook",
+      credentials: { url: "https://hooks.test/apex-ok", secret: "integration-secret-123" },
+    });
+    expect(ok.status).toBe(201);
   });
 });
 

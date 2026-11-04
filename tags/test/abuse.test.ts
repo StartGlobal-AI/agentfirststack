@@ -13,7 +13,7 @@ import { cleanCollectPayload, cleanServerEvent, serverDispatchEvent } from "../s
 import { collectSchema, serverEventSchema } from "../src/service/ingest-schema";
 import { hostAllowed } from "../src/service/origin";
 import { MAX_BROWSER_PARAMS, sanitizeText, summarizeResponse } from "../src/service/sanitize";
-import { fetchPage, hasSnippet, MAX_SCAN_PAGES, scanSite, scanTarget } from "../src/service/scan";
+import { fetchPage, hasSnippet, isHomepage, MAX_SCAN_PAGES, scanSite, scanTarget, scriptSrcs } from "../src/service/scan";
 import { checkDomain, customCodeIn, customCodeProblem, stripCustomCode, verifyToken } from "../src/service/verify";
 
 const C = "ctr_abcdefgh12345678";
@@ -321,5 +321,76 @@ describe("finding 6: custom code needs a verified domain and a claimed account",
     expect((await checkDomain(keyEnv, row, "auto", doh([]))).verified).toBe("snippet");
     expect(hasSnippet(`<p>see /c/${C}.js</p>`, C)).toBe(false); // text mentioning it isn't the snippet
     expect(hasSnippet(`<script src="/_t/c/${C}.js"></script>`, C)).toBe(true);
+  });
+  it("domain proof: only a real <script src> tag, never text a page echoes", () => {
+    const tag = `<script src="https://tags.example.com/c/${C}.js"></script>`;
+    for (const echoed of [
+      `<!-- ${tag} -->`,
+      `<input name="q" value='${tag}'>`,
+      `<meta content="${tag}">`,
+      `<script>window.__STATE__ = {"comment": "${tag.replace(/"/g, "'")}"}</script>`,
+      `<script type="application/json">{"html": "<script src='/c/${C}.js'>"}</script>`,
+      `<textarea>${tag}</textarea>`,
+      `<title>${tag}</title>`,
+      `<noscript>${tag}</noscript>`,
+      `<template>${tag}</template>`,
+      `<style>/* ${tag} */</style>`,
+      `&lt;script src="/c/${C}.js"&gt;`,
+      `<script src="/c/${C}.json"></script><script src="/c/${C}.js.map"></script>`,
+    ])
+      expect(hasSnippet(`<html><body>${echoed}</body></html>`, C), echoed).toBe(false);
+    for (const real of [
+      tag,
+      `<script async data-x=">" src='/_proxy/c/${C}.js?v=2'></script>`,
+      `<SCRIPT defer src=/c/${C}.js></SCRIPT>`,
+      `<!-- note --><script>var a = "</div>";</script><script src="/c/${C}.js"></script>`,
+    ])
+      expect(hasSnippet(`<html><head>${real}</head></html>`, C), real).toBe(true);
+    expect(
+      scriptSrcs(`<script src="a.js"></script><p src="b.js"></p><script>x("<script src=c.js>")</script><script src = "d.js">`),
+    ).toEqual(["a.js", "d.js"]);
+  });
+  it("domain proof: only from https://<domain>/ (or www.) itself, answered 2xx; queries and other pages never count", async () => {
+    const keyEnv = { ENCRYPTION_KEY: "q0n3d6Vf1w8Hq7m4Zt2yXb9cLr5sKp1uJe6aNg3hTiY=" };
+    const snippet = `<script src="https://tags.example.com/c/${C}.js"></script>`;
+    const site = (pages: Record<string, { status?: number; body?: string; location?: string }>) =>
+      (async (u: RequestInfo | URL) => {
+        const p = pages[String(u)];
+        if (!p) return new Response("not found", { status: 404 });
+        return new Response(p.body ?? "", { status: p.status ?? 200, headers: p.location ? { location: p.location } : {} });
+      }) as typeof fetch;
+    const verify = (pages: Parameters<typeof site>[0]) => checkDomain(keyEnv, row, "snippet", site(pages));
+    const home = "https://shop.example.com/";
+    expect((await verify({ [home]: { body: snippet } })).verified).toBe("snippet");
+    expect(
+      (
+        await verify({
+          [home]: { status: 301, location: "https://www.shop.example.com/" },
+          "https://www.shop.example.com/": { body: snippet },
+        })
+      ).verified,
+    ).toBe("snippet");
+    // The homepage sends the fetch somewhere that echoes a query (or to another page): not proof.
+    const echo = `https://shop.example.com/?s=${encodeURIComponent(snippet)}`;
+    const viaQuery = await verify({ [home]: { status: 302, location: echo }, [echo]: { body: `Results for ${snippet}` } });
+    expect(viaQuery.verified).toBeNull();
+    expect(viaQuery.checks[0]!.detail).toMatch(/only https:\/\/shop\.example\.com\/ or https:\/\/www\.shop\.example\.com\/ itself counts/);
+    expect(
+      (await verify({ [home]: { status: 302, location: "/landing" }, "https://shop.example.com/landing": { body: snippet } })).verified,
+    ).toBeNull();
+    expect((await verify({ [home]: { status: 404, body: snippet } })).verified).toBeNull();
+    expect((await verify({ [home]: { body: `<!-- ${snippet} -->` } })).verified).toBeNull();
+    // scan: a url with a query string never sets snippet_on_homepage.
+    const scanned = await scanSite("shop.example.com", C, { url: echo, follow_links: false }, site({ [echo]: { body: snippet } }));
+    expect(scanned.snippet_on_homepage).toBe(false);
+    expect(isHomepage("https://shop.example.com/", "shop.example.com")).toBe(true);
+    for (const u of [
+      "https://shop.example.com/?",
+      "https://shop.example.com/#x",
+      "https://shop.example.com/index.html",
+      "https://evil.shop.example.com/",
+      "http://shop.example.com/",
+    ])
+      expect(isHomepage(u, "shop.example.com"), u).toBe(false);
   });
 });

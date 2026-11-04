@@ -105,11 +105,21 @@ export function cleanDevice<T extends Record<string, unknown> | undefined>(d: T)
   return out as T;
 }
 
+export const REDACTED = "[redacted]";
+/** Field names whose values are never relayed (an answer's api_key, access_token, secret...). */
+const SECRET_FIELD = /key|token|secret|passw|auth|session|cookie|credential|signature|bearer/i;
+/** Key-like runs: 24+ token characters, or 16+ with a digit (API keys, tokens, JWT parts, hashes, ids). */
+const SECRET_LIKE = /[A-Za-z0-9_\-+/=]{24,}|(?=[A-Za-z0-9_\-+/=]*\d)[A-Za-z0-9_\-+/=]{16,}/g;
+
+/** Text with every key-like run replaced, before it's cut (so no prefix of a key survives either). */
+export const redactSecrets = (s: string) => s.replace(SECRET_LIKE, REDACTED);
+
 /**
  * A short, sanitized summary of an answer from a URL the account chose (webhook, analytics
  * base_url): the status is reported separately; this keeps at most 8 scalar top-level JSON fields
  * (strings cut to 80) or 200 characters of text. It never relays an arbitrary body, so a
- * destination can't be used to read pages through this service.
+ * destination can't be used to read pages through this service, and nothing that looks like a key
+ * or token comes back (secret-named fields and key-like strings are redacted).
  */
 export function summarizeResponse(v: unknown): unknown {
   if (v === null || v === undefined || v === "") return null;
@@ -121,11 +131,12 @@ export function summarizeResponse(v: unknown): unknown {
         omitted++;
         continue;
       }
-      if (typeof val === "string") out[k] = sanitizeText(val, 80);
+      if (SECRET_FIELD.test(k) && val !== null && typeof val !== "boolean") out[k] = REDACTED;
+      else if (typeof val === "string") out[k] = sanitizeText(redactSecrets(val), 80);
       else if ((typeof val === "number" && Number.isFinite(val)) || typeof val === "boolean" || val === null) out[k] = val;
       else omitted++;
     }
     return omitted ? { ...out, _omitted_fields: omitted } : out;
   }
-  return sanitizeText(typeof v === "string" ? v : JSON.stringify(v), 200);
+  return sanitizeText(redactSecrets(typeof v === "string" ? v : JSON.stringify(v)), 200);
 }

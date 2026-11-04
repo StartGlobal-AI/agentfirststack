@@ -1,3 +1,5 @@
+import { isIpLiteral, isPublicSuffix } from "./domain";
+
 /** Most bytes read from any destination's response (the event log keeps a snippet anyway). */
 export const MAX_RESPONSE_BYTES = 64 * 1024;
 
@@ -58,4 +60,48 @@ const LOCAL = (h: string) => ["localhost", "127.0.0.1", "[::1]", "0.0.0.0"].incl
 export function targetsDeployment(u: URL, own: URL[], devMode: boolean): boolean {
   const h = u.hostname.toLowerCase();
   return own.some((o) => o.hostname.toLowerCase() === h && !(devMode && LOCAL(h) && o.port !== u.port));
+}
+
+type PlatformEnv = { PUBLIC_BASE_URL?: string; AUTH_ISSUER?: string; ANALYTICS_BASE_URL?: string };
+
+/** This platform's origins: the tags Worker's (deploymentOrigins), the site's (AUTH_ISSUER) and the analytics app's. */
+export function platformOrigins(env: PlatformEnv, extra: string[] = []): URL[] {
+  return deploymentOrigins(env, [...extra, env.AUTH_ISSUER ?? "", env.ANALYTICS_BASE_URL ?? ""]);
+}
+
+const bare = (h: string) => h.toLowerCase().replace(/\.$/, "");
+const named = (h: string) => h.includes(".") && !isIpLiteral(h) && !LOCAL(h);
+
+/**
+ * The domain the platform's hosts share ("agentfirststack.com" for agentfirststack.com,
+ * tags.agentfirststack.com and analytics.agentfirststack.com), or null: fewer than two hosts,
+ * hosts on different domains, or only a suffix anyone can register under (com, co.uk, workers.dev).
+ */
+export function platformApex(hosts: string[]): string | null {
+  const names = [...new Set(hosts.map(bare))].filter(named);
+  if (names.length < 2) return null;
+  let common = names[0]!.split(".");
+  for (const n of names.slice(1)) {
+    const labels = n.split(".");
+    let k = 0;
+    while (k < common.length && k < labels.length && common[common.length - 1 - k] === labels[labels.length - 1 - k]) k++;
+    common = common.slice(common.length - k);
+  }
+  const apex = common.join(".");
+  return common.length >= 2 && !isPublicSuffix(apex) ? apex : null;
+}
+
+/**
+ * True when `u` is anywhere on this platform: one of its hosts (port-aware for localhost in dev,
+ * like targetsDeployment), a subdomain of one, or the domain they share and every subdomain of it
+ * (the site's /v1/signup, mail., replay.). A webhook must never call the platform: its answer
+ * comes back to the caller, and the platform's per-network limits would count this Worker.
+ */
+export function targetsPlatform(u: URL, env: PlatformEnv, extra: string[], devMode: boolean): boolean {
+  const own = platformOrigins(env, extra);
+  if (targetsDeployment(u, own, devMode)) return true;
+  const h = bare(u.hostname);
+  const names = own.map((o) => bare(o.hostname));
+  const apex = platformApex(names);
+  return [...names.filter(named), ...(apex ? [apex] : [])].some((d) => h === d || h.endsWith(`.${d}`));
 }

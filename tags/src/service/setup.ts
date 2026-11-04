@@ -1,18 +1,24 @@
-import { ApiError } from "@afs/shared";
+import { ApiError, type AuthContext, assertPermanentKey } from "@afs/shared";
 import type { Bindings } from "../env";
 import { draftConfig, getContainerRow } from "./containers";
-import { createDestination, presentDestination } from "./destinations";
+import { createDestination, DESTINATION_ACTIONS, presentDestination } from "./destinations";
 import { buildRecipe, type RecipeInput, recipeNextSteps } from "./recipe";
 import { putDraft } from "./versions";
 
-/** setup_conversion_tracking: write the draft + destinations from plain inputs, then validate. */
-export async function applyRecipe(env: Bindings, accountId: string, containerId: string, input: RecipeInput, origins: string[] = []) {
+/**
+ * setup_conversion_tracking: write the draft + destinations from plain inputs, then validate. An
+ * OAuth access token gets the draft but no destinations (they'd outlive it): each is reported in
+ * destination_errors as temporary_credential.
+ */
+export async function applyRecipe(env: Bindings, auth: AuthContext, containerId: string, input: RecipeInput, origins: string[] = []) {
+  const { accountId } = auth;
   const row = await getContainerRow(env, accountId, containerId);
   const built = buildRecipe(input, draftConfig(row));
   const created: unknown[] = [];
   const destinationErrors: unknown[] = [];
   for (const d of built.destinations) {
     try {
+      assertPermanentKey(auth, DESTINATION_ACTIONS.add);
       const r = await createDestination(env, accountId, containerId, { type: d.type, name: d.name, credentials: d.credentials }, origins);
       created.push({ ...presentDestination(r.row), existing: r.existing });
     } catch (e) {

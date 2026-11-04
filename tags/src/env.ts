@@ -28,6 +28,12 @@ export type Bindings = Env & {
   MAX_DELIVERIES_PER_DAY?: string;
   /** Browser hits per container per UTC day, and separately backend events. Unset = off. */
   MAX_EVENTS_PER_CONTAINER_PER_DAY?: string;
+  /**
+   * The same, summed over an account's containers, and for the whole deployment (unclaimed accounts
+   * stop at UNCLAIMED_MAX_EVENTS_PER_DAY on the same counter). Counted in D1. Unset = off.
+   */
+  MAX_EVENTS_PER_ACCOUNT_PER_DAY?: string;
+  MAX_EVENTS_PER_DAY?: string;
   /** Visitor rows kept per container (least recently seen evicted). Default 250000. */
   MAX_VISITORS_PER_CONTAINER?: string;
   /** A container's Durable Object database size above which /collect stops writing. Default 1 GiB. */
@@ -36,6 +42,8 @@ export type Bindings = Env & {
   CIRCUIT_BREAKER_FAILURES?: string;
   CIRCUIT_BREAKER_MINUTES?: string;
   ADMIN_TOKEN?: string;
+  /** The site's public URL (set by `pnpm afs`); refusal hints point to its claim links. */
+  AUTH_ISSUER?: string;
   SIGNUP_TOKEN?: string;
   DEV_MODE?: string;
   ANALYTICS_BASE_URL?: string;

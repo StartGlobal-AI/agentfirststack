@@ -1,3 +1,4 @@
+import { sha256Hex } from "@afs/shared";
 import { z } from "zod";
 import { compact, type Connector, type DeliveryResult, type DispatchEvent, execute, type SendContext } from "./types";
 
@@ -136,11 +137,16 @@ export function buildUploadClickConversionsBody(e: DispatchEvent, c: GoogleAdsCr
   };
 }
 
-// Access tokens are cached per isolate (they live ~1h).
+// Access tokens are cached per isolate (they live ~1h). An isolate serves every account, so the key
+// is a hash of the whole credential tuple: one account's token is never used for another's credentials.
 const tokenCache = new Map<string, { token: string; exp: number }>();
+const MAX_CACHED_TOKENS = 1000;
+
+export const tokenCacheKey = (c: GoogleAdsCredentials) =>
+  sha256Hex(JSON.stringify([c.client_id, c.client_secret, c.refresh_token, c.login_customer_id ?? null]));
 
 export async function googleAccessToken(c: GoogleAdsCredentials, ctx: SendContext): Promise<{ token?: string; result?: DeliveryResult }> {
-  const key = `${c.client_id}:${c.refresh_token.slice(-12)}`;
+  const key = await tokenCacheKey(c);
   const hit = tokenCache.get(key);
   if (hit && hit.exp > Date.now() + 60_000) return { token: hit.token };
   const r = await execute(
@@ -164,6 +170,7 @@ export async function googleAccessToken(c: GoogleAdsCredentials, ctx: SendContex
       },
     };
   }
+  if (tokenCache.size >= MAX_CACHED_TOKENS) tokenCache.delete(tokenCache.keys().next().value as string);
   tokenCache.set(key, { token: j.access_token, exp: Date.now() + (j.expires_in ?? 3600) * 1000 });
   return { token: j.access_token };
 }
