@@ -306,7 +306,7 @@ describe("finding 6: custom code needs a verified domain and a claimed account",
     expect(v.errors.map((e) => e.code)).toContain("domain_not_verified");
   });
   it("verification: the TXT record over DoH, else the snippet in a <script src> on https://<domain>/", async () => {
-    const keyEnv = { ENCRYPTION_KEY: "q0n3d6Vf1w8Hq7m4Zt2yXb9cLr5sKp1uJe6aNg3hTiY=" };
+    const keyEnv = { ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" };
     const token = (await verifyToken(keyEnv, C))!;
     expect(token).toMatch(/^afs-verify=[a-f0-9]{32}$/);
     const doh = (answer: string[]) =>
@@ -351,7 +351,7 @@ describe("finding 6: custom code needs a verified domain and a claimed account",
     ).toEqual(["a.js", "d.js"]);
   });
   it("domain proof: only from https://<domain>/ (or www.) itself, answered 2xx; queries and other pages never count", async () => {
-    const keyEnv = { ENCRYPTION_KEY: "q0n3d6Vf1w8Hq7m4Zt2yXb9cLr5sKp1uJe6aNg3hTiY=" };
+    const keyEnv = { ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" };
     const snippet = `<script src="https://tags.example.com/c/${C}.js"></script>`;
     const site = (pages: Record<string, { status?: number; body?: string; location?: string }>) =>
       (async (u: RequestInfo | URL) => {

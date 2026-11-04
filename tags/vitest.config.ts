@@ -69,7 +69,7 @@ export default defineConfig({
                 MAX_CONTAINER_DB_BYTES: "",
                 CIRCUIT_BREAKER_FAILURES: "",
                 CIRCUIT_BREAKER_MINUTES: "",
-                ENCRYPTION_KEY: "q0n3d6Vf1w8Hq7m4Zt2yXb9cLr5sKp1uJe6aNg3hTiY=",
+                ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
                 DEV_MODE: "true",
                 ANALYTICS_BASE_URL: "https://analytics.test",
               },

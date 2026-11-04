@@ -38,7 +38,7 @@ describe("/collect helpers", () => {
     expect(clientIpFrom(new Request("https://t.test/collect", { headers: { "x-real-ip": "203.0.113.66" } }), false)).toBeUndefined();
   });
   it("the proxy key is a per-container HMAC; a client-set first_party flag or a wrong key isn't trusted", async () => {
-    const env = { ENCRYPTION_KEY: "q0n3d6Vf1w8Hq7m4Zt2yXb9cLr5sKp1uJe6aNg3hTiY=" };
+    const env = { ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" };
     const a = await proxyKey(env, "ctr_abcdefgh12345678");
     const b = await proxyKey(env, "ctr_zzzzzzzz12345678");
     expect(a).toMatch(/^[a-f0-9]{64}$/);

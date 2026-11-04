@@ -16,7 +16,7 @@ export default defineConfig({
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
                 // The shared identity DB (AUTH_DB), as on the hosted platform.
                 TEST_AUTH_MIGRATIONS: await readD1Migrations("../site/migrations"),
-                ENCRYPTION_KEY: "q5B6mPm7m6t0C9x2l8Yk3gq7cB1Fz2b0bZr7u1y4c3E=",
+                ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
                 SEND_DAILY_LIMIT: "6",
                 // Fair-use controls stay off in tests (deployments may turn them on); fair-use tests set their own.
                 MAIL_DOMAIN: "mail.example.com",
