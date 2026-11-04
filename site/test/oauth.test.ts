@@ -247,6 +247,8 @@ describe("authorization code flow", () => {
     expect(r1.json.refresh_token).not.toBe(t.json.refresh_token);
     expect(r1.json.access_token).not.toBe(t.json.access_token);
     expect((await call("GET", "/v1/me", { key: r1.json.access_token })).status).toBe(200);
+    // ... and the access token issued before the refresh stops working at once.
+    expect((await call("GET", "/v1/me", { key: t.json.access_token })).status).toBe(401);
 
     // Reusing the rotated refresh token revokes the whole grant.
     const reuse = await token({ grant_type: "refresh_token", refresh_token: t.json.refresh_token, client_id: clientId });

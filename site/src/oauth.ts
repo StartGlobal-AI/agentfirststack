@@ -10,7 +10,8 @@ import { loadSession, readForm, redirect, signinUrl } from "./session";
  * OAuth 2.1 authorization server for MCP connectors (claude.ai, ChatGPT and other clients that
  * follow the MCP authorization spec). Public clients only, PKCE S256 only, exact redirect_uri
  * match, single-use 10-minute codes, `iss` on the redirect (RFC 9207), rotating refresh tokens
- * where reusing a rotated one revokes the whole grant.
+ * where reusing a rotated one revokes the whole grant, and each refresh revokes the access tokens
+ * issued before it.
  *
  * Access tokens are ordinary API keys with `expires_at` (8 hours) for the chosen project and
  * scope, so every service and the MCP gateway accept them without knowing about OAuth.
@@ -360,6 +361,9 @@ oauthApi.post("/oauth/token", async (c) => {
     if (asked.some((s) => s !== "*" && s !== "read") || (grant.scope === "read" && asked.includes("*"))) {
       return oauthError(c, 400, "invalid_scope", "A refresh can't widen the granted scope.");
     }
+    // A grant has one refresh chain, so the access tokens issued before this refresh are done:
+    // revoke them, so a leaked old access token stops working now instead of when it expires.
+    await db.prepare("UPDATE api_keys SET revoked_at = ? WHERE oauth_grant_id = ? AND revoked_at IS NULL").bind(now, grant.id).run();
     return issueTokens(c, grant, asked.length === 1 && asked[0] === "read" ? "read" : grant.scope);
   }
 

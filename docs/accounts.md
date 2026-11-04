@@ -175,8 +175,8 @@ What MCP clients expect (MCP authorization spec):
     presented again *with a valid verifier* after a successful exchange revokes the grant it
     created; an invalid second presentation is just `invalid_grant`.
   - `refresh_token` rotates the refresh token (`afsr_...`). Refresh tokens last 30 days. Presenting
-    a rotated one again revokes the whole grant (every refresh and access token). A refresh may
-    narrow `*` to `read`, never widen. A user who left the project loses the grant.
+    a rotated one again revokes the whole grant (every refresh and access token). Each refresh also
+    revokes the access tokens issued before it. A refresh may narrow `*` to `read`, never widen. A user who left the project loses the grant.
   - Access tokens are **API keys with an expiry** (`expires_at`, 8 hours) for the chosen project
     and scope, named after the client and linked to the grant (`oauth_grant_id`). Every service
     accepts them unchanged.
