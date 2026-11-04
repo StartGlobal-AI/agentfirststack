@@ -542,7 +542,8 @@ describe("SQL: plan bound (finding 2)", () => {
     expect(r.truncated_by).toBe("bytes");
     expect(r.rows.length).toBeLessThan(900);
     expect(JSON.stringify(r.rows).length).toBeLessThanOrEqual(engine.MAX_SQL_RESULT_BYTES);
-  });
+    // Ingests 900 rows of ~3 KB through the full ingest path: slow on CI runners.
+  }, 30_000);
 
   it("a site's SQL time budget refills over 10 minutes", () => {
     engine.configure(db, settings());
