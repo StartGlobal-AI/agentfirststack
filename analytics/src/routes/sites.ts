@@ -6,9 +6,18 @@ import { createFunnel, deleteFunnel, listFunnels, updateFunnel } from "../servic
 import { createGoal, deleteGoal, listGoals, updateGoal } from "../service/goals";
 import { ingestServer } from "../service/ingest";
 import { FRAMEWORKS } from "../service/install";
-import { createShareLink, revokeShareLinks } from "../service/share";
+import { createShareLink, listShareLinks, revokeShareLinks } from "../service/share";
+import { getMrr, listSubscriptions, recordSubscriptions } from "../service/subscriptions";
+import { getItems } from "../service/items";
+import { getRealtimeMap, listSessions } from "../service/reads";
+import { getCrawlers, recordCrawls } from "../service/crawlers";
+import { exportBody, exportEvents } from "../service/export";
+import { MAX_IMPORT_BYTES, deleteImport, importCsv, listImports } from "../service/imports";
+import { MAX_COST_CSV_BYTES, deleteCosts, listCosts, recordCosts } from "../service/costs";
+import { readTextCapped } from "../lib/body";
+import { connectBilling, disconnectBilling, getBillingIntegration } from "../service/billing-webhooks";
 import { connectStripe, deletePayment, disconnectStripe, getStripeIntegration, listPayments, recordPayments } from "../service/payments";
-import { getJourneys, getSession, getVisitor, listVisitors } from "../service/people";
+import { getJourneys, getSession, getVisitor, listUserProps, listVisitors } from "../service/people";
 import { createSite, deleteSite, getExclusions, getInstall, getSite, listSites, updateSite } from "../service/sites";
 import {
   getAttribution,
@@ -30,6 +39,7 @@ import { alertHistory, createAlert, deleteAlert, getAlert, listAlerts, testAlert
 import { createReport, deleteReport, getDigest, listReports, sendReport, updateReport } from "../service/reports";
 import { createSegment, deleteSegment, listSegments, updateSegment } from "../service/segments";
 import { getRetention } from "../service/retention";
+import { connectStripeWithKey, restartBackfill } from "../service/stripe-connect";
 import { body, ctxOf } from "./util";
 import type { Context } from "hono";
 import type { AppEnv } from "../env";
@@ -73,6 +83,8 @@ r.get("/:id/stats", async (c) => out(c, "stats", await getStats(ctxOf(c), c.req.
 r.get("/:id/breakdown", async (c) => out(c, "breakdown", await getBreakdown(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/timeseries", async (c) => out(c, "timeseries", await getTimeseries(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/realtime", async (c) => c.json(await getRealtime(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/realtime/map", async (c) => c.json(await getRealtimeMap(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/sessions", async (c) => c.json(await listSessions(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/funnel", async (c) => c.json(await getFunnel(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/attribution", async (c) => c.json(await getAttribution(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/paths", async (c) => c.json(await getPaths(ctxOf(c), c.req.param("id"), c.req.query())));
@@ -97,8 +109,64 @@ r.post("/:id/integrations/stripe", async (c) => {
   return c.json(res, res.existing ? 200 : 201);
 });
 r.delete("/:id/integrations/stripe", async (c) => c.json(await disconnectStripe(ctxOf(c), c.req.param("id"))));
+r.post("/:id/integrations/stripe/connect", async (c) => {
+  const res = await connectStripeWithKey(ctxOf(c), c.req.param("id"), await body(c));
+  return c.json(res, res.existing ? 200 : 201);
+});
+r.post("/:id/integrations/stripe/backfill", async (c) => c.json(await restartBackfill(ctxOf(c), c.req.param("id"), await body(c))));
+// Polar, Paddle, LemonSqueezy (after the Stripe routes, which are more specific).
+r.get("/:id/integrations/:provider", async (c) =>
+  c.json(await getBillingIntegration(ctxOf(c), c.req.param("id"), c.req.param("provider"))),
+);
+r.post("/:id/integrations/:provider", async (c) => {
+  const res = await connectBilling(ctxOf(c), c.req.param("id"), c.req.param("provider"), await body(c));
+  return c.json(res, res.existing ? 200 : 201);
+});
+r.delete("/:id/integrations/:provider", async (c) => c.json(await disconnectBilling(ctxOf(c), c.req.param("id"), c.req.param("provider"))));
+r.get("/:id/export", async (c) => {
+  const res = await exportEvents(ctxOf(c), c.req.param("id"), c.req.query());
+  const { body, type } = exportBody(res);
+  return c.body(body, 200, {
+    "content-type": type,
+    "x-afs-rows": String(res.rows.length),
+    ...(res.next_cursor ? { "x-afs-next-cursor": res.next_cursor } : {}),
+    "x-afs-export-used-today": String(res.used_today),
+  });
+});
+r.post("/:id/imports", async (c) => {
+  const type = c.req.header("content-type") ?? "";
+  const input = type.includes("text/csv")
+    ? {
+        csv: (await readTextCapped(c.req.raw.body, MAX_IMPORT_BYTES + 1)).text,
+        source: c.req.query("source"),
+        kind: c.req.query("kind"),
+        file_name: c.req.query("file_name"),
+      }
+    : await body(c);
+  const res = await importCsv(ctxOf(c), c.req.param("id"), input);
+  return c.json(res, "existing" in res && res.existing ? 200 : 201);
+});
+r.get("/:id/imports", async (c) => c.json(await listImports(ctxOf(c), c.req.param("id"))));
+r.delete("/:id/imports/:import_id", async (c) => c.json(await deleteImport(ctxOf(c), c.req.param("id"), c.req.param("import_id"))));
+r.post("/:id/crawls", async (c) => c.json(await recordCrawls(ctxOf(c), c.req.param("id"), await body(c)), 202));
+r.get("/:id/crawlers", async (c) => c.json(await getCrawlers(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/user-props", async (c) => c.json(await listUserProps(ctxOf(c), c.req.param("id"))));
+r.get("/:id/items", async (c) => c.json(await getItems(ctxOf(c), c.req.param("id"), c.req.query())));
+// Ad spend: JSON {costs:[...]} / {csv}, or a text/csv body.
+r.post("/:id/costs", async (c) => {
+  const type = c.req.header("content-type") ?? "";
+  const input = type.includes("text/csv")
+    ? { csv: (await readTextCapped(c.req.raw.body, MAX_COST_CSV_BYTES + 1)).text, currency: c.req.query("currency") }
+    : await body(c);
+  return c.json(await recordCosts(ctxOf(c), c.req.param("id"), input), 202);
+});
+r.get("/:id/costs", async (c) => c.json(await listCosts(ctxOf(c), c.req.param("id"), c.req.query())));
+r.delete("/:id/costs", async (c) => c.json(await deleteCosts(ctxOf(c), c.req.param("id"), c.req.query())));
 r.post("/:id/payments", async (c) => c.json(await recordPayments(ctxOf(c), c.req.param("id"), await body(c)), 202));
 r.get("/:id/payments", async (c) => c.json(await listPayments(ctxOf(c), c.req.param("id"), c.req.query())));
+r.post("/:id/subscriptions", async (c) => c.json(await recordSubscriptions(ctxOf(c), c.req.param("id"), await body(c)), 202));
+r.get("/:id/subscriptions", async (c) => c.json(await listSubscriptions(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/mrr", async (c) => c.json(await getMrr(ctxOf(c), c.req.param("id"), c.req.query())));
 r.delete("/:id/payments/:payment_id", async (c) => c.json(await deletePayment(ctxOf(c), c.req.param("id"), c.req.param("payment_id"))));
 
 r.get("/:id/exclusions", async (c) =>
@@ -142,7 +210,8 @@ r.post("/:id/share", async (c) => {
   const res = await createShareLink(ctxOf(c), c.req.param("id"), await body(c));
   return c.json(res, res.existing ? 200 : 201);
 });
-r.delete("/:id/share", async (c) => c.json(await revokeShareLinks(ctxOf(c), c.req.param("id"))));
+r.delete("/:id/share", async (c) => c.json(await revokeShareLinks(ctxOf(c), c.req.param("id"), c.req.query("token"))));
+r.get("/:id/share", async (c) => c.json(await listShareLinks(ctxOf(c), c.req.param("id"))));
 
 r.post("/:id/destinations", async (c) => {
   const res = await createDestination(ctxOf(c), c.req.param("id"), await body(c));

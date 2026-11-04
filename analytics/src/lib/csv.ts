@@ -45,3 +45,51 @@ export function csvRows(kind: "stats" | "breakdown" | "timeseries", res: Row): R
   const p = res.period as { from?: string; to?: string } | undefined;
   return [{ from: p?.from, to: p?.to, ...(res.metrics as Row), ...(res.comparison ? { comparison: res.comparison } : {}) }];
 }
+
+/**
+ * Parse CSV (RFC 4180: quoted fields, "" escapes, CRLF or LF) into objects keyed by the header row
+ * (lowercased, trimmed). At most `maxRows` data rows; `more` says some were left.
+ */
+export function parseCsv(text: string, maxRows: number): { rows: Record<string, string>[]; more: boolean } {
+  const records: string[][] = [];
+  let field = "";
+  let rec: string[] = [];
+  let quoted = false;
+  let more = false;
+  const end = () => {
+    rec.push(field);
+    field = "";
+    if (rec.length > 1 || rec[0] !== "") records.push(rec);
+    rec = [];
+  };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"' && field === "") quoted = true;
+    else if (c === ",") {
+      rec.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      end();
+      if (records.length > maxRows) {
+        more = true;
+        break;
+      }
+    } else field += c;
+  }
+  if (!more && (field !== "" || rec.length)) end();
+  if (records.length > maxRows + 1) more = true;
+  const [head, ...body] = records;
+  if (!head) return { rows: [], more: false };
+  const keys = head.map((h) => h.trim().toLowerCase().replace(/^﻿/, ""));
+  return {
+    rows: body.slice(0, maxRows).map((r) => Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? "").trim()]))),
+    more: more || body.length > maxRows,
+  };
+}

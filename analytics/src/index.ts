@@ -9,6 +9,10 @@ import { shareRoutes } from "./routes/share";
 import { webhookRoutes } from "./routes/webhooks";
 import { siteRoutes } from "./routes/sites";
 import { runCron } from "./service/cron";
+import { getFxRates } from "./service/fx";
+import { getRollup } from "./service/reads";
+import { crawlerList } from "./service/crawlers";
+import { ctxOf } from "./routes/util";
 
 export { SiteDO } from "./do/site-do";
 
@@ -67,8 +71,14 @@ app.route(
     ],
   }),
 );
+// The crawler list (public: middleware fetches it to know which requests to report).
+app.get("/v1/crawlers", (c) => c.json(crawlerList()));
 app.use("/v1/*", requireAuth<AppEnv>());
 app.route("/v1/sites", siteRoutes);
+// Every site of the account at once (totals per site and summed).
+app.get("/v1/rollup", async (c) => c.json(await getRollup(ctxOf(c), c.req.query())));
+// The exchange rates conversion to a site currency uses (ECB reference rates, stored per day).
+app.get("/v1/fx/rates", async (c) => c.json(await getFxRates(ctxOf(c), c.req.query())));
 
 export default {
   fetch: app.fetch,

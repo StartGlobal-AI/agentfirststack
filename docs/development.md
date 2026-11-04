@@ -30,7 +30,12 @@ Useful local hooks:
 - **site:** `DEV_MODE=true` (in `.dev.vars`) adds a fake sign-in, `/auth/dev-login?email=you@example.com`,
   so claim links, the dashboard and the OAuth consent page work without Google. It answers 404
   unless `DEV_MODE` is exactly `true`.
-- **analytics:** `DEV_MODE=true` honours `x-dev-geo-*` headers, so you can fake countries.
+- **analytics:** `DEV_MODE=true` honours `x-dev-geo-*` headers, so you can fake countries, and
+  allows `http://localhost` alert webhook destinations. Run the alert / report cron by hand with
+  `curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"` (`pnpm dev` runs `wrangler dev --test-scheduled`);
+  the same run continues Stripe backfills and fetches ECB exchange rates once a site has a
+  `currency`. Stripe, Polar, Paddle and LemonSqueezy webhooks can be exercised locally by signing a
+  body yourself (`stripeSignatureHeader` / `billingSignatureHeaders` in the source show the formats).
 - **tags:** `DEV_MODE=true` allows `http://localhost` webhook destinations.
 - **mail:** `DEV_MODE=true` allows `http://localhost` webhooks (the smoke script uses one).
 - **mail:** deliver a test message to the `email()` handler with
@@ -97,7 +102,19 @@ previous release's code (add columns and tables; don't rename or drop in the sam
 Connectors live in `tags/src/destinations/`, one file each, behind the interface in
 `tags/src/destinations/types.ts`: a credential schema, a payload builder (pure, unit-tested
 against the platform's documented examples), a sender, and a test-mode sender. Register it in
-the destinations index and add it to the catalog `GET /v1/schema` returns.
+the destinations index (the catalog `GET /v1/schema` returns is built from it), map its
+`send_to` in `tags/src/service/dispatch-plan.ts`, and list it in `SERVER_PLATFORMS` in
+`tags/src/config/validate.ts`.
+
+### The tags browser runtime
+
+`tags/src/runtime/` is bundled twice by `tags/scripts/build-runtime.mjs`: `dist/runtime.txt`
+(core) and `dist/runtime-ext.txt` (core plus `ext.ts`: video and js_error triggers,
+wait-for-tags, cross-domain linking, TCF, automatic user data). The Worker serves the second
+only to configs that need it (`needsExt` in `tags/src/service/script.ts`). Both have a size
+budget enforced by `tags/test/config-pack.test.ts`; keep new code in `ext.ts` when few sites
+need it, and raise the budget only with a reason. The runtime tests run the real bundle in a
+small fake browser (`tags/test/fixtures/browser.ts`).
 
 ## Conventions
 

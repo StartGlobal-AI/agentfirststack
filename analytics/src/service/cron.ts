@@ -1,3 +1,5 @@
+import { refreshFxRates } from "./fx";
+import { purgeShareAttempts } from "./share";
 import { accountStanding } from "@afs/shared";
 import type { Bindings } from "../env";
 import type { Fetcher } from "../lib/delivery";
@@ -5,6 +7,7 @@ import { type AlertRow, checkAlert } from "./alerts";
 import type { SiteRow } from "./context";
 import { purgeHistory, retryDue } from "./notify";
 import { runReports } from "./reports";
+import { runStripeBackfills } from "./stripe-connect";
 
 /**
  * The scheduled handler (wrangler.jsonc triggers: every 5 minutes). Bounded per run: at most
@@ -21,6 +24,8 @@ type Due = AlertRow & { s_account_id: string; s_domain: string };
 
 export interface CronOptions {
   fetcher?: Fetcher;
+  /** the ECB rates fetch (tests inject one; default fetch) */
+  fxFetcher?: Fetcher;
   /** extra work registered by later steps (reports); kept pluggable for tests */
   steps?: ((env: Bindings, now: number, stopAt: number, fetcher?: Fetcher) => Promise<Record<string, number>>)[];
 }
@@ -60,7 +65,8 @@ export async function runAlerts(env: Bindings, now: number, stopAt: number, fetc
 export async function runCron(env: Bindings, now = Date.now(), opts: CronOptions = {}) {
   const stopAt = Date.now() + CRON_BUDGET_MS;
   const out: Record<string, number> = {};
-  const steps = [runAlerts, runReports, ...(opts.steps ?? [])];
+  const fx = (e: Bindings, n: number) => refreshFxRates(e, n, opts.fxFetcher);
+  const steps = [runAlerts, runReports, runStripeBackfills, fx, ...(opts.steps ?? [])];
   for (const step of steps) {
     try {
       Object.assign(out, await step(env, now, stopAt, opts.fetcher));
@@ -71,6 +77,7 @@ export async function runCron(env: Bindings, now = Date.now(), opts: CronOptions
   try {
     out.retried = await retryDue(env, now, RETRIES_PER_RUN, opts.fetcher, stopAt);
     out.history_purged = await purgeHistory(env, now);
+    out.share_attempts_purged = await purgeShareAttempts(env, now);
   } catch (e) {
     console.error("cron retries / purge failed", e);
   }

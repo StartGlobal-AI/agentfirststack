@@ -1,3 +1,6 @@
+import type { ChannelGroup } from "../lib/types";
+import type { Fetcher } from "../lib/stripe-api";
+import { deleteCreatedEndpoint } from "./stripe-connect";
 import { ApiError, INTERNAL_KEY_ID, type Standing, accountStanding, badRequest, capFor, newId, parse } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
@@ -63,11 +66,26 @@ const settingsShape = {
       'Accept browser events only from these hostnames ("*.example.com" allowed; not *.com or other public suffixes). null (default) = the site\'s domain and its subdomains.',
     ),
   respect_dnt: z.boolean().optional().describe("Drop browser events when the visitor sends Global Privacy Control / Do Not Track."),
+  currency: z
+    .string()
+    .regex(/^[A-Za-z]{3}$/)
+    .transform((c) => c.toUpperCase())
+    .nullable()
+    .optional()
+    .describe(
+      "Reporting currency (ISO 4217, e.g. EUR). Payments and subscriptions in other currencies are converted at ingest with that day's ECB reference rate (the original amount and currency are kept). null = none (default): money stays in its own currency. Applies to money recorded after it is set.",
+    ),
   browser_revenue: z
     .boolean()
     .optional()
     .describe(
       "Count revenue sent from the browser (afsa('revenue', ...)). Default false: anyone can send browser events, so revenue should come from your server (track_events, payments, Stripe).",
+    ),
+  browser_user_props: z
+    .boolean()
+    .optional()
+    .describe(
+      "Keep user properties sent from the browser (afsa('identify', id, props)). Default false: anyone can send browser events, so set them from your server (user_props on server events); identify itself works either way.",
     ),
   trust_browser_user_id: z
     .boolean()
@@ -104,6 +122,30 @@ const settingsShape = {
     .optional()
     .describe(
       'Site search: query parameters that carry a search term, e.g. ["q","s"]. A pageview carrying one also records a site_search event {term} (lowercased, 100 characters, redacted); the rest of the query string is still never stored. null or [] = off (default).',
+    ),
+  session_timeout_minutes: z
+    .number()
+    .int()
+    .min(5)
+    .max(240)
+    .nullable()
+    .optional()
+    .describe("Minutes of inactivity that end a session (5-240; default 30). Applies to sessions from now on."),
+  channel_groups: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        source: z.array(z.string().min(1).max(200)).max(20).optional(),
+        medium: z.array(z.string().min(1).max(200)).max(20).optional(),
+        campaign: z.array(z.string().min(1).max(200)).max(20).optional(),
+        channel: z.array(z.string().min(1).max(60)).max(20).optional(),
+      }),
+    )
+    .max(30)
+    .nullable()
+    .optional()
+    .describe(
+      'Custom channel groups, first match wins: [{"name":"Partners","source":["partner-*","*.affiliates.com"]},{"name":"Paid Social","medium":["paid_social","cpc"],"source":["facebook","instagram"]}]. Within a rule every condition given must match (any of its patterns; * = anything, case-insensitive) over source, utm_medium, utm_campaign or the built-in channel. Unmatched traffic keeps its built-in channel. Evaluated when you query (applies to stored data): breakdown=channel_group, filters=channel_group==Partners.',
     ),
   content_groups: z
     .array(z.object({ name: z.string().min(1).max(100), match: z.string().min(1).max(500) }))
@@ -196,6 +238,7 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     respect_dnt: !!s.respect_dnt,
     exclusions: parseExclusions(s.exclusions),
     browser_revenue: !!s.browser_revenue,
+    browser_user_props: !!s.browser_user_props,
     trust_browser_user_id: !!s.trust_browser_user_id,
     replay_site_id: s.replay_site_id ?? null,
     ignored_referrers: jsonList<string>(s.ignored_referrers) ?? [],
@@ -203,6 +246,9 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     redact_pii: s.redact_pii !== 0,
     search_params: jsonList<string>(s.search_params) ?? [],
     content_groups: jsonList<{ name: string; match: string }>(s.content_groups) ?? [],
+    session_timeout_minutes: s.session_timeout_minutes ?? 30,
+    channel_groups: jsonList<ChannelGroup>(s.channel_groups) ?? [],
+    currency: s.currency ?? null,
     verification: verificationJson(s),
     created_at: s.created_at,
     updated_at: s.updated_at,
@@ -277,6 +323,8 @@ function contentGroupsColumn(input: { name: string; match: string }[] | null | u
   return JSON.stringify(input.map((g) => ({ name: g.name.trim(), match: g.match.trim() })));
 }
 
+const channelGroupsColumn = (v: ChannelGroup[] | null | undefined) => (v?.length ? JSON.stringify(v) : null);
+
 /** The settings columns of `sites` that create and update write, in order (besides id, account_id, timestamps). */
 const SETTING_COLUMNS = [
   "domain",
@@ -288,12 +336,16 @@ const SETTING_COLUMNS = [
   "respect_dnt",
   "exclusions",
   "browser_revenue",
+  "browser_user_props",
   "trust_browser_user_id",
   "ignored_referrers",
   "path_rules",
   "redact_pii",
   "search_params",
   "content_groups",
+  "currency",
+  "session_timeout_minutes",
+  "channel_groups",
 ] as const satisfies readonly (keyof SiteRow)[];
 
 const columnValues = (row: SiteRow) => SETTING_COLUMNS.map((c) => (row[c] ?? null) as string | number | null);
@@ -374,12 +426,16 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     respect_dnt: input.respect_dnt ? 1 : 0,
     exclusions: exclusionsColumn(input.exclusions),
     browser_revenue: input.browser_revenue ? 1 : 0,
+    browser_user_props: input.browser_user_props ? 1 : 0,
     trust_browser_user_id: input.trust_browser_user_id ? 1 : 0,
     ignored_referrers: ignoredReferrersColumn(input.ignored_referrers),
     path_rules: pathRulesColumn(input.path_rules),
     redact_pii: input.redact_pii === false ? 0 : 1,
     search_params: searchParamsColumn(input.search_params),
     content_groups: contentGroupsColumn(input.content_groups),
+    session_timeout_minutes: input.session_timeout_minutes ?? null,
+    channel_groups: channelGroupsColumn(input.channel_groups),
+    currency: input.currency ?? null,
     created_at: now,
     updated_at: now,
   };
@@ -477,12 +533,16 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.respect_dnt !== undefined) next.respect_dnt = input.respect_dnt ? 1 : 0;
   if (input.exclusions !== undefined) next.exclusions = exclusionsColumn(input.exclusions);
   if (input.browser_revenue !== undefined) next.browser_revenue = input.browser_revenue ? 1 : 0;
+  if (input.browser_user_props !== undefined) next.browser_user_props = input.browser_user_props ? 1 : 0;
   if (input.trust_browser_user_id !== undefined) next.trust_browser_user_id = input.trust_browser_user_id ? 1 : 0;
   if (input.ignored_referrers !== undefined) next.ignored_referrers = ignoredReferrersColumn(input.ignored_referrers);
   if (input.path_rules !== undefined) next.path_rules = pathRulesColumn(input.path_rules);
   if (input.redact_pii !== undefined) next.redact_pii = input.redact_pii ? 1 : 0;
   if (input.search_params !== undefined) next.search_params = searchParamsColumn(input.search_params);
   if (input.content_groups !== undefined) next.content_groups = contentGroupsColumn(input.content_groups);
+  if (input.session_timeout_minutes !== undefined) next.session_timeout_minutes = input.session_timeout_minutes ?? null;
+  if (input.channel_groups !== undefined) next.channel_groups = channelGroupsColumn(input.channel_groups);
+  if (input.currency !== undefined) next.currency = input.currency ?? null;
   if (replayChange) next.replay_site_id = replaySiteColumn(input.replay_site_id ?? null);
   // A new domain has to be proven again (share pages show the domain only while it is).
   const domainChanged = next.domain !== s.domain;
@@ -524,8 +584,10 @@ function replaySiteColumn(v: string | null): string | null {
   return v;
 }
 
-export async function deleteSite(ctx: Ctx, siteId: string) {
+export async function deleteSite(ctx: Ctx, siteId: string, opts: { fetcher?: Fetcher } = {}) {
   const s = await loadSite(ctx, siteId);
+  // The Stripe webhook endpoint we created for this site goes with it (best effort, with its key).
+  const endpointDeleted = await deleteCreatedEndpoint(ctx.env, s.id, opts.fetcher).catch(() => false);
   await ctx.env.DB.batch([
     ctx.env.DB.prepare("DELETE FROM goals WHERE site_id = ?").bind(s.id),
     ctx.env.DB.prepare("DELETE FROM share_links WHERE site_id = ?").bind(s.id),
@@ -541,7 +603,8 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
   await siteStub(ctx.env, s.id).destroy();
   return {
     deleted: s.id,
-    note: "The site, its goals, funnels, share links, Stripe connection, alerts, reports, destinations and their history, segments, annotations, payments and all stored events are gone.",
+    ...(endpointDeleted ? { stripe_webhook_endpoint_deleted: true } : {}),
+    note: "The site, its goals, funnels, share links, Stripe connection (and the webhook endpoint we created in Stripe), alerts, reports, destinations and their history, segments, annotations, payments and all stored events are gone.",
   };
 }
 

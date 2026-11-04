@@ -40,7 +40,7 @@ deploy.
 |---|---|
 | `ADMIN_TOKEN` | Safe any time: edit the file and deploy |
 | `SALT_SECRET` (analytics) | Safe; visitor ids for the current day are split once, nothing else changes |
-| `ENCRYPTION_KEY` (analytics, tags, mail) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it. Keep it backed up |
+| `ENCRYPTION_KEY` (analytics, tags, mail) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it (analytics: Stripe signing secrets and restricted keys, Polar / Paddle / LemonSqueezy signing secrets, alert destination URLs and signing secrets). Keep it backed up |
 | `SIGNUP_TOKEN` | Safe; callers need the new value |
 | `INTERNAL_TOKEN` (all apps) | Safe: edit the file and deploy all five apps (`pnpm afs deploy <profile>`). Between the first and last app, the dashboard may show resource lists as unavailable |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (site) | Safe; create a new secret in Google Cloud Console, deploy the site, then delete the old one. Existing sessions keep working |
@@ -67,8 +67,14 @@ deploy.
     `GET /accounts/<id>/email/sending/reputation`.
   - Keep DMARC at `p=reject` on the mail domain; it stops others from forging
     `@<mail-domain>` addresses.
-- **Cron.** Mail purges expired inboxes and old shared-domain mail hourly; its log line is
-  `cron.purge`.
+  - Delivery status (per-recipient delivered / bounced / complained, `GET /v1/messages/:id/delivery`)
+    needs an Email Sending event subscription per sending domain publishing to a queue the mail
+    Worker consumes, and the mail var `DELIVERY_EVENTS_QUEUE`; see the mail README, "Delivery
+    status". `events_seen_at` in that response shows whether events arrive for a domain.
+- **Cron.** Mail purges expired inboxes and old shared-domain mail hourly, and also expired
+  idempotency keys, event-feed rows older than 7 days, and sends scheduled messages whose inbox
+  alarm did not fire; its log line is `cron.purge`. Scheduled sends log `mail.scheduled` from the
+  inbox's Durable Object.
 
 ## Abuse handling
 
@@ -86,7 +92,18 @@ Free, instant signup attracts abuse. What bounds it, outermost first:
 - **Unclaimed accounts** (no person has claimed them) get the lower `UNCLAIMED_<NAME>` value of
   any cap or budget; custom tag code and replay beyond its trial need a claimed account and a
   verified domain.
-- **Retention**: replay chunks also expire through an R2 lifecycle rule (16 days on hosted).
+- **Retention**: replay chunks also expire through an R2 lifecycle rule (16 days on hosted). Scope
+  that rule to the prefix `rsite_` (every live chunk key is `rsite_<id>/<session>/<seq>`), not the
+  whole bucket: starred sessions (kept up to `MAX_STARRED_RETENTION_DAYS`) get a playback copy under
+  `starred/<site_id>/`, which the DO deletes itself when the session is unstarred, deleted or past
+  starred retention. Cached heatmap images live under `heatmaps/<site_id>/` (a second rule deleting
+  them after 2 days is a backstop; the service treats a copy older than a day as missing).
+- **Replay surveys and webhooks**: survey posts (`/f`) share the ingest rate limits and have their own
+  daily caps per site, network and test (`MAX_RESPONSES_*`, `MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY`);
+  a response counts against the account's daily derived and byte budgets. Webhooks are capped per account
+  (`MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_DELIVERIES_PER_ACCOUNT_PER_DAY`, `MAX_WEBHOOK_TESTS_PER_DAY`),
+  only verified sites emit events, and delivery logs (`webhook_deliveries`) are purged after 7 days by the
+  hourly cron. A stuck webhook shows in `GET /v1/webhooks/:id` (`status`, `error`).
 
 When something gets through, in order of escalation:
 
@@ -138,6 +155,8 @@ Routing > Routing rules, add a custom address rule for each one that forwards to
 |---|---|---|
 | Accounts, keys, config | D1 | Time Travel (30 days), `wrangler d1 export` |
 | Analytics events | Durable Object SQLite per site | Retained `retention_days`; DOs are replicated by Cloudflare |
+| Analytics subscriptions, costs, items, user properties, crawler hits, imports | The same per-site Durable Object | Subscriptions, costs and imports are kept until deleted; items go with their events; crawler hits follow `retention_days` |
+| Analytics exchange rates | D1 `fx_rates` (ECB, one row per day and currency) | Refetchable at any time; the cron fills gaps from the ECB's 90-day file |
 | Tags identities, event log | Durable Object SQLite per container | Event log 7 days, visitors 180 days after last seen, by design |
 | Raw mail, attachments | R2 | Durable storage; deleted with the message or inbox |
 

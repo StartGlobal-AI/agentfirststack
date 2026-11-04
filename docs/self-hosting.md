@@ -61,6 +61,16 @@ agentfirststack.com sets all of these (its profile is kept private). All are off
 | `SIGNUP_HOURLY_LIMIT` | all | New accounts per network (IPv4 address or IPv6 /48) per hour |
 | `MAX_SITES_PER_ACCOUNT` | analytics | Sites per account |
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | Chart annotations and saved funnels per site |
+| `MAX_ITEMS_PER_EVENT` | analytics | Ecommerce items kept per event (default 25) |
+| `MAX_EXPORT_ROWS_PER_SITE_PER_DAY` | analytics | Raw events exported per site per day (default 1000000) |
+| `MAX_IMPORTED_ROWS_PER_SITE` / `MAX_IMPORTS_PER_SITE` | analytics | Imported GA4 / Plausible rows (default 500000) and files (default 100) per site |
+| `MAX_CRAWL_HITS_PER_SITE_PER_DAY` | analytics | Crawler hits counted per site per day (default 100000) |
+| `MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY` / `MAX_CRAWL_HITS_PER_DAY` | analytics | Crawler hits per account and for the whole deployment per day (unset = none) |
+| `MAX_BROWSER_USER_PROP_KEYS_PER_SITE` | analytics | User property keys only browsers created (with `browser_user_props`; default 20) |
+| `MAX_USER_PROP_KEYS_PER_SITE` | analytics | Distinct user property keys per site (default 50) |
+| `MAX_COST_ROWS_PER_SITE` | analytics | Ad spend rows (date x source x campaign) per site (default 50000) |
+| `MAX_SEGMENTS_PER_SITE` / `MAX_ALERTS_PER_SITE` / `MAX_ALERT_DESTINATIONS_PER_SITE` / `MAX_REPORTS_PER_SITE` | analytics | Saved segments (default 50), alerts (20), alert destinations (5), scheduled reports (5) per site; each has an `UNCLAIMED_` variant |
+| `MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY` / `MAX_ALERT_EMAILS_PER_SITE_PER_DAY` | analytics | Alert, report and test deliveries per site per UTC day (default 100), of which emails (default 10) |
 | `MAX_CONTAINERS_PER_ACCOUNT` | tags | Tag containers per account |
 | `MAX_INBOXES_PER_ACCOUNT` | mail | Inboxes per account |
 | `SHARED_SEND_POLICY=reply_only` | mail | Inboxes on the shared domain may only write to people who wrote to them |
@@ -70,14 +80,27 @@ agentfirststack.com sets all of these (its profile is kept private). All are off
 | `MAX_MESSAGES_PER_INBOX` | mail | Messages an inbox may hold; more are rejected at SMTP |
 | `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | mail | Inbound messages per account per UTC day |
 | `MAX_BLOB_BYTES_PER_ACCOUNT` | mail | Stored mail (raw messages, HTML, attachments) per account; full means inbound is rejected at SMTP (default 1 GiB) |
+| `MAX_FEED_EVENTS_PER_DAY` / `MAX_LIST_ENTRIES_PER_ACCOUNT` / `MAX_SCHEDULED_PER_ACCOUNT` / `MAX_INBOX_CLEARS_PER_DAY` / `MAX_ATTACHMENT_TEXT_PER_DAY` | mail | Event-feed rows per account a day (5000), allow/block entries (100), scheduled sends waiting (20), inbox clears a day (off), attachment-to-text conversions a day (20); each has an `UNCLAIMED_` variant |
+| `DELIVERY_EVENTS_QUEUE` | mail | Turns on delivery status: the queue your Email Sending event subscriptions publish to (see the mail README, "Delivery status") |
 | `MAX_EVENTS_PER_ACCOUNT_PER_DAY` / `MAX_EVENTS_PER_DAY` | tags | Browser hits and backend events per account, and for the whole deployment, per UTC day |
 | `PROJECTS_PER_USER_DAILY_LIMIT` | site | New projects one signed-in person may create a day while connecting an app (default 5) |
+| `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY` / `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY` / `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | replay | Heatmap images rendered with Browser Rendering per UTC day (on by default: 10 / 30 / 300; cached images are free) |
+| `MAX_TAGS_EVENTS_PER_SITE_PER_DAY` | replay | Signals and survey scores sent to a linked tags container per site per day (default 500) |
 
 Some caps are on by default with safe values and only need setting to change them:
 `MAX_WEBHOOKS_PER_ACCOUNT` (10), `MAX_DESTINATIONS_PER_CONTAINER` (10),
-`MAX_VERSIONS_PER_CONTAINER` (50), `MAX_DRAFT_BYTES` (512 KB), `SQL_MAX_ROWS_READ` (1,000,000).
+`MAX_VERSIONS_PER_CONTAINER` (50), `MAX_DRAFT_BYTES` (512 KB), `SQL_MAX_ROWS_READ` (1,000,000),
+and for tags `MAX_ENVIRONMENTS_PER_CONTAINER` (5), `MAX_LOOKUPS_PER_CONTAINER` (10),
+`MAX_LOOKUP_ROWS` (10,000) and `MAX_LOOKUP_BYTES` (1 MB).
 
 Each app's README lists its full set of vars under "Config".
+
+Replay's R2 bucket: if you add a lifecycle rule to expire recording chunks, scope it to the prefix
+`rsite_` (live chunks are `rsite_<id>/<session>/<seq>`), so starred sessions' playback copies under
+`starred/` stay until replay deletes them itself; a second rule may expire `heatmaps/` (cached
+heatmap images, re-rendered after a day) after 2 days. Replay binds Browser Rendering as `BROWSER`
+for heatmap images (Workers Free includes 10 browser minutes a day, Workers Paid 10 hours a month
+then $0.09 an hour); remove the `browser` block from `replay/wrangler.jsonc` to turn them off.
 
 ## Run only some services
 
@@ -115,12 +138,23 @@ repository.
   claim links, the dashboard and OAuth connectors. Put them under `"site"` (or at the top level;
   they only go to the site). See [Sign-in for people](#sign-in-for-people-optional).
 - `SALT_SECRET` (analytics): derives the daily salt for cookieless visitor ids.
-- `ENCRYPTION_KEY` (analytics, tags, mail): seals stored third-party credentials and webhook
-  secrets (analytics: the Stripe webhook signing secret; without it, connecting Stripe answers 503
-  and the payments API still works). `pnpm afs init` adds a missing one to an older secrets file.
+- `ENCRYPTION_KEY` (analytics, tags, mail, replay): seals stored third-party credentials and webhook
+  secrets (analytics: the Stripe webhook signing secret and alert destinations' webhook / Slack
+  URLs and signing secrets; without it, connecting Stripe or adding a webhook or Slack
+  destination answers 503 and the payments API still works; replay: webhook signing secrets,
+  without it creating a replay webhook answers 503 `webhooks_unavailable`). `pnpm afs init` adds a missing one to an older secrets file
+  for analytics, tags and mail; for replay add `"replay": {"ENCRYPTION_KEY": "<32 random bytes, base64>"}` to the secrets file
+  yourself (`openssl rand -base64 32`).
   **If you lose it, those stored values can't be decrypted**; users have to re-enter them.
 
 `pnpm afs deploy` sets them on every deploy. To change one, edit the file and deploy again.
+
+Analytics alert and report emails (optional): the analytics template carries a `send_email`
+binding (`EMAIL`); email destinations also need the var `ALERT_EMAIL_FROM` (under `vars.analytics`
+in the profile), an address on a domain onboarded for Cloudflare Email Sending. They only ever go
+to the project's members. Without the var, email destinations are refused and webhook and Slack
+destinations still work. The analytics template also has a cron (`*/5 * * * *`) for alerts and
+reports.
 
 ## Sign-in for people (optional)
 

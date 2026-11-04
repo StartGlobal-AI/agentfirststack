@@ -1,3 +1,4 @@
+import type { Item } from "./items";
 import type { Breakdown, Filter, FilterExpr, Metric } from "./filters";
 import type { DebugMode, FunnelMode, FunnelStep, FunnelWindow } from "./query";
 import type { CompareSpec, Interval, Period } from "./time";
@@ -46,6 +47,8 @@ export interface SiteSettings {
   exclusions?: Exclusions | null;
   /** count revenue sent by the browser tracker ($ / afsa('revenue')); default false: anyone can send it */
   browser_revenue?: boolean;
+  /** count user properties sent by afsa('identify', id, props) (older copies: false) */
+  browser_user_props?: boolean;
   /** let user ids from afsa('identify') link payments that carry only a user id; default false */
   trust_browser_user_id?: boolean;
   /** linked replay site (rsite_...): the tracker loads its recorder. Older copies have no field: null. */
@@ -58,8 +61,14 @@ export interface SiteSettings {
   redact_pii?: boolean;
   /** query parameters that carry a site search term (older copies: none) */
   search_params?: string[] | null;
+  /** reporting currency (ISO 4217): money in other currencies is converted at ingest (older copies: none) */
+  currency?: string | null;
   /** content groups, first match wins, evaluated at query time (older copies: none) */
   content_groups?: { name: string; match: string }[] | null;
+  /** minutes of inactivity that end a session (older copies: 30) */
+  session_timeout_minutes?: number | null;
+  /** custom channel groups, first match wins, evaluated at query time */
+  channel_groups?: ChannelGroup[] | null;
   created_at: number;
   goals: Goal[];
 }
@@ -111,6 +120,10 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
    * logged, never used as a drop sample.
    */
   ip?: string | null;
+  /** user properties to set on the event's user (server user_props, afsa('identify', id, props)); null = unset */
+  user_props?: Record<string, string | null> | null;
+  /** ecommerce events: their items (lib/items.ts), capped per site in the DO */
+  items?: Item[] | null;
   /** engagement beacon: max scroll depth of the page, 0-100 */
   scroll_depth?: number | null;
   /** test traffic (afsa('debug') / data-debug, debug: true on server events): kept out of reports by default */
@@ -173,6 +186,15 @@ export interface PeriodParams {
   timezone?: string;
 }
 
+/** A custom channel group: every condition given must match one of its patterns (* = anything, case-insensitive). */
+export interface ChannelGroup {
+  name: string;
+  source?: string[];
+  medium?: string[];
+  campaign?: string[];
+  channel?: string[];
+}
+
 export interface StatsRequest extends PeriodParams {
   metrics: Metric[];
   filters: Filter[];
@@ -185,6 +207,8 @@ export interface StatsRequest extends PeriodParams {
   limit?: number;
   /** breakdown rows to skip (pagination) */
   offset?: number;
+  /** add imported (GA4 / Plausible) aggregates for days before live data */
+  imported?: boolean;
 }
 
 /** Breakdown order. `change` ranks by the absolute change of `metric` against the comparison. */
@@ -198,6 +222,7 @@ export interface TimeseriesRequest extends PeriodParams {
   filters: Filter[];
   interval?: Interval;
   compare?: CompareSpec;
+  imported?: boolean;
 }
 
 export interface FunnelRequest extends PeriodParams {
@@ -241,6 +266,13 @@ export interface PaymentInput {
   /** refunds: external ids of the payment that was refunded (tried in order) */
   original_refs: string[];
   livemode: boolean;
+  /** before conversion to the site currency (set by the Worker; equal to amount/currency when none) */
+  original_amount?: number | null;
+  original_currency?: string | null;
+  /** original -> site currency, the ECB publication day used, and whether that rate was stale */
+  fx_rate?: number | null;
+  fx_day?: string | null;
+  fx_fallback?: boolean;
 }
 
 export interface PaymentOutcome {

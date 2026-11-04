@@ -6,6 +6,7 @@ import { QUEUE_STUB } from "../../src/service/install";
 
 // The built bundle (pnpm test runs scripts/build-tracker.mjs first).
 const TRACKER = readFileSync(new URL("../../dist/tracker.txt", import.meta.url), "utf8");
+const TRACKER_LINKER = readFileSync(new URL("../../dist/tracker-linker.txt", import.meta.url), "utf8");
 
 type Sent = { via: "fetch" | "beacon"; url: string; body: Record<string, unknown> };
 
@@ -30,6 +31,11 @@ function browser(
     title?: string;
     innerWidth?: number;
     hash?: string;
+    /** the page's query string (default ?utm_source=x) */
+    search?: string;
+    /** the /s.js?linker=1 build */
+    linker?: boolean;
+    userAgent?: string;
   } = {},
 ) {
   const sent: Sent[] = [];
@@ -37,7 +43,7 @@ function browser(
   const listeners: Record<string, ((e: unknown) => void)[]> = {};
   const docListeners: Record<string, ((e: unknown) => void)[]> = {};
   let clock = 1_000_000;
-  const url = new URL(`https://example.com/?utm_source=x${opts.hash ?? ""}`);
+  const url = new URL(`https://example.com/${opts.search ?? "?utm_source=x"}${opts.hash ?? ""}`);
   const timers: (() => void)[] = [];
   const formEls: Record<string, unknown> = {};
   const observers: { threshold: number; el: unknown }[] = [];
@@ -96,6 +102,7 @@ function browser(
       head: { appendChild: (el: { tag: string }) => scripts.push(el) },
     },
     navigator: {
+      userAgent: opts.userAgent ?? "TestBrowser/1.0",
       webdriver: false,
       sendBeacon: (u: string, data: string) => {
         sent.push({ via: "beacon", url: u, body: JSON.parse(data) });
@@ -159,7 +166,7 @@ function browser(
     runInNewContext(QUEUE_STUB.replace(/^<script>|<\/script>$/g, ""), ctx);
     runInNewContext(opts.stubCalls, ctx);
   }
-  runInNewContext(TRACKER, ctx);
+  runInNewContext(opts.linker ? TRACKER_LINKER : TRACKER, ctx);
   const afsa = ctx.afsa as ((...a: unknown[]) => void) & { visitorId: () => string | null };
   return {
     sent,
@@ -169,8 +176,11 @@ function browser(
     ctx,
     tick: (ms: number) => (clock += ms),
     fire: (t: string, e: unknown = {}) => [...(listeners[t] ?? []), ...(docListeners[t] ?? [])].forEach((f) => f(e)),
-    click: (href: string) =>
-      docListeners.click?.forEach((f) => f({ type: "click", target: { closest: (sel: string) => (sel === "a" ? { href } : null) } })),
+    click: (href: string) => {
+      const a = { href };
+      docListeners.click?.forEach((f) => f({ type: "click", target: { closest: (sel: string) => (sel === "a" ? a : null) } }));
+      return a;
+    },
     /** a click on an element with data-afsa-* attributes (and optionally inside a link) */
     clickEl: (attrs: Record<string, string>, href?: string) =>
       docListeners.click?.forEach((f) =>
@@ -261,6 +271,69 @@ describe("tracker (/s.js)", () => {
     expect(b.sent.map((x) => [x.body.n, x.body.i])).toEqual([
       ["pageview", "u_9"],
       ["early", "u_9"],
+    ]);
+  });
+
+  it("data-require-consent: nothing is sent until afsa('consent', true); withdrawing stops it and drops the stored id", () => {
+    const b = browser({ attrs: { "data-require-consent": "true" }, response: { v: "vid_srv", p: 1 } });
+    expect(b.sent).toHaveLength(0);
+    b.afsa("event", "early");
+    expect(b.sent).toHaveLength(0);
+    b.afsa("consent", true);
+    expect(b.sent.map((x) => x.body.n)).toEqual(["pageview"]);
+    // Granting again (a consent manager calling on every change) sends nothing more (finding 12).
+    b.afsa("consent", true);
+    b.afsa("consent", true);
+    expect(b.sent.map((x) => x.body.n)).toEqual(["pageview"]);
+    b.afsa("event", "after");
+    expect(b.sent.map((x) => x.body.n)).toEqual(["pageview", "after"]);
+    b.store.afsa_vid = "vid_srv";
+    b.afsa("consent", false);
+    b.afsa("event", "withdrawn");
+    expect(b.sent).toHaveLength(2);
+    expect(b.store.afsa_vid).toBeUndefined();
+    // Granted again after a withdrawal: a real change, so the page's pageview goes once more.
+    b.afsa("consent", true);
+    b.afsa("consent", true);
+    expect(b.sent.filter((x) => x.body.n === "pageview")).toHaveLength(2);
+    // Queued before load (a consent manager's call through the snippet's stub): the pageview goes once consent is in.
+    const q = browser({ attrs: { "data-require-consent": "true" }, stubCalls: "afsa('consent', true)" });
+    expect(q.sent.map((x) => x.body.n)).toEqual(["pageview"]);
+  });
+
+  it("the linker build carries the visitor id to listed domains, bound to the browser and the minute, and strips it from the URL", () => {
+    const fnv = (s: string) => {
+      let x = 2166136261;
+      for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619);
+      return (x >>> 0).toString(36);
+    };
+    const minute = Math.floor(1_000_000 / 6e4);
+    const b = browser({ linker: true, storage: { afsa_vid: "vid_abcdef12" }, attrs: { "data-cross-domain": "shop.example.net" } });
+    const a = b.click("https://shop.example.net/cart?x=1");
+    expect(a.href).toBe(`https://shop.example.net/cart?x=1&_afsa=vid_abcdef12.${minute}.${fnv(`TestBrowser/1.0|vid_abcdef12|${minute}`)}`);
+    expect(b.click("https://other.org/").href).toBe("https://other.org/");
+    const value = (ua: string, m: number) => `vid_linked99.${m}.${fnv(`${ua}|vid_linked99|${m}`)}`;
+    const recv = browser({ linker: true, search: `?a=1&_afsa=${value("TestBrowser/1.0", minute)}&b=2` });
+    expect(recv.sent[0]!.body.id).toBe("vid_linked99");
+    expect(recv.location.search).toBe("?a=1&b=2"); // taken out of the address bar
+    expect(recv.sent[0]!.body.u).not.toContain("_afsa");
+    const otherBrowser = browser({ linker: true, userAgent: "OtherBrowser/2.0", search: `?_afsa=${value("TestBrowser/1.0", minute)}` });
+    expect(otherBrowser.sent[0]!.body.id).toBeUndefined();
+    const stale = browser({ linker: true, search: `?_afsa=${value("TestBrowser/1.0", minute - 3)}` });
+    expect(stale.sent[0]!.body.id).toBeUndefined();
+    const twoMin = browser({ linker: true, search: `?_afsa=${value("TestBrowser/1.0", minute - 2)}` });
+    expect(twoMin.sent[0]!.body.id).toBe("vid_linked99");
+    const plain = browser({ storage: { afsa_vid: "vid_abcdef12" }, attrs: { "data-cross-domain": "shop.example.net" } });
+    expect(plain.click("https://shop.example.net/cart").href).toBe("https://shop.example.net/cart");
+    expect(TRACKER).not.toContain("_afsa");
+    expect(TRACKER_LINKER.startsWith("/*! afs-analytics */\n(()=>")).toBe(true); // no page globals
+  });
+
+  it("identify with properties sends them once, with the next event", () => {
+    const b = browser({ stubCalls: "afsa('identify', 'u_9', { plan: 'pro' }); afsa('event', 'early')" });
+    expect(b.sent.map((x) => [x.body.n, x.body.i, x.body.up])).toEqual([
+      ["pageview", "u_9", { plan: "pro" }],
+      ["early", "u_9", undefined],
     ]);
   });
 

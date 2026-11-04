@@ -75,14 +75,33 @@ export function deleteIdentity(db: Db, key: string, o: DeleteIdentityOptions = {
     const payEvents = db.all(`SELECT id FROM events WHERE origin = 'payment' AND ${inList("session_id")}`, [S]).map((r) => Number(r.id));
     const P = JSON.stringify(payEvents);
     const events = num(db.all(`SELECT COUNT(*) AS n FROM events WHERE origin != 'payment' AND ${inList("session_id")}`, [S])[0]?.n);
-    if (!sids.length && !events && !payEvents.length) return null;
+    // Subscriptions of the person: by session, visitor, user or customer.
+    const U = JSON.stringify(userIdents.map((u) => u.slice(5)));
+    const subWhere = `${inList("session_id")} OR ${inList("visitor_id")} OR ${inList("user_id")}${o.customerHash ? " OR customer = ?" : ""}`;
+    const subArgs = o.customerHash ? [S, V, U, o.customerHash] : [S, V, U];
+    const subRefs = db.all(`SELECT ref FROM subscriptions WHERE ${subWhere}`, subArgs).map((r) => String(r.ref));
+    if (!sids.length && !events && !payEvents.length && !subRefs.length) return null;
     db.run(`DELETE FROM events WHERE origin != 'payment' AND ${inList("session_id")}`, [S]);
     db.run(`DELETE FROM sessions WHERE ${inList("id")}`, [S]);
     // First-touch rows of the person: their visitor ids, and the user ids those sessions carried.
     db.run(`DELETE FROM identities WHERE ${inList("ident")} OR ${inList("canonical")}`, [V, JSON.stringify(userIdents)]);
     db.run(`DELETE FROM identities WHERE ${inList("ident")}`, [JSON.stringify(userIdents)]);
+    db.run(`DELETE FROM user_props WHERE ${inList("user_id")}`, [JSON.stringify(userIdents.map((u) => u.slice(5)))]);
     db.run(`DELETE FROM payment_links WHERE ${inList("session_id")} OR ${inList("visitor_id")}`, [S, V]);
     if (o.customerHash) db.run("DELETE FROM payment_links WHERE customer = ?", [o.customerHash]);
+    // Their subscriptions are kept (MRR stays true) with every link to them removed, or deleted
+    // with their history when payments: delete.
+    if (subRefs.length) {
+      const R = JSON.stringify(subRefs);
+      if (o.payments === "delete") {
+        db.run(`DELETE FROM subscription_changes WHERE ${inList("sub_ref")}`, [R]);
+        db.run(`DELETE FROM subscriptions WHERE ${inList("ref")}`, [R]);
+      } else
+        db.run(
+          `UPDATE subscriptions SET session_id = NULL, visitor_id = NULL, user_id = NULL, customer = NULL, referrer = NULL, country = NULL, updated_at = ? WHERE ${inList("ref")}`,
+          [Date.now(), R],
+        );
+    }
     if (o.payments === "delete") {
       db.run(`DELETE FROM payments WHERE ${inList("event_rowid")}`, [P]);
       db.run(`DELETE FROM events WHERE ${inList("id")}`, [P]);
@@ -99,6 +118,7 @@ export function deleteIdentity(db: Db, key: string, o: DeleteIdentityOptions = {
       events_deleted: events,
       sessions_deleted: sids.length,
       payments: o.payments === "delete" ? { deleted: payEvents.length } : { unlinked: payEvents.length },
+      ...(subRefs.length ? { subscriptions: o.payments === "delete" ? { deleted: subRefs.length } : { unlinked: subRefs.length } } : {}),
       visitor_ids: visitorIds.length,
     };
   });

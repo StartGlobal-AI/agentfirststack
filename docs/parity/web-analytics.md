@@ -12,6 +12,21 @@ Since it was written we've built annotations with automatic spike notes, compari
 scroll depth and time on page, Web Vitals, 404 and form tracking, exclusions, visitors, journeys,
 insights, saved funnels and new vs returning visitors. This document supersedes that column.
 
+## Built since this audit (wave 2, 2026-11-04)
+
+Rows below still read as audited; these are now built (details in `analytics/src/llms.ts`): **R1** one-call
+Stripe connect with backfill, **R2** Polar, Paddle and LemonSqueezy signed webhooks (not Dodo), **R3**
+subscription lifecycle, **R4** MRR, ARR, ARPU, churn and trial conversion by acquisition source (no LTV),
+**R5** reporting currency, **R7** ad spend with cost, ROAS, CPA, CAC, cost per visit (no CPC), **C13**
+identify with traits (user properties), **C15** cross-domain linking (`/s.js?linker=1`), **C17** AI crawler
+analytics (user agent, not IP-verified), **Q3** behavioural filters (`did==` / `did!=`), **Q9** numeric prop
+sum / avg / min / max, **Q14** session list (with replay links), **Q15** realtime map, **Q17** new / returning
+(`visitor_type`), **D5** share links with password, segment, label and expiry, **D7** fuller share page
+(goals added), **D8** multi-site roll-up, **D11** bulk raw export, **I2** GA4 report CSV import, **I3**
+Plausible CSV import. Also custom channel groups, a per-site session timeout, consent gating and alert
+firings as annotations. Still open: **I1** Google Search Console (needs a verified sensitive Google OAuth
+scope).
+
 ## Summary
 
 | Bucket | Count | Meaning |

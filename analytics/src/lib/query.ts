@@ -1,3 +1,4 @@
+import type { ChannelGroup } from "./types";
 /**
  * SQL builders for the per-site SQLite (run inside SiteDO). Pure: they return { sql, args }.
  *
@@ -9,7 +10,18 @@
  * Schema (see do/schema.ts): events e, sessions s, goals g (synced copy of the site's goals).
  */
 
-import { DIMENSION_SQL, type Breakdown, type Filter, type FilterExpr, type FilterOp, NONE, PROP_KEY_RE, isLeaf } from "./filters";
+import {
+  CUSTOM_METRIC_RE,
+  DIMENSION_SQL,
+  type Breakdown,
+  type Filter,
+  type FilterExpr,
+  type FilterOp,
+  NONE,
+  PROP_KEY_RE,
+  customAlias,
+  isLeaf,
+} from "./filters";
 
 export type SqlValue = string | number | null;
 export interface Frag {
@@ -93,11 +105,15 @@ export interface QueryCtx {
   where?: FilterExpr | null;
   /** the site's content groups, for the content_group dimension */
   contentGroups?: { name: string; match: string }[];
+  /** the site's custom channel groups, for the channel_group dimension */
+  channelGroups?: ChannelGroup[];
   /** site has at least one goal / at least one goal with a value (lets us skip subqueries) */
   hasGoals: boolean;
   hasGoalValues: boolean;
   /** some goal counts once per visit (conversions then skip a session's repeat matches) */
   hasOnceGoals?: boolean;
+  /** numeric custom metrics to aggregate (sum|avg|min|max:prop:<key>) */
+  customMetrics?: string[];
 }
 
 /** Goal names named by `goal==...` filters: conversions then count only those goals. */
@@ -130,12 +146,44 @@ function contentGroupFrag(ctx: Pick<QueryCtx, "contentGroups"> | undefined): Fra
   )} END)`;
 }
 
-export function columnFor(key: string, ctx?: Pick<QueryCtx, "contentGroups">): Frag {
+/**
+ * channel_group: the site's channel_groups as a CASE (first match wins; within a rule every
+ * condition given must match one of its patterns, case-insensitive GLOB), else the built-in channel.
+ */
+function channelGroupFrag(ctx: Pick<QueryCtx, "channelGroups"> | undefined): Frag {
+  const groups = ctx?.channelGroups ?? [];
+  if (!groups.length) return raw("e.channel");
+  const COL = { source: "e.source", medium: "e.utm_medium", campaign: "e.utm_campaign", channel: "e.channel" } as const;
+  const rules = groups
+    .map((g) => {
+      const conds = (Object.keys(COL) as (keyof typeof COL)[])
+        .filter((k) => g[k]?.length)
+        .map(
+          (k) =>
+            sql`(${join(
+              g[k]!.map((p) => sql`lower(${raw(COL[k])}) GLOB ${wildcardGlob(p.toLowerCase())}`),
+              " OR ",
+            )})`,
+        );
+      return conds.length ? sql`WHEN ${join(conds, " AND ")} THEN ${g.name}` : null;
+    })
+    .filter((x): x is Frag => !!x);
+  return rules.length ? sql`(CASE ${join(rules, " ")} ELSE e.channel END)` : raw("e.channel");
+}
+
+export function columnFor(key: string, ctx?: Pick<QueryCtx, "contentGroups" | "channelGroups">): Frag {
   if (key === "content_group") return contentGroupFrag(ctx);
+  if (key === "channel_group") return channelGroupFrag(ctx);
   if (key.startsWith("prop:")) {
     const k = key.slice(5);
     if (!PROP_KEY_RE.test(k)) throw new Error("bad prop key");
     return sql`json_extract(e.props, ${`$."${k}"`})`;
+  }
+  if (key.startsWith("user:")) {
+    // A user property: the identified user's last value (events of anonymous visitors have none).
+    const k = key.slice(5);
+    if (!PROP_KEY_RE.test(k)) throw new Error("bad user property key");
+    return sql`(SELECT up.value FROM user_props up WHERE up.user_id = e.user_id AND up.key = ${k})`;
   }
   const col = DIMENSION_SQL[key as keyof typeof DIMENSION_SQL];
   if (!col) throw new Error(`unknown dimension ${key}`);
@@ -211,6 +259,15 @@ export function valueCond(col: Frag, op: FilterOp, values: string[]): Frag {
 }
 
 function filterFrag(f: Filter, ctx: QueryCtx): Frag {
+  if (f.key === "did") {
+    // Behaviour: visitors (and identified users) who did / didn't do an event within the range.
+    const negate = f.op === "!=" || f.op === "!~";
+    const cond = valueCond(raw("x.name"), f.op === "!=" ? "==" : f.op === "!~" ? "~" : f.op, f.values);
+    const who = (col: string) =>
+      sql`SELECT x.${raw(col)} FROM events x WHERE x.ts >= ${ctx.start} AND x.ts < ${ctx.end} AND x.origin != 'payment' AND x.${raw(col)} IS NOT NULL AND ${cond}`;
+    const did = sql`(e.visitor_id IN (${who("visitor_id")}) OR (e.user_id IS NOT NULL AND e.user_id IN (${who("user_id")})))`;
+    return negate ? sql`NOT ${did}` : did;
+  }
   if (f.key === "goal") {
     // Goal filters are session-level: keep events of sessions that completed the goal(s).
     const nameCol = raw("g.name");
@@ -294,7 +351,25 @@ function countCols(ctx: QueryCtx, pv: Frag = raw("e.name = 'pageview'"), pageSco
     ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} THEN e.session_id END)` : raw("0")} AS converted_sessions,
     COALESCE(SUM(CASE WHEN ${pv} THEN e.engagement_ms END), 0) / 1000.0 AS engagement_time,
     AVG(CASE WHEN ${pv} AND e.engagement_ms > 0 THEN e.engagement_ms END) / 1000.0 AS time_on_page,
-    AVG(CASE WHEN ${pv} THEN e.scroll_depth END) AS scroll_depth`;
+    AVG(CASE WHEN ${pv} THEN e.scroll_depth END) AS scroll_depth${customCols(ctx)}`;
+}
+
+/**
+ * Custom metrics over a numeric prop. Props are stored as text: only values made of digits, signs,
+ * a point and an exponent count (anything else is not a number and is skipped, not read as 0).
+ */
+function customCols(ctx: QueryCtx): Frag {
+  const list = (ctx.customMetrics ?? []).map((m) => CUSTOM_METRIC_RE.exec(m)).filter((m): m is RegExpExecArray => !!m);
+  if (!list.length) return EMPTY;
+  return join(
+    list.map((m) => {
+      const v = sql`json_extract(e.props, ${`$."${m[2]}"`})`;
+      const n = sql`CASE WHEN ${v} != '' AND ${v} NOT GLOB '*[^0-9.eE+-]*' THEN CAST(${v} AS REAL) END`;
+      const fn = { sum: "SUM", avg: "AVG", min: "MIN", max: "MAX" }[m[1] as "sum"]!;
+      return sql`, ${raw(fn)}(CASE WHEN ${raw(NOT_PAYMENT)} THEN ${n} END) AS ${raw(customAlias(m[0]))}`;
+    }),
+    "",
+  );
 }
 
 /** Sessions that converted (any goal), for the engaged-session test. Only when the site has goals. */
@@ -397,7 +472,7 @@ export interface GroupSpec {
 
 export const KEY_SEP = "\u001f";
 
-const dimExpr = (dim: Breakdown, ctx?: Pick<QueryCtx, "contentGroups">): Frag => {
+const dimExpr = (dim: Breakdown, ctx?: Pick<QueryCtx, "contentGroups" | "channelGroups">): Frag => {
   if (dim === "entry_page") return raw("s.entry_page");
   if (dim === "exit_page") return raw("s.exit_page");
   return columnFor(dim, ctx);

@@ -10,6 +10,26 @@ import { classifyChannel } from "../lib/channel";
 import { referrerIgnoredBy, spamReferrer } from "../lib/referrers";
 import { cleanEvent } from "../lib/ingest-rules";
 import { IDENTITIES_SQL, backfillIdentities, linkIdentity, retouchSession, touchIdentity } from "./identities";
+import { SUBSCRIPTIONS_SQL } from "./subscriptions-schema";
+import { ITEMS_SQL, insertItems } from "./items";
+import { DEFAULT_MAX_BROWSER_USER_PROP_KEYS, DEFAULT_MAX_USER_PROP_KEYS, USER_PROPS_SQL, setUserProps } from "./user-props";
+import { CRAWLERS_SQL } from "./crawlers";
+import { EXPORT_SQL } from "./export";
+import { IMPORTS_SQL, IMPORT_NOTE_FILTERED, importedByBucket, importedByValue, importedTotals, mergeTotals } from "./imports";
+import { DEFAULT_MAX_ITEMS_PER_EVENT, ECOMMERCE_SET } from "../lib/items";
+import {
+  COSTS_SQL,
+  COST_BASES,
+  COST_DIMS,
+  COST_NOTE,
+  costByBucket,
+  costByValue,
+  costScope,
+  costTotal,
+  fillCosts,
+  isCostMetric,
+  withCostBases,
+} from "./costs";
 import { type CompiledExclusions, compileExclusions, excludedBy } from "../lib/exclusions";
 import {
   type Breakdown,
@@ -20,6 +40,8 @@ import {
   SORTABLE_METRICS,
   VISITOR_TYPE_METRICS,
   VITALS_METRICS,
+  customAlias,
+  isCustomMetric,
 } from "../lib/filters";
 import {
   type GroupOpts,
@@ -93,7 +115,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const ATTR_COLS = [
   "referrer",
@@ -294,6 +316,26 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       backfillIdentities(db);
     },
   },
+  {
+    // Wave 2: subscriptions (the latest state of each and every MRR movement between states) and
+    // the original amount of converted payments.
+    version: 8,
+    up: (db) => {
+      for (const s of SUBSCRIPTIONS_SQL) db.run(s);
+      for (const s of COSTS_SQL) db.run(s);
+      for (const s of ITEMS_SQL) db.run(s);
+      for (const s of USER_PROPS_SQL) db.run(s);
+      for (const s of CRAWLERS_SQL) db.run(s);
+      for (const s of IMPORTS_SQL) db.run(s);
+      for (const s of EXPORT_SQL) db.run(s);
+      // Currency conversion: what each payment was before it became the site's currency.
+      addColumn(db, "payments", "original_amount", "REAL");
+      addColumn(db, "payments", "original_currency", "TEXT");
+      addColumn(db, "payments", "fx_rate", "REAL");
+      addColumn(db, "payments", "fx_day", "TEXT");
+      addColumn(db, "payments", "fx_fallback", "INTEGER");
+    },
+  },
 ];
 
 /** Columns and their meaning, for llms.txt / the query_sql tool description. */
@@ -308,11 +350,24 @@ sessions(id, visitor_id, user_id, user_source [server|browser: who sent the user
   exit_page, pageviews, custom_events, engagement_ms, + the same attribution, geo and device columns as events)
 goals(id, name, type [event|pageview|scroll], match, glob, value, threshold, props [JSON: every key must match], counting [every|once_per_visit], created_at)
 payments(id, ref [provider:external_id], provider, external_id, type [new|renewal|refund], amount, currency, ts, customer [salted hash],
-  event_rowid [events.id], linked_by [session|visitor|user|customer|original_payment|NULL], livemode, created_at, updated_at)
-annotations(id, kind [note|traffic_spike], ts, end_ts, title, description, source [api|auto], details [JSON], created_at, updated_at)
+  event_rowid [events.id], linked_by [session|visitor|user|customer|original_payment|NULL], livemode,
+  original_amount, original_currency, fx_rate, fx_day, fx_fallback [before conversion to the site currency], created_at, updated_at)
+annotations(id, kind [note|traffic_spike|alert], ts, end_ts, title, description, source [api|auto|alert], details [JSON], created_at, updated_at)
 usage(day [UTC YYYY-MM-DD], events [accepted events + engagement beacons], bytes, refused, flushed)
+subscriptions(id, ref [provider:external_id], provider, external_id, customer [salted hash], status [trialing|active|past_due|unpaid|paused|canceled|incomplete|incomplete_expired],
+  plan, currency, mrr [monthly, while paying], price_mrr, interval, interval_count, quantity, trial_start, trial_end, started_at, canceled_at, ended_at,
+  original_mrr, original_currency, fx_rate, period_amount, last_paid_at, current_period_end,
+  linked_by, channel, source, utm_source, utm_medium, utm_campaign, referrer, country [of the linked session], livemode, state_ts, created_at, updated_at)
+subscription_changes(id, sub_ref [subscriptions.ref], ts, kind [new|expansion|contraction|churn|reactivation|trial_start|trial_converted|trial_canceled], mrr_before, mrr_after, status_after, currency)
 identities(ident [visitor id or user:<user_id>], canonical [user:<id> for an identified visitor id], first_seen, last_seen, first_session_id,
-  channel, source, referrer, utm_source, utm_medium, utm_campaign, entry_page [the identity's first session])`;
+  channel, source, referrer, utm_source, utm_medium, utm_campaign, entry_page [the identity's first session])
+event_items(id, event_rowid [events.id], ts, event_name [view_item_list|select_item|view_item|add_to_cart|remove_from_cart|begin_checkout|purchase|refund],
+  item_id, item_name, item_category, item_brand, item_variant, item_list_name, price, quantity)
+user_props(user_id, key, value [text], source [server|browser], ts)
+costs(day [site timezone YYYY-MM-DD], source, campaign ['' = none], medium, cost, currency, original_cost, original_currency, fx_rate, clicks, impressions, created_at, updated_at)
+crawler_hits(day, bot, operator, category [ai_training|ai_search|ai_assistant|search|seo|preview|other], path, status [status class x 100, 0 unknown], hits, last_at)
+imports(id, source [plausible|ga4], kind [visitors|pages|sources|countries|devices], file_name, from_day, to_day, rows, created_at, updated_at)
+imported_rows(import_id, kind, day, value ['' for visitors], visitors, visits, pageviews, bounces, visit_duration [total seconds])`;
 
 export function migrate(db: Db): void {
   for (const stmt of statements(SCHEMA_V1)) db.run(stmt);
@@ -441,7 +496,7 @@ const TEXT_FIELDS = [
 
 /** Approximate stored size of an event: its text, plus a fixed overhead for numbers and keys. */
 export function eventBytes(ev: EnrichedEvent): number {
-  let n = 64;
+  let n = 64 + (ev.items?.length ? ev.items.length * 96 : 0);
   const r = ev as unknown as Record<string, unknown>;
   for (const k of TEXT_FIELDS) {
     const v = r[k];
@@ -464,6 +519,12 @@ export interface IngestOptions {
   drop?: (reason: string, sample: string | null) => void;
   /** validate_only: run every check and report what would be stored, then roll it all back */
   dryRun?: boolean;
+  /** ecommerce items kept per event (default DEFAULT_MAX_ITEMS_PER_EVENT) */
+  itemsPerEvent?: number;
+  /** distinct user property keys a site keeps (default DEFAULT_MAX_USER_PROP_KEYS) */
+  userPropKeys?: number;
+  /** keys only browsers created (default DEFAULT_MAX_BROWSER_USER_PROP_KEYS) */
+  browserUserPropKeys?: number;
 }
 
 /** The daily cap an event would break with `used` events already counted today, or null. */
@@ -495,11 +556,11 @@ export function pick<K extends string>(src: Record<string, unknown>, cols: reado
   return out;
 }
 
-function findSession(db: Db, visitorId: string, ts: number): SessionRow | null {
+function findSession(db: Db, visitorId: string, ts: number, timeoutMs = SESSION_TIMEOUT_MS): SessionRow | null {
   const r = db.all(
     `SELECT * FROM sessions WHERE visitor_id = ? AND last_seen_at >= ? AND started_at <= ?
      ORDER BY last_seen_at DESC LIMIT 1`,
-    [visitorId, ts - SESSION_TIMEOUT_MS, ts + SESSION_TIMEOUT_MS],
+    [visitorId, ts - timeoutMs, ts + timeoutMs],
   )[0];
   return (r as SessionRow | undefined) ?? null;
 }
@@ -553,7 +614,14 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
       // A site_search event rides along only while the daily caps leave room for a second event.
       const room = () => capRefusal(opts, used + 1) === null;
       const before = dry ? num(db.all("SELECT MAX(id) AS m FROM events")[0]?.m) : 0;
-      const r = ingestOne(db, settings, ev, now, { dev: !!opts.dev, drop, room });
+      const r = ingestOne(db, settings, ev, now, {
+        dev: !!opts.dev,
+        drop,
+        room,
+        itemsPerEvent: opts.itemsPerEvent ?? DEFAULT_MAX_ITEMS_PER_EVENT,
+        userPropKeys: opts.userPropKeys ?? DEFAULT_MAX_USER_PROP_KEYS,
+        browserUserPropKeys: opts.browserUserPropKeys ?? DEFAULT_MAX_BROWSER_USER_PROP_KEYS,
+      });
       if (dry) {
         r.warnings = warnings;
         if (r.ok)
@@ -621,7 +689,14 @@ function ingestOne(
   settings: SiteSettings,
   input: EnrichedEvent,
   now: number,
-  o: { dev: boolean; drop: (reason: string, sample: string | null) => void; room: () => boolean },
+  o: {
+    dev: boolean;
+    drop: (reason: string, sample: string | null) => void;
+    room: () => boolean;
+    itemsPerEvent?: number;
+    userPropKeys?: number;
+    browserUserPropKeys?: number;
+  },
 ): IngestOutcome {
   let ev = input;
   const drop = o.drop;
@@ -678,7 +753,8 @@ function ingestOne(
   if (ev.name === "engagement") return { ...engagement(db, visitorId, ev), engagement: true };
 
   const isPageview = ev.name === "pageview";
-  let sess = findSession(db, visitorId, ev.ts);
+  // The site's session timeout (minutes of inactivity), 30 by default.
+  let sess = findSession(db, visitorId, ev.ts, Math.min(240, Math.max(5, settings.session_timeout_minutes ?? 30)) * 60_000);
   let evAttr = pick(ev as unknown as Record<string, unknown>, ATTR_COLS);
   let attr: Record<string, SqlValue>;
   let geo = pick(ev as unknown as Record<string, unknown>, GEO_COLS);
@@ -833,6 +909,30 @@ function ingestOne(
       !isPageview && ev.interactive === false ? 1 : 0,
     ],
   );
+  if (userId && ev.user_props && Object.keys(ev.user_props).length) {
+    // Anyone can send browser events: their user properties count only with browser_user_props.
+    if (ev.origin !== "server" && !settings.browser_user_props) o.drop(`${WARN_PREFIX}browser_user_props_ignored`, null);
+    else {
+      const { refused } = setUserProps(
+        db,
+        userId,
+        ev.user_props,
+        ev.ts,
+        ev.origin === "server" ? "server" : "browser",
+        o.userPropKeys ?? DEFAULT_MAX_USER_PROP_KEYS,
+        o.browserUserPropKeys ?? DEFAULT_MAX_BROWSER_USER_PROP_KEYS,
+      );
+      if (refused) o.drop(`${WARN_PREFIX}user_prop_keys_limit`, null);
+    }
+  }
+  if (ev.items?.length && ECOMMERCE_SET.has(ev.name)) {
+    const max = o.itemsPerEvent ?? DEFAULT_MAX_ITEMS_PER_EVENT;
+    if (ev.items.length > max) o.drop(`${WARN_PREFIX}items_truncated`, null);
+    // Anyone can send browser events: their purchase / refund prices count only with browser_revenue.
+    const priced = ev.origin !== "browser" || !!settings.browser_revenue || (ev.name !== "purchase" && ev.name !== "refund");
+    const items = ev.items.slice(0, max).map((it) => (priced ? it : { ...it, price: null }));
+    if (max > 0) insertItems(db, num(db.all("SELECT last_insert_rowid() AS id")[0]?.id), ev.ts, ev.name, items);
+  }
   db.run(
     `UPDATE sessions SET
        pageviews = pageviews + ?, custom_events = custom_events + ?,
@@ -981,10 +1081,16 @@ export function shapeMetrics(row: Row | undefined, metrics: Metric[], totalVisit
     visit_conversion_rate: visits ? round((num(r.converted_sessions) / visits) * 100, 1) : 0,
     average_order_value: num(r.purchases) ? round(num(r.purchase_revenue) / num(r.purchases), 2) : 0,
     revenue_per_customer: customers ? round(revenue / customers, 2) : 0,
+    // filled from the costs table afterwards (fillCosts)
+    cost: null,
+    roas: null,
+    cpa: null,
+    cac: null,
+    cost_per_visit: null,
     percentage: totalVisitors === undefined ? (visitors ? 100 : 0) : totalVisitors ? round((visitors / totalVisitors) * 100, 1) : 0,
   };
   const out: MetricValues = {};
-  for (const k of metrics) out[k] = m[k];
+  for (const k of metrics) out[k] = isCustomMetric(k) ? nullable(r[customAlias(k)], 3) : m[k];
   return out;
 }
 
@@ -1033,7 +1139,91 @@ function notes(db: Db, settings: SiteSettings, metrics: Metric[], dims: unknown[
     const n = identityNote(settings);
     if (n) out.push(`returning_visitors: ${n}`);
   }
+  if (metrics.some(isCostMetric)) {
+    const known = new Set<string>(["utm_source", "utm_campaign", "source"]);
+    if (dims.some((d) => typeof d === "string" && !known.has(d))) out.push(COST_NOTE);
+    if (!num(db.all("SELECT COUNT(*) AS n FROM costs")[0]?.n))
+      out.push("No costs recorded: POST /v1/sites/:id/costs with daily spend by source and campaign (JSON or CSV).");
+  }
   return out;
+}
+
+/** Imports apply only without filters (they have no other dimensions). */
+const importScope = (q: { filters: Filter[]; where?: FilterExpr | null }) => !q.filters.length && !q.where;
+
+function importedOut(db: Db, r: { start: number; end: number; timezone: string }, applied: boolean) {
+  const t = applied ? importedTotals(db, r) : null;
+  return applied
+    ? { included: !!t, days: t?.days ?? 0, ...(t ? {} : { note: "No imported days in this period before live data begins." }) }
+    : { included: false, note: IMPORT_NOTE_FILTERED };
+}
+
+/** Breakdown rows by page / source / country / device with imported visitors, visits and pageviews added (values only imported are appended). */
+function importRows<T extends Record<string, unknown> & { value: SqlValue }>(
+  db: Db,
+  rows: T[],
+  dimIn: Breakdown | Breakdown[],
+  metrics: Metric[],
+  r: { start: number; end: number; timezone: string },
+  limit: number,
+): T[] {
+  if (Array.isArray(dimIn) && dimIn.length > 1) return rows;
+  const dim = Array.isArray(dimIn) ? dimIn[0]! : dimIn;
+  const by = importedByValue(db, dim, r);
+  if (!by?.size) return rows;
+  const seen = new Set<string>();
+  const out = rows.map((row) => {
+    const i = by.get(String(row.value));
+    if (!i) return row;
+    seen.add(String(row.value));
+    const m = mergeTotals(row as unknown as MetricValues, i);
+    return { ...row, ...Object.fromEntries(Object.entries(m).filter(([k]) => k in row)) } as T;
+  });
+  for (const [value, i] of by)
+    if (!seen.has(value) && out.length < limit)
+      out.push({
+        value,
+        ...Object.fromEntries(metrics.map((k) => [k, k === "visitors" || k === "visits" || k === "pageviews" ? i[k] : null])),
+      } as unknown as T);
+  return metrics.includes("visitors") ? out.sort((a, b) => Number(b.visitors ?? 0) - Number(a.visitors ?? 0)) : out;
+}
+
+/**
+ * Breakdown rows with their cost metrics: by utm_source / utm_campaign / source (lowercased match
+ * with the cost rows), null for any other dimension. The base metrics added for them are removed.
+ */
+function costRows<T extends Record<string, unknown> & { value: SqlValue }>(
+  db: Db,
+  rows: T[],
+  dimIn: Breakdown | Breakdown[],
+  metrics: Metric[],
+  r: { start: number; end: number; timezone: string },
+  p: { start: number; end: number } | null,
+  scope: { sql: string; args: string[] } | null,
+): T[] {
+  const dims = Array.isArray(dimIn) ? dimIn : [dimIn];
+  // Goal rows have their own fixed metrics.
+  if (!metrics.some(isCostMetric) || dims.includes("goal")) return rows;
+  const dim = dims.length === 1 && (COST_DIMS as readonly string[]).includes(dims[0]!) ? dims[0]! : null;
+  const by = dim && scope ? costByValue(db, dim, r, scope) : null;
+  const prevBy = dim && scope && p ? costByValue(db, dim, { ...p, timezone: r.timezone }, scope) : null;
+  const extra = COST_BASES.filter((b) => !metrics.includes(b));
+  const strip = (m: Record<string, unknown>) => {
+    for (const b of extra) delete m[b];
+    return m;
+  };
+  return rows.map((row) => {
+    const key = String(row.value ?? "").toLowerCase();
+    const filled = fillCosts(row as unknown as MetricValues, by ? (by.get(key) ?? 0) : null, metrics);
+    const out = strip({ ...row, ...filled }) as T & {
+      comparison?: { metrics: MetricValues; change_percent: Record<string, number | null> };
+    };
+    if (out.comparison?.metrics) {
+      const pm = fillCosts(out.comparison.metrics, prevBy ? (prevBy.get(key) ?? 0) : null, metrics);
+      out.comparison = { ...out.comparison, metrics: pm, change_percent: changes(filled, pm, metrics) };
+    }
+    return out;
+  });
 }
 
 // ------------------------------------------------------------------ stats, breakdowns, comparisons
@@ -1044,19 +1234,31 @@ export function stats(db: Db, settings: SiteSettings, q: StatsRequest, now = Dat
     if (ge) return ge;
     const r = rangeFor(db, settings, q, now);
     const ctx = ctxFor(db, r, q);
-    const cur = totals(db, ctx, q.metrics);
+    const scope = costScope(q.filters, !!q.where);
+    const costOf = (x: { start: number; end: number }) => (scope ? costTotal(db, { ...x, timezone: r.timezone }, scope) : null);
+    const imp = q.imported ? importScope(q) : false;
+    const withImp = (m: MetricValues, x: { start: number; end: number }) =>
+      imp ? mergeTotals(m, importedTotals(db, { ...x, timezone: r.timezone })) : m;
+    const cur = withImp(fillCosts(totals(db, ctx, withCostBases(q.metrics)), costOf(r), q.metrics), r);
     const out: Record<string, unknown> = { period: periodOut(r), filters: q.filters, metrics: cur };
+    if (q.imported) out.imported = importedOut(db, r, imp);
     const p = q.compare ? comparisonRange(r, q.compare, now) : null;
     const cmpCtx = p ? { ...ctx, start: p.start, end: p.end } : null;
     if (q.compare) {
       if (p && cmpCtx) {
-        const prev = totals(db, cmpCtx, q.metrics);
+        const prev = withImp(fillCosts(totals(db, cmpCtx, withCostBases(q.metrics)), costOf(p), q.metrics), p);
         out.comparison = { period: comparisonOut(p), metrics: prev, change_percent: changes(cur, prev, q.metrics) };
       } else out.comparison = null;
     }
     if (q.breakdown) {
       const metrics = q.breakdown_metrics ?? q.metrics;
-      const page = breakdownPage(db, ctx, q.breakdown, metrics, q.limit ?? 20, { sort: q.sort, cmp: cmpCtx, offset: q.offset });
+      const page = breakdownPage(db, ctx, q.breakdown, withCostBases(metrics), q.limit ?? 20, {
+        sort: q.sort,
+        cmp: cmpCtx,
+        offset: q.offset,
+      });
+      page.results = costRows(db, page.results, q.breakdown, metrics, r, p, scope);
+      if (imp) page.results = importRows(db, page.results, q.breakdown, metrics, r, q.limit ?? 20);
       out.breakdown = { ...propertyOut(q.breakdown), sort: sortOut(q.sort), ...page };
     }
     const n = notes(db, settings, q.metrics, [
@@ -1283,12 +1485,19 @@ export function breakdown(db: Db, settings: SiteSettings, q: StatsRequest & { br
       filters: q.filters,
       ...propertyOut(q.breakdown),
       sort: sortOut(q.sort),
-      ...breakdownPage(db, ctx, q.breakdown, q.metrics, q.limit ?? 20, {
-        sort: q.sort,
-        cmp: p ? { ...ctx, start: p.start, end: p.end } : null,
-        offset: q.offset,
-      }),
     };
+    const page = breakdownPage(db, ctx, q.breakdown, withCostBases(q.metrics), q.limit ?? 20, {
+      sort: q.sort,
+      cmp: p ? { ...ctx, start: p.start, end: p.end } : null,
+      offset: q.offset,
+    });
+    let results = costRows(db, page.results, q.breakdown, q.metrics, r, p, costScope(q.filters, !!q.where));
+    if (q.imported) {
+      const imp = importScope(q);
+      if (imp) results = importRows(db, results, q.breakdown, q.metrics, r, q.limit ?? 20);
+      out.imported = importedOut(db, r, imp);
+    }
+    Object.assign(out, page, { results });
     const n = notes(db, settings, q.metrics, [
       ...(Array.isArray(q.breakdown) ? q.breakdown : [q.breakdown]),
       ...q.filters.map((f) => f.key),
@@ -1369,7 +1578,16 @@ export function timeseries(db: Db, settings: SiteSettings, q: TimeseriesRequest,
     const rows = all(db, groupedQuery(ctx, { key, orderByKey: true }, opts));
     const byLabel = new Map(rows.map((x) => [String(x.value), x]));
     const total = totalVisitorsFor(db, ctx, q.metrics);
-    let results: Record<string, unknown>[] = bs.map((b) => ({ date: b.label, ...shapeMetrics(byLabel.get(b.label), q.metrics, total) }));
+    // Costs are per day: none in hourly series.
+    const scope = interval === "hour" ? null : costScope(q.filters, !!q.where);
+    const costs = scope && q.metrics.some(isCostMetric) ? costByBucket(db, r, bs, scope) : null;
+    const qm = withCostBases(q.metrics);
+    const imp = q.imported && interval !== "hour" && importScope(q) ? importedByBucket(db, r, bs) : null;
+    let results: Record<string, unknown>[] = bs.map((b) => {
+      const m = fillCosts(shapeMetrics(byLabel.get(b.label), qm, total), costs ? (costs.get(b.label) ?? 0) : null, q.metrics);
+      const i = imp?.get(b.label);
+      return { date: b.label, ...(i ? mergeTotals(m, i) : m) };
+    });
     const out: Record<string, unknown> = { period: periodOut(r), interval, filters: q.filters };
     if (q.compare) {
       const p = comparisonRange(r, q.compare, now);
@@ -1390,6 +1608,7 @@ export function timeseries(db: Db, settings: SiteSettings, q: TimeseriesRequest,
       } else out.comparison = null;
     }
     out.results = results;
+    if (q.imported) out.imported = importedOut(db, r, interval !== "hour" && importScope(q));
     out.annotations = annotationsIn(db, settings, r.start, r.end);
     const n = notes(
       db,
@@ -1605,6 +1824,14 @@ const PLAN_TABLES = new Set([
   "meta",
   "usage",
   "identities",
+  "subscriptions",
+  "subscription_changes",
+  "costs",
+  "event_items",
+  "user_props",
+  "crawler_hits",
+  "imports",
+  "imported_rows",
 ]);
 
 function tableBounds(db: Db): { rows: (t: string) => number; max: number } {
@@ -1869,8 +2096,13 @@ export function purge(db: Db, retentionDays: number, now = Date.now()): { events
   db.run("DELETE FROM events WHERE debug = 1 AND ts < ?", [now - DEBUG_RETENTION_DAYS * DAY]);
   // First-touch rows of identities not seen within retention.
   db.run("DELETE FROM identities WHERE last_seen < ?", [cutoff]);
+  // User properties last set before the retention window.
+  db.run("DELETE FROM user_props WHERE ts < ?", [cutoff]);
   // Daily counters are only needed for today; keep a few weeks for operators.
   db.run("DELETE FROM usage WHERE day < ?", [utcDay(now - 40 * DAY)]);
+  // Crawler hits are daily rows (by UTC day here: retention is days, a few hours either way is fine).
+  db.run("DELETE FROM crawler_hits WHERE day < ?", [utcDay(cutoff)]);
+  db.run("DELETE FROM crawl_usage WHERE day < ?", [utcDay(now - 40 * DAY)]);
   return { events: ev, sessions: se };
 }
 

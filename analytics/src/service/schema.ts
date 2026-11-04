@@ -1,6 +1,6 @@
 import { parse } from "@afs/shared";
 import { z } from "zod";
-import { breakdownCatalog, metricCatalog } from "../lib/catalog";
+import { breakdownCatalog, metricCatalog, CUSTOM_METRIC_DOCS } from "../lib/catalog";
 import { UNTRUSTED_NOTICE } from "../do/engine";
 import { identityNote } from "../do/common";
 import { type Ctx, callSite, loadGoals, loadSite, settingsFor } from "./context";
@@ -40,6 +40,7 @@ export async function getSchema(ctx: Ctx, siteId: string, raw: unknown) {
     site_id: site.id,
     period: d.period,
     metrics: metricCatalog(),
+    custom_metrics: CUSTOM_METRIC_DOCS,
     breakdowns: breakdownCatalog(),
     filters: { grammar: FILTER_GRAMMAR, ops: ["==", "!=", "~", "!~"] },
     goals: goals.map(goalJson),

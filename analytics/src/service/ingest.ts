@@ -1,3 +1,4 @@
+import { ECOMMERCE_SET, MAX_ITEMS_READ, cleanItems } from "../lib/items";
 import { ApiError, accountSuspended, networkKey, parse, randomString, timingSafeEqual } from "@afs/shared";
 import { z } from "zod";
 import { type Bindings, isDev } from "../env";
@@ -7,7 +8,7 @@ import { botReason, parseUserAgent } from "../lib/ua";
 import { hashRoute, parsePage, parseReferrer, primaryLanguage, queryOf, screenClass } from "../lib/url";
 import { proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
 import type { Attribution, EnrichedEvent, IngestResponse } from "../lib/types";
-import { allow, enforce, limitVars } from "../lib/limits";
+import { allow, enforce, limitVars, STORAGE_FULL_HINT } from "../lib/limits";
 import { type Ctx, SITE_ID_RE, type SiteStub, loadSite, pushSettings, siteStub } from "./context";
 
 const DEV_SALT = "insecure-dev-salt";
@@ -68,6 +69,23 @@ export function cleanProps(input: unknown): string | null {
   return n ? JSON.stringify(out) : null;
 }
 
+/** User properties: up to 30 keys like props; a null value unsets the key. */
+export function cleanUserProps(input: unknown): Record<string, string | null> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const out: Record<string, string | null> = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (n >= MAX_PROPS) break;
+    const key = String(k).trim().slice(0, MAX_PROP_KEY);
+    if (!/^[A-Za-z0-9_.-]+$/.test(key)) continue;
+    if (v === null) out[key] = null;
+    else if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[key] = String(v).slice(0, MAX_PROP_VALUE);
+    else continue;
+    n++;
+  }
+  return n ? out : null;
+}
+
 /** The claim hint (only where this deployment names the platform site, AUTH_ISSUER). */
 const claimHint = (env: Bindings) =>
   env.AUTH_ISSUER ? ` Accounts a person has claimed (POST ${env.AUTH_ISSUER.replace(/\/$/, "")}/v1/claim-link) get higher limits.` : "";
@@ -78,12 +96,7 @@ export function refusalError(env: Bindings, reason: NonNullable<IngestResponse["
     case "account_suspended":
       return accountSuspended();
     case "storage_full":
-      return new ApiError(
-        507,
-        "storage_full",
-        "This site's storage budget is used up, so new events are not stored.",
-        "Lower retention_days (PATCH /v1/sites/:id: older data is purged at once), keep junk out with allowed_hostnames or exclusions, or delete the site's data. GET /v1/sites/:id shows storage and limits.",
-      );
+      return new ApiError(507, "storage_full", "This site's storage budget is used up, so new events are not stored.", STORAGE_FULL_HINT);
     case "daily_limit":
       return new ApiError(
         429,
@@ -284,6 +297,8 @@ export async function ingestBrowser(
     url: route && page.url ? `${page.url}${route}`.slice(0, 1500) : page.url,
     user_id: clip(p.i, 200),
     props: cleanProps(p.p),
+    items: ECOMMERCE_SET.has(name) ? cleanItems((p.p as { items?: unknown } | undefined)?.items) : null,
+    user_props: cleanUserProps(p.up),
     ...revenueOf(p.$),
     engagement_ms: typeof p.e === "number" && p.e > 0 ? Math.round(p.e) : 0,
     visitor_hash: await visitorHash(salt, siteId, ip, ua ?? "", now),
@@ -361,6 +376,20 @@ export const serverEventSchema = z.object({
     .optional()
     .describe("String / number / boolean values. Kept: 30 keys of 64 characters, values of 500, 2 KB in all."),
   revenue: z.object({ amount: z.number(), currency: z.string().regex(/^[A-Za-z]{3}$/) }).optional(),
+  user_props: z
+    .record(z.string().max(MAX_PROP_KEY * 4), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()]))
+    .refine((o) => Object.keys(o).length <= 100, "at most 100 keys (30 are kept)")
+    .optional()
+    .describe(
+      "User properties for user_id (needs user_id): last value per user, e.g. {plan: 'pro', company_size: 50}; null unsets a key. Filter and break down with user:<key>.",
+    ),
+  items: z
+    .array(z.record(z.string(), z.unknown()))
+    .max(MAX_ITEMS_READ)
+    .optional()
+    .describe(
+      "Ecommerce events (view_item_list, select_item, view_item, add_to_cart, remove_from_cart, begin_checkout, purchase, refund): GA4-style items [{item_id, item_name, item_category, item_brand, item_variant, item_list_name, price, quantity}]. The site keeps MAX_ITEMS_PER_EVENT (default 25) per event.",
+    ),
   debug: z
     .boolean()
     .optional()
@@ -440,6 +469,8 @@ export async function enrichServerEvent(siteId: string, e: ServerEvent, salt: st
     url: page.url,
     user_id: e.user_id ?? null,
     props: cleanProps(e.props),
+    items: ECOMMERCE_SET.has(e.name) ? cleanItems(e.items) : null,
+    user_props: e.user_id ? cleanUserProps(e.user_props) : null,
     ...revenueOf(e.revenue),
     engagement_ms: 0,
     visitor_hash: visitor,

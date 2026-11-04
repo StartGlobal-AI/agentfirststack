@@ -4,6 +4,15 @@ Audited 2026-11-04 against `tags/src` (llms.ts, mcp.ts, config/schema.ts, servic
 destinations/*) and Google's own docs (Tag Manager API v2 reference, Tag Manager Help,
 tag-platform server-side guides). Evidence paths are relative to `tags/src/`.
 
+## Build status (2026-11-04)
+
+The prioritised list below has since been built in `tags/` except: custom domains (Cloudflare for
+SaaS, a live infrastructure change), the Google tag gateway passthrough, the GA4 `/g/collect`
+client, the Measurement Protocol-compatible `/mp/collect` ingest, the `draft` key scope (needs
+`@afs/shared`), the `replay` tag type, `containers.lookup` filters and Microsoft Ads server-side
+conversions (its UET Conversions API is still rolling out). The tables below are the audit as it
+was; `tags/llms.txt` (`GET /llms.txt`) describes what exists now.
+
 ## Summary
 
 | Bucket | Count | Meaning |

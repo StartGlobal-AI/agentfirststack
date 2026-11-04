@@ -36,6 +36,9 @@
  * its own sampling, bot, DNT and consent decisions.
  */
 
+/** Compile-time: the cross-domain linker is in the /s.js?linker=1 build only (scripts/build-tracker.mjs). */
+declare const __LINKER__: boolean;
+
 type Fn = ((cmd: string, ...args: unknown[]) => void) & { q?: IArguments[]; visitorId?: () => string | null };
 type Entry = PerformanceEntry & { value: number; duration: number; interactionId?: number; hadRecentInput?: boolean };
 type Payload = Record<string, unknown>;
@@ -68,8 +71,31 @@ type IO = typeof IntersectionObserver;
   if (store && store.getItem("afsa_ignore")) return; // localStorage.afsa_ignore = 1 excludes your own visits
 
   let vid = store ? store.getItem(KEY) : null; // persistent mode only
+  // data-require-consent="true": nothing is sent (or stored) until afsa('consent', true)
+  let ok = !on("require-consent");
+  // Cross-domain (the linker build): _afsa=<visitor id>.<minute>.<check> from a linked domain.
+  // check = FNV-1a (base 36) of "<user agent>|<id>|<minute>": a copied link stops working in another
+  // browser, and after 2 minutes. The parameter is then taken out of the address bar.
+  if (__LINKER__) {
+    // FNV-1a 32-bit, base 36 (not a secret: it ties a link to a browser and a minute)
+    const linkCheck = (s: string) => {
+      let x = 2166136261;
+      for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619);
+      return (x >>> 0).toString(36);
+    };
+    const lk = /[?&]_afsa=([\w-]{8,64})\.(\d+)\.([0-9a-z]+)/.exec(loc.search);
+    if (lk) {
+      const m = (Date.now() / 6e4) | 0;
+      if (m - +lk[2]! <= 2 && m >= +lk[2]! && linkCheck(`${nav.userAgent}|${lk[1]}|${lk[2]}`) === lk[3]) vid = lk[1]!;
+      const clean = new URL(loc.href);
+      clean.searchParams.delete("_afsa");
+      history.replaceState(history.state, "", clean.href);
+    }
+  }
+
   let lastV: string | null = null; // id echoed by the server (cookieless: today's hash)
   let uid: string | null = null;
+  let up: unknown; // user properties from identify, sent once with the next event
   let lastKey: string | null = null;
   let lastHref = "";
   let engaged = 0;
@@ -94,6 +120,7 @@ type IO = typeof IntersectionObserver;
   let obs: IntersectionObserver[] = [];
 
   const send = (n: string, extra?: Payload, beacon?: boolean) => {
+    if (!ok) return;
     let body: Payload | null = { s: site, n, u: pu || loc.href, r: d.referrer || undefined, ...extra };
     if (n !== "engagement") {
       const p = { ...gp, ...((body.p as Payload) || {}) };
@@ -101,6 +128,7 @@ type IO = typeof IntersectionObserver;
     }
     if (hashed) body.h = 1;
     if (uid) body.i = uid;
+    if (up) (body.up = up), (up = 0);
     if (vid) body.id = vid;
     if (nav.webdriver) body.b = 1;
     if (dbg) body.dbg = 1;
@@ -196,9 +224,15 @@ type IO = typeof IntersectionObserver;
     if (cmd === "event") send(String(a[0]), { p: a[1], ni: (a[2] as { interactive?: boolean })?.interactive === false ? 1 : undefined });
     else if (cmd === "404") notFound();
     else if (cmd === "revenue") send(String(a[0]), { $: [a[1], a[2]], p: a[3] });
-    else if (cmd === "identify") uid = a[0] == null ? null : String(a[0]);
+    else if (cmd === "identify") (uid = a[0] == null ? null : String(a[0])), (up = a[1]);
     else if (cmd === "debug") dbg = a[0] !== false;
     else if (cmd === "props") gp = { ...gp, ...(a[0] as Payload) };
+    else if (cmd === "consent")
+      // old < new only on the change to granted: then the page's pageview goes (once); withdrawn:
+      // nothing more is sent, and the stored id goes
+      (ok as unknown as number) < ((ok = a[0] !== false) as unknown as number)
+        ? ((lastKey = null), pageview())
+        : ok || store?.removeItem(KEY);
     else if (cmd === "pageview") {
       lastKey = null;
       pageview(a[0] as { url?: string; props?: Payload });
@@ -222,7 +256,7 @@ type IO = typeof IntersectionObserver;
   if (hashed) on2("hashchange", () => pageview());
   on2("visibilitychange", () => (visible() ? (since = Date.now()) : flush()), d);
   on2("pagehide", flush);
-  on2("scroll", measure, undefined, { passive: true });
+  on2("scroll", measure, w as unknown as EventTarget, { passive: true });
 
   // Core Web Vitals: LCP (last candidate), INP (slowest interaction), CLS (largest 5 s session window).
   let nf: unknown = 0; // this page is a 404 (opt-in)
@@ -308,6 +342,21 @@ type IO = typeof IntersectionObserver;
       return;
     }
     if (!/^https?:$/.test(u.protocol)) return;
+    // a link to a linked domain (data-cross-domain) carries the visitor id across (persistent mode)
+    if (__LINKER__) {
+      const i = vid || lastV;
+      const linkCheck = (s: string) => {
+        let x = 2166136261;
+        for (let j = 0; j < s.length; j++) x = Math.imul(x ^ s.charCodeAt(j), 16777619);
+        return (x >>> 0).toString(36);
+      };
+      if (i && (attr("cross-domain") || "").split(",").includes(u.hostname)) {
+        const m = (Date.now() / 6e4) | 0;
+        u.searchParams.set("_afsa", `${i}.${m}.${linkCheck(`${nav.userAgent}|${i}|${m}`)}`);
+        a.href = u.href;
+      }
+    }
+
     const url = u.origin + u.pathname;
     if (new RegExp(`\\.(${ext})$`, "i").test(u.pathname)) send("file_download", { p: { url } }, true);
     else if (u.host !== loc.host || links.some((r) => r.test(u.pathname))) send("outbound_click", { p: { url } }, true);

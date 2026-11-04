@@ -40,6 +40,11 @@ export const METRIC_DOCS: Record<Metric, string> = {
   average_order_value: "Revenue of new purchases / purchases.",
   revenue_per_customer: "revenue / customers.",
   percentage: "A row's share of all visitors in the period and filters, % (breakdowns; totals are 100).",
+  cost: "Ad spend from POST /costs in the period (site currency). Splits by utm_source, utm_campaign and source only; null under other filters / breakdowns and in hourly series.",
+  roas: "Return on ad spend: revenue / cost.",
+  cpa: "Cost per acquisition: cost / conversions (goal completions).",
+  cac: "Customer acquisition cost: cost / customers (visitors with a first purchase in the period).",
+  cost_per_visit: "cost / visits.",
 };
 
 export const BREAKDOWN_DOCS: Record<(typeof BREAKDOWNS)[number], string> = {
@@ -82,6 +87,10 @@ export const BREAKDOWN_DOCS: Record<(typeof BREAKDOWNS)[number], string> = {
   first_utm_campaign: "First touch: utm_campaign of the first session.",
   first_entry_page: "First touch: the landing page of the first session.",
   event_name: "Event name.",
+  channel_group:
+    "The site's custom channel groups (channel_groups rules over source, medium, campaign, channel; first match wins), else the built-in channel. Evaluated at query time.",
+  visitor_type:
+    "new (the visitor's first session) or returning (they had a session that ended before this one began; cookieless ids rotate daily, so same day only for anonymous visitors).",
   goal: "Goals (every goal, with conversions).",
 };
 
@@ -94,9 +103,22 @@ export function metricCatalog() {
   }));
 }
 
-export function breakdownCatalog(): { name: Breakdown | "prop:<key>"; description: string }[] {
+export function breakdownCatalog(): { name: Breakdown | "prop:<key>" | "user:<key>"; description: string }[] {
   return [
     ...BREAKDOWNS.map((name) => ({ name, description: BREAKDOWN_DOCS[name] })),
     { name: "prop:<key>" as const, description: "A custom event prop (keys are listed under untrusted.props)." },
+    {
+      name: "user:<key>" as const,
+      description:
+        "A user property (last value per identified user; GET /v1/sites/:id/user-props lists keys). Events of anonymous visitors have none.",
+    },
   ];
 }
+
+/** Numeric custom metrics over a prop: any of these with a prop key, e.g. sum:prop:amount. */
+export const CUSTOM_METRIC_DOCS = {
+  "sum:prop:<key>": "Sum of a numeric prop over the events that carry it (values that aren't numbers are skipped).",
+  "avg:prop:<key>": "Mean of a numeric prop.",
+  "min:prop:<key>": "Smallest value of a numeric prop.",
+  "max:prop:<key>": "Largest value of a numeric prop.",
+};

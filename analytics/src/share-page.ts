@@ -7,7 +7,7 @@
  */
 
 /** The share page's Content-Security-Policy: only its own nonce'd code, reads from its own origin, never framed. */
-export const sharePageCsp = (nonce: string) =>
+export const sharePageCsp = (nonce: string, formAction = false) =>
   [
     "default-src 'none'",
     `script-src 'nonce-${nonce}'`,
@@ -15,9 +15,48 @@ export const sharePageCsp = (nonce: string) =>
     "connect-src 'self'",
     "img-src 'self' data:",
     "base-uri 'none'",
-    "form-action 'none'",
+    // only the password page has a form, and it posts to this origin
+    formAction ? "form-action 'self'" : "form-action 'none'",
     "frame-ancestors 'none'",
   ].join("; ");
+
+/** The password form of a protected share link (no data on it). */
+export function sharePasswordPage(token: string, domain: string | null, nonce: string, wrong: boolean, retryAfterS?: number): string {
+  const heading = domain ? esc(domain) : "Shared analytics";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>${heading} · password</title>
+<style nonce="${nonce}">
+body{margin:0;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f4f4f2;color:#0b0b0b;display:flex;min-height:100vh;align-items:center;justify-content:center}
+@media (prefers-color-scheme:dark){body{background:#111110;color:#f0efec}input{background:#1a1a19;color:#f0efec;border-color:#2c2c2a}}
+form{width:min(340px,90vw);display:grid;gap:10px}
+h1{font-size:18px;margin:0}
+input{font:inherit;padding:8px 10px;border:1px solid #d6d5d0;border-radius:8px}
+button{font:inherit;padding:8px 10px;border:0;border-radius:8px;background:#2a78d6;color:#fff;cursor:pointer}
+.err{color:#b42318;font-size:13px}
+</style>
+</head>
+<body>
+<form method="post" action="/share/${esc(token)}/unlock">
+<h1>${heading}</h1>
+<label for="pw">This dashboard is protected. Password:</label>
+<input id="pw" name="password" type="password" autocomplete="current-password" required minlength="1" maxlength="200" autofocus>
+${
+  retryAfterS
+    ? `<div class="err" role="alert">Too many wrong passwords. Try again in ${Math.ceil(retryAfterS / 60)} minute(s).</div>`
+    : wrong
+      ? '<div class="err" role="alert">That password is not right.</div>'
+      : ""
+}
+<button type="submit">View dashboard</button>
+</form>
+</body>
+</html>`;
+}
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -95,6 +134,7 @@ details{margin-top:8px;color:var(--text-secondary);font-size:12px}
   <div class="card"><h2>Top sources</h2><table id="t-sources"></table></div>
   <div class="card"><h2>Countries</h2><table id="t-countries"></table></div>
   <div class="card"><h2>Devices</h2><table id="t-devices"></table></div>
+  <div class="card"><h2>Goals</h2><table id="t-goals"></table></div>
 </section>
 <footer>${source} Cookieless analytics; aggregate numbers only.</footer>
 </div></div>
@@ -152,13 +192,20 @@ function table(id,rows,name){
   var max=Math.max.apply(null,rows.map(function(r){return r.visitors}))||1;
   rows.forEach(function(r){var tr=el("tr"),td=el("td",{class:"name",title:String(r.value)});var bar=el("i");bar.style.width=(r.visitors/max*100).toFixed(1)+"%";td.appendChild(bar);td.appendChild(el("span",{},name?name(r.value):String(r.value)));tr.appendChild(td);tr.appendChild(el("td",{class:"n"},fmt(r.visitors)));t.appendChild(tr)});
 }
+function goals(rows){
+  var t=document.getElementById("t-goals");t.textContent="";
+  if(!rows.length){t.appendChild(el("tr")).appendChild(el("td",{class:"empty"},"No goals"));return}
+  rows.forEach(function(r){var tr=el("tr");tr.appendChild(el("td",{class:"name",title:String(r.value)})).appendChild(el("span",{},String(r.value)));tr.appendChild(el("td",{class:"n"},fmt(r.conversions||0)));tr.appendChild(el("td",{class:"n"},(r.conversion_rate||0)+"%"));t.appendChild(tr)});
+}
 function load(){
   document.querySelectorAll(".periods button").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.p===period))});
   fetch("/share/"+TOKEN+"/data?period="+encodeURIComponent(period)).then(function(r){return r.json()}).then(function(d){
     if(d.error){document.getElementById("range").textContent=d.error.message;return}
-    document.getElementById("range").textContent=d.period.from+" to "+d.period.to+" ("+d.period.timezone+")";
+    var extra=(d.share&&d.share.segment?" · segment: "+d.share.segment:"")+(d.share&&d.share.expires_at?" · link expires "+new Date(d.share.expires_at).toISOString().slice(0,10):"");
+    document.getElementById("range").textContent=d.period.from+" to "+d.period.to+" ("+d.period.timezone+")"+extra;
     kpis(d);chart(d.timeseries,d.interval);
     table("t-pages",d.top_pages);table("t-sources",d.top_sources,function(v){return v==="(none)"?"Direct / none":v});table("t-countries",d.top_countries,country);table("t-devices",d.top_devices,function(v){return v==="(none)"?"Unknown":v.charAt(0).toUpperCase()+v.slice(1)});
+    goals(d.goals||[]);
   }).catch(function(){document.getElementById("range").textContent="Could not load data."});
 }
 document.querySelectorAll(".periods button").forEach(function(b){b.addEventListener("click",function(){period=b.dataset.p;history.replaceState(null,"","?period="+period);load()})});

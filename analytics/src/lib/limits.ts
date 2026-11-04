@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_ITEMS_PER_EVENT, MAX_ITEMS_READ } from "./items";
 import { ApiError, type Standing, capFor } from "@afs/shared";
 
 /**
@@ -20,6 +21,9 @@ export const LIMIT_VARS = [
   "MAX_SITE_STORAGE_MB",
   "MIN_RETENTION_DAYS",
   "MAX_RETENTION_DAYS",
+  "MAX_ITEMS_PER_EVENT",
+  "MAX_USER_PROP_KEYS_PER_SITE",
+  "MAX_BROWSER_USER_PROP_KEYS_PER_SITE",
 ] as const;
 
 export type LimitVars = Record<string, string | undefined>;
@@ -46,6 +50,12 @@ export interface IngestCaps {
   platformDaily: number;
   /** stop writing once the site's Durable Object database is this big */
   storageBytes: number;
+  /** ecommerce items kept per event (the rest are dropped, counted as items_truncated) */
+  itemsPerEvent: number;
+  /** distinct user property keys per site set by servers (new keys past it: warning user_prop_keys_limit) */
+  userPropKeys: number;
+  /** keys only browsers created, counted apart so they can never use up the server keys */
+  browserUserPropKeys: number;
 }
 
 export function ingestCaps(vars: LimitVars, standing: Standing): IngestCaps {
@@ -55,8 +65,15 @@ export function ingestCaps(vars: LimitVars, standing: Standing): IngestCaps {
     accountDaily: capFor(vars, standing, "MAX_EVENTS_PER_ACCOUNT_PER_DAY", Number.POSITIVE_INFINITY),
     platformDaily: capFor(vars, standing, "DAILY_EVENT_BUDGET", Number.POSITIVE_INFINITY),
     storageBytes: Number.isFinite(mb) ? Math.floor(mb * 1024 * 1024) : Number.POSITIVE_INFINITY,
+    itemsPerEvent: Math.max(0, Math.min(MAX_ITEMS_READ, capFor(vars, standing, "MAX_ITEMS_PER_EVENT", DEFAULT_MAX_ITEMS_PER_EVENT))),
+    userPropKeys: Math.max(0, capFor(vars, standing, "MAX_USER_PROP_KEYS_PER_SITE", 50)),
+    browserUserPropKeys: Math.max(0, capFor(vars, standing, "MAX_BROWSER_USER_PROP_KEYS_PER_SITE", 20)),
   };
 }
+
+/** What to do about a full site (the same hint wherever new data is refused for it). */
+export const STORAGE_FULL_HINT =
+  "Lower retention_days (PATCH /v1/sites/:id: older data is purged at once), keep junk out with allowed_hostnames or exclusions, or delete the site's data. GET /v1/sites/:id shows storage and limits.";
 
 /** Do the caps need the account / platform totals (a D1 aggregate)? */
 export const needsAggregate = (c: IngestCaps) => Number.isFinite(c.accountDaily) || Number.isFinite(c.platformDaily);

@@ -485,6 +485,9 @@ describe("alerts: destinations, rules, cron delivery", () => {
     const payload = JSON.parse(hook.body);
     expect(payload).toMatchObject({ type: "alert.fired", site: { id: site, domain: "alert.test" }, alert_id: id, data: { value: 2 } });
     expect(payload.title).toBe("[alert.test] Goal Signup: 2 conversions in the last 1 hour");
+    // Wave 2: the firing is an annotation on the site's charts too.
+    const anns = (await call(`/v1/sites/${site}/annotations?kind=alert&period=today`, { key })).body.annotations;
+    expect(anns).toEqual([expect.objectContaining({ kind: "alert", title: "Alert: Signups" })]);
     const slackCall = cap.calls.find((c) => c.url.startsWith("https://hooks.slack.com/"))!;
     expect(JSON.parse(slackCall.body).text).toContain("*[alert.test] Goal Signup");
     // checked again only when due; and it cools down after firing

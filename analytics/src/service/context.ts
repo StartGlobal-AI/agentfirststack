@@ -18,7 +18,13 @@ import type {
 import { isDoError } from "../lib/types";
 import type { Exclusions } from "../lib/exclusions";
 import type { BudgetReason } from "../do/engine";
-import type { IngestPolicy } from "../do/site-do";
+import type { LimitVars } from "../lib/limits";
+import type { ChannelGroup } from "../lib/types";
+import type { IngestPolicy, SubscriptionRecord } from "../do/site-do";
+import type { SubscriptionOutcome } from "../do/subscriptions";
+import type { CostInput, CostOutcome } from "../do/costs";
+import type { CrawlHit } from "../do/crawlers";
+import type { ImportRow } from "../lib/imports";
 
 /** What every service call needs: bindings, the caller's account, and the public base URL. */
 export interface Ctx {
@@ -46,6 +52,8 @@ export interface SiteRow {
   exclusions?: string | null;
   /** 1 = count revenue the browser tracker sends (migration 0007; default 0) */
   browser_revenue?: number;
+  /** 1 = keep user properties from afsa('identify', id, props) (migration 0019; default 0) */
+  browser_user_props?: number;
   /** 1 = user ids from afsa('identify') may link payments (migration 0007; default 0) */
   trust_browser_user_id?: number;
   /** linked replay site, rsite_...; the tracker loads its recorder (migration 0008; NULL = none) */
@@ -64,6 +72,11 @@ export interface SiteRow {
   search_params?: string | null;
   /** JSON [{name, match}] content groups (migration 0013) */
   content_groups?: string | null;
+  /** migration 0018: NULL = 30 minutes; JSON ChannelGroup[] */
+  session_timeout_minutes?: number | null;
+  channel_groups?: string | null;
+  /** reporting currency, ISO 4217 (migration 0016; NULL = none: money stays in its own currency) */
+  currency?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -103,11 +116,42 @@ export interface SiteStub {
   journeys(q: Obj): Promise<Obj | DoError>;
   ingestPayments(records: PaymentInput[], policy?: IngestPolicy): Promise<{ results: PaymentOutcome[]; refused?: BudgetReason } | DoError>;
   listPayments(q: Obj): Promise<Obj | DoError>;
+  ingestSubscriptions(
+    records: SubscriptionRecord[],
+    policy?: IngestPolicy,
+  ): Promise<{ results: SubscriptionOutcome[]; refused?: BudgetReason } | DoError>;
+  listSubscriptions(q: Obj): Promise<Obj | DoError>;
+  mrr(q: Obj): Promise<Obj | DoError>;
+  upsertCosts(rows: CostInput[], max: number, vars?: LimitVars): Promise<{ results: CostOutcome[]; stored: number } | DoError>;
+  listCosts(q: Obj): Promise<Obj | DoError>;
+  items(q: Obj): Promise<Obj | DoError>;
+  userProps(): Promise<Obj | DoError>;
+  realtimeMap(q: Obj): Promise<Obj | DoError>;
+  recordCrawls(
+    hits: CrawlHit[],
+    dailyBudget: number,
+    room?: number,
+    vars?: LimitVars,
+  ): Promise<{ counted: number; refused: number; used_today: number; daily_budget: number | null } | DoError>;
+  crawlers(q: Obj): Promise<Obj | DoError>;
+  saveImport(
+    id: string,
+    meta: Obj,
+    rows: ImportRow[],
+    caps: { maxRows: number; maxImports: number },
+    vars?: LimitVars,
+  ): Promise<Obj | DoError>;
+  listImports(): Promise<Obj | DoError>;
+  exportEvents(q: Obj, dailyBudget: number): Promise<Obj | DoError>;
+  deleteImport(id: string): Promise<Obj | DoError>;
+  listSessions(q: Obj, replay: { site_id: string; base: string } | null): Promise<Obj | DoError>;
+  deleteCosts(q: Obj): Promise<{ deleted: number } | DoError>;
   deletePayment(id: string): Promise<Obj | DoError>;
   paymentsSummary(): Promise<PaymentsSummary | DoError>;
   createAnnotation(a: Obj, max: number | null): Promise<Obj | DoError>;
   listAnnotations(q: Obj): Promise<Obj | DoError>;
   updateAnnotation(id: string, p: Obj): Promise<Obj | DoError>;
+  alertAnnotation(a: { alert_id: string; ts: number; title: string; description: string | null; details: Obj }): Promise<Obj | DoError>;
   deleteAnnotation(id: string): Promise<Obj | DoError>;
   schemaVersion(): Promise<number>;
 }
@@ -191,6 +235,7 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     respect_dnt: !!site.respect_dnt,
     exclusions: parseExclusions(site.exclusions),
     browser_revenue: !!site.browser_revenue,
+    browser_user_props: !!site.browser_user_props,
     trust_browser_user_id: !!site.trust_browser_user_id,
     replay_site_id: site.replay_site_id ?? null,
     ignored_referrers: jsonList<string>(site.ignored_referrers),
@@ -198,6 +243,9 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     redact_pii: site.redact_pii !== 0,
     search_params: jsonList<string>(site.search_params),
     content_groups: jsonList<{ name: string; match: string }>(site.content_groups),
+    session_timeout_minutes: site.session_timeout_minutes ?? 30,
+    channel_groups: jsonList<ChannelGroup>(site.channel_groups),
+    currency: site.currency ?? null,
     created_at: site.created_at,
     goals,
   };

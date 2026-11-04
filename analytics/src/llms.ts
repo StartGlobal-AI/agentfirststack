@@ -51,7 +51,8 @@ MCP (stateless, Streamable HTTP): \`claude mcp add --transport http analytics ${
 - Pageviews automatically, including SPA navigations (pushState / replaceState / popstate).
 - \`afsa('event', 'signup', { plan: 'pro' })\` custom event with props (max 30 keys, string values).
 - \`afsa('revenue', 'purchase', 49.00, 'USD', { order_id: 'A-1' })\` event with revenue. **Browser revenue counts only when the site sets \`browser_revenue: true\`** (anyone can send browser events); otherwise the event is kept without revenue and counted as the warning \`browser_revenue_ignored\`. Prefer server events, POST /v1/sites/:id/payments or Stripe.
-- \`afsa('identify', 'user_123')\` attaches user_id to following events on this page; the session keeps it. A browser-sent user id links payments that carry only a user id only when the site sets \`trust_browser_user_id: true\`; a user_id on a server event always does (and replaces a browser one on that session).
+- Ecommerce items: put a GA4-style \`items\` array in the props of view_item_list, select_item, view_item, add_to_cart, remove_from_cart, begin_checkout, purchase or refund: \`afsa('event', 'add_to_cart', { items: [{ item_id: 'SKU1', item_name: 'Runner', item_category: 'Shoes', item_brand: 'Acme', item_variant: 'blue', price: 50, quantity: 1 }] })\`, \`afsa('revenue', 'purchase', 50, 'USD', { items: [...] })\`. The array is stored as items (see GET /v1/sites/:id/items), not as a prop. Browser purchase / refund prices count only with browser_revenue.
+- \`afsa('identify', 'user_123')\` attaches user_id to following events on this page; the session keeps it. A browser-sent user id links payments that carry only a user id only when the site sets \`trust_browser_user_id: true\`; a user_id on a server event always does (and replaces a browser one on that session). \`afsa('identify', 'user_123', { plan: 'pro' })\` also sets user properties (sent once, with the next event).
 - \`afsa('pageview')\` manual pageview.
 - \`afsa('debug')\` (or \`data-debug="true"\` on the script tag) marks every following event as test traffic: stored and counted against budgets, but left out of every report unless a query passes \`debug=include\` or \`debug=only\`; watch it live with GET /v1/sites/:id/realtime?debug=only. Purged after 7 days. \`afsa('debug', false)\` turns it off.
 - \`afsa.visitorId()\` the visitor id (after the first pageview) to pass as \`visitor_id\` on server events.
@@ -72,6 +73,8 @@ MCP (stateless, Streamable HTTP): \`claude mcp add --transport http analytics ${
 - Pageviews send the viewport width; only a class is stored (breakdown screen: xs < 576 px, sm < 992, md < 1440, lg). The browser language comes from the Accept-Language header (breakdown language), the extra UTM tags (utm_id, utm_source_platform, utm_creative_format, utm_marketing_tactic) from the URL, site search terms and content groups from the site's settings: none of these cost the tracker anything.
 - Revenue linking: \`afsa.visitorId()\` is the value to put in a Stripe Checkout Session's \`metadata.afs_visitor_id\` (or \`client_reference_id\`); see Revenue below.
 - \`data-api="https://.../e"\` overrides the collect URL (default: same origin + prefix as the script).
+- Consent: \`data-require-consent="true"\` sends nothing (and stores nothing) until \`afsa('consent', true)\` (then the current page's pageview goes, once: granting again changes nothing); \`afsa('consent', false)\` stops sending and removes the stored visitor id. Call it from your consent manager on every page load (the snippet's queue stub keeps calls made before /s.js loads).
+- Cross-domain (one site on several domains, persistent mode): load \`/s.js?linker=1\` (the same tracker plus the linker, about 240 bytes more) with \`data-cross-domain="shop.example.net,example.com"\`. Clicks on links to those hosts add \`_afsa=<visitor id>.<minute>.<check>\` (minute = unix ms / 60000, whole; check = FNV-1a 32-bit of "<user agent>|<visitor id>|<minute>" in base 36). The tracker on the other domain adopts the id only from the same browser (its user agent gives the same check) within 2 minutes, then removes \`_afsa\` from the address bar (history.replaceState), so a copied or shared link doesn't carry the id to someone else. In cookieless mode the visitor hash is already shared across one site's hostnames (same day, IP and user agent).
 - \`localStorage.afsa_ignore = 1\` in your own browser excludes your visits. No cookies; the only other storage key is \`afsa_vid\` (persistent mode).
 - Payload is text/plain JSON (no CORS preflight). Bots, headless browsers (navigator.webdriver) and verified bots are dropped and counted.
 - Visitor identity: \`cookieless\` (default) = sha256(daily_salt | site_id | ip | user_agent), salt rotates daily (UTC), no storage, no cross-day linking. \`persistent\` = random id in localStorage (the server tells the tracker; nothing to change in the snippet).
@@ -120,6 +123,14 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | GET | /v1/sites/:id/schema | metrics, breakdowns, filter grammar, goals, funnels, and the site's event names and prop keys (call first) |
 | GET | /v1/sites/:id/props?event_name= | custom prop keys with counts, event names and common values |
 | GET | /v1/sites/:id/realtime | last 5/30 minutes, a 1-60 minute window (minutes=, breakdown=, filters=), recent events (since=, limit=), debug=only view |
+| GET | /v1/sites/:id/realtime/map?minutes= | visitors of the last minutes by city with latitude / longitude |
+| GET | /v1/sites/:id/sessions?period=&filters=&sort=&limit=&offset= | session list (filterable, paged), linked to replay recordings |
+| GET | /v1/sites/:id/export?from=&to=&format=&cursor= | raw events as NDJSON / CSV / JSON, cursor-paged (10,000 a page) |
+| POST/GET/DELETE | /v1/sites/:id/imports[/:import_id] | GA4 / Plausible CSV imports (daily aggregates, idempotent per file and date range); reports add them with imported=true |
+| POST | /v1/sites/:id/crawls | bot requests your server saw: classified (AI crawlers, search, SEO, previews), counted apart from humans |
+| GET | /v1/sites/:id/crawlers?by=&bot=&category= | crawler hits per bot / operator / category / page / status |
+| GET | /v1/crawlers | the crawler list and a prefilter regex (no key) |
+| GET | /v1/rollup?period=&compare= | every site of the account: totals per site and summed |
 | GET | /v1/sites/:id/funnel?steps= | funnel steps (or funnel_id=): mode, window, revenue per step, compare, compare_segments |
 | GET | /v1/sites/:id/attribution?model=&goal=&lookback_days=&breakdown=&paths= | multi-touch attribution of conversions and revenue, conversion paths |
 | GET | /v1/sites/:id/paths?start=\|end= | path exploration: next / previous pages or events per step, top paths |
@@ -139,12 +150,22 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | GET | /v1/sites/:id/sessions/:session_id | one session and its events in order |
 | GET | /v1/sites/:id/journeys | visitors who completed a goal (or a first purchase) and how |
 | GET | /v1/sites/:id/integrations/stripe | webhook URL, events to enable, delivery status (works before connecting) |
-| POST | /v1/sites/:id/integrations/stripe | connect: {webhook_secret, record_test_events?} (same secret again: existing) |
+| POST | /v1/sites/:id/integrations/stripe/connect | one call: {restricted_key, backfill_days?, record_test_events?}: we create the webhook endpoint and import 90 days of history |
+| POST | /v1/sites/:id/integrations/stripe/backfill | resume, or with {days} restart, the history import |
+| POST | /v1/sites/:id/integrations/stripe | connect by hand: {webhook_secret, record_test_events?} (same secret again: existing) |
 | DELETE | /v1/sites/:id/integrations/stripe | disconnect |
 | POST | /webhooks/stripe/:site_id | Stripe webhook endpoint (no key; Stripe-Signature verified) |
+| GET/POST/DELETE | /v1/sites/:id/integrations/polar\|paddle\|lemonsqueezy | webhook URL + events / connect {webhook_secret, sandbox?, record_test_events?} / disconnect |
+| POST | /webhooks/polar\|paddle\|lemonsqueezy/:site_id | provider webhooks (no key; signature verified) |
 | POST | /v1/sites/:id/payments | payments from any provider, batch <= 100, idempotent by (provider, id) |
 | GET | /v1/sites/:id/payments | payments with type, link and attribution |
 | DELETE | /v1/sites/:id/payments/:payment_id | delete one payment |
+| POST | /v1/sites/:id/subscriptions | subscription states from any provider, batch <= 100, natural key (provider, id); older states ignored |
+| GET | /v1/sites/:id/subscriptions?status= | subscriptions with status, plan, MRR and attribution |
+| POST/GET/DELETE | /v1/sites/:id/costs | daily ad spend by source / campaign (JSON or CSV, idempotent by date+source+campaign) / list / delete a range |
+| GET | /v1/sites/:id/user-props | user property keys with user counts and top values (untrusted) |
+| GET | /v1/sites/:id/items?period=&by=&filters= | ecommerce item report: views, adds, checkouts, purchases, item revenue, cart-to-purchase rate per item / category / brand / variant |
+| GET | /v1/sites/:id/mrr?period=&interval=&breakdown=&include_test= | MRR, ARR, new / expansion / contraction / churned MRR, churn rates, trial conversion, over time and by source |
 | GET | /v1/sites/:id/exclusions | exclusion rules, drops, your_ip, dry run of every ingest rule (?ip= &url= &country= &referrer=) |
 | POST | /v1/sites/:id/annotations | create annotation (idempotent by time + title) |
 | GET | /v1/sites/:id/annotations | list (period=, kind=note\|traffic_spike) |
@@ -155,8 +176,9 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | GET | /v1/sites/:id/funnels/:funnel_id | the funnel with visitors and drop-off per step (period, filters) |
 | PATCH | /v1/sites/:id/funnels/:funnel_id | rename / replace steps |
 | DELETE | /v1/sites/:id/funnels/:funnel_id | delete |
-| POST | /v1/sites/:id/share | public dashboard URL (returns existing unless {"new":true}); verified domain and the project's own key only |
-| DELETE | /v1/sites/:id/share | revoke all share links |
+| POST | /v1/sites/:id/share | public dashboard URL {password?, expires_in_days?, segment?, label?} (no options: the existing plain link unless {"new":true}); verified domain and the project's own key only |
+| GET | /v1/sites/:id/share | the site's share links with their options |
+| DELETE | /v1/sites/:id/share?token= | revoke one link, or all |
 | POST | /v1/sites/:id/destinations | where alerts and reports go {type: webhook\|slack\|email, url?, name?} (idempotent by URL; project key only) |
 | GET | /v1/sites/:id/destinations | list (URLs never returned) |
 | DELETE | /v1/sites/:id/destinations/:destination_id | delete |
@@ -176,7 +198,9 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | DELETE | /v1/sites/:id/reports/:report_id | delete |
 | POST | /v1/sites/:id/reports/:report_id/send | send now |
 | GET | /share/:token | public dashboard (HTML, no auth) |
-| GET | /share/:token/data?period= | the dashboard's JSON (aggregates only) |
+| GET | /share/:token/data?period= | the dashboard's JSON (aggregates only; x-share-password header for protected links) |
+| POST | /share/:token/unlock | the password form of a protected link (sets a 12-hour cookie) |
+| GET | /v1/fx/rates?date=&base= | the ECB reference rates conversion uses for a day |
 | GET | /s.js, /<prefix>/s.js | tracker |
 | POST | /e, /<prefix>/e | browser collection |
 | POST | /mcp | MCP endpoint |
@@ -188,7 +212,8 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
   "retention_days": 400, "allowed_hostnames": null, "respect_dnt": false, "browser_revenue": false, "trust_browser_user_id": false,
   "exclusions": { "ips": ["203.0.113.0/24", "2001:db8::/32"], "paths": ["/admin/*"], "hostnames": ["staging.example.com"], "countries": ["RU"], "referrers": ["spam.example"] },
   "ignored_referrers": ["pay.mybank.example"], "redact_pii": true, "path_rules": [{ "match": "/users/*", "replace": "/users/:id" }],
-  "search_params": ["q"], "content_groups": [{ "name": "Blog", "match": "/blog/*" }],
+  "search_params": ["q"], "content_groups": [{ "name": "Blog", "match": "/blog/*" }], "currency": "EUR",
+  "session_timeout_minutes": 30, "channel_groups": [{ "name": "Partners", "source": ["partner-*"] }],
   "replay_site_id": null }
 \`\`\`
 Every site response also has \`verification: {verified, method, verified_at, how?, dns_record?}\` (see Domain verification).
@@ -198,6 +223,7 @@ Every site response also has \`verification: {verified, method, verified_at, how
 - retention_days: 1-3650 (default 400), within the deployment's MIN_RETENTION_DAYS..MAX_RETENTION_DAYS (get_site limits.retention_days). Raw events older than this are purged daily (the purge also clamps to those bounds); lowering it purges at once.
 - allowed_hostnames: null (default) = accept browser events from the site's domain and its subdomains only; else exactly these hosts or "*.example.com" (not "*.com", "*.co.uk", "*.vercel.app" or other public suffixes). Rejections are counted and shown by verify.
 - respect_dnt: drop browser events carrying GPC/DNT.
+- browser_user_props: false (default) = user properties sent by \`afsa('identify', id, props)\` are dropped (warning browser_user_props_ignored; identify itself still works); true = kept, within MAX_BROWSER_USER_PROP_KEYS_PER_SITE keys of their own, so they can never use up the keys your server sets.
 - browser_revenue: false (default) = revenue sent by the browser tracker is ignored (counted as warning browser_revenue_ignored); true = counted.
 - trust_browser_user_id: false (default) = payments that carry only a user id link to sessions a server event identified; true = afsa('identify') ids link too.
 - exclusions: drop matching events at ingest (see Exclusions). null = none; PATCH replaces the whole set.
@@ -206,6 +232,9 @@ Every site response also has \`verification: {verified, method, verified_at, how
 - ignored_referrers: referrer hosts treated as no referrer (up to 50; a host covers its subdomains, \`*.example.com\` allowed), on top of the built-in list (see Ignored referrers). PATCH replaces the list; null clears it.
 - search_params: query parameters that carry a site search term (up to 5, e.g. ["q","s"]; default none). A pageview carrying one also records a \`site_search\` event {term} (lowercased, 100 characters, redacted; counted against budgets like any event); the rest of the query string is still never stored. Top terms: \`breakdown=prop:term&filters=event_name==site_search\`.
 - content_groups: [{"name":"Blog","match":"/blog/*"}] (up to 50, * = anything, first match wins), evaluated at query time so they apply to stored data too: breakdown=content_group, filters=content_group==Blog. Pages in no group show as (none).
+- session_timeout_minutes: minutes of inactivity that end a session (5-240, default 30); applies to sessions from now on.
+- channel_groups: custom channel groups, first match wins: \`[{"name":"Partners","source":["partner-*"]},{"name":"Paid Social","medium":["paid_social","cpc"],"source":["facebook","instagram"]}]\` (up to 30 rules; within a rule every condition given (source, medium, campaign, channel) must match one of its patterns; * = anything; case-insensitive). Evaluated at query time, so they apply to stored data: \`breakdown=channel_group\`, \`filters=channel_group==Partners\`; unmatched traffic keeps its built-in channel. PATCH replaces the list; null clears it.
+- currency: the reporting currency (ISO 4217; null = none, the default). Payments and subscriptions in other currencies are converted at ingest (see Currency conversion); money recorded before it was set stays as it was.
 - replay_site_id (every site response returns it, null when unset): the AgentFirstStack replay site whose recorder the tracker loads by itself. Only the replay service sets and clears it (internal auth between the deployment's Workers), when you link a replay site to this one: PATCH the replay site's \`analytics_site_id\` (null there unlinks). With an API key, REST or MCP, changing it is refused: 403 \`replay_link_from_replay\` (sending the current value again is fine), so a site can't load another account's recorder.
 
 \`\`\`sh
@@ -218,14 +247,16 @@ curl "$BASE/v1/sites/$SITE/install?framework=nextjs" -H "Authorization: Bearer $
 - period: ${PERIODS.filter((p) => p !== "custom").join(", ")} (default 30d), or from=YYYY-MM-DD&to=YYYY-MM-DD (inclusive, site timezone), or ISO timestamps from=2026-11-03T09:30:00Z&to=2026-11-03T11:00:00Z (an exact range, to exclusive, minute precision; compare=previous then means the same length just before). 7d/30d/90d include today; 24h = last 24 whole hours; 12mo = this month and the 11 before.
 - timezone: an IANA name for this query's periods, days and buckets (default: the site's). Unknown names get 400.
 - metrics (comma list): ${METRICS.join(", ")}. Default for stats and breakdowns: ${DEFAULT_METRICS.join(", ")}; the rest are opt-in.
-  visitors = unique visitors; visits = sessions (30 min inactivity ends one); events = all events incl. pageviews; bounce_rate = % of sessions with <= 1 pageview and no custom event; visit_duration = mean seconds (first to last activity incl. engagement); conversions = events matching a goal; conversion_rate = % of visitors with a conversion; revenue = event revenue plus payments, refunds subtracted (goal value when an event has none; currencies are not converted).
+  visitors = unique visitors; visits = sessions (30 min inactivity ends one); events = all events incl. pageviews; bounce_rate = % of sessions with <= 1 pageview and no custom event; visit_duration = mean seconds (first to last activity incl. engagement); conversions = events matching a goal; conversion_rate = % of visitors with a conversion; revenue = event revenue plus payments, refunds subtracted (goal value when an event has none; in the site currency when it has one, see Currency conversion, else as sent).
   revenue_per_visitor = revenue / visitors; new_revenue = revenue that is not a renewal (refunds aside); renewal_revenue = subscription renewals; refunds = amount refunded (positive); purchases = new purchases (payments or revenue events, not renewals); customers = distinct visitors with a purchase; purchase_rate = customers / visitors %.
-  new_visitors / returning_visitors: returning = the visitor (or their user_id) had a session that ended before their first event in the range or row. Cookieless ids rotate daily, so for anonymous visitors that is same-day only; identified users and persistent mode link days (responses carry a note in cookieless mode).
+  new_visitors / returning_visitors: returning = the visitor (or their user_id) had a session that ended before their first event in the range or row. Cookieless ids rotate daily, so for anonymous visitors that is same-day only; identified users and persistent mode link days (responses carry a note in cookieless mode). As a dimension and filter, \`visitor_type\` = new | returning per session (returning: the visitor had a session that ended before this one began): \`breakdown=visitor_type\`, \`filters=visitor_type==returning\`.
   scroll_depth = mean max scroll % per pageview; time_on_page = mean visible seconds per pageview that reported engagement; lcp_p75 / inp_p75 (ms) and cls_p75 = 75th percentile (nearest rank) over pageviews. Good: LCP <= 2500, INP <= 200, CLS <= 0.1; poor: > 4000, > 500, > 0.25. They are null where nothing was measured.
   engaged_visits = sessions with at least 10 s of visible time, 2+ pageviews or a conversion (GA4's engaged sessions); engagement_rate = engaged_visits / visits %. Our bounce_rate is a stricter, different test (<= 1 pageview and no interactive custom event), so it is not 100 - engagement_rate. engagement_time = total visible seconds on pages (divide by visitors for an average). visits_per_visitor = visits / visitors; events_per_visit = events / visits; visit_conversion_rate = % of sessions with a conversion; average_order_value = new-purchase revenue / purchases (renewals are not orders); revenue_per_customer = revenue / customers; percentage = a row's share of the period's visitors (breakdown rows; 100 on totals; on timeseries, each bucket's share of the period).
   Payments never count as visitors, visits or events (a renewal months later is not a visit).
+  Custom metrics over a numeric prop: \`sum:prop:<key>\`, \`avg:prop:<key>\`, \`min:prop:<key>\`, \`max:prop:<key>\` (up to 5 per request) in stats, breakdowns and timeseries, e.g. \`metrics=events,sum:prop:amount,avg:prop:amount\`. Props are stored as text: values that aren't plain numbers are skipped (not read as 0); null where no event carries a number.
+  Ad spend (POST /v1/sites/:id/costs): cost = spend in the period; roas = revenue / cost; cpa = cost / conversions; cac = cost / customers; cost_per_visit = cost / visits. Costs only have date, source and campaign, so these split by utm_source, utm_campaign and source (and filter by utm_source / utm_campaign == or !=); under any other breakdown or filter, and in hourly series, they are null with a note.
 - breakdown: ${BREAKDOWNS.join(", ")}, prop:<key>; or 2-3 at once (breakdown=country,device): every row then carries each dimension under its own name (value = the first), comparisons and sorting work per combination, goal can't be combined, page can't be combined with entry_page / exit_page. Missing values show as "(none)". region/city rows include country. goal lists every goal. page rows: revenue and conversions are those of the sessions that viewed the page (pageviews, time on page, scroll and vitals are that page's own). Payments that found no visitor appear as channel "Unattributed".
-- filters: \`key==value;key2~text\`. Ops == != ~ (contains, case-insensitive) !~. \`|\` = OR (\`country==US|CA\`). \`(none)\` = missing value. \`*\` in an == / != value is a wildcard (\`page==/blog/*\`, case-sensitive like ==; \`\\*\` is a literal star; compiled to SQLite GLOB with every other metacharacter escaped, no regex). Keys: the breakdown names. goal==X keeps sessions that converted on X (and counts only X as conversions); entry_page/exit_page filter sessions; others filter events.
+- filters: \`key==value;key2~text\`. Ops == != ~ (contains, case-insensitive) !~. \`|\` = OR (\`country==US|CA\`). \`(none)\` = missing value. \`*\` in an == / != value is a wildcard (\`page==/blog/*\`, case-sensitive like ==; \`\\*\` is a literal star; compiled to SQLite GLOB with every other metacharacter escaped, no regex). Keys: the breakdown names, prop:<key>, user:<key>, and \`did\` (behaviour: \`did==signup\` keeps visitors, and identified users, who did that event in the range; \`did!=purchase\` those who didn't; \`did~sign\` by part of the name; combine: \`did==signup;did!=purchase\`). goal==X keeps sessions that converted on X (and counts only X as conversions); entry_page/exit_page filter sessions; others filter events.
 - filters_json: nested groups, ANDed with filters: \`["or", [["==","country",["US"]], ["and", [["~","page",["/blog"]], ["!=","device",["mobile"]]]]]]\`; \`["not", node]\` negates. Leaves are [op, key, [values]] with the same ops, keys and wildcards; up to 4 levels, 20 leaves, 30 values. (A goal leaf inside a group filters sessions but doesn't narrow which goals count as conversions.)
 - segment: a saved segment's id (seg_...) or name: its filters and filters_json are ANDed with the call's own. Works on stats, breakdown, timeseries, funnel, movers, insights, visitors, journeys, realtime and purge.
 - offset (breakdowns): rows to skip; answers carry total_rows, offset and next_offset (null on the last page).
@@ -369,6 +400,12 @@ Payments are stored with the visitor and session they came from, so revenue, rev
 
 ### Stripe
 
+**In one call (recommended):** create a restricted key in Stripe (Developers -> API keys -> Create restricted key) with exactly: Webhook Endpoints Write, Checkout Sessions Read, Invoices Read, Charges Read, Subscriptions Read. Then \`POST /v1/sites/:id/integrations/stripe/connect {"restricted_key":"rk_live_..."}\`. We create the site's webhook endpoint in your account (api_version pinned to 2024-06-20, the events below plus customer.subscription.*), keep its signing secret and the key sealed with ENCRYPTION_KEY (never returned), and import \`backfill_days\` (default 90, max 90, 0 = none) of checkout sessions (customer links), paid invoices, refunds and subscriptions. The key is used only for that, and to delete the endpoint on disconnect. The backfill runs two list pages in the call and the rest by cron (5 pages of 100 per run); every imported payment counts against the daily event budgets and the backfill pauses until 00:00 UTC when one is used up (backfill.status paused, paused_until). Progress: GET /v1/sites/:id/integrations/stripe (backfill {status, stage, imported, existing, linked, skipped, pages, error}). Calling connect again with the same key changes nothing (the endpoint is reused); with another key a new endpoint is made and the old one deleted (webhook.previous_endpoint_deleted). \`POST .../integrations/stripe/backfill {days}\` restarts the import, skipping payments already recorded (project key only). The cron takes backfills in turn (least recently worked on first, 10 sites a run); a suspended account or a full site pauses one (status paused, the reason in error, checked again daily), an unexpected error fails it (status failed, error), and the subscriptions stage reads at most 200 pages (20,000 subscriptions, newest first): past it the backfill is done with a \`truncated\` note. Deleting the site deletes the endpoint we created. A key without a permission gets 400 \`stripe_permission_missing\` naming it. An rk_test_ key counts test payments (record_test_events defaults to true for it). Needs the project's own API key (OAuth tokens: 403 temporary_credential).
+\`\`\`sh
+curl -X POST $BASE/v1/sites/$SITE/integrations/stripe/connect -H "Authorization: Bearer $KEY" -d '{"restricted_key":"rk_live_...","backfill_days":90}'
+\`\`\`
+
+**By hand:**
 1. \`GET /v1/sites/:id/integrations/stripe\` returns webhook_url (\`${base}/webhooks/stripe/<site_id>\`) and the events to enable: ${STRIPE_EVENTS.join(", ")} (optional: ${STRIPE_OPTIONAL_EVENTS.join(", ")}, only for your own PaymentIntents with metadata.afs_visitor_id).
 2. Add that URL as a webhook endpoint in Stripe (Stripe API: POST /v1/webhook_endpoints {url, enabled_events}) and take its signing secret (whsec_...).
 3. \`POST /v1/sites/:id/integrations/stripe {"webhook_secret":"whsec_...","record_test_events":false}\`. The secret is sealed with ENCRYPTION_KEY and never returned (signing_secret.configured: true). Same secret again: 200 existing. Without ENCRYPTION_KEY on the deployment: 503 not_configured. Needs the project's own API key: a connected app's OAuth access token gets 403 \`temporary_credential\` (the secret would keep writing payments after the token is gone).
@@ -379,6 +416,49 @@ Webhook handling: Stripe-Signature is verified (HMAC-SHA256 of "<t>.<body>", any
 curl "$BASE/v1/sites/$SITE/integrations/stripe" -H "Authorization: Bearer $KEY"
 curl -X POST $BASE/v1/sites/$SITE/integrations/stripe -H "Authorization: Bearer $KEY" -d '{"webhook_secret":"whsec_..."}'
 curl -X DELETE $BASE/v1/sites/$SITE/integrations/stripe -H "Authorization: Bearer $KEY"
+\`\`\`
+
+### Polar, Paddle, LemonSqueezy
+
+One signed webhook per site and provider feeds the same payments, refunds and subscriptions (MRR) as Stripe.
+1. \`GET /v1/sites/:id/integrations/<provider>\` (provider = polar | paddle | lemonsqueezy) returns webhook_url (\`${base}/webhooks/<provider>/<site_id>\`), the events to enable and where the secret is.
+2. Add the webhook in the provider: Polar (Settings -> Webhooks, format Raw; secret whsec_...), Paddle (Developer tools -> Notifications -> new webhook destination; secret pdl_ntfset_...), LemonSqueezy (Settings -> Webhooks: paste the signing secret we generate in step 3, or one of your own of 20+ characters).
+3. \`POST /v1/sites/:id/integrations/<provider> {"webhook_secret":"...","sandbox":false}\`: sealed with ENCRYPTION_KEY, never returned; the same secret again is 200 existing. LemonSqueezy: leave webhook_secret out and the answer carries a generated one (40 characters) **once**, with next_steps to paste it into the webhook's Signing secret (connecting again without one changes nothing); one you choose must be 20+ characters (400 weak_secret). Polar and Paddle need theirs (400 missing_secret). Project key only (OAuth token: 403 temporary_credential). \`sandbox: true\` (a Polar or Paddle sandbox account) records everything with livemode false and counts it (record_test_events defaults to true then); LemonSqueezy test-mode events are counted only with record_test_events.
+Bad signatures: after 20 in 10 minutes for a site and provider, further bad ones get 429 rate_limited (with retry_after) instead of 400. A correctly signed delivery is always accepted.
+4. Link checkouts to visitors with afsa.visitorId(): Polar checkout \`metadata.afs_visitor_id\` (copied to orders and subscriptions; customer external_id counts as a user id), Paddle \`customData.afs_visitor_id\` on Paddle.Checkout.open (subscriptions inherit it), LemonSqueezy \`checkout[custom][afs_visitor_id]\` (meta.custom_data). afs_user_id works too.
+
+Signatures (each provider's documented scheme; any failure is the same 400 webhook_rejected): Polar = Standard Webhooks (webhook-id, webhook-timestamp, webhook-signature "v1,<base64 HMAC-SHA256 of id.timestamp.body>"; the key is the secret's base64 after whsec_, or for secrets issued before 2026-09-08 the UTF-8 bytes of the whole string: both are tried); Paddle = Paddle-Signature "ts=..;h1=.." (hex HMAC-SHA256 of "ts:body" with the secret as is; any h1, for secret rotation); LemonSqueezy = X-Signature (hex HMAC-SHA256 of the body). Polar and Paddle timestamps must be within 5 minutes and their event ids are deduped; LemonSqueezy sends neither, so every record is idempotent by its natural key (order id, refund id, subscription state).
+
+Mapping. These are merchants of record (they collect the tax), so payments are **after discounts and before tax**. Polar: order.paid = new (billing_reason purchase / subscription_create) or renewal (subscription_cycle / update / meter_cycle) at net_amount; order.refunded = refund of the cumulative refunded_amount; subscription.* = states, MRR from the subscription's amount (Polar applies the discount to it). Paddle: transaction.completed = new or renewal (origin subscription_recurring / subscription_update) at total - tax; adjustment.created/updated with action refund or chargeback, once approved = refund of its subtotal; subscription.* = states, MRR from the active items' unit_price x quantity (**before discounts**: Paddle's subscription carries no discount amount). LemonSqueezy: order_created (paid) = new at subtotal - discount_total; order_refunded and subscription_payment_refunded = refunds (pre-tax share); subscription_payment_success = a renewal payment (the first invoice is the order) and the subscription's price; subscription_* = states. LemonSqueezy subscriptions carry no price or interval, so MRR comes from their invoices: the amount of the latest paid invoice per billing period, the period from the gap between two invoices or from the first invoice to renews_at (1 day, 1-2 weeks, 1-11 months or a year); until both are known the subscription counts 0. Its "cancelled" status keeps paying to the end of the period (cancel_at_period_end; a trial cancelled this way is a canceled trial); "expired" is churn.
+\`\`\`sh
+curl "$BASE/v1/sites/$SITE/integrations/paddle" -H "Authorization: Bearer $KEY"
+curl -X POST $BASE/v1/sites/$SITE/integrations/polar -H "Authorization: Bearer $KEY" -d '{"webhook_secret":"whsec_..."}'
+curl -X DELETE $BASE/v1/sites/$SITE/integrations/lemonsqueezy -H "Authorization: Bearer $KEY"
+\`\`\`
+
+### Currency conversion
+
+With a site \`currency\`, every payment and subscription in another currency is converted when it arrives, with the European Central Bank's euro foreign exchange reference rates (free, about 30 currencies, published around 16:00 CET on working days). The cron fetches them (the 90-day file first, then each new day; only while some site has a currency) and stores one row per day. A payment uses the rates of its own UTC day, or the latest earlier publication (weekends, holidays, today before 16:00 CET); with none at or within 5 days before it (a payment older than the stored history, or rates not fetched yet) the nearest stored rate is used and \`fx_fallback: true\` says so. Every converted payment keeps \`original: {amount, currency, fx_rate, fx_day, fx_fallback}\` (list_payments); revenue everywhere is in the site currency. A currency the ECB doesn't publish is stored unconverted. Subscriptions are converted with the rate of the day they are first seen and keep it, so an exchange-rate move is never expansion or contraction (\`original: {mrr, currency, fx_rate}\` in list_subscriptions). Changing the currency later applies to money recorded from then on.
+\`\`\`sh
+curl -X PATCH $BASE/v1/sites/$SITE -H "Authorization: Bearer $KEY" -d '{"currency":"EUR"}'
+curl "$BASE/v1/fx/rates?date=2026-11-03&base=USD" -H "Authorization: Bearer $KEY"
+\`\`\`
+
+### Ad spend: POST /v1/sites/:id/costs
+
+Daily spend by source and campaign, so cost, ROAS, CPA, CAC and cost per visit sit beside traffic and revenue.
+\`\`\`json
+{ "costs": [{ "date": "2026-11-03", "source": "google", "campaign": "brand", "medium": "cpc", "cost": 42.5, "currency": "USD", "clicks": 120, "impressions": 5400 }] }
+\`\`\`
+- Or CSV: a text/csv body (\`?currency=USD\` for rows without one), or \`{"csv": "date,source,campaign,cost\\n2026-11-03,google,brand,42.5"}\`. Columns: date (or day), source (or utm_source), campaign (or utm_campaign), cost (or spend, amount; "1,234.50" and "1234,50" both read), and optional currency, medium, clicks, impressions. Up to 1000 rows (256 KB) per request.
+- date is the site-timezone day (within retention, not in the future). source and campaign are matched, lowercased, with utm_source and utm_campaign (and source with the source name for breakdown=source); leave campaign out for spend not split by campaign.
+- Idempotent by (date, source, campaign): the same row again is \`existing: true\`, a new figure replaces the old one (\`updated\`). Response 202 {accepted, rejected, created, updated, unchanged, rows_stored, results, next_steps}.
+- Currency: a row's currency, else the request's, else the site's; converted to the site currency at the day's ECB rate (the original cost is kept). A site keeps at most MAX_COST_ROWS_PER_SITE rows (default 50,000; rows past it say \`cost_rows_limit\`).
+- \`GET /v1/sites/:id/costs?from=&to=&source=&campaign=\` lists rows and the total; \`DELETE /v1/sites/:id/costs?from=&to=&source=&campaign=\` deletes a range.
+\`\`\`sh
+curl -X POST $BASE/v1/sites/$SITE/costs -H "Authorization: Bearer $KEY" -d '{"costs":[{"date":"2026-11-03","source":"google","campaign":"brand","cost":42.5}]}'
+curl -X POST "$BASE/v1/sites/$SITE/costs?currency=USD" -H "Authorization: Bearer $KEY" -H "content-type: text/csv" --data-binary @spend.csv
+curl "$BASE/v1/sites/$SITE/breakdown?period=30d&breakdown=utm_campaign&metrics=visits,revenue,cost,roas,cpa,cac,cost_per_visit" -H "Authorization: Bearer $KEY"
 \`\`\`
 
 ### Any other provider: POST /v1/sites/:id/payments
@@ -397,17 +477,50 @@ curl "$BASE/v1/sites/$SITE/payments?period=30d&type=refund" -H "Authorization: B
 curl -X DELETE $BASE/v1/sites/$SITE/payments/pay_xxxxxxxxxxxxxxxx -H "Authorization: Bearer $KEY"
 \`\`\`
 
+## Subscriptions and MRR
+
+Subscription states come from Stripe (customer.subscription.* webhook events; the one-call connect subscribes to them and its backfill imports every subscription that hasn't ended before the window, however old; connected by hand, add those events), from the Polar, Paddle and LemonSqueezy webhooks (see above for how each prices a subscription), or from \`POST /v1/sites/:id/subscriptions\` for any other billing. Each subscription is attributed once, like a payment (its metadata.afs_visitor_id / afs_user_id, session, visitor, user, or the customer's earlier checkout link), so MRR splits by the channel, source and campaign that acquired it.
+
+**How MRR is computed** (per subscription, in its currency, major units, before tax):
+- Only while it pays: status \`active\` or \`past_due\` (the provider is still retrying the invoice). \`trialing\`, \`incomplete\`, \`incomplete_expired\`, \`unpaid\`, \`paused\`, \`canceled\` and an active subscription with collection paused count 0.
+- Each item: unit amount x quantity, per month: monthly / interval_count; yearly / (12 x interval_count); weekly x 52 / 12 / interval_count; daily x 365 / 12 / interval_count. Metered and tiered prices (no fixed unit amount) count 0 unless you send the amount through the API.
+- The discount in effect: a percent_off coupon scales it; an amount_off coupon (per invoice, same currency) is spread over the billing interval like the price. Duration "once" and discounts past their end don't count. Tax is never included.
+- ARR = MRR x 12. ARPU = MRR / paying customers.
+- Currencies: with a site currency (\`PATCH /v1/sites/:id {"currency":"EUR"}\`) every subscription is converted with the ECB reference rate of the day it is first seen, and keeps that rate (so exchange-rate moves never count as expansion or contraction; the original amount and currency are kept); without one, a single-currency site reports in that currency and a mixed one reports \`current.by_currency\` (the series then add the amounts as they are, with a note).
+
+**Movements** (each state that changes something is compared with the stored one): \`new\` (first time it pays), \`expansion\` / \`contraction\` (MRR up or down while paying), \`churn\` (paying -> not paying: canceled, ended, paused, unpaid), \`reactivation\` (paying again after having paid), and \`trial_start\`, \`trial_converted\`, \`trial_canceled\`. A subscription seen for the first time gets its history from its own dates (trial start, trial end or start = new at today's price, end = churn). A state older than the stored one (\`timestamp\`, Stripe's event.created) is ignored, so out-of-order and retried webhooks are safe; an unchanged state changes nothing. Each changing state counts as one event against the daily budgets.
+
+**GET /v1/sites/:id/mrr** (default period 12mo): \`current\` {mrr, arr, currency, active_subscriptions, paying_customers, arpu, trialing, past_due}; \`totals\` over the period {mrr_at_start, mrr_at_end, new_mrr, expansion_mrr, contraction_mrr, churned_mrr, reactivation_mrr, customer_churn_rate (churned subscriptions / those paying at the start, %), revenue_churn_rate (churned MRR / MRR at start, %), net_revenue_churn_rate ((churn + contraction - expansion) / MRR at start, %), trials_started, trials_converted, trial_conversion_rate (converted / trials that ended in the period, %)}; \`series\` per interval (day, week, month) with mrr at the bucket's end and its movements; \`breakdown\` = channel | source | utm_source | utm_medium | utm_campaign | referrer | country | plan gives the same per value. Test-mode subscriptions count only with include_test=true.
+
+\`\`\`json
+{ "subscriptions": [{ "id": "sub_123", "provider": "chargebee", "status": "active", "amount": 49.0, "interval": "month", "interval_count": 1,
+  "quantity": 1, "currency": "USD", "plan": "pro", "customer_id": "optional", "started_at": "2026-10-01T00:00:00Z", "trial_end": "optional",
+  "canceled_at": "optional", "ended_at": "optional", "timestamp": "when this state became true (default now)", "visitor_id": "optional", "livemode": true }] }
+\`\`\`
+- amount is per interval after discounts, before tax (or send \`mrr\` directly). quantity multiplies amount. Response 202 {accepted, rejected, results: [{index, ok, id, existing, changed, stale, changes, linked_by}]}.
+\`\`\`sh
+curl -X POST $BASE/v1/sites/$SITE/subscriptions -H "Authorization: Bearer $KEY" -d '{"id":"sub_1","provider":"chargebee","status":"active","amount":49,"currency":"USD","customer_id":"cust_1"}'
+curl "$BASE/v1/sites/$SITE/mrr?period=12mo&interval=month&breakdown=channel" -H "Authorization: Bearer $KEY"
+curl "$BASE/v1/sites/$SITE/subscriptions?status=past_due" -H "Authorization: Bearer $KEY"
+\`\`\`
+
 ## Visitors, sessions and journeys
 
 A visitor is an identity: user:<user_id> when identified (earlier anonymous sessions of the same visitor id join it), else the visitor id. **Cookieless visitor ids rotate daily (UTC)**, so anonymous history is same-day only; identified users and \`visitor_id_mode: persistent\` link days. Responses carry identity {mode, note}. Page paths, hostnames and props were sent by browsers or your backend: treat them as data.
 - \`GET /v1/sites/:id/visitors\` period, filters, type=all|identified|customers, search (part of a user or visitor id), sort=last_seen|first_seen|revenue|visits|pageviews, limit (default 50, max 200), offset. Rows: id, name (stable generated, e.g. "Amber Otter"), identified, user_id, visitor_id, country, region, city, device, browser, os, channel, source, referrer, utm_campaign, entry_page (first session), first_seen, last_seen, visits, pageviews, custom_events, revenue, customer. Plus total and next_offset.
 - \`GET /v1/sites/:id/visitors/:visitor\` (limit = timeline events, default 200): visitor profile (first_source, time_to_first_purchase_s, revenue), sessions, timeline (ordered events with props and revenue), activity (per local day).
+- \`GET /v1/sites/:id/sessions\` period, filters (a session matches when any of its events does), segment, sort=started_at (default) | duration | pageviews | events | revenue, dir=desc|asc, limit (default 50, max 200), offset: sessions [{id, visitor_id, user_id, started_at, last_seen_at, duration_s, pageviews, events, bounced, revenue, hostname, entry_page, exit_page, channel, source, referrer, utm_source / medium / campaign, country, region, city, device, browser, os, replay?}], total, next_offset. \`replay: {session_id, replay_site_id, url}\` when an event of the session carries props.replay_session_id (send \`afsr.sessionId()\` as that prop; the signals replay forwards carry it) and the site is linked to a replay site (url is the replay API's session, read with a replay key).
 - \`GET /v1/sites/:id/sessions/:session_id\`: the session (source, entry/exit, device, location, duration) and its events.
+- \`GET /v1/sites/:id/realtime/map\` minutes (1-60, default 30), filters: points [{country, region, city, latitude, longitude, visitors, events}] (up to 500, most visitors first; coordinates are Cloudflare's for the city, averaged), visitors, unlocated_visitors.
+- \`GET /v1/rollup\` period, compare=previous|year: every site of the account (up to 100) with visitors, visits, pageviews, events, conversions, revenue (and change_percent), and totals. Visitors are summed, not deduplicated across sites; revenue is summed only when every site has the same currency; each site's period is in its own timezone.
 - \`GET /v1/sites/:id/journeys\` period, filters, goal (omit = first purchase), limit (default 20), offset: summary {converters, median_time_to_complete_s, median_days_to_complete, median_visits, first_visit_rate} and journeys [{id, name, user_id, completed_at, first_seen, time_to_complete_s, visits, channel, source (first touch), last_touch, country, device, revenue, touchpoints [{session_id, started_at, channel, source, entry_page, pageviews}]}].
 \`\`\`sh
 curl "$BASE/v1/sites/$SITE/visitors?period=30d&type=customers&sort=revenue" -H "Authorization: Bearer $KEY"
 curl "$BASE/v1/sites/$SITE/visitors/user:user_42" -H "Authorization: Bearer $KEY"
 curl "$BASE/v1/sites/$SITE/journeys?period=30d&goal=Signup" -H "Authorization: Bearer $KEY"
+curl "$BASE/v1/sites/$SITE/sessions?period=7d&filters=did==signup;did!=purchase&sort=duration" -H "Authorization: Bearer $KEY"
+curl "$BASE/v1/sites/$SITE/realtime/map" -H "Authorization: Bearer $KEY"
+curl "$BASE/v1/rollup?period=30d&compare=previous" -H "Authorization: Bearer $KEY"
 \`\`\`
 
 ## Annotations
@@ -444,6 +557,94 @@ curl -X PATCH $BASE/v1/sites/$SITE -H "Authorization: Bearer $KEY" -d '{"exclusi
 curl "$BASE/v1/sites/$SITE/exclusions?ip=203.0.113.9" -H "Authorization: Bearer $KEY"
 \`\`\`
 
+### User properties
+
+A user's properties (plan, company size, role): the last value per identified user, set by server events (\`user_props\` with a user_id) or in the browser by \`afsa('identify', id, {plan: 'pro'})\` when the site sets \`browser_user_props: true\`. A value with an older timestamp than the stored one is ignored; null unsets a key; a browser value never replaces one a server set (anyone can send browser events). Up to 30 keys per user, MAX_USER_PROP_KEYS_PER_SITE distinct keys set by servers (default 50) and MAX_BROWSER_USER_PROP_KEYS_PER_SITE more that only browsers created (default 20; each budget: a new key past it is dropped and counted as the warning user_prop_keys_limit). Use them as \`user:<key>\` anywhere a breakdown or filter goes (\`breakdown=user:plan\`, \`filters=user:plan==pro\`): an event matches through its user id with the user's current value, so events of anonymous visitors show as (none). \`GET /v1/sites/:id/user-props\` lists the keys with user counts and top values (under untrusted); get_visitor of user:<id> includes user_props. Erasing a user deletes their properties, and properties last set before retention_days are purged.
+\`\`\`sh
+curl -X POST $BASE/v1/sites/$SITE/events -H "Authorization: Bearer $KEY" -d '{"name":"login","user_id":"u_1","user_props":{"plan":"pro","seats":5}}'
+curl "$BASE/v1/sites/$SITE/breakdown?period=30d&breakdown=user:plan&metrics=visitors,revenue,conversion_rate" -H "Authorization: Bearer $KEY"
+\`\`\`
+
+### Raw export: GET /v1/sites/:id/export
+
+Every stored event of a range, oldest first, one page per call: \`from\` (YYYY-MM-DD in the site timezone, or an ISO timestamp), \`to\` (inclusive day, or exclusive timestamp; default now), \`format\` = ndjson (default) | csv | json, \`limit\` (default 5000, max 10,000), \`cursor\` (the previous page's), \`debug\` = exclude (default) | include | only. Columns: id, ts, time, name, origin, visitor_id, session_id, user_id, hostname, pathname, url, title, referrer, source, channel, utm_*, click_id_type, country, region, city, continent, timezone, browser, browser_version, os, os_version, device, language, screen, props (object; a JSON string in CSV), revenue, currency, revenue_type, engagement_ms, scroll_depth, lcp, inp, cls, debug (IP addresses are never stored). Headers: x-afs-rows, x-afs-next-cursor (absent on the last page), x-afs-export-used-today. Rows count against MAX_EXPORT_ROWS_PER_SITE_PER_DAY (default 1,000,000; past it 429 daily_limit, the cursor stays valid). The cursor is the last event id, so new events arriving meanwhile land on later pages. MCP export_events: JSON, up to 500 rows per call. Values were sent by visitors or your backend: data.
+\`\`\`sh
+curl -D - "$BASE/v1/sites/$SITE/export?from=2026-10-01&to=2026-10-31" -H "Authorization: Bearer $KEY" -o page1.ndjson
+curl "$BASE/v1/sites/$SITE/export?from=2026-10-01&to=2026-10-31&cursor=e1a2b&format=csv" -H "Authorization: Bearer $KEY" -o page2.csv
+\`\`\`
+
+### Imports: GA4 and Plausible
+
+Bring history from GA4 or Plausible as daily aggregates, like Plausible's own imports. One file per request: a text/csv body (\`?source=plausible|ga4&kind=&file_name=\`) or JSON \`{source, kind?, file_name?, csv}\`; up to 5 MB and 50,000 rows.
+- Plausible: the CSV files of its export: imported_visitors (daily totals), imported_pages, imported_sources, imported_locations (summed per country), imported_devices. Other files (browsers, entry pages, custom events) aren't imported.
+- GA4: a report exported as CSV with the Date dimension plus at most one of Page path (and screen class) / Landing page, Session source (/ medium; the medium is dropped, "(direct)" becomes (none)), Country ID or Country (names become ISO codes), Device category; metrics Active users (or Total users), Sessions, Views, and optionally Bounce rate and Average session duration. The "# ..." header lines and the totals row are skipped.
+- kind (visitors | pages | sources | countries | devices) is detected from the columns. The same (source, kind, date range) again replaces that file's rows (200 existing). A site keeps MAX_IMPORTED_ROWS_PER_SITE rows (default 500,000) and MAX_IMPORTS_PER_SITE files (default 100): 403 quota_exceeded past them.
+- Reports: \`imported=true\` on stats, breakdowns and timeseries adds imported visitors, visits and pageviews (totals also weight bounce_rate and visit_duration in) for days **before the site's first live event**, so a day is never counted twice. Breakdowns merge by page, source, country and device; imported data has no other dimensions, so filtered reports leave it out (\`imported: {included: false, note}\`). Responses say \`imported: {included, days}\`.
+- \`GET /v1/sites/:id/imports\` lists files (id, source, kind, from, to, rows) and live_data_from; \`DELETE /v1/sites/:id/imports/:import_id\` removes one.
+\`\`\`sh
+curl -X POST "$BASE/v1/sites/$SITE/imports?source=plausible" -H "Authorization: Bearer $KEY" -H "content-type: text/csv" --data-binary @imported_pages_20250101_20251231.csv
+curl -X POST "$BASE/v1/sites/$SITE/imports?source=ga4" -H "Authorization: Bearer $KEY" -H "content-type: text/csv" --data-binary @ga4_pages.csv
+curl "$BASE/v1/sites/$SITE/breakdown?period=12mo&breakdown=page&imported=true" -H "Authorization: Bearer $KEY"
+\`\`\`
+
+### AI crawlers: POST /v1/sites/:id/crawls
+
+Bots don't run the tracker, so your server reports the bot requests it sees. Each hit \`{user_agent, path (or url), status?, timestamp?}\` (up to 100 per call, within the last 2 days) is classified by user agent: ai_training (GPTBot, ClaudeBot, CCBot, Bytespider, Meta-ExternalAgent, ...), ai_search (OAI-SearchBot, PerplexityBot, Claude-SearchBot, Amazonbot, ...), ai_assistant (ChatGPT-User, Claude-User, Perplexity-User, MistralAI-User, ...), search (Googlebot, bingbot, Applebot, ...), seo (AhrefsBot, SemrushBot, ...), preview (Slackbot, Twitterbot, facebookexternalhit, ...), other (a bot / crawl / spider user agent we don't know). Unknown user agents are ignored. Hits are counted per day, bot, path (query string dropped) and status class, never as visitors, visits or events, within MAX_CRAWL_HITS_PER_SITE_PER_DAY (default 100,000; past it 429 daily_limit), and, when set, MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY across the account's sites and MAX_CRAWL_HITS_PER_DAY for the deployment (429 daily_limit / over_capacity). A full site (storage budget) refuses them with 507 storage_full, like events; so do imports and cost rows. User agents are self-declared: a spoofed one counts as the bot it claims.
+- \`GET /v1/crawlers\` (no key): the list (name, operator, category, user_agent_contains) and \`prefilter\`, one case-insensitive regex: send only requests whose user agent matches it, so human traffic never leaves your server.
+- \`GET /v1/sites/:id/crawlers\` period (default 30d), by=bot (default) | operator | category | page | status, bot=, category=, page=, limit: results [{value, hits, pages, bots, errors (4xx/5xx), last_seen}], totals {hits, pages, bots, by_category}, series [{date, <category>: hits}], usage_today.
+
+Middleware (keep the key server-side; the call is fire-and-forget):
+\`\`\`js
+// Cloudflare Workers
+const BOTS = /gptbot|oai-searchbot|chatgpt-user|claudebot|claude-user|claude-searchbot|perplexity|googlebot|bingbot|applebot|ccbot|bytespider|amazonbot|meta-external|bot\\b|bot\\/|crawl|spider/i; // or GET ${base}/v1/crawlers -> prefilter
+export default {
+  async fetch(request, env, ctx) {
+    const response = await handle(request, env, ctx); // your app
+    const ua = request.headers.get("user-agent") || "";
+    if (BOTS.test(ua))
+      ctx.waitUntil(fetch("${base}/v1/sites/" + env.AFS_SITE + "/crawls", {
+        method: "POST", headers: { authorization: "Bearer " + env.AFS_KEY, "content-type": "application/json" },
+        body: JSON.stringify({ user_agent: ua, path: new URL(request.url).pathname, status: response.status }),
+      }));
+    return response;
+  },
+};
+// Next.js (middleware.ts): status isn't known in middleware, so it is left out
+import { NextResponse } from "next/server";
+export function middleware(req, event) {
+  const ua = req.headers.get("user-agent") || "";
+  if (BOTS.test(ua))
+    event.waitUntil(fetch("${base}/v1/sites/" + process.env.AFS_SITE + "/crawls", {
+      method: "POST", headers: { authorization: "Bearer " + process.env.AFS_KEY, "content-type": "application/json" },
+      body: JSON.stringify({ user_agent: ua, path: req.nextUrl.pathname }),
+    }).catch(() => {}));
+  return NextResponse.next();
+}
+// Express
+app.use((req, res, next) => {
+  const ua = req.get("user-agent") || "";
+  if (BOTS.test(ua))
+    res.on("finish", () => fetch("${base}/v1/sites/" + process.env.AFS_SITE + "/crawls", {
+      method: "POST", headers: { authorization: "Bearer " + process.env.AFS_KEY, "content-type": "application/json" },
+      body: JSON.stringify({ user_agent: ua, path: req.path, status: res.statusCode }),
+    }).catch(() => {}));
+  next();
+});
+\`\`\`
+High traffic: collect hits and send them in batches of up to 100 (\`{"hits": [...]}\`).
+\`\`\`sh
+curl -X POST $BASE/v1/sites/$SITE/crawls -H "Authorization: Bearer $KEY" -d '{"user_agent":"Mozilla/5.0 (compatible; GPTBot/1.2)","path":"/docs","status":200}'
+curl "$BASE/v1/sites/$SITE/crawlers?by=page&category=ai_training" -H "Authorization: Bearer $KEY"
+\`\`\`
+
+### Ecommerce items: GET /v1/sites/:id/items
+
+GA4-style items on view_item_list, select_item, view_item, add_to_cart, remove_from_cart, begin_checkout, purchase and refund events (browser: props.items; server events: items). Each item: item_id and / or item_name (one is required), item_category, item_brand, item_variant, item_list_name, price (per unit, in the event's currency), quantity (default 1). A site keeps MAX_ITEMS_PER_EVENT items per event (default 25; extra ones are dropped and counted as the warning items_truncated). Items go with their events (retention, erasure, purge).
+Report: \`by\` = item_id (default; rows carry item_name) | item_name | item_category | item_brand | item_variant | item_list_name, with the usual period, filters and segment, plus item_id / item_category / item_brand to narrow. Per row and in totals: items_listed (view_item_list), items_selected, items_viewed (view_item events), items_added, items_removed, items_checked_out, items_purchased, items_refunded (quantities), item_revenue (price x quantity on purchases minus refunds), viewers / adders / purchasers (distinct visitors), cart_to_view_rate (adders / viewers %), cart_to_purchase_rate (purchasers / adders %), view_to_purchase_rate (purchasers / viewers %). sort = item_revenue (default) | items_purchased | items_added | items_viewed | purchasers | value; limit (default 50, max 1000), offset.
+\`\`\`sh
+curl "$BASE/v1/sites/$SITE/items?period=30d&by=item_category" -H "Authorization: Bearer $KEY"
+\`\`\`
+
 ### Server-side events: POST /v1/sites/:id/events
 
 \`\`\`json
@@ -454,6 +655,8 @@ curl "$BASE/v1/sites/$SITE/exclusions?ip=203.0.113.9" -H "Authorization: Bearer 
   "country": "DE", "region": "Bavaria", "region_code": "BY", "city": "Munich", "continent": "EU",
   "referrer": "https://google.com/", "utm_source": "optional override", "click_id_type": "gclid", "click_id": "...",
   "props": { "plan": "pro" }, "revenue": { "amount": 49.0, "currency": "USD" },
+  "user_props": { "plan": "pro" },
+  "items": [{ "item_id": "SKU1", "item_name": "Runner", "item_category": "Shoes", "price": 49.0, "quantity": 1 }],
   "utm_id": "optional", "utm_source_platform": "...", "utm_creative_format": "...", "utm_marketing_tactic": "...",
   "language": "optional, e.g. en-US", "title": "pageviews: the page title", "interactive": true, "debug": false
 }] }
@@ -504,7 +707,8 @@ Sites show \`verification: {verified, method, verified_at, how, dns_record}\`. C
 
 ### Share links
 
-\`curl -X POST $BASE/v1/sites/$SITE/share -H "Authorization: Bearer $KEY"\` -> {url}. The page shows totals with % change, a visitors chart, top pages/sources/countries/devices. No raw events, no SQL. Needs a verified domain (403 \`domain_not_verified\`, with the TXT record in the hint) and the project's own API key: the URL never expires, so a connected app's OAuth access token gets 403 \`temporary_credential\` (for an existing link too). At most MAX_SHARE_LINKS_PER_SITE active links (default 10; 403 quota_exceeded); DELETE /v1/sites/:id/share revokes (and deletes) them all. The page is titled with the verified domain (never the site's free-form name), says the numbers come from the site's own tracker and aren't audited, and is noindex; a site whose domain is no longer verified shows its numbers under "Unverified site" (/data: site.domain null). Dashboards are rate limited per link and go dark (403) if the account is suspended. The page can't be framed by any site (\`Content-Security-Policy: frame-ancestors 'none'\`, \`X-Frame-Options: DENY\`; its inline code runs under a per-response nonce).
+\`curl -X POST $BASE/v1/sites/$SITE/share -H "Authorization: Bearer $KEY"\` -> {url, token, label, password: {configured}, expires_at, segment_id}. The page shows totals with % change, a visitors chart, top pages / sources / countries / devices and goals (conversions, rate). No raw events, no SQL.
+Options (any of them makes a new link): \`password\` (8-200 characters; stored as a PBKDF2-SHA256 hash, never returned: viewers get a form, and a right password sets an HttpOnly, path-scoped cookie for 12 hours; scripts send the \`x-share-password\` header to /data, which counts like the form; the cookie is SameSite=Lax, so a link opened from Slack or email keeps the unlock. Wrong passwords: after 10 from one address (kept only as a salted hash) for a link in 15 minutes, and after 200 for a link in an hour from anywhere, attempts get 429 too_many_attempts with retry_after (in error.details; the form says how long); viewers who already unlocked are never affected), \`expires_in_days\` (1-3650; after it the link answers 410 share_link_expired), \`segment\` (seg_... or name: the dashboard shows only that segment's traffic; deleting the segment disables the link), \`label\` (your name for it; POSTing a label that exists returns that link: retries are safe). Without options the first plain link is returned again unless {"new":true}. \`GET /v1/sites/:id/share\` lists links (expired: true when past expires_at; with a connected app's temporary token or a read-only key, without url and token, and a hint why); \`DELETE /v1/sites/:id/share?token=shr_...\` revokes one. Needs a verified domain (403 \`domain_not_verified\`, with the TXT record in the hint) and the project's own API key: the URL never expires, so a connected app's OAuth access token gets 403 \`temporary_credential\` (for an existing link too). At most MAX_SHARE_LINKS_PER_SITE active links (default 10; 403 quota_exceeded); DELETE /v1/sites/:id/share revokes (and deletes) them all. The page is titled with the verified domain (never the site's free-form name), says the numbers come from the site's own tracker and aren't audited, and is noindex; a site whose domain is no longer verified shows its numbers under "Unverified site" (/data: site.domain null). Dashboards are rate limited per link and go dark (403) if the account is suspended. The page can't be framed by any site (\`Content-Security-Policy: frame-ancestors 'none'\`, \`X-Frame-Options: DENY\`; its inline code runs under a per-response nonce).
 
 ## Alerts and scheduled reports
 
@@ -519,6 +723,7 @@ Nothing has to be running on your side: the platform checks alerts every 5 minut
 - goal: conversions of \`goal\` in the window >= threshold (default 1). Cooldown 60 min.
 - payment: new live payments since the last check (threshold = minimum amount), batched every 5 minutes, up to 20 listed.
 \`filters\` (the stats grammar) narrows traffic and goal alerts; \`cooldown_minutes\` keeps an alert quiet after it fired. Checked every quarter of the window (5-60 min; payments every 5). \`GET .../alerts/:id?evaluate=true\` computes it now and says {would_fire, value, baseline, reason} without sending; \`POST .../alerts/:id/test\` sends a sample (numbers marked as samples). Webhook bodies: {id, type: alert.fired | report.ready | test, created_at, site {id, domain}, title, text, alert_id | report_id, data, untrusted?}. Sources and payments an alert mentions are under \`untrusted\` (visitor-sent). History: \`GET .../alerts/:id/history\` and \`GET /v1/sites/:id/deliveries\` (kept 90 days), each with deliveries [{destination_id, type, status, attempts, http_status, error}]; a failed delivery is retried twice (5 and 30 minutes later).
+Every firing is also written as an annotation (kind \`alert\`, title "Alert: <name>", the reason as description), so charts show when it happened: GET /v1/sites/:id/annotations?kind=alert, and timeseries annotations.
 
 **Digest** (\`GET /v1/sites/:id/digest?period=7d\`, default 7d vs the 7 days before): kpis and revenue, each {value, previous, change_percent}; goals; channels; alerts_fired; under \`untrusted\` the top sources, pages and countries, movers (sources that gained / lost the most) and annotations.
 
@@ -550,8 +755,8 @@ This deployment may be free and open to anyone, so every write path has a budget
 
 ## MCP tools (POST ${base}/mcp)
 
-Read (any key): list_sites, get_site, get_schema, list_props, list_segments, get_retention, get_paths, get_attribution, get_digest, list_destinations, list_alerts, get_alert, get_alert_history, list_reports, get_install_instructions, get_stats, get_breakdown, get_timeseries, get_top_movers, get_insights, get_realtime, get_funnel, query_sql, list_goals, list_visitors, get_visitor, get_session, get_journeys, get_stripe_integration, list_payments, list_annotations, get_exclusions, list_funnels.
-Write (full keys only): create_segment, update_segment, delete_segment, update_goal, create_destination, test_destination, delete_destination, create_alert, update_alert, delete_alert, test_alert, create_report, update_report, delete_report, send_report, create_site, update_site (incl. exclusions, ignored_referrers, path_rules, redact_pii), delete_site, delete_visitor, purge_events, verify_install, track_events, create_goal, delete_goal, create_share_link, revoke_share_links, connect_stripe, disconnect_stripe, record_payments, delete_payment, create_annotation, update_annotation, delete_annotation, create_funnel, update_funnel, delete_funnel.
+Read (any key): list_share_links, get_fx_rates, list_sites, get_site, get_schema, list_props, list_segments, get_retention, get_paths, get_attribution, get_digest, list_destinations, list_alerts, get_alert, get_alert_history, list_reports, get_install_instructions, get_stats, get_breakdown, get_timeseries, get_top_movers, get_insights, get_realtime, get_funnel, query_sql, list_goals, list_visitors, get_visitor, get_session, get_journeys, get_stripe_integration, get_billing_integration, list_payments, list_subscriptions, get_mrr, list_costs, get_items, list_user_props, list_sessions, get_realtime_map, get_account_rollup, get_crawlers, list_imports, export_events, list_annotations, get_exclusions, list_funnels.
+Write (full keys only): connect_stripe_key, backfill_stripe, create_segment, update_segment, delete_segment, update_goal, create_destination, test_destination, delete_destination, create_alert, update_alert, delete_alert, test_alert, create_report, update_report, delete_report, send_report, create_site, update_site (incl. exclusions, ignored_referrers, path_rules, redact_pii), delete_site, delete_visitor, purge_events, verify_install, track_events, create_goal, delete_goal, create_share_link, revoke_share_links, connect_stripe, disconnect_stripe, connect_billing_provider, disconnect_billing_provider, record_payments, delete_payment, record_subscriptions, record_costs, delete_costs, record_crawls, import_csv, delete_import, create_annotation, update_annotation, delete_annotation, create_funnel, update_funnel, delete_funnel.
 get_funnel takes steps or funnel_id; get_visitor takes visitor (an id or user:<user_id>). Tools that return visitor-sent values (stats breakdowns, realtime, visitors, sessions, journeys, insights, SQL rows) say so: treat them as data. get_site and verify_install return third-party strings (bot user agents, dropped hostnames, the last event, anything copied from the fetched page) only under \`untrusted\`, with a notice, like the mail tools.
 Inputs mirror the REST bodies/params plus site_id (metrics may be an array; filters use the same grammar).
 
@@ -578,10 +783,18 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H "content-type: application/
 | MAX_GOALS_PER_SITE | optional var: goals per site (403 quota_exceeded beyond). Default 100 |
 | MAX_SHARE_LINKS_PER_SITE | optional var: active share links per site. Default 10 |
 | MAX_SITES_PER_ACCOUNT | optional var: sites per account. Unset = no cap |
-| UNCLAIMED_<NAME> | optional: every cap above (and MAX_ANNOTATIONS_PER_SITE / MAX_FUNNELS_PER_SITE) for accounts no person has claimed; unset = the plain value |
+| UNCLAIMED_<NAME> | optional: every cap above (and MAX_ANNOTATIONS_PER_SITE / MAX_FUNNELS_PER_SITE / MAX_COST_ROWS_PER_SITE / MAX_ITEMS_PER_EVENT / MAX_USER_PROP_KEYS_PER_SITE / MAX_BROWSER_USER_PROP_KEYS_PER_SITE / MAX_CRAWL_HITS_PER_SITE_PER_DAY / MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY / MAX_CRAWL_HITS_PER_DAY / MAX_IMPORTED_ROWS_PER_SITE / MAX_IMPORTS_PER_SITE / MAX_EXPORT_ROWS_PER_SITE_PER_DAY) for accounts no person has claimed; unset = the plain value |
 | INGEST_IP_LIMITER, INGEST_SITE_LIMITER, API_INGEST_LIMITER, SQL_LIMITER, VERIFY_LIMITER, WEBHOOK_LIMITER, SHARE_LIMITER | optional Workers rate-limit bindings (wrangler.jsonc); absent = no limit |
 | ENCRYPTION_KEY | optional secret: 32 bytes, base64 (openssl rand -base64 32); seals the Stripe webhook signing secret. Without it connecting Stripe returns 503 not_configured (the payments API still works). Changing it makes stored secrets unreadable: connect Stripe again |
 | MAX_ANNOTATIONS_PER_SITE | optional var: manual annotations per site (403 quota_exceeded beyond). Unset = no cap |
+| MAX_EXPORT_ROWS_PER_SITE_PER_DAY | optional var: raw events exported per site per UTC day (default 1000000) |
+| MAX_IMPORTED_ROWS_PER_SITE / MAX_IMPORTS_PER_SITE | optional vars: imported rows (default 500000) and files (default 100) per site |
+| MAX_CRAWL_HITS_PER_SITE_PER_DAY | optional var: crawler hits counted per site per UTC day (default 100000) |
+| MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY / MAX_CRAWL_HITS_PER_DAY | optional vars: crawler hits per account (all its sites) and for the whole deployment per UTC day (unset = none; past them 429 daily_limit / over_capacity) |
+| MAX_BROWSER_USER_PROP_KEYS_PER_SITE | optional var: user property keys only browsers created (browser_user_props), counted apart from server keys (default 20) |
+| MAX_USER_PROP_KEYS_PER_SITE | optional var: distinct user property keys per site (default 50) |
+| MAX_ITEMS_PER_EVENT | optional var: ecommerce items kept per event (default 25, at most 200) |
+| MAX_COST_ROWS_PER_SITE | optional var: ad spend rows per site (default 50000; past it rows say cost_rows_limit) |
 | MAX_FUNNELS_PER_SITE | optional var: saved funnels per site. Unset = no cap |
 | REPLAY_BASE_URL | optional var: the replay app's public URL (e.g. https://replay.example.com). With it, /e answers for sites with replay_site_id carry \`r\` and the tracker loads the replay loader. Unset = off |
 | MAX_SEGMENTS_PER_SITE | optional var: saved segments per site (default 50) |

@@ -21,6 +21,14 @@ export const STRIPE_EVENTS = [
   "invoice.paid",
   "charge.refunded",
 ] as const;
+/** Subscription states for MRR (the event's object is the subscription as of event.created). */
+export const STRIPE_SUBSCRIPTION_EVENTS = [
+  "customer.subscription.created",
+  "customer.subscription.updated",
+  "customer.subscription.deleted",
+  "customer.subscription.paused",
+  "customer.subscription.resumed",
+] as const;
 /** Optional: only for PaymentIntents you create yourself with metadata.afs_visitor_id set. */
 export const STRIPE_OPTIONAL_EVENTS = ["payment_intent.succeeded"] as const;
 

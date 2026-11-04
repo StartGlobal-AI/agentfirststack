@@ -211,6 +211,16 @@ extraction, labels, allow/block lists, an event feed for agents without a public
   per sending domain (changelog 2026-07-15). Delivery status needs that subscription per domain: a
   deploy step for the shared domain, and an `auto_configure` step for custom domains.
 
+## Build status (2026-11-04)
+
+Shipped in `mail/` (see CHANGELOG): P1 items 1-6 and 8 (Retry-After on mail's own 429s only, item 7 for `shared/`
+is not done), P2 items 9-14 (delivery status needs the operator's Email Sending event subscription per sending domain;
+see the mail README), and from P3: attachment text (with an `AI` binding), scheduled send, the deliverability report,
+Standard Webhooks headers, batch update, ICS parsing, webhook `reply_text` / excerpt. Not done: inbox-scoped API keys
+(item 15, needs an identity-DB change in `@afs/shared`), `Retry-After` in `shared/` (signup and key limits), the
+prompt-injection verdict and OpenAPI (P3 19-20), and the remaining small follow-ups (pause inbox, inbox `q=` and
+metadata, suppressions, Domain Connect). Everything marked Skip stays skipped.
+
 ## Prioritised build list
 
 P1: small, high value, closes a rule gap. Each ships REST + MCP + llms.txt + tests.

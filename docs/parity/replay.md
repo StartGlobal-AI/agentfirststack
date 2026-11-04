@@ -50,6 +50,26 @@ Biggest gaps: no surveys or feedback (all of Hotjar "Ask"), no custom tags / ide
 no segments, no trends over time, no failed-request capture, no attention / first-click / compare
 heatmaps, no notes, labels or favourites, no smart events, no webhooks.
 
+## Built in the parity release (2026-11-04)
+
+Items 1-13 of the prioritised list below are built in `replay/` (see `replay/llms.txt` sections and
+the CHANGELOG): custom tags and identify attributes with optional browser-side hashing; more
+filters, `!` negation and saved segments on every read; `get_replay_metrics` and active time;
+failed network requests (`api_error`, opt-in); on-site surveys and feedback (popover, embedded,
+feedback tab; templates, logic, targeting, triggers incl. exit intent and frustration, limits,
+responses with CSV, deterministic results and themes, session linking, `test_survey`); the heatmap
+bundle (session filters, first/last click, compare, sort, conversion share, findings, CSV); notes,
+labels, stars and clips; consent by region, Google Consent Mode, IP-range exclusion,
+`afsr('upgrade')` / `afsr('start')`; signed webhooks; event definitions and automatic
+`form_submit` / `outbound_click` / `download`; attention map and zones; exports, raw events,
+`get_visitor`, `get_manual`, funnel time to convert, more sorts, in-progress sessions, opt-in
+console.warn; Shopify, Webflow, Wix, Squarespace, Framer and Segment / Mixpanel / Amplitude install
+notes. Wave 2 added item 15 (IAB TCF v2 consent, signals and survey scores to a tags container for GA4
+and ad platforms, heatmap PNGs through Browser Rendering), the opt-in email question type, playback
+for starred sessions past the R2 lifecycle rule, https-only uploads and impression budgets. Still
+not built, on purpose: link surveys on our domain (item 14, until user content has a separate
+domain) and the Skip rows. The tables below are the audit as written before the build.
+
 ## 1. Recording and playback
 
 | Feature | Doc | Ours | Decision | Effort | Proposed API |

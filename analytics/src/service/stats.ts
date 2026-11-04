@@ -87,6 +87,14 @@ const breakdownField = z
     `Property to group by: ${BREAKDOWNS.join(", ")}, prop:<key>. Up to 3 at once (comma list or array, e.g. country,device): each row then carries every dimension by name.`,
   );
 
+const importedField = z
+  .union([z.boolean(), z.enum(["true", "false"])])
+  .optional()
+  .transform((v) => v === true || v === "true")
+  .describe(
+    "Add imported GA4 / Plausible data (POST /imports) for days before live data begins: visitors, visits, pageviews (and bounce_rate, visit_duration); unfiltered reports only.",
+  );
+
 export const statsInput = z.object({
   ...periodShape,
   metrics: listish.describe(`Comma list or array of: ${METRICS.join(", ")}. Default: ${DEFAULT_METRICS.join(", ")} (the rest are opt-in).`),
@@ -96,6 +104,7 @@ export const statsInput = z.object({
   sort: sortField,
   limit: z.coerce.number().int().min(1).max(1000).optional().describe("Breakdown rows (default 20)."),
   offset: z.coerce.number().int().min(0).max(100_000).optional().describe("Skip this many breakdown rows (pagination: pass next_offset)."),
+  imported: importedField,
 });
 
 export const breakdownInput = statsInput.extend({ breakdown: breakdownField });
@@ -108,6 +117,7 @@ export const timeseriesInput = z.object({
   interval: z.enum(INTERVALS).optional().describe("hour, day, week or month. Default depends on the period."),
   ...filterShape,
   ...compareShape,
+  imported: importedField,
 });
 
 export const funnelInput = z.object({
@@ -239,6 +249,7 @@ async function statsReq(ctx: Ctx, siteId: string, q: z.infer<typeof statsInput>)
       sort,
       limit: q.limit,
       offset: q.offset,
+      imported: q.imported,
     },
     segment,
   };
@@ -269,6 +280,7 @@ export async function getTimeseries(ctx: Ctx, siteId: string, raw: unknown) {
     ...f,
     interval: q.interval,
     compare: compareOf(q),
+    imported: q.imported,
   };
   return { site_id: site.id, ...(segment ? { segment } : {}), ...(await callSite(ctx.env, site, (s) => s.timeseries(req))) };
 }

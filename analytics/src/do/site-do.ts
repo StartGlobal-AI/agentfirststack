@@ -5,6 +5,16 @@ import type { Db, MoversRequest, Row, SqlCursor } from "./engine";
 import * as annotations from "./annotations";
 import type { AnnotationInput, AnnotationPatch } from "./annotations";
 import * as payments from "./payments";
+import * as subscriptions from "./subscriptions";
+import * as costs from "./costs";
+import * as items from "./items";
+import * as userProps from "./user-props";
+import * as sessionsList from "./sessions-list";
+import * as crawlers from "./crawlers";
+import * as imports from "./imports";
+import * as exporter from "./export";
+import type { ImportKind, ImportRow, ImportSource } from "../lib/imports";
+import type { SubscriptionOutcome } from "./subscriptions";
 import * as people from "./people";
 import { insights, type InsightsRequest } from "./insights";
 import * as schema from "./schema";
@@ -17,7 +27,15 @@ import { type AttributionRequest, attribution } from "./attribution";
 import { err, guard, rangeFor, utcDay } from "./common";
 import type { SqlValue } from "../lib/query";
 import type { Breakdown } from "../lib/filters";
-import { type IngestCaps, type LimitVars, effectiveRetention, ingestCaps, limitVars, needsAggregate } from "../lib/limits";
+import {
+  type IngestCaps,
+  type LimitVars,
+  STORAGE_FULL_HINT,
+  effectiveRetention,
+  ingestCaps,
+  limitVars,
+  needsAggregate,
+} from "../lib/limits";
 import type {
   DoError,
   EnrichedEvent,
@@ -48,6 +66,9 @@ const aggregateEvery = (c: IngestCaps) =>
 const DROPS_EVERY_MS = 10_000;
 /** Payments are small; this is their share of the daily byte counter. */
 const PAYMENT_BYTES = 256;
+
+export type { SubscriptionRecord } from "./subscriptions";
+import type { SubscriptionRecord } from "./subscriptions";
 
 /** How the Worker asks for ingest: the limit vars of its env (so tests can change them per call). */
 export interface IngestPolicy {
@@ -135,6 +156,17 @@ export class SiteDO extends DurableObject<Bindings> {
 
   private storageFull(caps: IngestCaps): boolean {
     return Number.isFinite(caps.storageBytes) && this.ctx.storage.sql.databaseSize >= caps.storageBytes;
+  }
+
+  /** Writes other than events (imports, costs, crawler hits) stop like ingest does on a full site or a suspended account. */
+  private async refuseWhenFull(what: string, vars?: LimitVars): Promise<DoError | null> {
+    const s = this.settingsOrNull();
+    if (!s) return null;
+    const { standing } = await this.standingOf(s);
+    if (standing.suspended) return err("account_suspended", "This account has been suspended; its data is not recorded.");
+    if (this.storageFull(ingestCaps(vars ?? limitVars(this.env), standing)))
+      return err("storage_full", `This site's storage budget is used up, so new ${what} are not stored.`, STORAGE_FULL_HINT);
+    return null;
   }
 
   /**
@@ -276,6 +308,9 @@ export class SiteDO extends DurableObject<Bindings> {
       drop: (reason, sample) =>
         reason.startsWith(engine.WARN_PREFIX) ? engine.recordDrop(this.db, reason, sample) : this.queueDrop(reason, sample),
       dryRun: !!policy.dryRun,
+      itemsPerEvent: caps.itemsPerEvent,
+      userPropKeys: caps.userPropKeys,
+      browserUserPropKeys: caps.browserUserPropKeys,
     });
     if (policy.dryRun) return { ...res, replay_site_id: s.replay_site_id ?? null };
     this.pendingRefused += res.results.filter((r) => (engine.BUDGET_REASONS as readonly string[]).includes(r.reason ?? "")).length;
@@ -310,6 +345,50 @@ export class SiteDO extends DurableObject<Bindings> {
     return this.withSettings(() => engine.realtime(this.db, q));
   }
 
+  exportEvents(q: exporter.ExportRequest, dailyBudget: number) {
+    return this.withSettings(() => exporter.exportEvents(this.db, q, dailyBudget));
+  }
+
+  async saveImport(
+    id: string,
+    meta: { source: ImportSource; kind: ImportKind; file_name: string | null },
+    rows: ImportRow[],
+    caps: { maxRows: number; maxImports: number },
+    vars?: LimitVars,
+  ) {
+    const full = await this.refuseWhenFull("imported data", vars);
+    if (full) return full;
+    return this.withSettings(() => imports.saveImport(this.db, id, meta, rows, caps));
+  }
+
+  listImports() {
+    return this.withSettings(() => imports.listImports(this.db));
+  }
+
+  deleteImport(id: string) {
+    return this.withSettings(
+      () => imports.deleteImport(this.db, id) ?? err("not_found", "Import not found.", "GET /v1/sites/:id/imports lists them."),
+    );
+  }
+
+  async recordCrawls(hits: crawlers.CrawlHit[], dailyBudget: number, room = Number.POSITIVE_INFINITY, vars?: LimitVars) {
+    const full = await this.refuseWhenFull("crawler hits", vars);
+    if (full) return full;
+    return this.withSettings((s) => crawlers.recordCrawls(this.db, hits, s, dailyBudget, Date.now(), room));
+  }
+
+  crawlers(q: crawlers.CrawlersRequest) {
+    return this.withSettings((s) => crawlers.crawlersReport(this.db, s, q, Date.now()));
+  }
+
+  realtimeMap(q: sessionsList.MapRequest) {
+    return this.withSettings(() => sessionsList.realtimeMap(this.db, q));
+  }
+
+  listSessions(q: sessionsList.SessionsRequest, replay: { site_id: string; base: string } | null) {
+    return this.withSettings((s) => sessionsList.listSessions(this.db, s, q, replay));
+  }
+
   funnel(q: FunnelRequest) {
     return this.withSettings((s) => engine.funnel(this.db, s, q));
   }
@@ -337,7 +416,17 @@ export class SiteDO extends DurableObject<Bindings> {
   }
 
   visitor(key: string, limit?: number) {
-    return this.withSettings((s) => people.getVisitor(this.db, s, key, limit));
+    return this.withSettings((s) => {
+      const v = people.getVisitor(this.db, s, key, limit);
+      // An identified user's properties ride along.
+      if (key.startsWith("user:") && v && typeof v === "object" && !("error" in v))
+        return { ...v, user_props: userProps.userPropsOf(this.db, key.slice(5)) };
+      return v;
+    });
+  }
+
+  userProps() {
+    return this.withSettings(() => userProps.listUserProps(this.db));
   }
 
   session(id: string) {
@@ -393,6 +482,31 @@ export class SiteDO extends DurableObject<Bindings> {
     records: PaymentInput[],
     policy: IngestPolicy = {},
   ): Promise<{ results: PaymentOutcome[]; refused?: engine.BudgetReason } | DoError> {
+    return this.admitWrites(records, policy, "payments", (s, fit, now) =>
+      payments.ingestPayments(this.db, fit, now, { trustBrowserUserId: !!s.trust_browser_user_id }),
+    );
+  }
+
+  /**
+   * Subscription states (from the API, a signed provider webhook or a backfill) count like
+   * payments: each new state that changes something is one event against the daily caps.
+   */
+  async ingestSubscriptions(
+    records: SubscriptionRecord[],
+    policy: IngestPolicy = {},
+  ): Promise<{ results: SubscriptionOutcome[]; refused?: engine.BudgetReason } | DoError> {
+    return this.admitWrites(records, policy, "subscriptions", (s, fit, now) =>
+      subscriptions.applySubscriptions(this.db, fit, now, { trustBrowserUserId: !!s.trust_browser_user_id }),
+    );
+  }
+
+  /** The daily-budget gate shared by payments and subscriptions: what fits is applied, the rest refused. */
+  private async admitWrites<T, R extends { ok: boolean; existing?: boolean; changed?: boolean; reason?: string }>(
+    records: T[],
+    policy: IngestPolicy,
+    what: string,
+    apply: (s: SiteSettings, fit: T[], now: number) => R[],
+  ): Promise<{ results: R[]; refused?: engine.BudgetReason } | DoError> {
     const s = this.settingsOrNull();
     if (!s) return NOT_CONFIGURED;
     const { accountId, standing } = await this.standingOf(s);
@@ -401,7 +515,7 @@ export class SiteDO extends DurableObject<Bindings> {
     if (this.storageFull(caps))
       return err(
         "storage_full",
-        "This site's storage budget is used up; payments are not recorded.",
+        `This site's storage budget is used up; ${what} are not recorded.`,
         "Lower retention_days or delete data.",
       );
     const aggregate = needsAggregate(caps) && !!accountId;
@@ -409,7 +523,7 @@ export class SiteDO extends DurableObject<Bindings> {
     const now = Date.now();
     const day = utcDay(now);
     const used = engine.usageOn(this.db, day).events;
-    // Each payment records at most one row: take as many as the tightest cap leaves room for.
+    // Each record writes at most one row: take as many as the tightest cap leaves room for.
     const room = Math.max(
       0,
       Math.min(caps.siteDaily - used, caps.accountDaily - others.account - used, caps.platformDaily - others.platform - used),
@@ -419,16 +533,22 @@ export class SiteDO extends DurableObject<Bindings> {
       fit.length < records.length
         ? engine.capRefusal({ caps, accountOthers: others.account, platformOthers: others.platform }, used + fit.length)
         : null;
-    const results: PaymentOutcome[] = fit.length
-      ? payments.ingestPayments(this.db, fit, now, { trustBrowserUserId: !!s.trust_browser_user_id })
-      : [];
-    for (let i = fit.length; i < records.length; i++) results.push({ ok: false, reason: reason ?? "daily_limit" });
-    const added = results.filter((r) => r.ok && r.existing === false).length;
+    const results: R[] = fit.length ? apply(s, fit, now) : [];
+    for (let i = fit.length; i < records.length; i++) results.push({ ok: false, reason: reason ?? "daily_limit" } as R);
+    const added = results.filter((r) => r.ok && (r.existing === false || r.changed === true)).length;
     engine.addUsage(this.db, day, { events: added, bytes: added * PAYMENT_BYTES });
     this.pendingRefused += records.length - fit.length;
     this.writeDrops();
     if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
     return fit.length ? { results } : { results, refused: reason ?? "daily_limit" };
+  }
+
+  listSubscriptions(q: subscriptions.SubscriptionsQuery) {
+    return this.withSettings(() => subscriptions.listSubscriptions(this.db, q));
+  }
+
+  mrr(q: subscriptions.MrrRequest) {
+    return this.withSettings((s) => subscriptions.mrrReport(this.db, s, q, Date.now()));
   }
 
   listPayments(q: PeriodParams & { type?: string; limit: number; offset: number }) {
@@ -455,10 +575,36 @@ export class SiteDO extends DurableObject<Bindings> {
     return this.withSettings(() => payments.paymentsSummary(this.db));
   }
 
+  // ---------------------------------------------------------------- ecommerce items
+
+  items(q: items.ItemsRequest) {
+    return this.withSettings((s) => items.itemsReport(this.db, s, q, Date.now()));
+  }
+
+  // ---------------------------------------------------------------- costs
+
+  async upsertCosts(rows: costs.CostInput[], max: number, vars?: LimitVars) {
+    const full = await this.refuseWhenFull("cost rows", vars);
+    if (full) return full;
+    return this.withSettings(() => costs.upsertCosts(this.db, rows, max));
+  }
+
+  listCosts(q: costs.CostsQuery) {
+    return this.withSettings(() => costs.listCosts(this.db, q));
+  }
+
+  deleteCosts(q: { from: string; to: string; source?: string; campaign?: string }) {
+    return this.withSettings(() => costs.deleteCosts(this.db, q));
+  }
+
   // ---------------------------------------------------------------- annotations
 
   createAnnotation(a: AnnotationInput, max: number | null) {
     return this.withSettings((s) => annotations.createAnnotation(this.db, s, a, max));
+  }
+
+  alertAnnotation(a: { alert_id: string; ts: number; title: string; description: string | null; details: Record<string, unknown> }) {
+    return this.withSettings(() => annotations.alertAnnotation(this.db, a));
   }
 
   listAnnotations(q: PeriodParams & { kind?: string }) {

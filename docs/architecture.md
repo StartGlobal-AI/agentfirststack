@@ -30,9 +30,18 @@ that has to be retried.
 Replay (`replay.*`) sits beside them: the browser recorder (`/r/:id.js`, masked before anything is
 sent) posts gzip chunks to `/i`; they're stored in R2 (`<site>/<session>/<seq>`) and a
 `ReplaySiteDO` per site keeps the session index, derived events, signals, error groups and heatmap
-rollups. Signals can be forwarded to analytics as events over its service binding. Linking a
+rollups. Signals can be forwarded to analytics as events over its service binding, and to a
+tags container as server events over the `TAGS` binding (queued in the site DO, sent in batches by
+its alarm, routed on to GA4 and ad platforms by the container). Heatmap images are drawn by
+Browser Rendering (`BROWSER`) from a stored snapshot and cached in R2 (`heatmaps/<site>/`). Linking a
 replay site to an analytics site also sets that site's `replay_site_id` over the binding, so the
 analytics tracker loads the replay loader by itself (`r` in the `/e` answer, with `REPLAY_BASE_URL`).
+The same loader lazy-loads replay's on-site survey widget (`/sv/<site>.<rev>.js`, closed Shadow DOM,
+never recorded) when the site has active surveys; answers go to `/f` and into the site's DO next to
+the sessions they are linked to. Replay's signed webhooks (survey responses, segment entries, new
+error groups, signal spikes) are D1 delivery rows sent right away and retried by the site DO's own
+alarm, so replay needs no queue. Saved segments, event definitions, surveys and webhooks are D1
+config; tags, labels, notes, responses and attention data live in the DO with the session.
 
 ## Identity
 
@@ -125,12 +134,38 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   (origin `payment`, linked to the visitor's session, so revenue flows through every breakdown)
   and in a `payments` ledger keyed by `provider:external_id`; Stripe event ids are deduped in
   `provider_events`, and `payment_links` maps a hashed customer to its first session so renewals
-  keep the original source.
+  keep the original source. Polar, Paddle and LemonSqueezy post to `/webhooks/<provider>/:site_id`
+  (each provider's signature scheme, secrets sealed in the same `integrations` table). One-call
+  Stripe connect seals a restricted key too, creates the endpoint and backfills history from the
+  cron. Subscription states land in the DO's `subscriptions` (latest state) and
+  `subscription_changes` (every MRR movement), so MRR at any moment is a query over the movements.
+  With a site currency the Worker converts money at ingest using ECB rates kept per day in D1
+  (`fx_rates`, refreshed by the cron).
+- **More per-site data in the DO**, each in its own table and never mixed into events: ad spend
+  (`costs`, joined into cost metrics by source and campaign), ecommerce items (`event_items`,
+  removed with their event by a trigger), user properties (`user_props`, the `user:<key>`
+  dimension), crawler hits reported by the site's server (`crawler_hits`, own daily budget),
+  imported GA4 / Plausible aggregates (`imports`, `imported_rows`, merged into unfiltered reports
+  for days before live data), and the raw export's daily counter.
 - **Exclusions** (IPs and CIDR ranges, paths, hostnames, countries) live on the D1 site row and in
   the DO's settings copy. The Worker hands the visitor IP to the DO only to compare it in memory;
   it is never stored.
+- **Ingest rules in the DO**, before anything is stored: referrer spam is dropped, ignored
+  referrers (hosted checkouts, sign-in pages, the site's own list) count as no referrer so a
+  visitor back from paying keeps their source, emails and formatted phone numbers are redacted,
+  path rules rewrite paths, site search terms become `site_search` events, and each new session
+  updates its identity's first touch (DO `identities` table: first-touch dimensions, retention
+  cohorts, attribution). `validate_only` runs the same path in a transaction that is rolled back.
 - **The DO's daily alarm** purges data past retention and writes traffic-spike annotations
   (DO `annotations` table, next to manual notes) for the days since its last run.
+- **Alerts and scheduled reports** (each alert firing also writes an `alert` annotation in the DO) live in D1 (`alerts`, `reports`, `alert_destinations` with
+  webhook and Slack URLs sealed by `ENCRYPTION_KEY`, history in `alert_events`). A cron every
+  5 minutes evaluates due alerts (a few read-only aggregates from each site's DO), sends due
+  reports (the digest), continues Stripe backfills (5 pages per site, 10 sites per run), fetches
+  ECB exchange rates when a publication is due and some site has a currency, retries failed
+  deliveries and purges old history, bounded per run.
+  Deliveries are signed webhooks, Slack incoming webhooks, or email to the project's members
+  through an optional `send_email` binding.
 - **DO schema migrations.** `meta.schema_version` per DO: version 1 is the first release's schema
   (frozen); later versions run once, in a transaction, when a DO is next instantiated (columns added
   only if missing, new tables and indexes). D1 changes stay forward-only migrations.
@@ -138,12 +173,22 @@ The apex serves what agents and crawlers look for, from `site/public/`:
 ## Tags
 
 - **Browser side.** A container is a draft config (variables, triggers, tags, conversions,
-  consent) plus immutable published versions. `/c/:id.js` serves the browser runtime with the
-  live config inlined. Conversions fire client pixels with an `event_id`.
+  consent) plus immutable versions (published, or saved for later and for environments).
+  `/c/:id.js` serves the browser runtime with the live config inlined (`?env=` an environment's
+  pinned version, `?preview=` the draft or a version). The runtime comes in two bundles: the core
+  one, and one with rarely used features (video and error triggers, wait-for-tags, cross-domain
+  linking, TCF) that only containers using them get. Conversions fire client pixels with an
+  `event_id`. The draft is edited whole or one item at a time (each write guarded by the
+  revision it read), diffed against any version, and can be imported from a GTM container
+  export.
 - **Server side.** The runtime posts to `/collect`. The per-container Durable Object stores the
   visitor's click ids and identity, dedupes events, keeps a seven-day event log, and enqueues
   delivery. The queue consumer calls each platform's conversion API with the same `event_id`, so
-  platforms count the conversion once, and writes each platform's answer back to the log.
+  platforms count the conversion once, and writes each platform's answer back to the log. Just
+  before sending, each destination's own transformations run (routing conditions, parameter
+  allow/exclude/set, lookup tables kept in D1, webhook body templates). The Durable Object also
+  keeps the preview log (what preview builds report: triggers matched, tags fired or not, and
+  why), per-tag fire counts and page coverage.
 - **Credentials** for destinations are sealed with AES-GCM (`ENCRYPTION_KEY`) and never returned.
 
 ## Mail
@@ -154,8 +199,18 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   any waiter parked on the inbox's Durable Object. `wait_for_email` therefore returns the moment
   mail lands, with no polling.
 - **Sending** goes through the Email Service binding, from verified domains only. Shared-domain
-  inboxes can be limited to replies.
-- **Webhooks** are signed and delivered through a queue with retries.
+  inboxes can be limited to replies (the account's own inboxes and its members' verified emails
+  are always allowed). Mail to the account's own inboxes never leaves the Worker: it is written
+  and stored directly. Sends take an `Idempotency-Key`; `send_at` schedules them on the inbox's
+  Durable Object alarm.
+- **Delivery status** comes from Cloudflare Email Sending events: a Queues event subscription per
+  sending domain publishes delivered / deferred / bounced / failed / rejected / complained events,
+  which the Worker's queue consumer matches to the sent message, per recipient.
+- **Webhooks** are signed (own scheme and Standard Webhooks) and delivered through a queue with
+  retries. The same events are kept for 7 days in an event feed (`GET /v1/events`, long-poll on a
+  per-account Durable Object) for agents without a public URL.
+- **Allow / block lists** are checked as soon as the headers are parsed, so refused mail is
+  rejected during the SMTP session, before its body is read.
 
 ## Why this storage
 

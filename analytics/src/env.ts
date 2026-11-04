@@ -27,6 +27,18 @@ export interface Bindings extends AuthBindings {
   ENCRYPTION_KEY?: string;
   /** Fair use: max manual annotations per site. Unset = no cap. */
   MAX_ANNOTATIONS_PER_SITE?: string;
+  /** cost rows (date x source x campaign) a site keeps (default 50000; UNCLAIMED_ variant) */
+  MAX_COST_ROWS_PER_SITE?: string;
+  /** crawler hits counted per site per UTC day (default 100000; UNCLAIMED_ variant) */
+  MAX_CRAWL_HITS_PER_SITE_PER_DAY?: string;
+  /** crawler hits per account (all its sites) and for the whole deployment per UTC day (unset = none; UNCLAIMED_ variants) */
+  MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY?: string;
+  MAX_CRAWL_HITS_PER_DAY?: string;
+  /** imported GA4 / Plausible rows a site keeps (default 500000) and imports (files) per site (default 100); UNCLAIMED_ variants */
+  MAX_IMPORTED_ROWS_PER_SITE?: string;
+  MAX_IMPORTS_PER_SITE?: string;
+  /** raw events exported per site per UTC day (default 1000000; UNCLAIMED_ variant) */
+  MAX_EXPORT_ROWS_PER_SITE_PER_DAY?: string;
   /** Fair use: max saved funnels per site. Unset = no cap. */
   MAX_FUNNELS_PER_SITE?: string;
   /**

@@ -7,6 +7,12 @@ Analytics ("AFS") as built today, so we can decide what to build. AFS facts come
 official docs and pricing pages (sources at the end, per product). Where a doc was ambiguous,
 missing, or only reachable through search snippets, the cell or note says so.
 
+> **Superseded (2026-11-04):** the "AFS today" column below is out of date. The current status of
+> every capability, with evidence, decisions and proposed APIs, is in
+> [`docs/parity/ga4.md`](../parity/ga4.md) and [`docs/parity/web-analytics.md`](../parity/web-analytics.md),
+> and what has shipped since is in `CHANGELOG.md` and `analytics/README.md`. The competitor
+> columns are still a useful snapshot.
+
 **Status changes worth knowing before reading the matrix**
 
 - **Hotjar is no longer a standalone product.** hotjar.com/pricing redirects to Contentsquare

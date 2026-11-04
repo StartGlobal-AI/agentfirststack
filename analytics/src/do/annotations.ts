@@ -71,6 +71,24 @@ export function createAnnotation(db: Db, settings: SiteSettings, a: AnnotationIn
   return { annotation: shapeAnnotation(db.all("SELECT * FROM annotations WHERE id = ?", [id])[0]!, settings.timezone), existing: false };
 }
 
+/**
+ * An alert that fired, as an annotation (kind alert, source alert): on charts it marks when it
+ * happened. Idempotent per alert and minute; purged with retention like other automatic ones.
+ */
+export function alertAnnotation(
+  db: Db,
+  a: { alert_id: string; ts: number; title: string; description: string | null; details: Record<string, unknown> },
+  now = Date.now(),
+) {
+  const key = `alert:${a.alert_id}:${Math.floor(a.ts / 60_000)}`;
+  db.run(
+    `INSERT OR IGNORE INTO annotations (id, key, kind, ts, end_ts, title, description, source, details, created_at, updated_at)
+     VALUES (?, ?, 'alert', ?, NULL, ?, ?, 'alert', ?, ?, ?)`,
+    [newId("ann"), key, a.ts, a.title.slice(0, 200), a.description?.slice(0, 1000) ?? null, JSON.stringify(a.details), now, now],
+  );
+  return { ok: true };
+}
+
 export function updateAnnotation(db: Db, settings: SiteSettings, id: string, p: AnnotationPatch, now = Date.now()) {
   const cur = db.all("SELECT * FROM annotations WHERE id = ?", [id])[0];
   if (!cur) return err("not_found", "Annotation not found.", "GET /v1/sites/:id/annotations lists this site's annotations.");

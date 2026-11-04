@@ -13,6 +13,20 @@ annotations and comparisons have shipped since).
 follows our conventions: `/v1/sites/:id/...`, hyphenated path segments, snake_case JSON, MCP read
 tools vs write tools (`tools.write`), idempotent creates by natural key, `next_steps`, hints.
 
+## Built since this audit (wave 2, 2026-11-04)
+
+Rows below still read as audited; these are now built (details in `analytics/src/llms.ts`):
+**DA-9** (site `currency`, ECB rates per day, originals kept), **DM-8** (as `POST /v1/sites/:id/costs`,
+metrics `cost`, `roas`, `cpa`, `cac`, `cost_per_visit`; no CPC), **DM-9** (`sum|avg|min|max:prop:<key>`; no
+count), **CO-10** / **DM-14** / **DM-15** (items on ecommerce events and `GET /items`; no coupons or
+promotions), **CO-12** / **DM-18** (user properties, `user:<key>`; no custom item dims), **DM-19**
+(`visitor_type` dimension), **AD-11** (`channel_groups`, `channel_group`), **AD-16** (as a synchronous
+cursor-paged `GET /export`, not R2 jobs), **AD-17** (alert firings as annotations), **AD-21**
+(`GET /v1/rollup`), **AD-28** (items and user data through events and `user_props`; GA4 report CSVs via
+`POST /imports`), **CO-14** (tracker consent gate; not Consent Mode signals), **CO-16** (`/s.js?linker=1`),
+**CO-18** (`session_timeout_minutes`). Still open: **AD-15** Search Console (needs a verified sensitive
+Google OAuth scope).
+
 ## Summary
 
 124 rows. Every row lands in exactly one bucket; **Skip** = rows we decided not to build, whatever

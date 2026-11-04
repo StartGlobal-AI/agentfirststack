@@ -473,6 +473,16 @@ export async function checkAlert(env: Bindings, site: SiteRow, a: AlertRow, now:
       { fetcher, now },
     );
     fired = true;
+    // The firing marks the site's charts too (our own text only: no visitor-sent values in it).
+    await callSite(env, site, (s) =>
+      s.alertAnnotation({
+        alert_id: a.id,
+        ts: now,
+        title: `Alert: ${a.name}`,
+        description: d.reason ?? null,
+        details: { alert_id: a.id, type: a.type, value: d.value ?? null, baseline: d.baseline ?? null },
+      }),
+    ).catch(() => {});
   } else if (d.fire && cooling && a.type === "payment") {
     state = { ...state, cursor: prev.cursor }; // payments seen while cooling down are reported once it ends
   }

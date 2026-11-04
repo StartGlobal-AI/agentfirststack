@@ -49,7 +49,7 @@ function paymentEventOf(db: Db, where: string, args: (string | number)[]): Row |
   );
 }
 
-function resolve(db: Db, p: PaymentInput, o: PaymentOptions): Target {
+export function resolve(db: Db, p: PaymentInput, o: PaymentOptions): Target {
   if (p.type === "refund" && p.original_refs.length) {
     for (const ref of p.original_refs) {
       const e = paymentEventOf(db, "p.ref = ?", [`${p.provider}:${ref}`]);
@@ -148,7 +148,12 @@ function one(db: Db, p: PaymentInput, now: number, o: PaymentOptions): PaymentOu
   if (existing) {
     // Refunds report the cumulative amount: a later partial refund replaces the figure.
     if (p.type === "refund" && Number(existing.amount) !== signed) {
-      db.run("UPDATE payments SET amount = ?, updated_at = ? WHERE id = ?", [signed, now, String(existing.id)]);
+      db.run("UPDATE payments SET amount = ?, original_amount = ?, updated_at = ? WHERE id = ?", [
+        signed,
+        p.original_amount != null ? -Math.abs(p.original_amount) : signed,
+        now,
+        String(existing.id),
+      ]);
       db.run("UPDATE events SET revenue = ? WHERE id = ?", [signed, num(existing.event_rowid)]);
     }
     // The same payment seen again with better identifiers (a Checkout event after its PaymentIntent).
@@ -162,9 +167,30 @@ function one(db: Db, p: PaymentInput, now: number, o: PaymentOptions): PaymentOu
   const rowid = insertEvent(db, p as PaymentInput & { type: keyof typeof EVENT_NAME }, signed, t);
   const id = newId("pay");
   db.run(
-    `INSERT INTO payments (id, ref, provider, external_id, type, amount, currency, ts, customer, event_rowid, linked_by, livemode, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, ref, p.provider, p.external_id, p.type, signed, p.currency, p.ts, p.customer, rowid, t.linked_by, p.livemode ? 1 : 0, now, now],
+    `INSERT INTO payments (id, ref, provider, external_id, type, amount, currency, ts, customer, event_rowid, linked_by, livemode,
+       original_amount, original_currency, fx_rate, fx_day, fx_fallback, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      ref,
+      p.provider,
+      p.external_id,
+      p.type,
+      signed,
+      p.currency,
+      p.ts,
+      p.customer,
+      rowid,
+      t.linked_by,
+      p.livemode ? 1 : 0,
+      round(p.type === "refund" ? -Math.abs(p.original_amount ?? p.amount) : (p.original_amount ?? p.amount), 3),
+      p.original_currency ?? p.currency,
+      p.fx_rate ?? null,
+      p.fx_day ?? null,
+      p.fx_fallback ? 1 : 0,
+      now,
+      now,
+    ],
   );
   if (p.customer && t.dims && t.linked_by !== "customer" && t.linked_by !== "original_payment") upsertLink(db, p.customer, t.dims, now);
   return { ok: true, id, existing: false, linked_by: t.linked_by };
@@ -191,6 +217,7 @@ export function listPayments(db: Db, settings: SiteSettings, q: PaymentsQuery) {
   const args = q.type ? [q.start, q.end, q.type] : [q.start, q.end];
   const rows = db.all(
     `SELECT p.id, p.provider, p.external_id, p.type, p.amount, p.currency, p.ts, p.linked_by, p.livemode, p.created_at,
+            p.original_amount, p.original_currency, p.fx_rate, p.fx_day, p.fx_fallback,
             e.visitor_id, e.session_id, e.user_id, e.channel, e.source, e.country, e.device
      FROM payments p LEFT JOIN events e ON e.id = p.event_rowid
      WHERE p.ts >= ? AND p.ts < ? ${typeSql} ORDER BY p.ts DESC, p.id LIMIT ? OFFSET ?`,
@@ -212,6 +239,17 @@ export function listPayments(db: Db, settings: SiteSettings, q: PaymentsQuery) {
         type: r.type,
         amount: r.amount,
         currency: r.currency,
+        ...(r.fx_rate != null
+          ? {
+              original: {
+                amount: r.original_amount,
+                currency: r.original_currency,
+                fx_rate: r.fx_rate,
+                fx_day: r.fx_day,
+                fx_fallback: !!r.fx_fallback,
+              },
+            }
+          : {}),
         timestamp: r.ts,
         time: new Date(Number(r.ts)).toISOString(),
         livemode: !!r.livemode,

@@ -30,7 +30,10 @@ export const listAnnotationsInput = z.object({
   period: z.enum(PERIODS).optional().describe("Only annotations in this period (default: all)."),
   from: z.string().optional(),
   to: z.string().optional(),
-  kind: z.enum(["note", "traffic_spike"]).optional(),
+  kind: z
+    .enum(["note", "traffic_spike", "alert"])
+    .optional()
+    .describe("note (yours), traffic_spike (automatic) or alert (an alert that fired)."),
 });
 
 function dayStart(site: SiteRow, s: string, field: string): number {

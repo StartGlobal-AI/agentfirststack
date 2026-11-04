@@ -1,15 +1,28 @@
-import { ApiError, assertPermanentKey, decryptSecret, encryptSecret, newId, notFound, parse, sha256Hex } from "@afs/shared";
+import { ApiError, assertPermanentKey, decryptSecret, encryptSecret, newId, notFound, parse } from "@afs/shared";
 import { allow, enforce, limitVars } from "../lib/limits";
 import { z } from "zod";
 import { periodOf } from "./stats";
 import type { Bindings } from "../env";
 import { readTextCapped } from "../lib/body";
-import { STRIPE_EVENTS, STRIPE_OPTIONAL_EVENTS, STRIPE_TOLERANCE_S, normalizeStripeEvent, verifyStripeSignature } from "../lib/stripe";
+import {
+  STRIPE_EVENTS,
+  STRIPE_OPTIONAL_EVENTS,
+  STRIPE_SUBSCRIPTION_EVENTS,
+  STRIPE_TOLERANCE_S,
+  normalizeStripeEvent,
+  verifyStripeSignature,
+} from "../lib/stripe";
+import { STRIPE_KEY_PERMISSIONS } from "../lib/stripe-api";
 import { PERIODS } from "../lib/time";
 import type { PaymentInput } from "../lib/types";
 import { SESSION_ID_RE, VISITOR_ID_RE } from "../lib/visitor";
+import { hashCustomer } from "../lib/customer";
 import { type Ctx, type PaymentsSummary, type SiteRow, SITE_ID_RE, callSite, loadSite } from "./context";
 import { refusalError } from "./ingest";
+import type { Fetcher } from "../lib/stripe-api";
+import { deleteCreatedEndpoint } from "./stripe-connect";
+import { stripeSubscriptionEvent } from "./subscriptions";
+import { convertRecords } from "./fx";
 
 /**
  * Revenue attribution. Two ways in, one ledger (the site's Durable Object, do/payments.ts):
@@ -24,15 +37,16 @@ export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
 const webhookUrl = (baseUrl: string, siteId: string) => `${baseUrl}/webhooks/stripe/${siteId}`;
 
-/** Provider customer ids are stored only as a per-site salted hash (enough to link renewals). */
-export const hashCustomer = async (siteId: string, provider: string, id: string) =>
-  (await sha256Hex(`${siteId}|customer|${provider}|${id}`)).slice(0, 32);
+export { hashCustomer } from "../lib/customer";
 
 interface IntegrationRow {
   id: string;
   site_id: string;
   provider: string;
   secret_sealed: string;
+  api_key_sealed?: string | null;
+  endpoint_id?: string | null;
+  backfill?: string | null;
   options: string | null;
   events_received: number;
   last_event_at: number | null;
@@ -66,9 +80,18 @@ function stripeStatus(ctx: Ctx, site: SiteRow, row: IntegrationRow | null, summa
   return {
     provider: "stripe",
     connected: !!row,
+    connect_mode: row?.api_key_sealed ? "restricted_key" : row ? "webhook_secret" : null,
+    endpoint_id: row?.endpoint_id ?? null,
+    restricted_key: { configured: !!row?.api_key_sealed },
+    backfill: row?.backfill ? JSON.parse(row.backfill) : null,
+    one_call_connect: {
+      route: `POST /v1/sites/${site.id}/integrations/stripe/connect {"restricted_key":"rk_live_..."}`,
+      permissions: STRIPE_KEY_PERMISSIONS,
+    },
     webhook_url: webhookUrl(ctx.baseUrl, site.id),
     events: [...STRIPE_EVENTS],
     optional_events: [...STRIPE_OPTIONAL_EVENTS],
+    subscription_events: [...STRIPE_SUBSCRIPTION_EVENTS],
     signing_secret: { configured: !!row },
     record_test_events: !!optionsOf(row).record_test_events,
     signature_tolerance_s: STRIPE_TOLERANCE_S,
@@ -134,8 +157,8 @@ function stripeSteps(ctx: Ctx, site: SiteRow, connected: boolean): string[] {
         `Revenue by source: GET /v1/sites/${site.id}/breakdown?breakdown=channel&metrics=visitors,revenue,revenue_per_visitor,purchase_rate&sort=revenue.`,
       ]
     : [
-        `In Stripe, add a webhook endpoint with URL ${url} and events ${STRIPE_EVENTS.join(", ")} (Stripe API: POST /v1/webhook_endpoints {url, enabled_events}).`,
-        `Then POST /v1/sites/${site.id}/integrations/stripe {"webhook_secret": "whsec_..."} with the endpoint's signing secret.`,
+        `Easiest: POST /v1/sites/${site.id}/integrations/stripe/connect {"restricted_key":"rk_live_..."} with a restricted key (${STRIPE_KEY_PERMISSIONS.map((p) => `${p.resource} ${p.access}`).join(", ")}): we create the endpoint and import 90 days of history.`,
+        `Or by hand: in Stripe, add a webhook endpoint with URL ${url} and events ${STRIPE_EVENTS.join(", ")} (plus ${STRIPE_SUBSCRIPTION_EVENTS.join(", ")} for MRR) (Stripe API: POST /v1/webhook_endpoints {url, enabled_events}), then POST /v1/sites/${site.id}/integrations/stripe {"webhook_secret": "whsec_..."} with its signing secret.`,
       ];
 }
 
@@ -193,14 +216,16 @@ export async function connectStripe(ctx: Ctx, siteId: string, raw: unknown) {
   };
 }
 
-export async function disconnectStripe(ctx: Ctx, siteId: string) {
+export async function disconnectStripe(ctx: Ctx, siteId: string, opts: { fetcher?: Fetcher } = {}) {
   const site = await loadSite(ctx, siteId);
+  const removed = await deleteCreatedEndpoint(ctx.env, site.id, opts.fetcher);
   const res = await ctx.env.DB.prepare("DELETE FROM integrations WHERE site_id = ? AND provider = 'stripe'").bind(site.id).run();
   if (!res.meta.changes)
     throw notFound("Stripe integration", `Nothing to disconnect. GET /v1/sites/${site.id}/integrations/stripe shows how to connect.`);
   return {
     disconnected: true,
-    note: "The signing secret is deleted; deliveries to this site's webhook URL are now rejected (400 webhook_rejected). Payments already recorded are kept (DELETE /v1/sites/:id/payments/:payment_id removes one).",
+    ...(removed ? { webhook_endpoint_deleted: true } : {}),
+    note: "The signing secret (and the restricted key, if any) are deleted; deliveries to this site's webhook URL are now rejected (400 webhook_rejected). Payments already recorded are kept (DELETE /v1/sites/:id/payments/:payment_id removes one).",
   };
 }
 
@@ -217,7 +242,7 @@ export const STATUS_EVERY_MS = 5_000;
 const statusPending = new Map<string, { at: number; count: number }>();
 
 /** How many deliveries to add to events_received now, or null to skip this write. */
-function takeStatusWrite(integrationId: string, now: number): number | null {
+export function takeStatusWrite(integrationId: string, now: number): number | null {
   const cur = statusPending.get(integrationId) ?? { at: 0, count: 0 };
   cur.count++;
   if (now - cur.at < STATUS_EVERY_MS) {
@@ -300,8 +325,8 @@ export async function stripeWebhook(
   } catch {
     return fail(400, "invalid_json", "The body is not JSON.");
   }
-  const action = normalizeStripeEvent(event);
   const ev = event as { type?: string; livemode?: boolean };
+  const action = normalizeStripeEvent(event);
   const mark = (result: string) => {
     const n = takeStatusWrite(row.id, now);
     if (n === null) return;
@@ -315,6 +340,11 @@ export async function stripeWebhook(
       now,
     );
   };
+  if (typeof ev.type === "string" && ev.type.startsWith("customer.subscription.")) {
+    const r = await stripeSubscriptionEvent(env, site, event as Record<string, unknown>, !!optionsOf(row).record_test_events);
+    mark(r.result);
+    return { status: r.status, body: r.body };
+  }
   if (action.action === "ignore") {
     mark(`ignored: ${action.reason}`);
     return { status: 200, body: { received: true, ignored: action.reason } };
@@ -324,9 +354,10 @@ export async function stripeWebhook(
     mark("ignored: test mode (connect with record_test_events: true to count test payments)");
     return { status: 200, body: { received: true, ignored: "test_mode" } };
   }
-  const record: PaymentInput = { ...rec, customer: rec.customer ? await hashCustomer(site.id, "stripe", rec.customer) : null };
+  const hashed: PaymentInput = { ...rec, customer: rec.customer ? await hashCustomer(site.id, "stripe", rec.customer) : null };
+  const [record] = await convertRecords(env, site, [hashed]);
   // Signed or not, a payment counts against the daily event budgets: the account picked the secret.
-  const res = await callSite(env, site, (s) => s.ingestPayments([record], { vars: limitVars(env) }));
+  const res = await callSite(env, site, (s) => s.ingestPayments([record!], { vars: limitVars(env) }));
   if (res.refused) {
     // 429: Stripe retries the delivery for days, so the payment is recorded once the budget resets.
     mark(`refused: ${res.refused} (Stripe retries the delivery)`);
@@ -424,7 +455,11 @@ export async function recordPayments(ctx: Ctx, siteId: string, raw: unknown) {
       };
     }),
   );
-  const valid = prepared.filter((x): x is PaymentInput => typeof x !== "string");
+  const valid = await convertRecords(
+    ctx.env,
+    site,
+    prepared.filter((x): x is PaymentInput => typeof x !== "string"),
+  );
   const res = valid.length
     ? await callSite(ctx.env, site, (s) => s.ingestPayments(valid, { vars: limitVars(ctx.env) }))
     : { results: [], refused: undefined };

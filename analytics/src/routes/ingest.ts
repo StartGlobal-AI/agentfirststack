@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import tracker from "../../dist/tracker.txt";
+import trackerLinker from "../../dist/tracker-linker.txt";
 import type { AppEnv } from "../env";
 import { readCapped } from "../lib/body";
 import { MAX_BODY_BYTES, TOO_LARGE, ingestBrowser } from "../service/ingest";
@@ -12,14 +13,16 @@ const CORS = {
   "access-control-max-age": "86400",
 };
 
-let etag: string | null = null;
-async function trackerEtag(): Promise<string> {
+const etags = new Map<string, string>();
+async function trackerEtag(text: string): Promise<string> {
+  let etag = etags.get(text.length + text.slice(-40));
   if (!etag) {
-    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tracker));
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
     etag = `"${[...new Uint8Array(d)]
       .slice(0, 8)
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("")}"`;
+    etags.set(text.length + text.slice(-40), etag);
   }
   return etag;
 }
@@ -34,7 +37,9 @@ export const ingestRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
   const method = c.req.method;
 
   if ((path === "/s.js" || path.endsWith("/s.js")) && (method === "GET" || method === "HEAD")) {
-    const tag = await trackerEtag();
+    // ?linker=1: the build with cross-domain linking (data-cross-domain); otherwise the default one
+    const text = new URL(c.req.url).searchParams.get("linker") === "1" ? trackerLinker : tracker;
+    const tag = await trackerEtag(text);
     const headers = {
       "content-type": "application/javascript; charset=utf-8",
       "cache-control": "public, max-age=3600, stale-while-revalidate=86400",
@@ -43,7 +48,7 @@ export const ingestRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
       etag: tag,
     };
     if (c.req.header("if-none-match") === tag) return new Response(null, { status: 304, headers });
-    return new Response(method === "HEAD" ? null : tracker, { headers });
+    return new Response(method === "HEAD" ? null : text, { headers });
   }
 
   if (path === "/e" || path.endsWith("/e")) {

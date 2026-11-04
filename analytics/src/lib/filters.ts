@@ -41,8 +41,21 @@ export const METRICS = [
   "average_order_value",
   "revenue_per_customer",
   "percentage",
+  // ad spend (POST /costs): cost, revenue / cost, cost per conversion, per new customer, per visit
+  "cost",
+  "roas",
+  "cpa",
+  "cac",
+  "cost_per_visit",
 ] as const;
-export type Metric = (typeof METRICS)[number];
+/** A numeric custom metric over a prop: sum:prop:amount, avg:prop:amount, min:..., max:... */
+export type CustomMetric = `${"sum" | "avg" | "min" | "max"}:prop:${string}`;
+export type Metric = (typeof METRICS)[number] | CustomMetric;
+export const CUSTOM_METRIC_RE = /^(sum|avg|min|max):prop:([A-Za-z0-9_.-]{1,64})$/;
+export const MAX_CUSTOM_METRICS = 5;
+export const isCustomMetric = (m: string): m is CustomMetric => CUSTOM_METRIC_RE.test(m);
+/** The SQL alias of a custom metric (an identifier made only of [A-Za-z0-9_]). */
+export const customAlias = (m: string) => `cm_${m.replace(/[^A-Za-z0-9]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}`;
 
 /** What stats and breakdowns return when `metrics` is not given (the rest are opt-in). */
 export const DEFAULT_METRICS: readonly Metric[] = [
@@ -120,6 +133,7 @@ export const BREAKDOWNS = [
   "screen",
   "page_title",
   "content_group",
+  "channel_group",
   "first_channel",
   "first_source",
   "first_referrer",
@@ -128,6 +142,7 @@ export const BREAKDOWNS = [
   "first_utm_campaign",
   "first_entry_page",
   "event_name",
+  "visitor_type",
   "goal",
 ] as const;
 
@@ -144,10 +159,10 @@ export const FIRST_TOUCH_DIMS = [
 
 /** An event's identity row (user:<id> when identified, else its visitor id), one column of it. */
 const firstTouch = (col: string) => `(SELECT i.${col} FROM identities i WHERE i.ident = COALESCE('user:' || e.user_id, e.visitor_id))`;
-export type Breakdown = (typeof BREAKDOWNS)[number] | `prop:${string}`;
+export type Breakdown = (typeof BREAKDOWNS)[number] | `prop:${string}` | `user:${string}`;
 
 /** Dimension -> SQL over `events e` (and `sessions s` for entry/exit page). Never user input. */
-export const DIMENSION_SQL: Record<Exclude<(typeof BREAKDOWNS)[number], "goal" | "content_group">, string> = {
+export const DIMENSION_SQL: Record<Exclude<(typeof BREAKDOWNS)[number], "goal" | "content_group" | "channel_group">, string> = {
   page: "e.pathname",
   entry_page: "s.entry_page",
   exit_page: "s.exit_page",
@@ -185,6 +200,9 @@ export const DIMENSION_SQL: Record<Exclude<(typeof BREAKDOWNS)[number], "goal" |
   first_utm_campaign: firstTouch("utm_campaign"),
   first_entry_page: firstTouch("entry_page"),
   event_name: "e.name",
+  // new: the visitor's first session; returning: they had a session that ended before this one began
+  visitor_type:
+    "(CASE WHEN EXISTS (SELECT 1 FROM sessions s2 WHERE s2.visitor_id = e.visitor_id AND s2.last_seen_at < (SELECT s3.started_at FROM sessions s3 WHERE s3.id = e.session_id)) THEN 'returning' ELSE 'new' END)",
 };
 
 export const PROP_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -192,18 +210,22 @@ export const PROP_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 export type FilterOp = "==" | "!=" | "~" | "!~";
 
 export interface Filter {
-  key: (typeof BREAKDOWNS)[number] | `prop:${string}`;
+  key: (typeof BREAKDOWNS)[number] | `prop:${string}` | `user:${string}` | "did";
   op: FilterOp;
   values: string[];
 }
 
 export class FilterError extends Error {}
 
+/** Filter-only keys: did==<event> keeps visitors who did that event in the range (did!= who didn't). */
+export const FILTER_ONLY_KEYS = ["did"] as const;
+export const isFilterKey = (key: string) => isBreakdown(key) || (FILTER_ONLY_KEYS as readonly string[]).includes(key);
+
 export const NONE = "(none)";
 export const MAX_FILTER_VALUES = 30;
 
 export function isBreakdown(key: string): key is Breakdown {
-  if (key.startsWith("prop:")) return PROP_KEY_RE.test(key.slice(5));
+  if (key.startsWith("prop:") || key.startsWith("user:")) return PROP_KEY_RE.test(key.slice(5));
   return (BREAKDOWNS as readonly string[]).includes(key);
 }
 
@@ -234,12 +256,13 @@ export function parseFilters(input: string | null | undefined): Filter[] {
   for (const rawPart of splitEscaped(input, ";")) {
     const part = rawPart.trim();
     if (!part) continue;
-    const m = /^([a-z_]+|prop:[A-Za-z0-9_.-]{1,64})\s*(==|!=|!~|~)(.*)$/s.exec(part);
+    const m = /^([a-z_]+|(?:prop|user):[A-Za-z0-9_.-]{1,64})\s*(==|!=|!~|~)(.*)$/s.exec(part);
     if (!m) {
       throw new FilterError(`Bad filter "${unescape(part)}". Use key==value, key!=value, key~text or key!~text, separated by ';'.`);
     }
     const key = m[1]!;
-    if (!isBreakdown(key)) throw new FilterError(`Unknown filter key "${key}". Valid: ${BREAKDOWNS.join(", ")}, prop:<key>.`);
+    if (!isFilterKey(key))
+      throw new FilterError(`Unknown filter key "${key}". Valid: ${BREAKDOWNS.join(", ")}, prop:<key>, user:<key>, did.`);
     const values = splitEscaped(m[3]!, "|").map((v) => unescape(v).trim());
     if (values.some((v) => v === "")) throw new FilterError(`Filter "${key}" has an empty value. Use (none) to match a missing value.`);
     if (values.some((v) => v.length > 500)) throw new FilterError(`Filter "${key}" value is too long (max 500 chars).`);
@@ -297,8 +320,8 @@ export function parseFilterJson(input: unknown): FilterExpr | null {
     if (head === "not") return { not: walk(a, depth + 1) };
     if (head !== "==" && head !== "!=" && head !== "~" && head !== "!~")
       throw new FilterError(`Unknown filters_json op "${String(head)}". Use and, or, not, ==, !=, ~, !~.`);
-    if (typeof a !== "string" || !isBreakdown(a))
-      throw new FilterError(`Unknown filter key "${String(a)}". Valid: ${BREAKDOWNS.join(", ")}, prop:<key>.`);
+    if (typeof a !== "string" || !isFilterKey(a))
+      throw new FilterError(`Unknown filter key "${String(a)}". Valid: ${BREAKDOWNS.join(", ")}, prop:<key>, user:<key>, did.`);
     const vals = (Array.isArray(b) ? b : [b]).map((y) => String(y ?? "").trim());
     if (!vals.length || vals.some((y) => !y))
       throw new FilterError(`Filter "${a}" needs non-empty values. Use (none) to match a missing value.`);
@@ -317,7 +340,12 @@ export function parseMetrics(input: string | null | undefined, fallback: readonl
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const bad = list.filter((m) => !(METRICS as readonly string[]).includes(m));
-  if (bad.length) throw new FilterError(`Unknown metric(s): ${bad.join(", ")}. Valid: ${METRICS.join(", ")}.`);
+  const bad = list.filter((m) => !(METRICS as readonly string[]).includes(m) && !isCustomMetric(m));
+  if (bad.length)
+    throw new FilterError(
+      `Unknown metric(s): ${bad.join(", ")}. Valid: ${METRICS.join(", ")}, or sum|avg|min|max:prop:<key> (a numeric prop).`,
+    );
+  if (list.filter(isCustomMetric).length > MAX_CUSTOM_METRICS)
+    throw new FilterError(`At most ${MAX_CUSTOM_METRICS} custom metrics (sum|avg|min|max:prop:<key>) at once.`);
   return [...new Set(list)] as Metric[];
 }

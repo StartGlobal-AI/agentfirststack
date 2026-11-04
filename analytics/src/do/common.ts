@@ -3,7 +3,7 @@
  * Storage-agnostic like the engine: everything takes the tiny `Db` interface.
  */
 
-import { FilterError, type Filter, type FilterExpr, filterLeaves } from "../lib/filters";
+import { CUSTOM_METRIC_RE, FilterError, type Filter, type FilterExpr, filterLeaves } from "../lib/filters";
 import { type DebugMode, type Frag, type QueryCtx, type SqlValue, isWildcard } from "../lib/query";
 import { type Range, PeriodError, resolvePeriod } from "../lib/time";
 import type { DoError, PeriodParams, SiteSettings } from "../lib/types";
@@ -64,13 +64,18 @@ export interface FilterSpec {
   filters: Filter[];
   debug?: DebugMode;
   where?: FilterExpr | null;
+  /** the request's metrics: custom ones (sum|avg|min|max:prop:<key>) are aggregated too */
+  metrics?: readonly string[];
+  breakdown_metrics?: readonly string[];
 }
 
 export function ctxFor(db: Db, range: { start: number; end: number }, spec: Filter[] | FilterSpec): QueryCtx {
   const q: FilterSpec = Array.isArray(spec) ? { filters: spec } : spec;
   const g = db.all("SELECT COUNT(*) AS n, COUNT(value) AS v, COALESCE(SUM(counting = 'once_per_visit'), 0) AS o FROM goals")[0];
   const st = db.all("SELECT value FROM meta WHERE key = 'settings'")[0]?.value;
-  const contentGroups = st ? ((JSON.parse(String(st)) as SiteSettings).content_groups ?? []) : [];
+  const parsed = st ? (JSON.parse(String(st)) as SiteSettings) : null;
+  const contentGroups = parsed?.content_groups ?? [];
+  const channelGroups = parsed?.channel_groups ?? [];
   return {
     start: range.start,
     end: range.end,
@@ -81,6 +86,8 @@ export function ctxFor(db: Db, range: { start: number; end: number }, spec: Filt
     hasGoalValues: num(g?.v) > 0,
     hasOnceGoals: num(g?.o) > 0,
     contentGroups,
+    channelGroups,
+    customMetrics: [...new Set([...(q.metrics ?? []), ...(q.breakdown_metrics ?? [])])].filter((m) => CUSTOM_METRIC_RE.test(m)),
   };
 }
 
