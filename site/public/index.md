@@ -35,14 +35,20 @@ All of it over REST and MCP, with the same key.
 
 ### Analytics (instead of GA4, Plausible or DataFast)
 
-- **Tracking:** Cookieless by default, single-page and hash routing, custom events and properties (also from HTML attributes), outbound clicks, downloads, forms, 404s, scroll depth, engaged time, Core Web Vitals, site search, UTMs and ad click IDs.
-- **Server events:** An events API with a dry run, joined to browser visitors.
-- **Reports:** Stats, timeseries and comparisons, breakdowns by up to three dimensions, realtime, engagement rate, average order value, top movers, insights, CSV.
-- **Filters:** Wildcards, nested and/or groups, saved segments, timezones.
+- **Tracking:** Cookieless by default, single-page and hash routing, custom events and properties (also from HTML attributes), outbound clicks, downloads, forms, 404s, scroll depth, engaged time, Core Web Vitals, site search, UTMs and ad click IDs, consent gating, cross-domain linking.
+- **Server events:** An events API with a dry run, joined to browser visitors, with user properties.
+- **Reports:** Stats, timeseries and comparisons, breakdowns by up to three dimensions, custom metrics, channel groups, realtime with a map, engagement rate, average order value, top movers, insights, CSV, one rollup across all your sites.
+- **Filters:** Wildcards, nested and/or groups, saved segments, new or returning, did or didn't do an event, user properties, timezones.
 - **Goals and funnels:** Goals that apply to past data, funnels in order or any order, with time windows and revenue per step.
-- **People:** Visitors, sessions and journeys, first touch, retention cohorts, path exploration, six attribution models.
-- **Revenue:** Stripe, a payments API, new and renewal revenue by source, page and campaign.
+- **People:** Visitors, a session list linked to replay, journeys, first touch, retention cohorts, path exploration, six attribution models.
+- **Revenue:** Stripe in one call with 90 days of history, Polar, Paddle and LemonSqueezy, a payments API, one reporting currency, new and renewal revenue by source, page and campaign.
+- **Subscriptions:** MRR, ARR and ARPU; new, expansion, contraction and churned MRR; churn and trial conversion, by channel, campaign, country or plan.
+- **Ad spend:** Import costs per campaign for ROAS, CPA and CAC.
+- **Ecommerce:** Items in each purchase, with revenue and quantity per product.
+- **AI crawlers:** Which AI bots read which pages, never counted as visitors.
 - **Querying:** Read-only SQL with cost limits, and a schema call that lists every event and property.
+- **Import and export:** GA4 and Plausible CSV imports, raw events as NDJSON, CSV or JSON.
+- **Sharing:** Public dashboards with a password, an expiry and a saved segment.
 - **Alerts:** Spikes, drops, no data, goals and payments, plus weekly or monthly reports, by webhook, Slack or email.
 - **Privacy:** Delete a visitor, purge with a dry run, email and phone redaction, path rules, exclusions, a referral-spam filter, Do Not Track and GPC.
 

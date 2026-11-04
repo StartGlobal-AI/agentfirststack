@@ -73,8 +73,13 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (`429 signups_paused`) |
 | `MAX_KEYS_PER_ACCOUNT` / `KEYS_HOURLY_LIMIT` (+ `KEY_LIMITER` binding) | all | 25 active (10 unclaimed) / 20 created an hour |
 | `PROJECTS_PER_USER_DAILY_LIMIT` | site | 5 new projects a day per signed-in person (OAuth consent "new project"), on top of the signup limits |
+| `MAX_ALERTS_PER_SITE` / `MAX_ALERT_DESTINATIONS_PER_SITE` / `MAX_REPORTS_PER_SITE` / `MAX_SEGMENTS_PER_SITE` | analytics | 20 / 5 / 5 / 50 |
+| `MAX_COST_ROWS_PER_SITE` / `MAX_ITEMS_PER_EVENT` / `MAX_USER_PROP_KEYS_PER_SITE` / `MAX_IMPORTED_ROWS_PER_SITE` / `MAX_IMPORTS_PER_SITE` | analytics | 10,000 / 25 / 50 / 200,000 / 20 |
+| `MAX_CUSTOM_CODE_BYTES` / `MAX_TAGS_BYTES_PER_ACCOUNT` / `MAX_VISITORS_PER_CONTAINER` / `MAX_CONTAINER_DB_BYTES` | tags | 32 KB / 20 MB / 100,000 / 256 MB (plus `MAX_ENVIRONMENTS_PER_CONTAINER`, `MAX_LOOKUPS_PER_CONTAINER`, `MAX_LOOKUP_ROWS`, lower when unclaimed) |
+| `MAX_LIST_ENTRIES_PER_ACCOUNT` / `MAX_SCHEDULED_PER_ACCOUNT` / `MAX_CONCURRENT_WAITS_PER_INBOX` | mail | 100 / 20 / 2 |
+| `MAX_UNVERIFIED_SITES_PER_ACCOUNT` / `MAX_CHUNKS_PER_SESSION` / `MAX_HEATMAP_RETENTION_DAYS` / `MAX_STARRED_RETENTION_DAYS` | replay | 1 / 600 / 90 / 14 |
 | `UNCLAIMED_<NAME>` | all | any account cap or daily budget has a lower value for accounts no person has claimed (`capFor()` in `@afs/shared`) |
-| Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows | analytics / tags / replay | per site or container, per account and per deployment, counters never go down; values in the hosted profile |
+| Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows, crawler hits, export rows, alert deliveries, inbox creates, feed events, heatmap images | all | per site or container, per account and per deployment, counters never go down; values in the hosted profile |
 | `MAX_CONCURRENT_WAITS` / `MAX_INBOUND_PER_SENDER_PER_DAY` / `MAX_TEXT_BYTES_PER_ACCOUNT` | mail | 3 (2 unclaimed) / 20 / 10 MB |
 | `MAX_BLOB_BYTES_PER_ACCOUNT` | mail | stored mail in R2 per account (default 1 GiB, 256 MiB unclaimed); full = inbound rejected at SMTP |
 | `MAX_SITES_PER_ACCOUNT` / `MAX_SESSIONS_PER_SITE_PER_DAY` / `MAX_SESSION_MINUTES` / `MAX_RETENTION_DAYS` / `MAX_LINKS_PER_SITE` / `MAX_CHUNK_BYTES` / `MAX_SESSION_BYTES` | replay | 5 / 200 / 30 / 14 / 5 / 256 KB / 2 MB (`MAX_SAMPLE_RATE` unset: sites choose); R2 lifecycle deletes chunks after 16 days |

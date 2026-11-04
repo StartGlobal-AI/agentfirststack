@@ -26,5 +26,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
+      - run: node scripts/tool-counts.mjs --check
       - run: pnpm typecheck
       - run: pnpm test
