@@ -32,10 +32,13 @@ internet ─ MX ─► Cloudflare Email Routing (catch-all) ─► Worker email(
                                        ─► R2: raw .eml, HTML body (deleted again if the commit fails)
                                        ─► D1, one transaction: message row if the daily quota and stored
                                           bytes still allow (+ FTS5 index, the day's count, attachment
-                                          rows pointing into the raw .eml), extracted codes/links/auth, thread
+                                          rows pointing into the raw .eml), extracted codes/links/auth, thread,
+                                          forward_queue row when the inbox forwards to its members
                                        ─► full inbox: evict the dominant sender's oldest mail
                                        ─► InboxDO.notify() wakes any parked wait_for_email
                                        ─► Queue: webhook deliveries (signed, retried)
+                                       ─► after the SMTP answer (waitUntil): forward to the members
+                                          (mode each); the hourly cron sends digests and leftovers
 agent ─ REST / MCP ─► Worker ─► D1 / R2 ;  send ─► Cloudflare Email Service (send_email binding)
 ```
 
@@ -45,7 +48,8 @@ shared by both), `src/extract/*` (pure extraction), `src/lib/*` (address rules, 
 Cloudflare API, signing, header hygiene, sender keys), `src/llms.ts`, `src/ui.ts`, `migrations/0002_mail.sql` (schema)
 plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombstones.sql`,
 `0009_abuse_controls.sql` (wait slots, sender keys and counters, daily budgets, text usage, cron state),
-`0010_blob_storage.sql` (stored bytes per message and account, attachments served from the raw MIME).
+`0010_blob_storage.sql` (stored bytes per message and account, attachments served from the raw MIME),
+`0014_forward_to_members.sql` (the inbox `forward_*` columns and `forward_queue`).
 
 - **Receiving**: Email Routing's catch-all routes every address of a mail domain to this Worker.
   The envelope recipient is lowercased and its `+tag` stripped (`acme+meta@` delivers to `acme@`).
@@ -242,7 +246,7 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
     mail for routing subdomains that have no literal rule. Deleting a domain never changes
     Cloudflare settings.
 - **Webhooks**: events (`message.received`, `message.sent`, `message.delivered`, `message.bounced`,
-  `message.complained`, `message.failed`, `domain.verified`, and `webhook.test`) are written to a delivery log and
+  `message.complained`, `message.failed`, `message.forwarded`, `domain.verified`, and `webhook.test`) are written to a delivery log and
   sent through a Queue. Each webhook has its own secret, returned once at creation and sealed at
   rest with `encryptSecret()` when `ENCRYPTION_KEY` is set. Header
   `x-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>` plus
@@ -286,6 +290,26 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   `calendar` at ingest.
 - **Forward**: `Fwd:` subject, your text, a From/Date/Subject/To block, the original text and HTML
   (from the raw MIME when there is one), and its attachments; the same rules as send.
+- **Forward to the owner** (`src/service/forward.ts`, pure parts in `src/lib/forwarding.ts`,
+  migration `0014_forward_to_members.sql`): an inbox's `forward: { mode: each | digest | off,
+  digest_hour, timezone }` sends its mail on to the project's members (Google-verified emails of
+  the people who claimed it, read from the identity DB like `memberEmails`). At ingest,
+  `forwardEligibility` decides from the headers whether a message may be forwarded at all (sender
+  authenticated; not a bounce, auto-reply, internal delivery, our own `X-AFS-Forwarded` mail or the
+  setup test's `+afs-test`); if so, a `forward_queue` row is written in the transaction that stores
+  the message. Mode `each`: `email()` hands the stored message to `forwardEach` with `waitUntil`,
+  after the SMTP answer; it claims the row, drops loops (mail from the account's own inboxes or a
+  member), reserves `MAX_FORWARDS_PER_ACCOUNT_PER_DAY` (one per member; never `SEND_DAILY_LIMIT`)
+  and sends one email per member from the inbox (`<inbox> via AgentFirstStack`, subject
+  `[<inbox>] <subject>`, header block, text, HTML with active content stripped, attachments within
+  the forward limits, a footer with the dashboard link from `AUTH_ISSUER`, no Reply-To). Mode
+  `digest`: the hourly cron (`runForwards`) sends one digest per member when the inbox's local hour
+  is `digest_hour`, claiming the local day on the inbox so a retry never sends twice. The cron also
+  sends one catch-up digest once a member exists for mail that waited since before the claim, and
+  in mode `each` what the live forward left (budget used up, a failed send) once the budget allows,
+  noting the pause. Nothing is stored as sent mail and `message.forwarded` carries counts only, so
+  the agent's key never learns the members' addresses. Rows go with their message and are dropped
+  after 30 days.
 - **Delivery status** (`src/service/delivery.ts`): Cloudflare Email Sending publishes
   `cf.email.sending.message.*` events to a Queues event subscription, one per sending domain. This
   Worker's `queue()` handler tells them from webhook jobs by shape, matches them to the sent
@@ -322,9 +346,10 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 - **Usage** (`GET /v1/usage`): every cap with the configured value for the account's standing and
   what it has used; every mail 429 has `Retry-After` and `details.retry_after_s`. `/llms.txt`
   renders this deployment's configured limits per request.
-- **Cron** (hourly): deletes expired inboxes, shared-domain mail older than
-  `SHARED_RETENTION_DAYS`, webhook delivery logs older than 7 days, daily counters older than a
-  week, expired wait slots and lapsed address tombstones, and sweeps R2 for orphans: up to 5 list
+- **Cron** (hourly): sends forward digests (see Forward to the owner), deletes expired inboxes,
+  shared-domain mail older than `SHARED_RETENTION_DAYS`, webhook delivery logs older than 7 days,
+  daily counters older than a week, expired wait slots, lapsed address tombstones and forward-queue
+  rows older than 30 days, and sweeps R2 for orphans: up to 5 list
   pages of 1,000 objects per run, resuming from a cursor in `cron_state`, deleting objects older
   than an hour whose message id has no D1 row. Each purge loops in rounds (retention: 200 messages
   per round; expiry: 50 inboxes per round, each inbox's mail deleted in 500-row chunks) until
@@ -337,9 +362,9 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 |---|---|---|
 | POST | `/signup` | account + key (`@afs/shared`); also creates and returns a default inbox |
 | GET | `/me`; GET, POST `/keys`; DELETE `/keys/:id` | `@afs/shared` |
-| POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days? }`; random username if omitted; same address returns existing (200); another account's address, or a recently deleted shared-domain address that received mail and was another account's, is 409; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
+| POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days?, forward? }` (`forward: { mode: each\|digest\|off, digest_hour, timezone }`, applied to a new inbox; every inbox JSON has `forward` with `recipients`, `waiting_for_owner`, `last_forwarded_at`, `last_digest_at`, `forwarded_today`, `daily_limit`, never the members' addresses); random username if omitted; same address returns existing (200); another account's address, or a recently deleted shared-domain address that received mail and was another account's, is 409; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
 | GET | `/inboxes`, `/inboxes/:id` | list (`?limit=&domain=`); one with message/unread counts |
-| PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days? }` (null = forever); delete removes all its mail and answers `address_reserved_until` (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |
+| PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days?, forward? }` (null = forever; `forward` merges, a bad `timezone` is 400); delete removes all its mail and answers `address_reserved_until` (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |
 | GET | `/inboxes/:id/messages` | `?unread=true&q=&from=&to=&subject=&direction=in\|out&tag=&has=code,link,attachments&auth=pass\|fail\|unknown&labels=&status=&after=&before=&order=asc\|desc&limit=` -> `{ messages, next_before }` (`next_after` with `order=asc`) |
 | DELETE | `/inboxes/:id/messages` | clear the inbox (`?before=`); `{ deleted, more }`; 429 past `MAX_INBOX_CLEARS_PER_DAY` |
 | GET | `/inboxes/:id/threads` | `?limit=&before=&after=&q=&labels=` |
@@ -419,9 +444,10 @@ served with a strict CSP.
 | `DEV_MODE` | var; `"true"` only for local development (`.dev.vars`): webhooks may use `http://localhost`. Template default `"false"` |
 | `MAIL_DOMAIN` | var; shared domain for instant inboxes (placeholder `mail.example.com`; see operator setup) |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth (`SIGNUP_MODE` is a var, the tokens are secrets). `ADMIN_TOKEN` also authorises `auto_configure`/`force` (request header `x-admin-token`) and keys domain ownership challenges when `ENCRYPTION_KEY` is unset |
-| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
+| `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed; forwards to the owner also link to `<AUTH_ISSUER>/dashboard/projects/<account id>`, unset = no link), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SEND_DAILY_LIMIT` | var, default 200 recipients per account per UTC day |
-| `UNCLAIMED_<name>` | optional vars; for `SEND_DAILY_LIMIT` and every per-account cap below (`MAX_INBOXES_PER_ACCOUNT`, `MAX_INBOX_CREATES_PER_DAY`, `MAX_INBOX_DELETES_PER_DAY`, `MAX_MESSAGES_PER_INBOX`, `MAX_INBOUND_PER_ACCOUNT_PER_DAY`, `MAX_INBOUND_PER_SENDER_PER_DAY`, `MAX_TEXT_BYTES_PER_ACCOUNT`, `MAX_BLOB_BYTES_PER_ACCOUNT`, `MAX_CONCURRENT_WAITS`, `MAX_CONCURRENT_WAITS_PER_INBOX`, `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_TESTS_PER_DAY`): the value for accounts no person has claimed (`capFor` in `@afs/shared`). For any cap, `"0"` means none allowed (except `MAX_BLOB_BYTES_PER_ACCOUNT`, where it turns the cap off) and unset means the default (or no cap) |
+| `MAX_FORWARDS_PER_ACCOUNT_PER_DAY` | optional var; emails forwarded to the project's members (inbox `forward`: one per member per forward or digest) per account per UTC day, default 100, `"0"` = forwarding off. Never counts toward `SEND_DAILY_LIMIT` |
+| `UNCLAIMED_<name>` | optional vars; for `SEND_DAILY_LIMIT` and every per-account cap below (`MAX_INBOXES_PER_ACCOUNT`, `MAX_INBOX_CREATES_PER_DAY`, `MAX_INBOX_DELETES_PER_DAY`, `MAX_MESSAGES_PER_INBOX`, `MAX_INBOUND_PER_ACCOUNT_PER_DAY`, `MAX_INBOUND_PER_SENDER_PER_DAY`, `MAX_TEXT_BYTES_PER_ACCOUNT`, `MAX_BLOB_BYTES_PER_ACCOUNT`, `MAX_CONCURRENT_WAITS`, `MAX_CONCURRENT_WAITS_PER_INBOX`, `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_TESTS_PER_DAY`, `MAX_FORWARDS_PER_ACCOUNT_PER_DAY`): the value for accounts no person has claimed (`capFor` in `@afs/shared`). For any cap, `"0"` means none allowed (except `MAX_BLOB_BYTES_PER_ACCOUNT`, where it turns the cap off) and unset means the default (or no cap) |
 | `WORKER_NAME` | var; must equal the Worker name (`sg-mail`); auto_configure points catch-alls at it |
 | `ENCRYPTION_KEY` | secret; 32-byte base64 (`openssl rand -base64 32`), seals webhook secrets and keys domain ownership challenges. Without it webhook secrets are stored unsealed (`plain:` prefix), and without it and `ADMIN_TOKEN` custom domains are refused. Changing it changes the challenge of domains whose ownership is still pending |
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID` | optional secrets; enable `auto_configure` (operator only). Token: Zone Read, Zone Settings Edit, Email Routing Rules Edit, Email Sending Edit on the zones it may configure |
@@ -457,7 +483,7 @@ enforces senders), rate limits `SIGNUP_LIMITER` (41001), `WAIT_LIMITER` (42021, 
 account), `WEBHOOK_TEST_LIMITER` (42022, 5/min), `SEARCH_LIMITER` (42023, 30/min) (each optional:
 without the binding the check is skipped; the D1 caps are the strict limits), hourly cron (purges
 expired inboxes, old shared-domain mail, delivery logs, idempotency keys, events and counters,
-sweeps orphan blobs, sends scheduled messages an alarm missed), observability on. Optional, not in
+sweeps orphan blobs, sends scheduled messages an alarm missed and forward digests), observability on. Optional, not in
 the template: an `ai` binding named `AI` (attachment text) and a consumer for the Email Sending
 events queue (delivery status). `compatibility_date` is 2026-08-22, the newest date the
 workerd bundled with `@cloudflare/vitest-plugin` 1.5 supports, so tests run on the same

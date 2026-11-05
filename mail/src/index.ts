@@ -8,6 +8,7 @@ import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { api } from "./routes/api";
 import { createDefaultInbox, pruneCounters, purgeExpiredInboxes, purgeOldSharedMessages, sharedDomain } from "./service/inboxes";
+import { forwardEach, runForwards } from "./service/forward";
 import { purgeSendKeys } from "./service/idempotency";
 import { runScheduled } from "./service/send";
 import { handleEmail } from "./service/ingest";
@@ -120,8 +121,15 @@ app.route("/v1", api);
 
 export default {
   fetch: app.fetch,
-  async email(message, env) {
-    await handleEmail(message, env);
+  async email(message, env, ctx) {
+    const res = await handleEmail(message, env);
+    // Forward to the project's members (mode each) after the message is stored and accepted: it
+    // never slows down or fails SMTP. What does not go out stays queued for the hourly cron.
+    if (res?.status === "stored" && res.forward) {
+      const job = forwardEach(env, res.message_id).catch((e: unknown) => console.error("forward failed (the cron retries)", e));
+      if (ctx?.waitUntil) ctx.waitUntil(job);
+      else await job;
+    }
   },
   async queue(batch, env) {
     await handleQueue(batch, env);
@@ -148,6 +156,8 @@ export default {
         run("events", purgeEvents(env)),
         // Fallback for scheduled sends whose inbox alarm did not fire.
         run("scheduled", runScheduled(env, null)),
+        // Digests to the project's members (digest hour, catch-up after a claim, what mode each left).
+        run("forward", runForwards(env, _controller.scheduledTime || Date.now())),
         run("sweep", sweepOrphanBlobs(env)),
       ]).then((parts) => console.log(JSON.stringify(Object.assign({ event: "cron.purge" }, ...parts)))),
     );

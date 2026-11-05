@@ -2,6 +2,7 @@ import { type AppEnv, type CapName, cap, standingOf } from "../env";
 import { maxBlobBytes, nextUtcMidnight } from "./budgets";
 import { deliveryCounts } from "./delivery";
 import { maxEventsPerDay } from "./feed";
+import { maxForwardsPerDay } from "./forward-settings";
 import { attachmentTextPerDay } from "./attachment-text";
 import { maxListEntries } from "./lists";
 import { utcDay } from "./format";
@@ -67,13 +68,22 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
        (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'event' AND day = ?2) AS events,
        (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'inbox_clear' AND day = ?2) AS inbox_clears,
        (SELECT COUNT(*) FROM messages WHERE account_id = ?1 AND status = 'scheduled') AS scheduled,
-       (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'attachment_text' AND day = ?2) AS attachment_text`,
+       (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'attachment_text' AND day = ?2) AS attachment_text,
+       (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'forward' AND day = ?2) AS forwards`,
   )
     .bind(accountId, day, now)
     .first<Record<string, number | null>>();
   const v = (k: string) => row?.[k] ?? 0;
   const limits: Record<string, UsageItem> = {
     sends_per_day: item(v("sends"), dailyLimit(env, standing), "recipients (to + cc + bcc) sent", "SEND_DAILY_LIMIT", resets),
+    forwards_per_day: item(
+      v("forwards"),
+      maxForwardsPerDay(env, standing),
+      "emails forwarded to the project's members (one per member per forward or digest)",
+      "MAX_FORWARDS_PER_ACCOUNT_PER_DAY",
+      resets,
+      "Inbox forwarding (forward on an inbox) has its own budget and never counts toward SEND_DAILY_LIMIT. Past it, forwarding each email pauses until 00:00 UTC and the rest goes into a digest.",
+    ),
     inbound_per_day: item(
       v("inbound"),
       maxInboundPerDay(env, standing),

@@ -25,6 +25,7 @@ export const FEED_EVENT_TYPES = [
   "message.bounced",
   "message.complained",
   "message.failed",
+  "message.forwarded",
   "domain.verified",
 ] as const;
 export type FeedEventType = (typeof FEED_EVENT_TYPES)[number];

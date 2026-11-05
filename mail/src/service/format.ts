@@ -14,6 +14,41 @@ export interface InboxRow {
   created_at: number;
   /** Inbound messages stored (kept by triggers; MAX_MESSAGES_PER_INBOX). */
   inbound_count?: number;
+  /** Forwarding to the project's members (migrations/0014; src/service/forward.ts). */
+  forward_mode?: string;
+  forward_digest_hour?: number;
+  forward_timezone?: string;
+  forward_since?: number | null;
+  forward_last_forwarded_at?: number | null;
+  forward_last_digest_at?: number | null;
+  forward_digest_day?: string | null;
+  forward_paused_at?: number | null;
+}
+
+/** What every inbox JSON's `forward` needs beyond the row: account-wide, read once per request. */
+export interface ForwardContext {
+  /** Members of the project with a verified email (their addresses are never returned). */
+  recipients: number;
+  /** Recipients forwarded to today (UTC), across the account's inboxes. */
+  forwarded_today: number;
+  /** MAX_FORWARDS_PER_ACCOUNT_PER_DAY for this account; null = no cap. */
+  daily_limit: number | null;
+}
+
+/** The inbox's `forward` block. Counts only, never the members' addresses (the agent's key must not learn them). */
+export function forwardJson(row: InboxRow, ctx: ForwardContext) {
+  const mode = row.forward_mode === "each" || row.forward_mode === "digest" ? row.forward_mode : "off";
+  return {
+    mode,
+    digest_hour: row.forward_digest_hour ?? 8,
+    timezone: row.forward_timezone ?? "UTC",
+    recipients: ctx.recipients,
+    waiting_for_owner: mode !== "off" && ctx.recipients === 0,
+    last_forwarded_at: row.forward_last_forwarded_at ?? null,
+    last_digest_at: row.forward_last_digest_at ?? null,
+    forwarded_today: ctx.forwarded_today,
+    daily_limit: ctx.daily_limit,
+  };
 }
 
 export interface MessageRow {
@@ -131,7 +166,7 @@ function parseJson<T>(s: string | null | undefined, fallback: T): T {
   }
 }
 
-export function inboxJson(row: InboxRow) {
+export function inboxJson(row: InboxRow, fwd: ForwardContext) {
   return {
     id: row.id,
     address: row.address,
@@ -141,6 +176,7 @@ export function inboxJson(row: InboxRow) {
     expires_at: row.expires_at,
     last_message_at: row.last_message_at,
     created_at: row.created_at,
+    forward: forwardJson(row, fwd),
   };
 }
 

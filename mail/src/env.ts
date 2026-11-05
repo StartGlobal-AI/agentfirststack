@@ -80,6 +80,9 @@ export type AppEnv = Omit<
    *                            (default 20, 5 unclaimed; needs the AI binding).
    *   DELIVERY_EVENTS_QUEUE    name of the queue the Email Sending event subscriptions publish to
    *                            (this Worker consumes it). Set = delivery tracking is on. See README.
+   *   MAX_FORWARDS_PER_ACCOUNT_PER_DAY  emails forwarded to the project's members (forwards and
+   *                            digests, counted per recipient) per account per UTC day (default 100;
+   *                            "0" = forwarding off). Never counts toward SEND_DAILY_LIMIT.
    */
   SHARED_SEND_POLICY?: string;
   SHARED_RETENTION_DAYS?: string;
@@ -103,6 +106,7 @@ export type AppEnv = Omit<
   MAX_SCHEDULED_PER_ACCOUNT?: string;
   MAX_ATTACHMENT_TEXT_PER_DAY?: string;
   DELIVERY_EVENTS_QUEUE?: string;
+  MAX_FORWARDS_PER_ACCOUNT_PER_DAY?: string;
   /** Optional Workers AI binding (not in the template): attachment text via toMarkdown. Without it that route answers 501. */
   AI?: Ai;
 } & { [K in CapName as `UNCLAIMED_${K}`]?: string };
@@ -132,7 +136,8 @@ export type CapName =
   | "MAX_LIST_ENTRIES_PER_ACCOUNT"
   | "MAX_INBOX_CLEARS_PER_DAY"
   | "MAX_SCHEDULED_PER_ACCOUNT"
-  | "MAX_ATTACHMENT_TEXT_PER_DAY";
+  | "MAX_ATTACHMENT_TEXT_PER_DAY"
+  | "MAX_FORWARDS_PER_ACCOUNT_PER_DAY";
 
 /**
  * A per-account cap for an account of this standing: `UNCLAIMED_<name>` for unclaimed accounts
@@ -166,6 +171,7 @@ export type WebhookEventType =
   | "message.bounced"
   | "message.complained"
   | "message.failed"
+  | "message.forwarded"
   | "domain.verified"
   | "webhook.test";
 

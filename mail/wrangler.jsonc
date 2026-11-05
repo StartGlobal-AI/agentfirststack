@@ -35,7 +35,8 @@
   // MAX_WEBHOOK_TESTS_PER_DAY, MAX_FEED_EVENTS_PER_DAY (default 5000, 1000 unclaimed),
   // MAX_LIST_ENTRIES_PER_ACCOUNT (default 100), MAX_INBOX_CLEARS_PER_DAY, MAX_SCHEDULED_PER_ACCOUNT
   // (default 20, 5 unclaimed), MAX_ATTACHMENT_TEXT_PER_DAY (default 20, 5 unclaimed),
-  // DELIVERY_EVENTS_QUEUE (turns delivery status on; see "queues" below), and UNCLAIMED_<name> of
+  // MAX_FORWARDS_PER_ACCOUNT_PER_DAY (inbox forwarding to the project's members, default 100; "0" =
+  // off), DELIVERY_EVENTS_QUEUE (turns delivery status on; see "queues" below), and UNCLAIMED_<name> of
   // each per-account cap. Secrets:
   // ENCRYPTION_KEY (also keys custom-domain ownership challenges), ADMIN_TOKEN (also the
   // x-admin-token for auto_configure), SIGNUP_TOKEN, CF_API_TOKEN.
@@ -112,7 +113,7 @@
   // it by uncommenting this (catch-alls must name the zone apex, e.g. "*@agentmail.example"):
   // "addresses": ["*@your-mail-domain.example"],
 
-  // Hourly: delete inboxes whose ttl_days has passed, shared-domain mail older than
+  // Hourly: forward digests to the project's members (src/service/forward.ts), delete inboxes whose ttl_days has passed, shared-domain mail older than
   // SHARED_RETENTION_DAYS (with their stored blobs), webhook delivery logs older than 7 days, old
   // counters, wait slots and tombstones, and sweep R2 for blobs whose message is gone.
   "triggers": { "crons": ["17 * * * *"] }

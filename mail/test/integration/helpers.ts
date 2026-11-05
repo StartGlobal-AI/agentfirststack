@@ -68,9 +68,12 @@ export function fakeMessage(from: string, to: string, raw: string) {
   return { msg, state };
 }
 
+/** Hand a message to the email() handler and wait for what it left running (the live forward). */
 export async function deliver(from: string, to: string, raw: string, env: AppEnv = E) {
   const { msg, state } = fakeMessage(from, to, raw);
-  await worker.email(msg, env);
+  const ctx = createExecutionContext();
+  await worker.email(msg, env, ctx);
+  await waitOnExecutionContext(ctx);
   return state;
 }
 
@@ -88,6 +91,8 @@ export function eml(opts: {
   references?: string;
   html?: string;
   auth?: string | string[] | null;
+  /** Extra header lines, e.g. "Auto-Submitted: auto-replied". */
+  headers?: string[];
 }) {
   const id = opts.messageId ?? `<${crypto.randomUUID()}@sender.example>`;
   const fromDomain = opts.from.split("@")[1]!.toLowerCase();
@@ -106,6 +111,7 @@ export function eml(opts: {
     "Date: Tue, 03 Nov 2026 10:00:00 +0000",
     ...(opts.inReplyTo ? [`In-Reply-To: ${opts.inReplyTo}`] : []),
     ...(opts.references ? [`References: ${opts.references}`] : []),
+    ...(opts.headers ?? []),
     "MIME-Version: 1.0",
   ];
   if (opts.html) {
