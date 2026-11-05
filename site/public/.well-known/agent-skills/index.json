@@ -6,7 +6,7 @@
       "type": "skill-md",
       "description": "Set up a website's analytics, tag manager with server-side conversion tracking (GA4, Google Ads, Meta, TikTok and more), an email inbox and session replay with AgentFirstStack (free, open source, no signup form), then verify every part yourself. Use when a project needs analytics, conversion tracking for ads, an inbox for verification codes or session recordings, or when asked to set up AgentFirstStack.",
       "url": "https://agentfirststack.com/.well-known/agent-skills/agentfirststack-setup/SKILL.md",
-      "digest": "sha256:3922a0d0f24fe6e466387860bd8eca87c289dcaa6c411b850389fc4aa090242c"
+      "digest": "sha256:2cf81b96762f10d14ade7c432a3e861843ec9d1b43b54691bb02d7fa10299425"
     }
   ]
 }

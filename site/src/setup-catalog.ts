@@ -70,6 +70,12 @@ export const SETUP_CATALOG: CatalogItem[] = [
       "reporting AI crawler and search bot visits from the site's server (sites with a server or edge code; static hosting skips it), so analytics shows which bots read which pages",
     checks: ["analytics.crawlers"],
   },
+  {
+    version: 4,
+    label:
+      "bringing over what the site used before (GA4, Google Tag Manager, Plausible, DataFast and others): its setup, its history, and a check that our numbers match before the old tools are removed",
+    checks: ["migrate.tools", "migrate.compare"],
+  },
 ];
 
 export const CATALOG_VERSION = Math.max(...SETUP_CATALOG.map((i) => i.version));

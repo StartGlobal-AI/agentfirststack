@@ -78,7 +78,13 @@ function healthy(): Record<"analytics" | "tags" | "mail" | "replay", Routes> {
     tags: {
       "/v1/containers": { containers: [{ id: "ctr_acme", domain: "www.acme.test", name: null, live_version: 2, created_at: NOW }] },
       "/v1/containers/ctr_acme": {
-        container: { id: "ctr_acme", live_version: 2, domain_verified: true },
+        container: {
+          id: "ctr_acme",
+          live_version: 2,
+          domain_verified: true,
+          last_scan: { at: NOW, url: "https://acme.test/", tools: [], ours: { container: true, analytics: true } },
+          last_import: null,
+        },
         stats: { today: { browser_events: 4 } },
       },
       "/v1/containers/ctr_acme/versions/2": {
@@ -203,6 +209,7 @@ describe("setup check", () => {
       ["Analytics", "ok"],
       ["Goals", "ok"],
       ["AI crawlers", "ok"],
+      ["Other tools", "ok"],
       ["Reports and alerts", "ok"],
       ["Tag manager", "ok"],
       ["Events", "ok"],
@@ -227,6 +234,70 @@ describe("setup check", () => {
     const again = await call("GET", "/v1/setup", { key: agent.key, env });
     expect(byId(again.json.checks)("project.claimed").status).toBe("ok");
     expect(again.json.counts.ok).toBe(again.json.checks.length);
+  });
+
+  it("says which tools the site used before still have to be brought over, then compares the numbers", async () => {
+    const agent = await signup("acme.test");
+    const routes = healthy();
+    const detail = routes.tags["/v1/containers/ctr_acme"] as { container: Record<string, unknown> };
+    detail.container.last_scan = {
+      at: NOW,
+      url: "https://acme.test/",
+      tools: [
+        { tool: "gtm", id: "GTM-ABC123" },
+        { tool: "ga4", id: "G-XYZ" },
+        { tool: "datafast" },
+        { tool: "hotjar" },
+        { tool: "meta", id: "1234" },
+      ],
+      ours: { container: true, analytics: true },
+    };
+    let { env } = envWith(routes);
+    let r = await call("GET", "/v1/setup", { key: agent.key, env });
+    let c = byId(r.json.checks)("migrate.tools");
+    expect(c.status).toBe("warning");
+    expect(c.detail).toContain("Not brought over yet: Google Tag Manager (GTM-ABC123), Google Analytics 4 (G-XYZ), DataFast.");
+    expect(c.detail).toContain("Done: Hotjar (its recordings can't move, so it stays until they expire).");
+    expect(c.fix).toContain('draft/import {"format":"gtm"');
+    expect(c.fix).toContain('{"source":"ga4","report":...}');
+    expect(c.fix).toContain('{"source":"other","tool":"datafast","rows":[...]}');
+    expect(r.json.checks.some((x: SetupCheck) => x.id === "migrate.compare")).toBe(false);
+    expect(r.json.ready).toBe(r.json.checks.every((x: SetupCheck) => !["missing", "failing", "unavailable"].includes(x.status)));
+
+    // Brought over: the GTM container imported, GA4 and DataFast history imported, and the numbers compared.
+    detail.container.last_import = { at: NOW, format: "gtm", mode: "merge", summary: { tags: 12, triggers: 9, variables: 4 } };
+    routes.analytics["/v1/sites/site_acme/imports"] = {
+      imports: [
+        { id: "imp_1", source: "ga4", tool: null, kind: "visitors", from: "2025-11-01", to: "2026-11-04", rows: 369 },
+        { id: "imp_2", source: "other", tool: "datafast", kind: "pages", from: "2026-01-01", to: "2026-11-04", rows: 900 },
+      ],
+      live_data_from: "2026-10-28",
+    };
+    routes.analytics["/v1/sites/site_acme/imports/compare"] = {
+      source: "ga4",
+      tool: null,
+      overlap_days: 2,
+      ratio: 0.9,
+      verdict: "not_enough_overlap",
+      note: "",
+    };
+    ({ env } = envWith(routes));
+    r = await call("GET", "/v1/setup", { key: agent.key, env });
+    c = byId(r.json.checks)("migrate.tools");
+    expect(c.status).toBe("ok");
+    expect(c.detail).toContain("Google Analytics 4 (G-XYZ): history 2025-11-01 to 2026-11-04");
+    expect(c.detail).toContain("Also on the site: Meta Pixel (1234)");
+    let cmp = byId(r.json.checks)("migrate.compare");
+    expect(cmp.status).toBe("warning");
+    expect(cmp.detail).toContain("Only 2 days both ran so far");
+
+    routes.analytics["/v1/sites/site_acme/imports/compare"] = { source: "ga4", tool: null, overlap_days: 7, ratio: 0.94, verdict: "close" };
+    ({ env } = envWith(routes));
+    r = await call("GET", "/v1/setup", { key: agent.key, env });
+    cmp = byId(r.json.checks)("migrate.compare");
+    expect(cmp.status).toBe("ok");
+    expect(cmp.detail).toBe("Within 6% of Google Analytics 4 over 7 days. The old tool can go once the owner agrees.");
+    expect(r.json.rows.find((x: { part: string }) => x.part === "Other tools").status).toBe("ok");
   });
 
   it("warns, without holding up ready, when no crawler visits are reported", async () => {

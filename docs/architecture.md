@@ -189,8 +189,10 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   (`costs`, joined into cost metrics by source and campaign), ecommerce items (`event_items`,
   removed with their event by a trigger), user properties (`user_props`, the `user:<key>`
   dimension), crawler hits reported by the site's server (`crawler_hits`, own daily budget),
-  imported GA4 / Plausible aggregates (`imports`, `imported_rows`, merged into unfiltered reports
-  for days before live data), and the raw export's daily counter.
+  imported daily aggregates from GA4, Plausible or any other tool (`imports`, keyed by source, tool,
+  kind and date range; `imported_rows`, merged into unfiltered reports for days before live data,
+  and compared with live visitors for the days both ran: `imports/compare`), and the raw export's
+  daily counter.
 - **Exclusions** (IPs and CIDR ranges, paths, hostnames, countries) live on the D1 site row and in
   the DO's settings copy. The Worker hands the visitor IP to the DO only to compare it in memory;
   it is never stored.

@@ -41,9 +41,15 @@ curl -s -X POST https://agentfirststack.com/v1/signup
 
 ## 3. Full setup (what "set up AgentFirstStack" means)
 
-Do the whole setup in one run, in this order. Ask the owner one thing, at the start: should the
-inbox's email be forwarded to them as each one arrives, or as one daily digest (at what hour, in
-their time zone)? If they can't answer, forward each one. Don't stop to ask anything else. Every
+Do the whole setup in one run, in this order. Ask the owner once, in one message, after step 2
+(when you know what the site uses today) and before you change anything:
+- should the inbox's email be forwarded to them as each one arrives, or as one daily digest (at
+  what hour, in their time zone)?
+- if step 2 found other analytics or tag tools (GA4, Google Tag Manager, Plausible, DataFast, ...):
+  shall you bring their setup and history over, and, only where you'd need it (see "Move from
+  another tool" in section 4), may you use their browser, where they're signed in, to export it?
+If they can't answer, forward each one and bring over whatever needs no help from them. Don't stop
+to ask anything else. Every
 step ends with a check you run yourself; don't move on until it passes, or note why it can't yet.
 Every create call is safe to repeat: it returns the existing thing (`"existing": true`).
 
@@ -60,7 +66,12 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
      the thank-you or success pages;
    - the conversions: what this business counts as a lead, a sign-up or a purchase, and which of
      them only the backend knows (a paid order, a verified account);
-   - the ad and analytics tags already on the site (the tags `scan` reports them).
+   - what the site uses today: every analytics, tag manager, pixel and replay tool, from the code
+     (script tags, packages, env vars, tracking calls such as `gtag('event', ...)`,
+     `plausible('Signup')`, `window.datafast(...)`, `posthog.capture(...)`, `fbq('track', ...)`)
+     and the live site (the tags `scan` reports them, and remembers them for the setup check).
+     Write down each tool with its id (GTM-..., G-..., AW-..., pixel ids) and the event names it
+     tracks: keep those names, so its history and the new data line up.
    Put this list in `AGENTFIRSTSTACK.md`. The steps below cover every item on it.
 3. **Inbox.** Create one for the project (mail manual). Use its address whenever the setup needs an
    email for a third-party service, and `wait_for_email` / `latest-code` for the code. Forward its
@@ -70,6 +81,10 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    who claims the project (their Google sign-in email) and starts when the owner claims it; they can
    change it in the dashboard.
 4. **Analytics.** Create the site for the production domain (analytics manual).
+   - History from the tool the site used before (GA4, Plausible or any other): import its daily
+     totals, then pages, sources, countries and devices (`POST /v1/sites/:id/imports`; how to get
+     the data out of each tool: "Move from another tool" in section 4). Import its daily visitors
+     up to today too, so `GET /v1/sites/:id/imports/compare` can check our numbers against it.
    - A goal for every conversion and main action from step 2: event goals for clicks and forms,
      pageview goals for thank-you pages.
    - Conversions only the backend knows go in as server events (`POST /v1/sites/:id/events`), with
@@ -87,6 +102,9 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    - For the owner: an email destination (it reaches the owner once they claim the project) with a
      weekly report, and alerts for a traffic drop and for no data.
 5. **Tags.** Create a container and put its snippet in the `<head>` of every page (tags manual).
+   - From Google Tag Manager: import the container first (`POST /v1/containers/:id/draft/import`
+     with `format: "gtm"` and its export, or the lists from the GTM API; dry run first), then add
+     what it doesn't cover.
    - Run `scan`, then `setup` (MCP `setup_conversion_tracking`) with `analytics` as a platform (it
      adds the analytics tag, so events reach analytics) plus every ad platform the business uses.
    - One trigger and event for each main action from step 2 (click, form submit, element visible),
@@ -147,7 +165,10 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
 10. **Hand over.** Create a claim link (section 8). In your last message, show the owner the
     setup check's `report_markdown` (what's set up, with check marks) and the test runs'
     `report_markdown` (what passed), then exactly what's waiting on them (each ID or token, and
-    where they find it), and give them the claim link.
+    where they find it), and give them the claim link. If the site used other tools, say what you
+    brought over from each and what you didn't, and that they stay installed until the setup
+    check's "Other tools" row says our numbers match (`imports/compare`); then offer to remove them,
+    and only do it when the owner says yes.
 
 You're done when the setup test passes, the browser test visit passes with every main action from
 step 2 among its expected events, the setup check says `"ready": true`, and the owner has the
@@ -156,6 +177,34 @@ claim link and both tables.
 ## 4. Common tasks
 
 Set `K=$AGENTFIRSTSTACK_API_KEY` and `H="Authorization: Bearer $K"` first.
+
+### Move from another tool (GA4, Google Tag Manager, Plausible, DataFast, ...)
+
+Find what the site uses (full setup step 2), bring the setup over, then the history. To get data
+out of the old tool, go down this list and stop at the first way that works:
+1. **Access you already have:** an MCP server for the tool (Google's GA4 and Tag Manager MCP
+   servers), `gcloud` credentials with the right scope, or the tool's API key in the project's
+   `.env`. No clicks for the owner.
+2. **A browser you control where the owner is signed in** (Claude in Chrome, a Playwright session
+   they opened), if they said yes in the setup's one message: open the tool's export page and
+   download the file. Never type a password, accept terms or grant new permissions in their
+   accounts; if they're signed out, ask them to sign in.
+3. **Ask the owner** to download it, with the exact clicks below and where to save it (the project
+   folder), and carry on with the rest of the setup while you wait.
+
+| Tool | Bring over | Get it out | Send it to |
+|---|---|---|---|
+| Google Tag Manager | tags, triggers, variables, conversions | GTM API lists (Tag Manager MCP: list tags, triggers, variables), or Admin > Export Container (a JSON file) | tags `POST /v1/containers/:id/draft/import {"format":"gtm","data":...,"dry_run":true}`, then without dry_run |
+| GA4 | key events as goals; daily history | Data API `runReport` (GA4 MCP server) with dimensions date + one of pagePath, sessionSource, country, deviceCategory; or a report exported as CSV | analytics `POST /v1/sites/:id/imports {"source":"ga4","report":...}` (or the CSV) |
+| Plausible | goals; daily history | Stats API v2 with an API key (Settings > API keys), or Settings > Imports & Exports > Export (CSV files) | analytics `POST /v1/sites/:id/imports {"source":"plausible","report":...}` (or each CSV) |
+| DataFast, Fathom, Umami, Matomo, Simple Analytics, Mixpanel, PostHog, ... | events as goals (same names); daily history | the tool's CSV export or API | analytics `POST /v1/sites/:id/imports {"source":"other","tool":"datafast","rows":[{"date","visitors","visits","pageviews"}]}` |
+| Meta, Google Ads, TikTok, LinkedIn pixels | pixel and conversion IDs (in the page and the GTM import) | the server-side tokens come from the owner (section 5) | tags destinations |
+| Hotjar, Clarity, FullStory | masking and excluded pages | recordings can't move: keep the old tool until its own history expires | replay site settings |
+
+Then keep the old tools installed for a week. `GET /v1/sites/:id/imports/compare` (analytics)
+checks our daily visitors against the old tool's for the days both ran; the setup check's "Other
+tools" row says when it's close. Offer to remove the old snippets then, and only do it when the
+owner says yes.
 
 ### Add analytics to a website
 
@@ -375,7 +424,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (240 tools: 235 prefixed `analytics_`, `tags_`, `mail_` and
+One MCP server for every service (241 tools: 236 prefixed `analytics_`, `tags_`, `mail_` and
 `replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_check_setup`, `afs_test_setup` and `afs_check_test_visit`):
 
 ```sh

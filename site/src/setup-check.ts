@@ -110,6 +110,7 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
   },
   { part: "Goals", ids: ["analytics.goals", "analytics.goals_counted"], show: ["analytics.goals"], perDomain: true },
   { part: "AI crawlers", ids: ["analytics.crawlers"], show: ["analytics.crawlers"], perDomain: true },
+  { part: "Other tools", ids: ["migrate.tools", "migrate.compare"], show: ["migrate.tools", "migrate.compare"], perDomain: true },
   {
     part: "Reports and alerts",
     ids: ["analytics.owner_email", "analytics.weekly_report", "analytics.alerts"],
@@ -288,7 +289,15 @@ interface Conversion {
   send_to?: Record<string, unknown> & { analytics?: { event_name?: string } };
 }
 interface TagsContainer {
-  container: { id: string; live_version: number | null; domain_verified?: boolean };
+  container: {
+    id: string;
+    live_version: number | null;
+    domain_verified?: boolean;
+    /** What the tags scan last found on the site (other tools, not ours). */
+    last_scan?: { at: number; url?: string; tools: { tool: string; id?: string | null }[] } | null;
+    /** The last non-dry-run draft import (a GTM container, for example). */
+    last_import?: { at: number; format: string; summary?: Record<string, number> } | null;
+  };
   stats?: { today?: { browser_events?: number } };
 }
 interface TagStats {
@@ -637,7 +646,207 @@ async function domainChecks(domain: string, x: Ctx): Promise<SetupCheck[]> {
     x.has.replay ? replayChecks(domain, rsite, site?.id ?? null, x) : [],
   ]);
   const tagsChecks = x.has.tags ? tagsChecksFor(domain, container, tags, analytics, x) : [];
-  return [...analytics.checks, ...tagsChecks, ...replay];
+  const moving = x.has.tags && x.has.analytics ? await movingChecks(domain, analytics.siteId, tags, x) : [];
+  return [...analytics.checks, ...tagsChecks, ...replay, ...moving];
+}
+
+// ---------- other tools: what the site used before (steps 2, 4 and 5) ----------
+
+/** Tools whose history analytics can import, and the import source that covers each. */
+const HISTORY_TOOLS: Record<string, string> = {
+  ga4: "Google Analytics 4",
+  plausible: "Plausible",
+  datafast: "DataFast",
+  fathom: "Fathom",
+  umami: "Umami",
+  matomo: "Matomo",
+  simple_analytics: "Simple Analytics",
+  mixpanel: "Mixpanel",
+  posthog: "PostHog",
+  amplitude: "Amplitude",
+  heap: "Heap",
+};
+/** Everything else the scan names (ad pixels, chat, forms), as the owner reads them. */
+const OTHER_TOOLS: Record<string, string> = {
+  google_ads: "Google Ads",
+  universal_analytics: "Universal Analytics (retired by Google)",
+  meta: "Meta Pixel",
+  tiktok: "TikTok Pixel",
+  linkedin: "LinkedIn Insight Tag",
+  bing_uet: "Microsoft Ads (UET)",
+  reddit: "Reddit Pixel",
+  x: "X Pixel",
+  pinterest: "Pinterest Tag",
+  snap: "Snap Pixel",
+  segment: "Segment",
+  hubspot: "HubSpot",
+  intercom: "Intercom",
+  stripe: "Stripe.js",
+  calendly: "Calendly",
+  typeform: "Typeform",
+};
+/** Replay tools: their recordings can't move, so finding one needs nothing done. */
+const REPLAY_TOOLS: Record<string, string> = {
+  hotjar: "Hotjar",
+  clarity: "Microsoft Clarity",
+  fullstory: "FullStory",
+  logrocket: "LogRocket",
+};
+
+interface ImportItem {
+  source: string;
+  tool?: string | null;
+  kind: string;
+  from: string;
+  to: string;
+  rows: number;
+}
+interface ImportCompare {
+  source?: string | null;
+  tool?: string | null;
+  overlap_days: number;
+  ratio: number | null;
+  verdict: "close" | "lower" | "higher" | "not_enough_overlap";
+  note?: string;
+}
+
+async function movingChecks(domain: string, siteId: string | null, tags: TagsDetail | null, x: Ctx): Promise<SetupCheck[]> {
+  const { A, T } = x;
+  const c = tags?.container?.container;
+  if (!c) return []; // no container yet: the tags checks say so
+  const scan = c.last_scan ?? null;
+  const imports = siteId ? ((await x.read<{ imports?: ImportItem[] }>("analytics", `/v1/sites/${siteId}/imports`))?.imports ?? []) : [];
+  const checks: SetupCheck[] = [];
+  const title = "What the site used before (other analytics and tag tools) is brought over";
+  const at = (s: Omit<SetupCheck, "step" | "service" | "domain">, step: number, service: CheckService): SetupCheck => ({
+    ...s,
+    step,
+    service,
+    domain,
+  });
+  if (!scan)
+    checks.push(
+      at(
+        {
+          id: "migrate.tools",
+          status: "warning",
+          title,
+          detail: "The tags scan hasn't been run since it started remembering what it finds.",
+          fix: `POST ${T}/v1/containers/${c.id}/scan (MCP tags scan_site): it lists the other tools on the site and keeps the list for this check`,
+        },
+        2,
+        "tags",
+      ),
+    );
+  else {
+    const found = scan.tools ?? [];
+    const named = (t: { tool: string; id?: string | null }) =>
+      `${HISTORY_TOOLS[t.tool] ?? REPLAY_TOOLS[t.tool] ?? OTHER_TOOLS[t.tool] ?? (t.tool === "gtm" ? "Google Tag Manager" : t.tool)}${t.id ? ` (${t.id})` : ""}`;
+    const imported = (tool: string) => imports.filter((i) => (i.source === "other" ? i.tool === tool : i.source === tool) && i.rows > 0);
+    const left: string[] = [];
+    const done: string[] = [];
+    const fixes: string[] = [];
+    for (const t of found) {
+      if (t.tool === "gtm") {
+        if (c.last_import?.format === "gtm")
+          done.push(`${named(t)}: container imported ${new Date(c.last_import.at).toISOString().slice(0, 10)}`);
+        else {
+          left.push(named(t));
+          fixes.push(
+            `GTM: POST ${T}/v1/containers/${c.id}/draft/import {"format":"gtm","data":<the export, or the GTM API lists>,"dry_run":true}, then without dry_run`,
+          );
+        }
+      } else if (HISTORY_TOOLS[t.tool]) {
+        const got = imported(t.tool);
+        if (got.length) {
+          const from = got.map((i) => i.from).sort()[0];
+          const to = got
+            .map((i) => i.to)
+            .sort()
+            .at(-1);
+          done.push(`${named(t)}: history ${from} to ${to}`);
+        } else if (siteId) {
+          left.push(named(t));
+          fixes.push(
+            `${HISTORY_TOOLS[t.tool]}: POST ${A}/v1/sites/${siteId}/imports (${
+              t.tool === "ga4" || t.tool === "plausible"
+                ? `{"source":"${t.tool}","report":...} or its CSV export`
+                : `{"source":"other","tool":"${t.tool}","rows":[...]}`
+            })`,
+          );
+        }
+      } else if (REPLAY_TOOLS[t.tool]) done.push(`${named(t)} (its recordings can't move, so it stays until they expire)`);
+    }
+    const others = found.filter((t) => t.tool !== "gtm" && !HISTORY_TOOLS[t.tool] && !REPLAY_TOOLS[t.tool]).map(named);
+    const when = new Date(scan.at).toISOString().slice(0, 10);
+    checks.push(
+      at(
+        left.length
+          ? {
+              id: "migrate.tools",
+              status: "warning",
+              title,
+              detail: `Not brought over yet: ${list(left)}.${done.length ? ` Done: ${done.join("; ")}.` : ""} (scan of ${when})`,
+              fix: `${fixes.join("; ")}. How to get the data out of each tool: "Move from another tool" in https://agentfirststack.com/llms.txt`,
+            }
+          : {
+              id: "migrate.tools",
+              status: "ok",
+              title,
+              detail: found.length
+                ? `${(done.length ? done : found.map(named)).join("; ")}${others.length ? `. Also on the site: ${list(others)}` : ""} (scan of ${when}).`
+                : `No other analytics or tag tools on the site (scan of ${when}).`,
+            },
+        2,
+        "tags",
+      ),
+    );
+  }
+
+  // Do our numbers match the old tool's, for the days both ran?
+  if (siteId && imports.some((i) => i.kind === "visitors" && i.rows > 0)) {
+    const cmp = await x.read<ImportCompare>("analytics", `/v1/sites/${siteId}/imports/compare`);
+    const ctitle = "Our daily visitors match the old tool's, for the days both ran";
+    const old = cmp
+      ? cmp.source === "other"
+        ? (HISTORY_TOOLS[cmp.tool ?? ""] ?? cmp.tool)
+        : (HISTORY_TOOLS[cmp.source ?? ""] ?? cmp.source)
+      : null;
+    if (cmp && cmp.verdict === "close")
+      checks.push(
+        at(
+          {
+            id: "migrate.compare",
+            status: "ok",
+            title: ctitle,
+            detail: `Within ${Math.round(Math.abs(1 - (cmp.ratio ?? 1)) * 100)}% of ${old ?? "the old tool"} over ${plural(cmp.overlap_days, "day")}. The old tool can go once the owner agrees.`,
+          },
+          4,
+          "analytics",
+        ),
+      );
+    else if (cmp)
+      checks.push(
+        at(
+          {
+            id: "migrate.compare",
+            status: "warning",
+            title: ctitle,
+            detail:
+              cmp.verdict === "not_enough_overlap"
+                ? `Only ${plural(cmp.overlap_days, "day")} both ran so far (3 needed). Keep ${old ?? "the old tool"} installed.`
+                : `${cmp.verdict === "lower" ? "Lower" : "Higher"} than ${old ?? "the old tool"}: ${cmp.ratio}x over ${plural(cmp.overlap_days, "day")}. ${cmp.note ?? ""}`.trim(),
+            fix:
+              cmp.verdict === "not_enough_overlap"
+                ? `Import ${old ?? "the old tool"}'s daily visitors up to today again in a few days (POST ${A}/v1/sites/${siteId}/imports, the same call with the newer dates), then GET ${A}/v1/sites/${siteId}/imports/compare`
+                : `GET ${A}/v1/sites/${siteId}/imports/compare and fix what its note points to (the snippet on every page, consent, bot filtering); keep the old tool until it says close`,
+          },
+          4,
+          "analytics",
+        ),
+      );
+  }
+  return checks;
 }
 
 // ---------- analytics (step 4) ----------

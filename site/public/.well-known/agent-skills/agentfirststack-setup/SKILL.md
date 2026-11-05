@@ -9,9 +9,12 @@ AgentFirstStack is infrastructure an agent sets up by itself: one request gets a
 works for analytics, tags, mail and replay, and everything is a REST call and an MCP tool. This is
 the short form of the "Full setup" section of https://agentfirststack.com/llms.txt. Read that
 section first, and each service's manual before you use the service. Do the whole setup in one
-run. Ask the owner one thing at the start: should the inbox's email reach them as each one arrives,
-or as one daily digest (at what time)? Don't stop to ask anything else; list what only they can
-give at the end.
+run. First find what the site uses today (step 2 of the manual's full setup), then ask the owner
+once, in one message: should the inbox's email reach them as each one arrives, or as one daily
+digest (at what time)? And if the site uses other analytics or tag tools: shall you bring their
+setup and history over, and may you use their browser where they're signed in to export it, if you
+need to ("Move from another tool" in the manual's section 4)? Don't stop to ask anything else; list
+what only they can give at the end.
 
 ## 1. Start from what exists
 
@@ -52,10 +55,16 @@ Forward its mail to the owner the way they chose, so nothing is missed after you
    there (`POST /v1/sites/:id/crawls`, only for user agents matching `GET /v1/crawlers` ->
    `prefilter`, without waiting for the answer). On static hosting, skip it and say so.
 5. For the owner: an email destination, a weekly report and alerts for a traffic drop and for no data.
+6. History from the tool the site used before (GA4, Plausible or any other):
+   `POST /v1/sites/:id/imports` (GA4 Data API report JSON, Plausible Stats API JSON, their CSV
+   exports, or `{"source":"other","tool":"datafast","rows":[...]}`), including its daily visitors
+   up to today, so `GET /v1/sites/:id/imports/compare` can check our numbers against it.
 
 ## 5. Tags
 
 1. `POST https://tags.agentfirststack.com/v1/containers {"domain":"<production domain>"}`; snippet in every `<head>`.
+   From Google Tag Manager: `POST /v1/containers/:id/draft/import {"format":"gtm","data":...}` with
+   its export or the GTM API lists, dry run first.
 2. `POST /v1/containers/:id/scan`, then `POST /v1/containers/:id/setup` with `analytics` plus every ad
    platform the business uses: one event per main action (snake_case, e.g. `sign_up_click`), sent to analytics.
 3. Turn on `report_tag_fires`, validate, open a preview on the main pages, then publish.

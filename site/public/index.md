@@ -102,7 +102,7 @@ Or one per service at `https://<service>.agentfirststack.com/mcp`.
 ```text
 Set up AgentFirstStack for this project, completely, and verify it yourself. It's free, open-source infrastructure built for agents: web analytics, a tag manager with server-side conversion tracking, email inboxes and session replay. There is no signup form: one request gets a key, and you can do every step without me.
 
-First, ask me one question and wait for my answer: should email that reaches the project's inbox be forwarded to me as each one arrives, or as one daily digest (and at what time, in my time zone)? If I can't answer, forward each one as it arrives.
+First, look at what this site uses today (Google Analytics, Google Tag Manager, Plausible, DataFast, ad pixels, any other analytics or replay tool) without changing anything. Then ask me once and wait for my answer: should email that reaches the project's inbox be forwarded to me as each one arrives, or as one daily digest (and at what time, in my time zone)? And if you found other tools: shall you bring their setup and history over, and if you need it to export their data, may you use my browser where I'm signed in? If I can't answer, forward each one as it arrives and bring over whatever needs no help from me.
 
 1. Read https://agentfirststack.com/llms.txt, then follow its "Full setup" section from start to finish. Read each service's manual before you use that service.
 
@@ -117,7 +117,7 @@ First, ask me one question and wait for my answer: should email that reaches the
 
 4. Deploy, then test it end to end (the manual's step 8): run the setup test (POST https://agentfirststack.com/v1/setup/test, or afs_test_setup), do its browser plan in a real browser and check that visit (afs_check_test_visit), then run the setup check (GET https://agentfirststack.com/v1/setup, or afs_check_setup) until it says ready. Fix what fails and test again.
 
-5. Apart from that first question, don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
+5. Apart from that first message, don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
 
 6. Write what you set up in AGENTFIRSTSTACK.md at the repo root (ids, env var names, every goal and event and what triggers it; never key values), add the AgentFirstStack block from the manual to AGENTS.md (so later agent sessions see new features), and commit both.
 
