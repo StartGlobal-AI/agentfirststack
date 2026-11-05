@@ -161,6 +161,15 @@ to the project's members. Without the var, email destinations are refused and we
 destinations still work. The analytics template also has a cron (`*/5 * * * *`) for alerts and
 reports.
 
+Emails to people (optional): the site template carries a `send_email` binding (`EMAIL`) too.
+Set `NOTIFY_EMAIL_FROM` under `vars.site` (for example `"Your Stack <notifications@example.com>"`,
+an address on a domain onboarded for Cloudflare Email Sending) and the site emails signed-in
+people about their projects: claims, members, connected apps, project deletion and suspension,
+and new setup items (see [accounts.md](accounts.md#9-emails-to-people)). Optional:
+`NOTIFY_REPLY_TO`, and `MAX_EMAILS_PER_PERSON_PER_DAY` (default 20). Without the var nothing is
+sent. Reserve the sender's username (`EXTRA_RESERVED_USERNAMES` on mail) so nobody can create an
+inbox with it. The site's hourly cron (`47 * * * *`) sends queued emails and retries.
+
 ## Sign-in for people (optional)
 
 Agents never need it. To let people claim projects, use the dashboard and connect Claude or

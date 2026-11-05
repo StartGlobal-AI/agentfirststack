@@ -18,6 +18,8 @@ import {
   revokeGrant,
 } from "./identity";
 import { RESTORE_DAYS, cleanupPrompt, deleteProject, exportPrompt, restoreProject } from "./project-deletion";
+import { recentEmails, waitUntilOf } from "./email";
+import { emailAccountDeleted, emailMemberRemoved, emailProjectDeleted, emailProjectRestored } from "./email-messages";
 import { analyticsDashboard } from "./analytics-dashboard";
 import { serviceViews } from "./service-views";
 import { type BuildKind, buildPrompt } from "./dashboard-prompt";
@@ -315,16 +317,31 @@ dashboard.post("/projects/:id/delete", async (c) => {
   requireOwner(p, "delete it");
   if ((form.confirm ?? "").trim() !== projectName(p))
     throw new ApiError(400, "not_confirmed", "The project was not deleted.", `Type its name, ${projectName(p)}, in the box to confirm.`);
-  await deleteProject(c.env, p.id, c.var.session.user.id);
+  const d = await deleteProject(c.env, p.id, c.var.session.user.id);
+  if (!d.existing)
+    await emailProjectDeleted(c.env, siteBase(c), waitUntilOf(c), {
+      accountId: p.id,
+      name: p.name,
+      byUserId: c.var.session.user.id,
+      deletedAt: d.deleted_at,
+      purgeAfter: d.purge_after,
+    });
   return redirect(`/dashboard?deleted=${p.id}`);
 });
 
 dashboard.post("/projects/:id/restore", async (c) => {
   await readForm(c);
   const id = projectId(c);
-  const mine = (await listDeletedProjects(c.env.DB, c.var.session.user.id)).some((d) => d.id === id);
+  const mine = (await listDeletedProjects(c.env.DB, c.var.session.user.id)).find((d) => d.id === id);
   if (!mine) throw projectNotFound();
-  await restoreProject(c.env, id);
+  const r = await restoreProject(c.env, id);
+  if (r.restored)
+    await emailProjectRestored(c.env, siteBase(c), waitUntilOf(c), {
+      accountId: id,
+      name: mine.name,
+      byUserId: c.var.session.user.id,
+      deletedAt: mine.deleted_at,
+    });
   return redirect(`/dashboard/projects/${id}`);
 });
 
@@ -626,6 +643,8 @@ dashboard.post("/projects/:id/members/:user/remove", async (c) => {
   const target = c.req.param("user");
   if (target !== me && p.role !== "owner") throw new ApiError(403, "forbidden", "Only the project's owner can remove other members.");
   await removeMember(c.env.DB, p.id, target);
+  if (target !== me)
+    await emailMemberRemoved(c.env, siteBase(c), waitUntilOf(c), { accountId: p.id, name: p.name, userId: target, at: Date.now() });
   return redirect(target === me ? "/dashboard" : `/dashboard/projects/${p.id}/members`);
 });
 
@@ -709,6 +728,11 @@ dashboard.post("/apps/:grant/revoke", async (c) => {
 
 dashboard.get("/account", async (c) => {
   const s = c.var.session;
+  const [updates, emails] = await Promise.all([
+    c.env.DB.prepare("SELECT email_updates FROM users WHERE id = ?").bind(s.user.id).first<number>("email_updates"),
+    recentEmails(c.env.DB, s.user.id),
+  ]);
+  const saved = c.req.query("emails") === "saved";
   return dashPage(c, {
     title: "Account",
     nav: "account",
@@ -723,6 +747,22 @@ dashboard.get("/account", async (c) => {
   </dl>
   <form method="post" action="/auth/signout" class="row">${csrfField(s)}<button class="btn btn-quiet" type="submit">Sign out</button></form>
 </section>
+<form class="tile stack account-emails" id="emails" method="post" action="/dashboard/account/emails">
+  <h2>Emails</h2>
+  ${saved ? notice("Saved.", "ok") : ""}
+  <p class="small">We email ${s.user.email} when something happens to your projects: you claim one, someone joins or is removed, you connect an app, a project is deleted or suspended. Those always go out.</p>
+  ${csrfField(s)}
+  <label class="check"><input type="checkbox" name="updates" value="on"${updates === 0 ? "" : html` checked`}> <span>Also tell me when there's something new to set up in my projects</span></label>
+  <p class="row"><button class="btn btn-quiet" type="submit">Save</button></p>
+  ${
+    emails.length
+      ? html`<details class="recent-emails"><summary class="small">Emails we sent you recently</summary><ul class="email-list">${emails.map(
+          (m) =>
+            html`<li><span>${m.subject}</span><span class="muted small">${fmtDate(m.sent_at ?? m.created_at)}${m.status === "sent" ? "" : ` · ${m.status}`}</span></li>`,
+        )}</ul></details>`
+      : ""
+  }
+</form>
 <form class="tile stack danger-zone" method="post" action="/dashboard/account/delete">
   <h2>Delete my account</h2>
   <p class="small">This deletes your sign-in, your project memberships, your sessions and every app you connected. Your projects and their agent keys keep working; a project with no members left becomes unclaimed again. See the <a href="/privacy">privacy policy</a>.</p>
@@ -734,12 +774,22 @@ dashboard.get("/account", async (c) => {
   });
 });
 
+dashboard.post("/account/emails", async (c) => {
+  const form = await readForm(c);
+  await c.env.DB.prepare("UPDATE users SET email_updates = ? WHERE id = ?")
+    .bind(form.updates === "on" ? 1 : 0, c.var.session.user.id)
+    .run();
+  return redirect("/dashboard/account?emails=saved#emails");
+});
+
 dashboard.post("/account/delete", async (c) => {
   const form = await readForm(c);
   if ((form.confirm ?? "").trim().toLowerCase() !== "delete") {
     throw new ApiError(400, "not_confirmed", "Your account was not deleted.", "Type delete in the box to confirm.");
   }
-  await deleteUser(c.env.DB, c.var.session.user.id);
+  const user = c.var.session.user;
+  await emailAccountDeleted(c.env, siteBase(c), { userId: user.id, email: user.email });
+  await deleteUser(c.env.DB, user.id);
   return page({
     title: "Account deleted",
     headers: { "set-cookie": clearSessionCookie(c) },

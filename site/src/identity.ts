@@ -241,6 +241,8 @@ export async function deleteUser(db: D1Database, userId: string): Promise<void> 
     db.prepare("UPDATE api_keys SET created_by_user_id = NULL WHERE created_by_user_id = ?").bind(userId),
     db.prepare("UPDATE claim_links SET created_by_user_id = NULL WHERE created_by_user_id = ?").bind(userId),
     db.prepare("UPDATE claim_links SET used_by_user_id = NULL WHERE used_by_user_id = ?").bind(userId),
+    // The emails we sent them (with their address and content).
+    db.prepare("DELETE FROM email_outbox WHERE user_id = ?").bind(userId),
     // Cascades: memberships, sessions, oauth_grants -> oauth_codes, oauth_refresh_tokens.
     db.prepare("DELETE FROM users WHERE id = ?").bind(userId),
   ]);

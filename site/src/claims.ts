@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { DAY, type SiteEnv, isDev } from "./env";
 import { googleConfigured, siteBase } from "./google";
 import { MARK, csrfField, fmtDate, fmtDay, googleButton, html, htmlErrorHandler, messagePage, page } from "./html";
+import { waitUntilOf } from "./email";
+import { emailClaimed } from "./email-messages";
 import { addMember, getProject } from "./identity";
 import { trackOwn } from "./own-analytics";
 import { projectResources } from "./services";
@@ -245,5 +247,14 @@ claimRoutes.post("/claim/:token", optionalSession, async (c) => {
   // Only the backend knows a claim happened (the signed-in pages run no analytics). The path
   // leaves the token out.
   trackOwn(c, { name: "project_claimed", accountId: claim.account_id, path: "/claim", props: { role: added.role }, visitor: true });
+  // The new owner hears they own it; when someone joins as a member, the owner hears about it.
+  if (added.role === "owner" || !added.existing)
+    await emailClaimed(c.env, siteBase(c), waitUntilOf(c), {
+      accountId: claim.account_id,
+      name: claim.name,
+      userId: session.user.id,
+      role: added.role,
+      at: now,
+    });
   return redirect(`/dashboard/projects/${claim.account_id}`);
 });

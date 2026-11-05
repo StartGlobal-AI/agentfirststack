@@ -287,6 +287,42 @@ per-isolate `accountStanding()` cache). Suspending twice keeps the first time an
 (`"existing": true`). `pnpm afs suspend <profile> <acct_id> --reason "..."` and `pnpm afs
 unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 
+### 9. Emails to people
+
+`src/email.ts` (how) and `src/email-messages.ts` (what), migration `0008_email.sql`. The site
+emails signed-in people at their Google address, never an address an agent supplied, from
+`NOTIFY_EMAIL_FROM` through the `EMAIL` binding. Without either, nothing is queued.
+
+| Email | When | To |
+|---|---|---|
+| `project_claimed` | a claim link made them the owner | them |
+| `member_joined` | someone joined through an invite link | the owner |
+| `member_removed` | the owner removed them (not when they leave) | them |
+| `app_connected` | they connected a chat app over OAuth (client name, its redirect host, access) | them |
+| `project_deleted` | the owner deleted it: restore date, cleanup prompt | the owner, and members |
+| `project_restored` | the owner restored it | members |
+| `purge_soon` | it is erased within a day (hourly cron) | the owner |
+| `project_purged` | the purge erased it | the owner |
+| `project_suspended`, `project_unsuspended` | the operator suspended or resumed it (never the reason) | the owner |
+| `account_deleted` | they deleted their account | them |
+| `setup_notice` (updates) | the daily notices found new setup items for a project whose agent ran the check before | the owner |
+
+- Every email is an `email_outbox` row first, keyed by `dedupe_key` (one per event and person),
+  so a retried request or a repeated cron run never sends twice.
+  - Request-triggered emails are sent after the response (`waitUntil`).
+  - Bulk ones (notices, purge reminders and notices) wait for the hourly cron.
+  - A failed send is retried after 15 minutes and 2 hours, then marked `failed`.
+- At most `MAX_EMAILS_PER_PERSON_PER_DAY` (default 20) go to one address a day; the rest are
+  recorded as `skipped`.
+- Rows are deleted after 30 days, and at once when the person deletes their account (the
+  `account_deleted` confirmation goes once it is sent).
+- Account emails always go out. "Updates" respect `users.email_updates` (Account, Emails) and carry
+  `List-Unsubscribe` plus `List-Unsubscribe-Post` (RFC 8058).
+  - The link is `/email/unsubscribe?u=<user>&s=<hmac>`, signed with `INTERNAL_TOKEN`.
+  - Its GET shows a button and its POST turns updates off, so mail scanners that open links don't
+    unsubscribe anyone.
+- Account, Emails also lists the last 10 emails sent to the person.
+
 ## Routes
 
 | Route | Auth | What |
@@ -298,6 +334,8 @@ unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 | `DELETE /v1/me {confirm}` | full-access API key (not OAuth), unclaimed project | delete the project (MCP gateway tool `afs_delete_project`; `src/project-deletion.ts`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `POST /v1/admin/accounts/:id/restore` | `ADMIN_TOKEN` | undo a project deletion before its purge |
+| `GET`, `POST /email/unsubscribe?u=&s=` | the signed link | turn off "updates" emails (GET asks, POST does it; mail apps' one-click POST too) |
+| `POST /dashboard/account/emails {updates}` | session + CSRF | turn updates emails on or off |
 | `POST /v1/admin/notices/refresh` | `ADMIN_TOKEN` | write the project notices now (the daily cron does it otherwise) |
 | `GET /signin` | none | sign-in page |
 | `GET /auth/google`, `GET /auth/google/callback` | none | Google sign-in |

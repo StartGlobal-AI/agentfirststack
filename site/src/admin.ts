@@ -3,6 +3,9 @@ import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { SiteEnv } from "./env";
 import { noticeBase, refreshNotices } from "./notices";
+import { waitUntilOf } from "./email";
+import { emailSuspension } from "./email-messages";
+import { siteBase } from "./google";
 import { restoreProject } from "./project-deletion";
 
 /**
@@ -90,8 +93,11 @@ adminApi.post("/v1/admin/accounts/:id/suspend", async (c) => {
       .run();
   }
   forgetStanding(id);
+  const after = await accountState(c.env.DB, id);
+  if (before.suspended_at === null && after.suspended_at !== null)
+    await emailSuspension(c.env, siteBase(c), waitUntilOf(c), { accountId: id, name: after.name, suspended: true, at: after.suspended_at });
   return c.json({
-    account: await accountState(c.env.DB, id),
+    account: after,
     suspended: true,
     existing: before.suspended_at !== null,
     next_steps: [
@@ -121,6 +127,8 @@ adminApi.post("/v1/admin/accounts/:id/unsuspend", async (c) => {
   const before = await accountState(c.env.DB, id);
   await c.env.DB.prepare("UPDATE accounts SET suspended_at = NULL, suspended_reason = NULL WHERE id = ?").bind(id).run();
   forgetStanding(id);
+  if (before.suspended_at !== null)
+    await emailSuspension(c.env, siteBase(c), waitUntilOf(c), { accountId: id, name: before.name, suspended: false, at: Date.now() });
   return c.json({
     account: await accountState(c.env.DB, id),
     suspended: false,

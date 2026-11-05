@@ -11,6 +11,8 @@ import {
 } from "@afs/shared";
 import { type Context, Hono } from "hono";
 import { DAY, type Session, type SiteEnv } from "./env";
+import { waitUntilOf } from "./email";
+import { emailAppConnected } from "./email-messages";
 import { pkceChallenge, siteBase } from "./google";
 import { type SafeHtml, csrfField, html, htmlErrorHandler, messagePage, page } from "./html";
 import { assertRoomForGrant, createProject, getProject, listProjects, revokeGrant } from "./identity";
@@ -687,18 +689,22 @@ oauthPages.post("/oauth/authorize", async (c) => {
   // Each connected app can mint access tokens: one person holds a bounded number of them.
   await assertRoomForGrant(db, session.user.id);
   let accountId = form.project ?? "";
+  let projectName: string | null = null;
   if (accountId === "new") {
     const name = cleanName(form.project_name, 200) ?? cleanName(`${r.client.name} project`, 200);
     // A new project is a new account: the same signup gate as POST /v1/signup, plus a per-person cap.
     const release = await reserveNewAccount(c.env, c.req.raw, session.user.id);
     try {
       accountId = await createProject(db, session.user.id, name);
+      projectName = name;
     } catch (e) {
       await release().catch(() => {});
       throw e;
     }
-  } else if (!(await getProject(db, session.user.id, accountId))) {
-    return messagePage({ title: "Not found", message: "Project not found.", status: 404, session });
+  } else {
+    const project = await getProject(db, session.user.id, accountId);
+    if (!project) return messagePage({ title: "Not found", message: "Project not found.", status: 404, session });
+    projectName = project.name;
   }
   const scope = r.scope === "read" || form.access === "read" ? "read" : "*";
   const grantId = newId("grant");
@@ -714,5 +720,15 @@ oauthPages.post("/oauth/authorize", async (c) => {
       )
       .bind(await sha256Hex(code), grantId, r.client.id, r.redirectUri, r.codeChallenge, r.resource, now, now + CODE_TTL_MS),
   ]);
+  // A security notice: a connected app can act on the project until it's disconnected.
+  await emailAppConnected(c.env, siteBase(c), waitUntilOf(c), {
+    grantId,
+    accountId,
+    name: projectName,
+    userId: session.user.id,
+    client: r.client.name,
+    redirectHost: new URL(r.redirectUri).host,
+    scope,
+  });
   return back({ code });
 });

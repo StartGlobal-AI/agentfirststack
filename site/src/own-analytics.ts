@@ -84,7 +84,7 @@ export function trackOwn(c: Context<SiteEnv>, ev: OwnEvent): void {
  */
 const BOTS =
   /gptbot|oai-searchbot|chatgpt-user|claudebot|claude-user|claude-searchbot|anthropic-ai|perplexity|googlebot|google-extended|bingbot|applebot|ccbot|bytespider|amazonbot|meta-external|duckassistbot|mistralai|cohere|youbot|diffbot|bot\b|bot\/|crawl|spider|slurp/i;
-const NOT_CONTENT = /^\/(?:v1|mcp|a2a|oauth|auth|dashboard|claim|signin)(?:\/|$)/;
+const NOT_CONTENT = /^\/(?:v1|mcp|a2a|oauth|auth|dashboard|claim|signin|email)(?:\/|$)/;
 
 export function trackCrawl(c: Context<SiteEnv>, status: number): void {
   const target = ownAnalytics(c.env);

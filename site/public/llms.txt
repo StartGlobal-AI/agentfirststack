@@ -344,6 +344,12 @@ test event in the platform's test mode and returns the platform's own answer.
 
 Everything else (signup, sites, containers, conversions, inboxes, verification) you can do alone.
 
+The platform emails the people of a claimed project itself (you never send these): the owner when
+they claim it, when someone joins, when they connect a chat app, when a project is deleted (with
+the restore date), the day before it's erased, and when it's suspended; members when they're
+removed or the project is deleted or restored. Owners also get an email when there are new setup
+items their agent hasn't applied, with the prompt to paste into you (they can turn that one off).
+
 ## 8. Check and test the setup, then let the owner claim it
 
 ### The setup check

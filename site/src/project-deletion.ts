@@ -12,6 +12,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { type Bindings, DAY, type SiteEnv } from "./env";
 import { siteBase } from "./google";
+import { emailProjectPurged, projectPeople } from "./email-messages";
+import { noticeBase } from "./notices";
 import { type Service, callService } from "./services";
 
 /**
@@ -150,6 +152,9 @@ export async function purgeProject(env: Bindings, accountId: string, deadline: n
       return report;
     }
   }
+  // Read before the memberships go: the owners hear it's done.
+  const owners = (await projectPeople(env.DB, accountId)).filter((x) => x.role === "owner");
+  const name = (await deletionState(env.DB, accountId))?.name ?? null;
   await env.DB.batch([
     // Cascades: oauth_codes, oauth_refresh_tokens (and the grants' access tokens are api_keys).
     env.DB.prepare("DELETE FROM api_keys WHERE account_id = ?").bind(accountId),
@@ -163,6 +168,7 @@ export async function purgeProject(env: Bindings, accountId: string, deadline: n
   ]);
   forgetStanding(accountId);
   report.done = true;
+  if (owners.length) await emailProjectPurged(env, noticeBase(env), { accountId, name, owners });
   return report;
 }
 

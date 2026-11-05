@@ -122,6 +122,14 @@ When something gets through, in order of escalation:
 3. **Remove its resources.** Delete its inboxes, sites and containers through the API with a
    temporary key, or with SQL on the app's database.
 
+**Emails to people.** The site's hourly cron logs `cron.email` (`reminders`, `sent`, `failed`,
+`left`), and each failed send `email.failed` with its error. The `email_outbox` table in the
+identity DB shows every email of the last 30 days and its status:
+```sh
+wrangler d1 execute afs-identity --remote -c site/wrangler.deploy.json --command \
+  "SELECT kind, status, attempts, error, created_at FROM email_outbox ORDER BY created_at DESC LIMIT 20"
+```
+
 **Deleted projects.** Owners delete projects in the dashboard, and an unclaimed project's agent
 can with `DELETE /v1/me` (see [accounts.md](accounts.md#6-privacy-and-deletion)). A deleted
 project stops at once. The site's daily cron (03:17 UTC) erases it 7 days later in every service

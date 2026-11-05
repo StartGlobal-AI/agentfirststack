@@ -1,6 +1,9 @@
 import { accountRoutes, extractKey, onError, onNotFound, protectedResourceRoutes, timingSafeEqual } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import { adminApi } from "./admin";
+import { deliverDue, pruneOutbox } from "./email";
+import { emailPurgeReminders } from "./email-messages";
+import { emailRoutes } from "./email-routes";
 import { deletionApi, purgeDeletedProjects } from "./project-deletion";
 import { claimLinkApi, claimRoutes } from "./claims";
 import { purgeExpired } from "./cleanup";
@@ -126,6 +129,7 @@ app.route("/", setupApi);
 app.route("/", setupTestApi);
 app.route("/", adminApi);
 app.route("/", deletionApi);
+app.route("/", emailRoutes);
 app.route("/dashboard", dashboard);
 
 // A project created here is a conversion only the backend sees (agents sign up with curl): with
@@ -179,16 +183,32 @@ app.route(
 // (not images, fonts, CSS or JS) so bot visits can be reported above; the file gets the headers
 // public/_headers gives it. API, gateway and people paths that matched nothing stay a JSON 404.
 app.on(["GET", "HEAD"], "*", (c) => {
-  if (/^\/(?:v1|mcp|a2a|oauth|auth|dashboard|claim|signin)(?:\/|$)/.test(new URL(c.req.url).pathname)) return c.notFound();
+  if (/^\/(?:v1|mcp|a2a|oauth|auth|dashboard|claim|signin|email)(?:\/|$)/.test(new URL(c.req.url).pathname)) return c.notFound();
   return servePage(c);
 });
 
 export { app };
 
+/** The site's hourly cron (wrangler.jsonc); the other one is daily. */
+export const HOURLY_CRON = "47 * * * *";
+
 export default {
   fetch: app.fetch,
-  async scheduled(_controller, env, ctx) {
+  async scheduled(controller, env, ctx) {
+    if (controller.cron === HOURLY_CRON) {
+      // Emails: the reminders before a deleted project is erased, then everything due (queued in
+      // bulk, or waiting for a retry).
+      const base = noticeBase(env);
+      ctx.waitUntil(
+        emailPurgeReminders(env, base)
+          .then(async (reminders) => ({ reminders, ...(await deliverDue(env, base)) }))
+          .then((n) => console.log(JSON.stringify({ event: "cron.email", ...n })))
+          .catch((e) => console.error("cron.email failed", e)),
+      );
+      return;
+    }
     ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
+    ctx.waitUntil(pruneOutbox(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.email_prune", deleted: n }))));
     // Deleted projects whose 7 days to restore have passed: erased in every service.
     ctx.waitUntil(
       purgeDeletedProjects(env)

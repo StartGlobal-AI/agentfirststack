@@ -125,7 +125,33 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
   } as unknown as Fetcher;
 }
 
+// ---------- the EMAIL binding ----------
+
+export interface SentEmail {
+  from: unknown;
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  replyTo?: unknown;
+  headers: Record<string, string>;
+}
+/** Every email the site sent through EMAIL. */
+export const sentEmails: SentEmail[] = [];
+/** Addresses whose sends throw (a delivery failure). */
+export const failingEmailTo = new Set<string>();
+export const emailsTo = (address: string) => sentEmails.filter((m) => m.to === address);
+
+const EMAIL = {
+  send: async (m: SentEmail) => {
+    if (failingEmailTo.has(m.to)) throw Object.assign(new Error("delivery failed"), { code: "E_DELIVERY_FAILED" });
+    sentEmails.push(m);
+    return { messageId: `<msg-${sentEmails.length}@afs.test>` };
+  },
+};
+
 const services = {
+  EMAIL,
   ANALYTICS: stubService("analytics"),
   TAGS: stubService("tags"),
   MAIL: stubService("mail"),

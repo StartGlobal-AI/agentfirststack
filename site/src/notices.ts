@@ -1,4 +1,5 @@
 import { forgetNotice } from "@afs/shared";
+import { emailSetupNotices } from "./email-messages";
 import type { Bindings } from "./env";
 import { CATALOG_VERSION, itemsAfter } from "./setup-catalog";
 
@@ -97,9 +98,11 @@ export async function refreshNotices(env: Bindings, base: string, now = Date.now
     .bind(CATALOG_VERSION, now - 30 * DAY, limit)
     .all<{ account_id: string; seen: number | null }>();
   const statements: D1PreparedStatement[] = [];
+  const noticed: { account_id: string; seen: number | null }[] = [];
   for (const r of rows.results ?? []) {
     const t = noticeTexts(base, r.seen);
     if (!t) continue;
+    noticed.push(r);
     statements.push(
       env.DB.prepare(
         `INSERT INTO project_notices (account_id, notice, owner_notice, created_at, shown_at) VALUES (?, ?, ?, ?, NULL)
@@ -110,7 +113,9 @@ export async function refreshNotices(env: Bindings, base: string, now = Date.now
     );
   }
   for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
-  return { projects: statements.length };
+  // Their owners hear about it by email too, once per catalog version (queued; the hourly run sends).
+  const emails = await emailSetupNotices(env, base, noticed, CATALOG_VERSION);
+  return { projects: statements.length, emails };
 }
 
 /** The base URL the notices name (the deployment's site). */

@@ -67,6 +67,6 @@ export const projectDeleted = (deletedAt?: number | null, purgeAfter?: number | 
     "project_deleted",
     `This project was deleted${deletedAt ? ` on ${day(deletedAt)}` : ""}.`,
     purgeAfter
-      ? `Its owner can restore it from https://agentfirststack.com/dashboard until ${day(purgeAfter)}; after that its data is erased. To start a new project: POST /v1/signup.`
+      ? `It can be restored until ${day(purgeAfter)}: by its owner in the dashboard (https://agentfirststack.com/dashboard), or, for a project nobody claimed, by emailing privacy@agentfirststack.com. After that its data is erased. To start a new project: POST /v1/signup.`
       : "To start a new project: POST /v1/signup.",
   );

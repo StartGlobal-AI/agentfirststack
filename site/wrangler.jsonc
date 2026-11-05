@@ -55,8 +55,16 @@
     }
   ],
 
-  // Daily: delete expired OAuth tokens and codes, sessions and claim links from the identity DB.
-  "triggers": { "crons": ["17 3 * * *"] },
+  // Daily (03:17): delete expired OAuth tokens and codes, sessions, claim links and old emails from
+  // the identity DB, write setup notices, and erase deleted projects whose 7 days have passed.
+  // Hourly (:47): send queued and retried emails, and the reminders before a project is erased.
+  "triggers": { "crons": ["17 3 * * *", "47 * * * *"] },
+
+  // Optional: Cloudflare Email Service, for the emails the platform sends people (src/email.ts):
+  // claims, members, connected apps, project deletion, suspension, setup updates. Needs the
+  // NOTIFY_EMAIL_FROM var too (an address on a domain onboarded for Email Sending); without
+  // either, nothing is sent.
+  "send_email": [{ "name": "EMAIL" }],
 
   // Burst limits (the binding only supports 10s/60s windows): signup (and OAuth client registration)
   // per network, shared by every app (namespace from the deploy profile); API key creation per
@@ -88,7 +96,9 @@
   //   AUTH_ISSUER (the OAuth issuer; default PUBLIC_BASE_URL), OAUTH_REGISTER_HOURLY_LIMIT (new OAuth
   //   clients per network per hour, default 30);
   //   own analytics: OWN_ANALYTICS_ACCOUNT_ID + OWN_ANALYTICS_SITE_ID (the deployment's own project and
-  //   analytics site) get a server event for each signup and project claim here (src/own-analytics.ts).
+  //   analytics site) get a server event for each signup and project claim here (src/own-analytics.ts);
+  //   email: NOTIFY_EMAIL_FROM ("Name <address>", with the EMAIL binding), NOTIFY_REPLY_TO (optional),
+  //   MAX_EMAILS_PER_PERSON_PER_DAY (default 20).
   // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard),
   // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google). See docs/accounts.md.
   "observability": { "enabled": true }

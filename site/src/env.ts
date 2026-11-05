@@ -33,6 +33,11 @@ export type Bindings = Env & {
    */
   OWN_ANALYTICS_ACCOUNT_ID?: string;
   OWN_ANALYTICS_SITE_ID?: string;
+  /** The emails the platform sends people (src/email.ts): the EMAIL binding and this sender. */
+  EMAIL?: SendEmail;
+  NOTIFY_EMAIL_FROM?: string;
+  NOTIFY_REPLY_TO?: string;
+  MAX_EMAILS_PER_PERSON_PER_DAY?: string;
 };
 
 export interface User {
