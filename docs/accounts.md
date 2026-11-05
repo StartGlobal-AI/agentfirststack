@@ -202,6 +202,12 @@ service) is still a 401. A wrong token is a 401, never a fallback to the API key
 nothing changes. Anything new that calls a service with internal auth must use an `.internal` URL
 (replay already does, for analytics).
 
+Internal calls also never carry a project notice (`project_notices`, read by every service through
+`shared/src/notices.ts`; see [architecture.md](architecture.md#identity)) and never mark one shown, so
+the dashboard and the setup check reading the services don't use up the agent's daily notice. A
+service reads the row and sets `shown_at`, nothing else; after deleting a row in the same isolate,
+`forgetNotice(accountId)` drops the 10-minute cache.
+
 ### 6. Privacy and deletion
 
 - `/privacy` and `/terms` pages (static, `site/public/`); Google's consent screen needs both URLs.

@@ -1,4 +1,4 @@
-import { ApiError, accountStanding, badRequest, newId, notFound, parse } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, newId, notFound, ownerNotice, parse } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
 import type { Fetcher } from "../lib/delivery";
@@ -297,14 +297,33 @@ export async function deleteReport(ctx: Ctx, siteId: string, id: string) {
 const fmt = (v: number | null) => (v == null ? "n/a" : Math.abs(v) >= 1000 ? v.toLocaleString("en-US") : String(v));
 const pct = (c: number | null) => (c == null ? "" : ` (${c > 0 ? "+" : ""}${c}%)`);
 
+/**
+ * "New for your project": what the platform has for the project's people (the site's
+ * project_notices row: owner_notice, else notice) and the line to give their agent. Reading it
+ * never marks it shown (that is the agent channel); no row, or any error, is no section.
+ */
+export async function projectNoticeLines(env: Bindings, accountId: string): Promise<string[]> {
+  const notice = await ownerNotice(env, accountId);
+  if (!notice) return [];
+  const site = (env.AUTH_ISSUER ?? "").trim().replace(/\/+$/, "");
+  const check = site ? `GET ${site}/v1/setup` : "MCP afs_check_setup";
+  return [
+    "New for your project",
+    notice.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 600),
+    `Ask your agent: "Run the AgentFirstStack setup check (${check}) and apply what it lists."`,
+    "",
+  ];
+}
+
 /** Deliver one report now: the digest of its period, to its destinations. */
 async function sendReportRow(env: Bindings, site: SiteRow, r: ReportRow, now: number, fetcher?: Fetcher) {
   const period = reportPeriod(r.cadence, site.timezone, now);
-  const d = await digestFor(env, site, period);
+  const [d, notice] = await Promise.all([digestFor(env, site, period), projectNoticeLines(env, site.account_id)]);
   const k = d.kpis;
   const rev = d.revenue;
   const label = r.cadence === "weekly" ? "Weekly" : "Monthly";
   const lines = [
+    ...notice,
     `${period.from} to ${period.to} (${site.timezone}), compared with the period before.`,
     `Visitors ${fmt(k.visitors!.value)}${pct(k.visitors!.change_percent)} · visits ${fmt(k.visits!.value)}${pct(k.visits!.change_percent)} · pageviews ${fmt(k.pageviews!.value)}${pct(k.pageviews!.change_percent)}`,
     `Engagement rate ${fmt(k.engagement_rate!.value)}% · bounce rate ${fmt(k.bounce_rate!.value)}%`,

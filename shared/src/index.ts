@@ -4,6 +4,7 @@ export * from "./errors";
 export * from "./html";
 export * from "./http";
 export * from "./ids";
+export * from "./notices";
 export * from "./resource";
 export * from "./standing";
 export * from "./text";

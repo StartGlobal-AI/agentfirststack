@@ -5,6 +5,7 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { type AuthBindings, type AuthContext, authenticate, authenticateEnv, canWrite, extractKey } from "./auth";
 import { ApiError } from "./errors";
+import { MCP_NOTICE_PREFIX, pendingNotice, takeNotice } from "./notices";
 import { mcpChallenge } from "./resource";
 
 /**
@@ -18,6 +19,7 @@ import { mcpChallenge } from "./resource";
  *
  * Tools are registered through a ToolRegistrar, which hides write tools from read-only keys
  * and turns thrown ApiErrors into MCP tool errors (with the hint) instead of protocol errors.
+ * A successful result may end with the project's notice (notices.ts), at most once a day.
  */
 
 export type ToolHandler<S extends z.ZodRawShape> = (args: z.infer<z.ZodObject<S>>) => Promise<unknown>;
@@ -62,7 +64,11 @@ function toolFailure(err: unknown) {
   return { ...toolText({ error: { code: "internal", message } }), isError: true };
 }
 
-function makeRegistrar(server: McpServer, auth: AuthContext): ToolRegistrar {
+/**
+ * `env`: where the project's notice is read (notices.ts). When it is due (takeNotice: at most once a
+ * day), a successful tool result gets it as one more text item after the tool's own content.
+ */
+function makeRegistrar(server: McpServer, auth: AuthContext, env: AuthBindings): ToolRegistrar {
   const register = <S extends z.ZodRawShape>(readOnly: boolean, name: string, spec: ToolSpec<S>, handler: ToolHandler<S>) => {
     const annotations: ToolAnnotations = {
       readOnlyHint: readOnly,
@@ -77,11 +83,17 @@ function makeRegistrar(server: McpServer, auth: AuthContext): ToolRegistrar {
       name,
       { title: spec.title, description: spec.description, inputSchema: spec.input ?? {}, annotations },
       async (args: z.infer<z.ZodObject<S>>) => {
+        // Cached; a miss is looked up while the tool runs. Never throws.
+        const pending = pendingNotice(env, auth.accountId);
+        let result: ReturnType<typeof toolText>;
         try {
-          return toolText(await handler(args));
+          result = toolText(await handler(args));
         } catch (err) {
           return toolFailure(err);
         }
+        const notice = (await pending) ? await takeNotice(env, auth.accountId) : null;
+        if (notice) result.content.push({ type: "text", text: `${MCP_NOTICE_PREFIX}${notice}` });
+        return result;
       },
     );
   };
@@ -114,17 +126,17 @@ export async function handleMcp(request: Request, envOrDb: AuthBindings | D1Data
   }
   const token = extractKey(request);
   if (!token) return unauthorizedMcp(request, "Add header `Authorization: Bearer <api_key>`. Get a key with POST /v1/signup.", false);
-  const auth =
-    "prepare" in envOrDb && typeof envOrDb.prepare === "function"
-      ? await authenticate(envOrDb as D1Database, token)
-      : await authenticateEnv(envOrDb as AuthBindings, token);
+  const isDb = "prepare" in envOrDb && typeof envOrDb.prepare === "function";
+  const auth = isDb ? await authenticate(envOrDb as D1Database, token) : await authenticateEnv(envOrDb as AuthBindings, token);
   if (!auth) return unauthorizedMcp(request, "That API key is unknown, revoked or expired. POST /v1/signup for a new one.", true);
+  // For the project's notice on tool results (notices.ts); a bare D1 database is the identity DB.
+  const env: AuthBindings = isDb ? { DB: envOrDb as D1Database } : (envOrDb as AuthBindings);
 
   const server = new McpServer(
     { name: opts.name, version: opts.version },
     { instructions: opts.instructions, jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
   );
-  await opts.register(makeRegistrar(server, auth), auth);
+  await opts.register(makeRegistrar(server, auth, env), auth);
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   return transport.handleRequest(request);
