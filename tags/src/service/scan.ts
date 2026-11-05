@@ -204,8 +204,184 @@ function codeOf(p: PageParts) {
   const srcs = p.scripts.flatMap((s) => (s.attrs.src ? [s.attrs.src] : []));
   const inline = p.scripts.filter((s) => !s.attrs.src && !NOT_CODE.test(s.attrs.type ?? "")).map((s) => s.code);
   const fallbacks = p.noscript.flatMap((ns) => all(/<(?:img|iframe)\b[^>]*?\ssrc\s*=\s*["']([^"']+)["']/i, ns));
-  return { srcs, code: [...srcs, ...inline, ...fallbacks].join("\n") };
+  return { srcs, inline, fallbacks, code: [...srcs, ...inline, ...fallbacks].join("\n") };
 }
+
+/**
+ * Other tools, found by script host, loader call or known global only (a link to /posthog-mcp or
+ * the word "Hotjar" in text isn't a tag). tool: the slug in last_scan.tools; name: detected.other;
+ * ids: patterns whose group 1 is the tool's public id (project token, site id, ...).
+ */
+const OTHER_TOOLS: { tool: ToolSlug; name: string; re: RegExp; ids?: RegExp[] }[] = [
+  { tool: "hotjar", name: "Hotjar", re: /static\.hotjar\.com|\bhjid\s*:|\bwindow\.hj\b/, ids: [/\bhjid\s*:\s*(\d{4,12})\b/] },
+  {
+    tool: "clarity",
+    name: "Microsoft Clarity",
+    re: /clarity\.ms\/tag/,
+    ids: [/clarity\.ms\/tag\/([a-z0-9]{6,20})\b/, /["']clarity["']\s*,\s*["']script["']\s*,\s*["']([a-z0-9]{6,20})["']/],
+  },
+  {
+    tool: "plausible",
+    name: "Plausible",
+    re: /plausible\.io\/js|\bwindow\.plausible\b/,
+    ids: [/plausible\.io\/js\/(pa-[A-Za-z0-9_-]{6,40})\.js/],
+  },
+  {
+    tool: "segment",
+    name: "Segment",
+    re: /cdn\.segment\.com|\banalytics\.load\(/,
+    ids: [/cdn\.segment\.com\/analytics\.js\/v1\/([A-Za-z0-9]{10,64})\//, /\banalytics\.load\(\s*["']([A-Za-z0-9]{10,64})["']/],
+  },
+  {
+    tool: "posthog",
+    name: "PostHog",
+    re: /[./]posthog\.com\/|\bposthog\.init\(|\bwindow\.posthog\b|posthog-js/,
+    ids: [/\bposthog\.init\(\s*["'](phc_[A-Za-z0-9]{10,60})["']/],
+  },
+  { tool: "hubspot", name: "HubSpot", re: /js\.hs-scripts\.com|\bhbspt\.forms/, ids: [/js\.hs-scripts\.com\/(\d{3,12})\.js/] },
+  {
+    tool: "intercom",
+    name: "Intercom",
+    re: /widget\.intercom\.io|\bintercomSettings\b/,
+    ids: [/widget\.intercom\.io\/widget\/([a-z0-9]{6,12})\b/],
+  },
+  { tool: "linkedin", name: "LinkedIn Insight (script)", re: /snap\.licdn\.com/ },
+  {
+    tool: "snap",
+    name: "Snap Pixel",
+    re: /sc-static\.net\/scevent|\bsnaptr\(/,
+    ids: [/\bsnaptr\(\s*["']init["']\s*,\s*["']([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})["']/i],
+  },
+  { tool: "stripe", name: "Stripe.js", re: /js\.stripe\.com/ },
+  { tool: "calendly", name: "Calendly", re: /assets\.calendly\.com/ },
+  { tool: "typeform", name: "Typeform", re: /embed\.typeform\.com/ },
+  { tool: "fathom", name: "Fathom", re: /cdn\.usefathom\.com|\bwindow\.fathom\b|\bfathom\.track(?:Pageview|Event|Goal)\(/ },
+  { tool: "umami", name: "Umami", re: /\bumami\.is\/script\.js|analytics\.umami\.is|\bwindow\.umami\b|\bumami\.track\(/ },
+  {
+    tool: "matomo",
+    name: "Matomo",
+    re: /\/matomo\.js\b|\/piwik\.js\b|cdn\.matomo\.cloud|\b_paq\.push\(/,
+    ids: [/["']setSiteId["']\s*,\s*["']?(\d{1,8})\b/],
+  },
+  {
+    tool: "simple_analytics",
+    name: "Simple Analytics",
+    re: /scripts\.simpleanalyticscdn\.com|simpleanalytics\.com\/(?:latest|light|app)\.js|\bwindow\.sa_event\b|\bsa_event\(/,
+  },
+  { tool: "datafast", name: "DataFast", re: /datafa\.st\/js\/|\bwindow\.datafast\b|\bdatafast\(\s*["']/ },
+  {
+    tool: "mixpanel",
+    name: "Mixpanel",
+    re: /cdn\d?\.mxpnl\.com|\bmixpanel\.init\(|\bwindow\.mixpanel\b|mixpanel-2-latest/,
+    ids: [/\bmixpanel\.init\(\s*["']([a-f0-9]{32})["']/],
+  },
+  {
+    tool: "amplitude",
+    name: "Amplitude",
+    re: /cdn\.amplitude\.com|\bamplitude(?:\.getInstance\(\))?\.init\(|\bwindow\.amplitude\b/,
+    ids: [/\bamplitude(?:\.getInstance\(\))?\.init\(\s*["']([a-f0-9]{32})["']/, /cdn\.amplitude\.com\/script\/([a-f0-9]{32})\b/],
+  },
+  {
+    tool: "heap",
+    name: "Heap",
+    re: /cdn\.heapanalytics\.com|\bheap\.load\(|\bwindow\.heap\b/,
+    ids: [/\bheap\.load\(\s*["']?(\d{4,20})\b/, /heapanalytics\.com\/js\/heap-(\d{4,20})\.js/],
+  },
+  {
+    tool: "fullstory",
+    name: "FullStory",
+    re: /fullstory\.com\/s\/fs\.js|\b_fs_org\b|\bFullStory\.init\(/,
+    ids: [/\b_fs_org['"\]]*\s*=\s*["']([A-Za-z0-9-]{3,24})["']/, /\bFullStory\.init\(\s*\{\s*orgId\s*:\s*["']([A-Za-z0-9-]{3,24})["']/],
+  },
+  {
+    tool: "logrocket",
+    name: "LogRocket",
+    re: /cdn\.logrocket\.(?:io|com)|cdn\.lr-ingest\.(?:io|com)|cdn\.lr-in(?:-prod)?\.com|\bLogRocket\.init\(/,
+    ids: [/\bLogRocket\.init\(\s*["']([a-z0-9-]{2,40}\/[a-z0-9-]{2,40})["']/],
+  },
+];
+
+/** Slugs in last_scan.tools: a fixed set, so nothing in a stored scan is the page's own text. */
+export const TOOL_SLUGS = [
+  "gtm",
+  "ga4",
+  "google_ads",
+  "universal_analytics",
+  "meta",
+  "tiktok",
+  "linkedin",
+  "bing_uet",
+  "reddit",
+  "x",
+  "pinterest",
+  "snap",
+  "plausible",
+  "fathom",
+  "umami",
+  "matomo",
+  "simple_analytics",
+  "datafast",
+  "posthog",
+  "mixpanel",
+  "amplitude",
+  "segment",
+  "heap",
+  "hotjar",
+  "clarity",
+  "fullstory",
+  "logrocket",
+  "hubspot",
+  "intercom",
+  "stripe",
+  "calendly",
+  "typeform",
+] as const;
+export type ToolSlug = (typeof TOOL_SLUGS)[number];
+/** Analytics tools whose history the analytics app can import (and compare against). */
+export const ANALYTICS_TOOLS: readonly ToolSlug[] = [
+  "ga4",
+  "plausible",
+  "datafast",
+  "fathom",
+  "umami",
+  "matomo",
+  "simple_analytics",
+  "mixpanel",
+  "posthog",
+  "amplitude",
+  "heap",
+];
+/** Ad pixels: their ids go into tags and destinations (the credentials come from the owner). */
+export const AD_PIXEL_TOOLS: readonly ToolSlug[] = [
+  "google_ads",
+  "meta",
+  "tiktok",
+  "linkedin",
+  "bing_uet",
+  "reddit",
+  "x",
+  "pinterest",
+  "snap",
+];
+
+export interface ScanTool {
+  tool: ToolSlug;
+  /** The tool's public id (GTM-..., G-..., AW-..., a pixel or project id) when the page shows it. */
+  id?: string;
+  /** Where it was found: a <script src>, inline script code, or a <noscript> pixel fallback. */
+  where?: "script_src" | "inline_script" | "noscript";
+}
+/** container.last_scan. */
+export interface LastScan {
+  at: number;
+  url: string;
+  tools: ScanTool[];
+  /** This container's snippet, and our analytics snippet, were found. Never listed in tools. */
+  ours: { container: boolean; analytics: boolean };
+}
+export const MAX_SCAN_TOOLS = 50;
+export const MAX_TOOL_ID = 64;
+const TOOL_ID = /^[A-Za-z0-9][A-Za-z0-9_./:-]*$/;
 
 // ---------------------------------------------------------------- tags
 
@@ -228,23 +404,7 @@ export function detectTags(html: string | PageParts): DetectedTags {
   const reddit_pixel = all(/rdt\(\s*['"]init['"]\s*,\s*['"]((?:a2|t2)_[a-z0-9]+)['"]/, h);
   const x_pixel = uniq([...all(/twq\(\s*['"](?:config|init)['"]\s*,\s*['"]([a-z0-9]{4,10})['"]/, h)]);
   const pinterest_tag = all(/pintrk\(\s*['"]load['"]\s*,\s*['"](\d{8,16})['"]/, h);
-  const other: string[] = [];
-  // Script hosts, loader calls and globals only: a link to /posthog-mcp or the word "Hotjar" in text isn't a tag.
-  const otherTools: [RegExp, string][] = [
-    [/static\.hotjar\.com|\bhjid\s*:|\bwindow\.hj\b/, "Hotjar"],
-    [/clarity\.ms\/tag/, "Microsoft Clarity"],
-    [/plausible\.io\/js|\bwindow\.plausible\b/, "Plausible"],
-    [/cdn\.segment\.com|\banalytics\.load\(/, "Segment"],
-    [/[./]posthog\.com\/|\bposthog\.init\(|\bwindow\.posthog\b|posthog-js/, "PostHog"],
-    [/js\.hs-scripts\.com|\bhbspt\.forms/, "HubSpot"],
-    [/widget\.intercom\.io|\bintercomSettings\b/, "Intercom"],
-    [/snap\.licdn\.com/, "LinkedIn Insight (script)"],
-    [/sc-static\.net\/scevent|\bsnaptr\(/, "Snap Pixel"],
-    [/js\.stripe\.com/, "Stripe.js"],
-    [/assets\.calendly\.com/, "Calendly"],
-    [/embed\.typeform\.com/, "Typeform"],
-  ];
-  for (const [re, name] of otherTools) if (re.test(h)) other.push(name);
+  const other = OTHER_TOOLS.filter((t) => t.re.test(h) || toolAttrIds(parts, t.tool).length).map((t) => t.name);
   const our_containers = all(/\/c\/(ctr_[a-z0-9]{8,32})\.js/, h);
   // The analytics snippet: a real <script src=".../s.js" data-site="site_..."> (or a loader setting data-site).
   const our_analytics_sites = uniq([
@@ -307,6 +467,82 @@ export function detectTags(html: string | PageParts): DetectedTags {
     data_layer_events,
     gtag_consent_default: /gtag\(\s*['"]consent['"]\s*,\s*['"]default['"]/.test(h),
   };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const escapeRe = (s: string) => s.replace(/[.*+?^$|()[\]{}\\/-]/g, "\\$&");
+
+/** Ids some tools carry on their own <script src> element (data-site, data-website-id). */
+function toolAttrIds(parts: PageParts, tool: ToolSlug): string[] {
+  const out: string[] = [];
+  for (const s of parts.scripts) {
+    const src = s.attrs.src;
+    if (!src) continue;
+    const site = s.attrs["data-site"] ?? "";
+    const website = s.attrs["data-website-id"] ?? "";
+    const datafast = /datafa\.st\//.test(src) || /^dfid_/.test(website);
+    if (tool === "fathom" && /cdn\.usefathom\.com\//.test(src) && /^[A-Z0-9]{4,12}$/.test(site)) out.push(site);
+    if (tool === "datafast" && datafast && /^[A-Za-z0-9_-]{4,64}$/.test(website)) out.push(website);
+    // Umami's snippet (cloud or self-hosted) is a <script src> with a data-website-id UUID.
+    if (tool === "umami" && !datafast && UUID.test(website)) out.push(website.toLowerCase());
+  }
+  return uniq(out);
+}
+
+/**
+ * Every tool the page uses, as normalised slugs with their public ids (container.last_scan.tools).
+ * Only what detectTags reads (script src, inline code, known globals, noscript pixels) counts;
+ * our own container and analytics are never listed (last_scan.ours). Ids must look like ids
+ * (at most MAX_TOOL_ID characters of letters, digits and _ . / : -), else the tool is kept
+ * without one; at most MAX_SCAN_TOOLS entries.
+ */
+export function detectTools(html: string | PageParts, d: DetectedTags = detectTags(html)): ScanTool[] {
+  const parts = typeof html === "string" ? pageParts(html) : html;
+  const { srcs, inline, fallbacks } = codeOf(parts);
+  const sources = [
+    ["script_src", srcs.join("\n")],
+    ["inline_script", inline.join("\n")],
+    ["noscript", fallbacks.join("\n")],
+  ] as const;
+  const h = sources.map(([, s]) => s).join("\n");
+  const out: ScanTool[] = [];
+  const add = (tool: ToolSlug, ids: string[], re?: RegExp, onScriptTag: string[] = []) => {
+    const good = uniq(ids.filter((id) => id.length <= MAX_TOOL_ID && TOOL_ID.test(id)));
+    if (good.length) {
+      for (const id of good) {
+        if (out.some((t) => t.tool === tool && t.id === id)) continue;
+        // The id as a whole token: "3" (a Matomo site id) isn't found inside some other number.
+        const token = new RegExp(`(?<![A-Za-z0-9_-])${escapeRe(id)}(?![A-Za-z0-9_-])`);
+        const where = onScriptTag.includes(id) ? "script_src" : sources.find(([, s]) => token.test(s))?.[0];
+        out.push({ tool, id, ...(where ? { where } : {}) });
+      }
+      // An entry without an id for the same tool says less: drop it.
+      for (let i = out.length - 1; i >= 0; i--) if (out[i]!.tool === tool && !out[i]!.id) out.splice(i, 1);
+    } else if (!out.some((t) => t.tool === tool)) {
+      const where = re ? sources.find(([, s]) => re.test(s))?.[0] : undefined;
+      out.push({ tool, ...(where ? { where } : {}) });
+    }
+  };
+  const has = (ids: string[], tool: ToolSlug, re?: RegExp) => {
+    if (ids.length) add(tool, ids, re);
+  };
+  has(d.gtm, "gtm");
+  has(d.ga4, "ga4");
+  has(d.google_ads, "google_ads");
+  has(d.universal_analytics, "universal_analytics");
+  has(d.meta_pixel, "meta");
+  has(d.tiktok_pixel, "tiktok");
+  has(d.linkedin_insight, "linkedin");
+  has(d.microsoft_uet, "bing_uet", /bat\.bing\.com/);
+  has(d.reddit_pixel, "reddit");
+  has(d.x_pixel, "x");
+  has(d.pinterest_tag, "pinterest");
+  for (const t of OTHER_TOOLS) {
+    const attrIds = toolAttrIds(parts, t.tool);
+    if (!t.re.test(h) && !attrIds.length) continue;
+    add(t.tool, [...attrIds, ...(t.ids ?? []).flatMap((re) => all(re, h))], t.re, attrIds);
+  }
+  return out.slice(0, MAX_SCAN_TOOLS);
 }
 
 // ---------------------------------------------------------------- forms
@@ -587,15 +823,22 @@ export interface ScanResult {
   thank_you_candidates: string[];
   suggested_config: ContainerConfig;
   notes: string[];
+  /** What this scan found, as stored on the container (GET /v1/containers/:id -> container.last_scan). */
+  last_scan: LastScan;
 }
 
-export function analyze(pages: { url: string; html: string }[], containerId: string): Omit<ScanResult, "url" | "pages"> {
+export function analyze(
+  pages: { url: string; html: string }[],
+  containerId: string,
+): Omit<ScanResult, "url" | "pages" | "last_scan"> & { tools: ScanTool[] } {
   const read = pages.map((p) => ({ url: p.url, u: new URL(p.url), parts: pageParts(p.html) }));
-  const detected = detectTags({
+  const merged: PageParts = {
     markup: read.map((p) => p.parts.markup).join("\n"),
     scripts: read.flatMap((p) => p.parts.scripts),
     noscript: read.flatMap((p) => p.parts.noscript),
-  });
+  };
+  const detected = detectTags(merged);
+  const tools = detectTools(merged, detected);
   const forms = read.flatMap((p) => detectForms(p.parts, p.u.pathname));
   // A nav or footer link repeats on every page: listed once, on the first page it was seen.
   const ctas: CtaInfo[] = [];
@@ -644,6 +887,7 @@ export function analyze(pages: { url: string; html: string }[], containerId: str
     thank_you_candidates: thank,
     suggested_config: suggestConfig(detected, forms, ctas, thank),
     notes,
+    tools,
   };
 }
 
@@ -948,6 +1192,7 @@ export async function scanSite(
   }
   const home = fetched[0]!;
   const homepage = first.toString() === `https://${domain}/`;
+  const { tools, ...found } = analyze(ok, containerId);
   return {
     url: first.toString(),
     // snippet: this container's <script src> is on that page (tag coverage per scanned page).
@@ -959,6 +1204,17 @@ export async function scanSite(
       ...(p.error ? { error: p.error } : {}),
     })),
     snippet_on_homepage: homepage && homepageProof(home, domain, containerId),
-    ...analyze(ok, containerId),
+    ...found,
+    last_scan: lastScan(first.toString(), tools, found.detected, found.container_installed),
+  };
+}
+
+/** The record kept on the container: the scanned URL (ours, on the container's domain), slugs and ids. */
+export function lastScan(url: string, tools: ScanTool[], d: DetectedTags, installed: boolean, at = Date.now()): LastScan {
+  return {
+    at,
+    url: url.slice(0, 2048),
+    tools: tools.slice(0, MAX_SCAN_TOOLS),
+    ours: { container: installed, analytics: d.our_analytics_sites.length > 0 },
   };
 }

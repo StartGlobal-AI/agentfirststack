@@ -13,9 +13,12 @@ import {
   draftValidation,
   getContainerRow,
   installInstructions,
+  type LastImport,
+  lastImportOf,
   listContainers,
   liveConfig,
   publicContainer,
+  recordScan,
   snippet,
   updateContainer,
 } from "./containers";
@@ -36,7 +39,16 @@ import { assertRate } from "./ratelimit";
 import { checkDomain, dnsRecord, markVerified, verificationInfo } from "./verify";
 import type { ServerEvent } from "./ingest-schema";
 import type { RecipeInput } from "./recipe";
-import { MAX_FOLLOWED_LINKS, MAX_SCAN_PAGES, MAX_SCAN_PATHS, SCAN_PAGES_RULE, scanSite } from "./scan";
+import {
+  AD_PIXEL_TOOLS,
+  ANALYTICS_TOOLS,
+  type LastScan,
+  MAX_FOLLOWED_LINKS,
+  MAX_SCAN_PAGES,
+  MAX_SCAN_PATHS,
+  SCAN_PAGES_RULE,
+  scanSite,
+} from "./scan";
 import { applyRecipe } from "./setup";
 import {
   createPreview,
@@ -182,6 +194,40 @@ export const eventsQuery = z.object({
 
 const truthy = (v: unknown) => v === true || v === "true" || v === "1";
 
+/** The analytics app (for next_steps pointing there): this deployment's, else the hosted one. */
+const analyticsBase = (env: Bindings) => (env.ANALYTICS_BASE_URL || "https://analytics.agentfirststack.com").replace(/\/+$/, "");
+
+/**
+ * Moving the site over, per kind of tool the scan found: GTM (import it), analytics tools (import
+ * their history, keep them until compare is close) and ad pixels (ids into tags and destinations).
+ * Only tool slugs and GTM-[A-Z0-9] ids go into the text, never other page content.
+ */
+export function migrationSteps(env: Bindings, id: string, scan: LastScan, imported: LastImport | null): string[] {
+  const steps: string[] = [];
+  const found = new Set(scan.tools.map((t) => t.tool));
+  if (found.has("gtm")) {
+    const ids = scan.tools.flatMap((t) => (t.tool === "gtm" && t.id ? [t.id] : [])).join(", ");
+    steps.push(
+      imported?.format === "gtm"
+        ? `Google Tag Manager (${ids}) is still on the site; a GTM container was imported on ${new Date(imported.at).toISOString()} (container.last_import). Try the draft with POST /v1/containers/${id}/preview (its log shows which tags fired), publish, then remove GTM's snippet from the site in the same change, so its tags don't fire twice.`
+        : `Google Tag Manager (${ids}) is on the site. Bring its tags, triggers and variables over with POST /v1/containers/${id}/draft/import { "format": "gtm", "dry_run": true, "data": ... }: data is the export file (GTM Admin > Export Container), or the lists from the GTM API or Google's Tag Manager MCP server, { "tag": [...], "trigger": [...], "variable": [...] }. Dry run first (report.unmapped says what can't come over and what to use instead), then send it again without dry_run.`,
+    );
+  }
+  const analytics = ANALYTICS_TOOLS.filter((t) => found.has(t));
+  if (analytics.length) {
+    const a = analyticsBase(env);
+    steps.push(
+      `Analytics tools on the site (${analytics.join(", ")}): their history can be imported into analytics with POST ${a}/v1/sites/:id/imports (see the Imports section of ${a}/llms.txt). Keep each old tool collecting until GET ${a}/v1/sites/:id/imports/compare says close, then remove it.`,
+    );
+  }
+  const ads = AD_PIXEL_TOOLS.filter((t) => found.has(t));
+  if (ads.length)
+    steps.push(
+      `Ad pixels on the site (${ads.join(", ")}): their ids (last_scan.tools) go into tags (suggested_config has them) and server-side destinations (POST /v1/containers/${id}/destinations). Access tokens and API secrets aren't on the page: ask the owner for them.`,
+    );
+  return steps;
+}
+
 export const ops = {
   schema: () => schemaDocument(),
 
@@ -280,11 +326,15 @@ export const ops = {
     // The snippet on https://<domain>/ proves control of the domain (needed to publish custom code).
     let verified_at = row.verified_at ?? null;
     if (r.snippet_on_homepage && !verified_at) verified_at = await markVerified(o.env, id, "snippet");
+    // What the site uses now, for the setup check and the next agent (GET /v1/containers/:id).
+    await recordScan(o.env, id, r.last_scan);
     return {
       ...r,
       domain_verified: !!verified_at,
+      last_import: lastImportOf(row),
       next_steps: [
         ...(r.container_installed ? [] : [`Install the snippet: ${snippet(o.base, row.id)}`]),
+        ...migrationSteps(o.env, id, r.last_scan, lastImportOf(row)),
         `Review suggested_config, fill in what's missing, then PUT /v1/containers/${id}/draft (or use setup_conversion_tracking).`,
       ],
     };
@@ -399,6 +449,7 @@ export const ops = {
       written: r.written,
       revision: r.row.draft_revision,
       format: r.format,
+      ...(r.gtm ? { input_shape: r.gtm.shape } : {}),
       mode: r.mode,
       on_conflict: r.on_conflict,
       summary: r.changes.summary,
@@ -406,8 +457,9 @@ export const ops = {
       ...(report ? { report } : {}),
       changes: r.changes.changes,
       validation: r.validation,
-      ...(r.dry_run ? { config: r.config } : {}),
+      ...(r.dry_run ? { config: r.config } : { last_import: r.last_import }),
       next_steps: [
+        ...(r.gtm?.notes ?? []),
         ...(r.dry_run ? [`Looks right? Send the same body without dry_run to save it (POST /v1/containers/${id}/draft/import).`] : []),
         ...(report?.unmapped.length ? ["report.unmapped lists what wasn't imported, each with the reason and what to use instead."] : []),
         ...(r.format === "gtm"

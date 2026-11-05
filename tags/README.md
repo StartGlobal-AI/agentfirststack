@@ -225,11 +225,15 @@ tags. `custom_js` variables count as custom code too.
 `POST /draft/:kind/:key/revert`), each write guarded by the draft revision it read: without
 `?revision=` a change is re-applied on top of a newer draft, with it a stale revision is a 409.
 `GET /diff` compares any two of live, draft and a version, in plain words and JSON paths, and
-`GET /draft` includes `changes_vs_live`. `POST /draft/import` takes a GTM container export
-(mapped to this config, every GTM tag, trigger and variable reported as mapped, adapted with a
-note, or unmapped with the reason; at most 2 MB; custom HTML/JS stays custom code) or this
-platform's own JSON, merged by key (`on_conflict` overwrite, rename or skip) or replacing the
-draft, with `dry_run`; re-running an import changes nothing.
+`GET /draft` includes `changes_vs_live`. `POST /draft/import` takes a GTM container (the export
+file, a `containerVersion`, or the GTM API / Tag Manager MCP lists `{ tag, trigger, variable,
+builtInVariable?, customTemplate? }`, plural keys and list responses too, all normalised to the
+export's shape and mapped the same way; every GTM tag, trigger and variable reported as mapped,
+adapted with a note, or unmapped with the reason; at most 2 MB; custom HTML/JS stays custom code)
+or this platform's own JSON, merged by key (`on_conflict` overwrite, rename or skip) or replacing
+the draft, with `dry_run`; re-running an import changes nothing. The container remembers the
+last scan (`last_scan`: the tools the site used, as slugs with their public ids, never page text)
+and the last real import (`last_import`: format, mode and per-kind counts), migration 0009.
 
 A **conversion** is defined once. When its trigger fires the runtime creates one `event_id`,
 fires the matching client tags with it (gtag `transaction_id` when there's no order id, fbq
@@ -427,16 +431,16 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | POST | `/signup` | account + key (public) |
 | GET | `/schema` | JSON Schema for the config, tag/trigger/variable catalog with examples, destination credential schemas (public) |
 | POST, GET | `/containers` | `{ domain, name?, allowed_hostnames? }`; same domain returns existing |
-| GET, PATCH, DELETE | `/containers/:id` | GET includes destinations and last-24h stats; PATCH `{ name?, allowed_hostnames? }` |
+| GET, PATCH, DELETE | `/containers/:id` | GET includes destinations, last-24h stats and `container.last_scan` / `container.last_import` (null until there is one); PATCH `{ name?, allowed_hostnames? }` |
 | GET | `/containers/:id/install` | snippet, API guide and how to get the proxy configs; `?proxy=1` (full-access key) adds the first-party proxy configs (Cloudflare Worker, Next.js middleware, Vercel, netlify.toml, nginx) with the container's secret `proxy_key` |
-| POST | `/containers/:id/scan` | `{ url?, paths? (at most 5), follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; the homepage (or url) plus up to 5 paths, 6 pages at most, with up to 3 linked contact/signup/pricing pages filling the room left; 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics, PostHog/Hotjar/...; only from script src, inline code, globals and noscript pixels, never links or text), consent platforms, CMS, forms, CTAs (buttons outside forms, data-attribute and button-styled links, nav/header and outbound links, with kind, area and a selector), thank-you pages; text in `<pre>`, `<code>`, `<template>`, comments and escaped markup is ignored; suggested config |
+| POST | `/containers/:id/scan` | `{ url?, paths? (at most 5), follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; the homepage (or url) plus up to 5 paths, 6 pages at most, with up to 3 linked contact/signup/pricing pages filling the room left; 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics, Plausible, Fathom, Umami, Matomo, Simple Analytics, DataFast, PostHog, Mixpanel, Amplitude, Segment, Heap, Hotjar, Clarity, FullStory, LogRocket, ...; only from script src, inline code, globals and noscript pixels, never links or text; kept on the container as `last_scan`, with next_steps for bringing GTM, analytics history and ad pixels over), consent platforms, CMS, forms, CTAs (buttons outside forms, data-attribute and button-styled links, nav/header and outbound links, with kind, area and a selector), thank-you pages; text in `<pre>`, `<code>`, `<template>`, comments and escaped markup is ignored; suggested config |
 | POST | `/containers/:id/verify` | `{ method?: "auto"\|"dns"\|"snippet" }`: domain verification (needed to publish custom code), rate limited with scan |
 | POST | `/containers/:id/setup` | the `setup_conversion_tracking` recipe over REST |
 | GET, PUT, PATCH | `/containers/:id/draft` | full replace (PUT) or JSON merge patch (PATCH); optional `?revision=` guards concurrent edits; `413 draft_too_large` over `MAX_DRAFT_BYTES`; GET has `changes_vs_live` |
 | GET, PUT, DELETE | `/containers/:id/draft/:kind/:key` | one tag, trigger, variable or conversion (`?revision=` optional; without it the edit is re-applied on a newer draft) |
 | POST | `/containers/:id/draft/:kind/:key/revert` | copy the item back from the live version (or remove it) |
 | GET | `/containers/:id/diff` | `?from=live&to=draft` (or version numbers): summary, per-item changes with JSON paths |
-| POST | `/containers/:id/draft/import` | `{ format: "gtm"\|"afst", data\|config, mode?, on_conflict?, dry_run? }`: GTM container import or own JSON, with a mapped/adapted/unmapped report; 2 MB max |
+| POST | `/containers/:id/draft/import` | `{ format: "gtm"\|"afst", data\|config, mode?, on_conflict?, dry_run? }`: GTM container import (export file, containerVersion, or Tag Manager API lists) or own JSON; a real import sets `last_import`, with a mapped/adapted/unmapped report; 2 MB max |
 | POST | `/containers/:id/draft/validate` | errors and warnings with hints; optional `{ config }` validates without saving |
 | POST | `/containers/:id/preview` | `{ ttl_minutes?, path?, version? }` -> preview token + URL to open (`?afst_preview=`) |
 | GET | `/containers/:id/preview/:token/log` | the preview log: per event, triggers matched or why not, tags fired / waiting for consent / not fired and why (untrusted) |
