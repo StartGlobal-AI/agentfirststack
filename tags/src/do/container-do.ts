@@ -787,6 +787,10 @@ export class ContainerDO extends DurableObject<Bindings> {
     const over = this.overBudget(others, budgets, "browser", used, 1);
     if (over) return { ok: false, error: "quota", scope: over.scope, limit: over.limit };
     const live = !hit.preview_config;
+    // Test traffic (preview, ?afsa_debug=1, afst('test', true)) is logged as test and delivered in
+    // test mode; it never creates, updates or joins a visitor (so it can't lend one click ids,
+    // hashes or consent), and browser hits never link identities anyway.
+    const test = !!hit.test || !live;
     if (p.type === "tags") {
       // settings.report_tag_fires: one hit per page with per-tag counts (a browser event for quotas).
       this.bump(day, "browser_events", 1);
@@ -799,7 +803,7 @@ export class ContainerDO extends DurableObject<Bindings> {
       return { ok: true, event_id: eventId };
     }
     if (live) this.recordPage(p.page_url, now);
-    const visitor = p.visitor_id ? this.upsertVisitor(p.visitor_id, visitorUpdateFromHit(hit), now, caps.visitors) : null;
+    const visitor = p.visitor_id && !test ? this.upsertVisitor(p.visitor_id, visitorUpdateFromHit(hit), now, caps.visitors) : null;
 
     if (p.type === "visit") {
       const inserted = this.insertEvent({
@@ -813,7 +817,7 @@ export class ContainerDO extends DurableObject<Bindings> {
         transaction_id: null,
         value: null,
         currency: null,
-        preview: !!hit.preview_config,
+        preview: test,
         data: JSON.stringify({
           page_url: p.page_url,
           referrer: p.referrer,
@@ -864,7 +868,7 @@ export class ContainerDO extends DurableObject<Bindings> {
       transaction_id: event.transaction_id ?? null,
       value: event.value ?? null,
       currency: event.currency ?? null,
-      preview: !!hit.preview_config,
+      preview: test,
       // The log keeps no raw IP, user agent, city or postal code (src/service/privacy.ts); the
       // queue messages enqueued below carry them for delivery only.
       data: JSON.stringify(eventForLog(event)),
@@ -978,6 +982,10 @@ export class ContainerDO extends DurableObject<Bindings> {
       if (visitorId && !inherit)
         notes.push(
           `Joined by ${by}: the visitor's consent and click ids aren't inherited through a ${by} join. Pass consent and click_ids in the event, or the browser's visitor_id.`,
+        );
+      if (opts.test && ev.visitor_id && !inherit)
+        notes.push(
+          `No stored visitor ${ev.visitor_id}: browser test traffic (preview, ?afsa_debug=1, afst('test', true)) never stores one, and real hits store one only when consent allows a visitor id. Pass click_ids, fbp/fbc and consent in the test event to test with them.`,
         );
       const note = notes.length ? notes.join(" ") : undefined;
       let planned = this.plannedResults(targets, now);
@@ -1101,6 +1109,8 @@ export class ContainerDO extends DurableObject<Bindings> {
       value: r.value,
       currency: r.currency,
       preview: !!r.preview,
+      // The clearer name for the same flag: preview hits, browser test traffic, test: true backend events.
+      test: !!r.preview,
       status: r.status,
       ...(r.note ? { note: r.note } : {}),
       ...(isConversion

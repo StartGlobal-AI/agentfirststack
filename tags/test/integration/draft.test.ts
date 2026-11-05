@@ -194,6 +194,22 @@ describe("preview log", () => {
     expect(log.body.untrusted.events[0]).toMatchObject({ event: "page_view", tags: [{ id: "ga4", status: "fired" }] });
     expect((await api("GET", `/v1/containers/${C}/preview/prv_bbbbbbbbbbbbbbbbbbbbbbbb/log`)).status).toBe(404);
   });
+
+  it("an expired or invalid preview link loads the live container and keeps the tab test traffic", async () => {
+    const { api, C } = await container("plog-expired.test");
+    await api("PUT", `/v1/containers/${C}/draft`, base);
+    await api("POST", `/v1/containers/${C}/publish`, {});
+    const js = await (await SELF.fetch(`${B}/c/${C}.js?preview=prv_cccccccccccccccccccccccc`)).text();
+    expect(js).toContain(`sessionStorage.removeItem("_afst_preview_${C}")`);
+    expect(js).toContain(`sessionStorage.setItem("afsa_debug","1")`);
+    expect(js).toContain("loading the live container as test traffic");
+    // Its hits, which still carry the dead token, are test traffic: logged as test, never stored as a visitor.
+    const r = await json(
+      await hit(C, "plog-expired.test", { type: "visit", preview: "prv_cccccccccccccccccccccccc", visitor_id: "vis_expired_1" }),
+    );
+    expect(r).toMatchObject({ ok: true, test: true });
+    expect((await api("GET", `/v1/containers/${C}/visitors/vis_expired_1`)).status).toBe(404);
+  });
 });
 
 describe("versions, environments and previews of a version", () => {
@@ -265,6 +281,34 @@ describe("tag telemetry and coverage", () => {
     expect(JSON.stringify(st.body)).not.toContain("made_up");
     const cov = await api("GET", `/v1/containers/${C}/coverage`);
     expect(cov.body.untrusted.pages).toEqual([expect.objectContaining({ host: "stats.test", path: "/pricing", hits: 2 })]);
+  });
+
+  it("a pixel that would have fired on test traffic counts as test_skipped and isn't listed in never_fired", async () => {
+    const { api, C } = await container("stats-test.test");
+    await api("PUT", `/v1/containers/${C}/draft`, {
+      triggers: base.triggers,
+      tags: [
+        ...base.tags,
+        { id: "meta", type: "meta_pixel", params: { pixel_id: "1234567890123456" }, triggers: ["all_pages"] },
+        { id: "quiet", type: "tiktok_pixel", params: { pixel_id: "C1A2B3C4D5E6F7G8H9I0" }, triggers: ["all_pages"] },
+      ],
+      settings: { report_tag_fires: true },
+    });
+    expect((await api("POST", `/v1/containers/${C}/publish`, {})).status).toBe(201);
+    // What a tab with ?afsa_debug=1 sends: the pixels as test_skipped, test: 1.
+    const fires = [
+      { tag_id: "ga4", status: "test_skipped", n: 2 },
+      { tag_id: "meta", status: "test_skipped", n: 2 },
+    ];
+    const r = await hit(C, "stats-test.test", { type: "tags", fires, test: 1, page_url: "https://stats-test.test/?afsa_debug=1" });
+    expect(r.status).toBe(200);
+    expect((await json(r)).test).toBe(true);
+    const st = await api("GET", `/v1/containers/${C}/tag-stats?since=1d`);
+    const by = Object.fromEntries((st.body.tags as { tag_id: string }[]).map((t) => [t.tag_id, t]));
+    expect(by.meta).toMatchObject({ fired: 0, test_skipped: 2 });
+    expect(by.ga4).toMatchObject({ fired: 0, test_skipped: 2 });
+    expect(st.body.never_fired).toEqual(["quiet"]);
+    expect(st.body.note).toContain("test_skipped");
   });
 });
 

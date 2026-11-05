@@ -362,7 +362,10 @@ const tagBase = {
     })
     .optional()
     .describe("Fire only between start and end (unix ms or ISO 8601), checked in the browser."),
-  live_only: z.boolean().optional().describe("Skip in preview (e.g. tags that would record real data)."),
+  live_only: z
+    .boolean()
+    .optional()
+    .describe("Skip in preview and other test traffic (?afsa_debug=1, afst('test', true)), e.g. tags that would record real data."),
   after: z
     .strictObject({
       tag: ident.describe("Setup tag id: it fires first (even if its own triggers didn't), and this tag waits for its scripts."),

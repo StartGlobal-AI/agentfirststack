@@ -187,8 +187,10 @@ export async function serveScript(
         });
       }
     }
-    // Expired/invalid token: clear the preview flag and fall through to the live container.
-    const prelude = `try{sessionStorage.removeItem(${JSON.stringify(`_afst_preview_${id}`)})}catch(e){}console.warn("[afst] preview link expired or invalid; loading the live container. Create a new one with POST /v1/containers/${id}/preview.");\n`;
+    // Expired/invalid token: clear the preview flag and fall through to the live container. The tab
+    // was previewing, so it stays test traffic (sessionStorage afsa_debug, the flag the runtime and
+    // the analytics tracker share): its clicks never become real conversions.
+    const prelude = `try{sessionStorage.removeItem(${JSON.stringify(`_afst_preview_${id}`)});sessionStorage.setItem("afsa_debug","1")}catch(e){}console.warn("[afst] preview link expired or invalid; loading the live container as test traffic for this tab (?afsa_debug=0 ends that). Create a new link with POST /v1/containers/${id}/preview.");\n`;
     const live = await serveLive(env, runtime, req, ctx);
     if (live.status !== 200) return live;
     return new Response(prelude + (await live.text()), { headers: { ...JS_HEADERS, "cache-control": "no-store" } });

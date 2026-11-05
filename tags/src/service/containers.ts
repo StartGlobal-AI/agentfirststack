@@ -225,6 +225,10 @@ export function installInstructions(base: string, row: Pick<ContainerRow, "id" |
         "The visitor id; send it to your backend so server events (POST /v1/containers/:id/events) join to this visitor.",
       "afst('get', 'event_id')":
         "The last conversion's event_id; pass it as event_id in the matching server event so Meta/TikTok dedupe it against the pixel.",
+      "afst('test', true)":
+        "Mark this tab as test traffic (same as opening a page with ?afsa_debug=1; afst('test', false) or ?afsa_debug=0 ends it): ad pixels don't fire in the browser and conversions reach the platforms only in their test mode.",
+      "afst('get', 'test')":
+        "true in test traffic (preview, ?afsa_debug=1, afst('test', true)); custom_html / custom_js tags still run there and can check it.",
     },
     privacy:
       "By default (settings.respect_dnt) the snippet does nothing in a browser that sends Global Privacy Control or Do Not Track: no tags, no /collect hits, no cookies. Install the plain snippet; no loader is needed for that.",
@@ -233,6 +237,7 @@ export function installInstructions(base: string, row: Pick<ContainerRow, "id" |
       `POST /v1/containers/${id}/scan confirms the snippet is on ${row.domain}.`,
       `GET /v1/containers/${id} shows stats.last_24h.visits once pages load.`,
       `GET /v1/containers/${id}/events?include_visits=true shows each hit.`,
+      `Click through the site as a visitor with ?afsa_debug=1 on the first page: the tab is test traffic (ad pixels don't fire, conversions go to the platforms in test mode, events are logged with test: true).`,
     ],
   };
 }

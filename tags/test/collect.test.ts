@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clientIpFrom, deviceFrom, identityCookies } from "../src/service/collect";
+import { automatedBrowser, clientIpFrom, deviceFrom, identityCookies, isTestHit } from "../src/service/collect";
 import { installInstructions } from "../src/service/containers";
 import { fromTrustedProxy, PROXY_KEY_HEADER, proxyKey } from "../src/service/proxy";
 import { collectSchema } from "../src/service/ingest-schema";
@@ -86,6 +86,27 @@ describe("/collect helpers", () => {
     expect(js).not.toContain("</script>");
     expect(js).toContain("\\u003c/script>");
     expect(js.startsWith("/* AgentFirstStack tags ctr_abcdefgh12345678 v1 */")).toBe(true);
+  });
+  it("test traffic: the runtime's flag, any preview token (even an expired one), or ?afsa_debug=1 in the page URL", () => {
+    const base = { container_id: "ctr_abcdefgh12345678", type: "visit" as const, page_url: "https://shop.test/" };
+    expect(isTestHit(collectSchema.parse({ ...base, test: 1 }))).toBe(true);
+    expect(isTestHit(collectSchema.parse({ ...base, test: true }))).toBe(true);
+    expect(isTestHit(collectSchema.parse({ ...base, preview: "prv_expiredexpiredexpired00" }))).toBe(true);
+    expect(isTestHit(collectSchema.parse({ ...base, page_url: "https://shop.test/p?utm_source=x&afsa_debug=1#top" }))).toBe(true);
+    expect(isTestHit(collectSchema.parse(base))).toBe(false);
+    expect(isTestHit(collectSchema.parse({ ...base, test: 0 }))).toBe(false);
+    expect(isTestHit(collectSchema.parse({ ...base, page_url: "https://shop.test/?afsa_debug=0" }))).toBe(false);
+    expect(isTestHit(collectSchema.parse({ ...base, page_url: "https://shop.test/?no_afsa_debug=1" }))).toBe(false);
+    expect(() => collectSchema.parse({ ...base, test: "yes" })).toThrow();
+  });
+  it("an automated browser is one whose user agent says Headless and nothing else bot-like", () => {
+    expect(
+      automatedBrowser("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/130.0.0.0 Safari/537.36"),
+    ).toBe(true);
+    expect(automatedBrowser("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36")).toBe(false);
+    expect(automatedBrowser("Mozilla/5.0 (compatible; Googlebot/2.1) HeadlessChrome/130.0")).toBe(false);
+    expect(automatedBrowser("HeadlessChrome/130 Lighthouse")).toBe(false);
+    expect(automatedBrowser("Mozilla/5.0 (compatible; SemrushBot/7)")).toBe(false);
   });
 });
 

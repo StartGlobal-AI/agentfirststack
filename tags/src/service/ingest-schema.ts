@@ -41,7 +41,8 @@ export const traceEntrySchema = z.object({
 });
 export type TraceEntryPayload = z.infer<typeof traceEntrySchema>;
 
-export const TAG_FIRE_STATUSES = ["fired", "blocked", "error", "skipped", "excluded"] as const;
+/** test_skipped: an ad or vendor pixel that would have fired, on test traffic (it doesn't run there). */
+export const TAG_FIRE_STATUSES = ["fired", "blocked", "error", "skipped", "excluded", "test_skipped"] as const;
 
 /** What the browser runtime POSTs to /collect (text/plain JSON, no preflight). */
 export const collectSchema = z.object({
@@ -110,6 +111,8 @@ export const collectSchema = z.object({
   first_party: z.boolean().optional(),
   cookie_domain: z.string().max(253).optional(),
   preview: z.string().max(100).optional(),
+  /** Test traffic (?afsa_debug=1 for the tab, afst('test', true), preview): delivered in test mode, never stored as a visitor. */
+  test: z.union([z.boolean(), z.literal(0), z.literal(1)]).optional(),
 });
 export type CollectPayload = z.infer<typeof collectSchema>;
 

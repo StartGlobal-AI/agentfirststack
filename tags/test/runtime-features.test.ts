@@ -107,19 +107,13 @@ describe("variable cycles", () => {
         {
           variables: [{ name: "loop", type: "param_set", params: { again: "{{loop}}" } }],
           triggers: [allPages],
-          tags: [
-            {
-              id: "g",
-              type: "ga4",
-              params: { measurement_id: "G-ABC123XYZ", event_name: "x", event_params_from: "loop" },
-              triggers: ["all_pages"],
-            },
-          ],
+          // A custom_html tag templating the cycle (ad pixels don't run in preview: it's test traffic).
+          tags: [{ id: "h", type: "custom_html", params: { html: "<i>{{loop}}</i>" }, triggers: ["all_pages"] }],
         },
         { preview: "prv_abcdefghijklmnopqrstuvwx" },
       ),
     );
-    expect(gtagCalls(b.win).some((c) => c[0] === "event" && c[1] === "x")).toBe(true);
+    expect(b.doc.body.children.some((c) => c.attrs["data-afst-tag"] === "h")).toBe(true);
   });
 });
 
@@ -274,7 +268,7 @@ describe("tag options", () => {
     expect(skips).toEqual(
       expect.arrayContaining([
         "tag expired: outside its schedule",
-        "tag live: live_only: not fired in preview",
+        "tag live: live_only: not fired in test traffic (preview, ?afsa_debug=1)",
         "tag html: custom_html is blocked on this page (data-afst-block)",
       ]),
     );

@@ -16,8 +16,8 @@ export interface VendorHost {
   base: string;
   analyticsBase?: string;
   debug: boolean;
-  /** The boot config: preview builds mark analytics traffic as test traffic. */
-  boot: { preview?: string };
+  /** Test traffic (preview, ?afsa_debug=1, afst('test', true)): the analytics tag marks it as analytics test traffic. */
+  readonly test: boolean;
   loadScript(src: string, attrs?: Record<string, string>): void;
   scriptStatus(src: string): "pending" | "loaded" | "error" | undefined;
   gtag(...args: unknown[]): void;
@@ -286,10 +286,11 @@ function ensureAnalytics(h: VendorHost, siteId: string, base?: string) {
   const key = `analytics:${siteId}`;
   if (!h.state.inited[key]) {
     h.state.inited[key] = true;
-    // Preview traffic is analytics' test traffic (left out of reports): afsa('debug') before anything
-    // is sent, and data-debug for the tracker's own first pageview.
-    if (h.boot.preview) (w.afsa as AnyFn)("debug");
-    if (b) h.loadScript(`${b}/s.js`, { "data-site": siteId, defer: "", ...(h.boot.preview ? { "data-debug": "true" } : {}) });
+    // Test traffic (preview, ?afsa_debug=1, afst('test', true)) is analytics' test traffic (left out
+    // of reports): afsa('debug') before anything is sent, and data-debug for the tracker's own first pageview.
+    const test = h.test;
+    if (test) (w.afsa as AnyFn)("debug");
+    if (b) h.loadScript(`${b}/s.js`, { "data-site": siteId, defer: "", ...(test ? { "data-debug": "true" } : {}) });
     else h.log("error", "analytics tag: no base_url and no ANALYTICS_BASE_URL configured");
   }
   return w.afsa as AnyFn;

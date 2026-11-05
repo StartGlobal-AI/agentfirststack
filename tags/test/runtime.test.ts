@@ -238,7 +238,7 @@ describe("runtime: served /c/:id.js in a simulated browser", () => {
     expect(fbqCalls(b.win).some((c) => c[2] === "PageView")).toBe(true);
   });
 
-  it("preview: ?afst_preview hands off to the draft build; the draft build runs with debug logging", () => {
+  it("preview: ?afst_preview hands off to the draft build; the draft build runs with debug logging, as test traffic", () => {
     const b = browser("https://shop.test/?afst_preview=prv_abcdefghijklmnopqrstuvwx");
     b.run(serve(purchaseConfig));
     expect(b.scripts()).toContain(`${BASE}/c/${CID}.js?preview=prv_abcdefghijklmnopqrstuvwx`);
@@ -246,10 +246,16 @@ describe("runtime: served /c/:id.js in a simulated browser", () => {
     expect(b.session[`_afst_preview_${CID}`]).toBe("prv_abcdefghijklmnopqrstuvwx");
 
     b.run(serve(purchaseConfig, { preview: "prv_abcdefghijklmnopqrstuvwx" }));
-    expect(fbqCalls(b.win).some((c) => c[2] === "PageView")).toBe(true);
-    const log = b.win.__afst_debug as { msg: string }[];
+    // Preview is test traffic: the ad pixels would fire but don't run in the browser.
+    expect(b.win.fbq).toBeUndefined();
+    expect(b.win.ttq).toBeUndefined();
+    const log = b.win.__afst_debug as { kind: string; msg: string }[];
     expect(log.some((l) => l.msg.includes("PREVIEW"))).toBe(true);
-    expect(b.fetches.find((f) => f.body.type === "visit")!.body.preview).toBe("prv_abcdefghijklmnopqrstuvwx");
+    expect(log.some((l) => l.kind === "skip" && l.msg.startsWith("tag meta (meta_pixel): test traffic"))).toBe(true);
+    const visit = b.fetches.find((f) => f.body.type === "visit")!.body;
+    expect(visit.preview).toBe("prv_abcdefghijklmnopqrstuvwx");
+    expect(visit.test).toBe(1);
+    expect((b.win.afst as (c: string, a: string) => unknown)("get", "test")).toBe(true);
   });
 
   it("first-party proxy: posts to <prefix>/collect next to the script", () => {

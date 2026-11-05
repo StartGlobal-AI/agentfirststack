@@ -58,7 +58,7 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
   pick up the new version within 60 s. Before the first publish the script serves the runtime
   with an empty config (so preview works). `?preview=<token>` serves the draft (or the version
   the preview was made for) with debug logging and `no-store`; an expired token falls back to the
-  live script and clears the flag. `?env=<token>` serves an environment's pinned version (or
+  live script, clears the flag and keeps the tab test traffic (sessionStorage `afsa_debug`). `?env=<token>` serves an environment's pinned version (or
   the draft), cached 60 s in the browser; an invalid token falls back to live.
 - **ContainerDO** (one per container, SQLite): `meta` (copy of the container, live config and
   destination list, pushed by the control plane on create/publish/rollback/destination
@@ -84,8 +84,8 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
   the database passes `MAX_CONTAINER_DB_BYTES` (see "Abuse and cost controls").
   Also `preview_log` (what preview builds post: per event, triggers matched and tags fired or
   not, with reasons; 500 entries per token, 48 h), `tag_stats` (per-tag fired/blocked/error/
-  skipped counts per day from `settings.report_tag_fires`, only the live config's tag ids, 30
-  days) and `pages` (host + path coverage of live hits, at most 1000 rows, 30 days).
+  skipped/excluded/test_skipped counts per day from `settings.report_tag_fires`, only the live
+  config's tag ids, 30 days) and `pages` (host + path coverage of live hits, at most 1000 rows, 30 days).
   Storage is created only when the control plane syncs a container (create, publish,
   rollback, destination change, or a resync of an id that exists in D1): `/collect` for an id
   nobody created answers 404 and writes nothing.
@@ -323,15 +323,45 @@ line in `src/destinations/index.ts`.
 (Microsoft Advertising server-side conversions aren't built yet: its UET Conversions API is
 documented but still rolling out. UET conversions are browser-only for now.)
 
-**Test traffic** (preview hits, backend events with `test: true`, destination tests) is never
-delivered as a real conversion. Each connector uses its platform's test mechanism (GA4's
+**Test traffic** (browser test traffic, backend events with `test: true`, destination tests) is
+never delivered as a real conversion. Each connector uses its platform's test mechanism (GA4's
 validation server, Google Ads `validateOnly`, Meta/TikTok `test_event_code`, Reddit `test_id`,
 Pinterest `?test=true`, Snap `/validate`, analytics `debug: true`, webhook `"test": true`); where
 there is none (Meta/TikTok/Reddit without a test code, LinkedIn and X always) the delivery is
 skipped with `test event, no test mode configured: <how to set one up>` and the destination test
-answers 400 (`test_event_code_required` / `no_test_mode`) without sending anything. In preview the
-`analytics` tag calls `afsa('debug')` and loads the tracker with `data-debug`, so preview hits are
-analytics test traffic too.
+answers 400 (`test_event_code_required` / `no_test_mode`) without sending anything.
+
+**Browser test traffic** is how an agent (or a person) clicks through the site like a visitor
+without making a real conversion. A tab is test traffic when:
+
+- a page was opened with `?afsa_debug=1`: the runtime stores `afsa_debug = "1"` in sessionStorage,
+  the same key and values the analytics tracker uses (and replay reads), so a flag set by either
+  script holds for both, for the rest of the tab; `?afsa_debug=0` stores `"0"` and ends it;
+- `afst('test', true)` was called (`afst('test', false)` ends it; both also call
+  `afsa('debug', ...)` when the analytics tracker is on the page); `afst('get', 'test')` reads it;
+- it runs a preview link (an expired link loads the live container and sets the tab flag).
+
+In test traffic the ad and vendor pixel tags (`ga4`, `google_ads`, `meta_pixel`, `tiktok_pixel`,
+`linkedin_insight`, `microsoft_uet`, `reddit_pixel`, `x_pixel`, `pinterest_tag`, `snap_pixel`,
+`image_pixel`), and conversions through them, don't fire. Each is reported as would-have-fired:
+`test_skipped` in the preview log (reason "test traffic: ad pixels don't fire in the browser; the
+server-side conversion is sent in test mode") and in `GET /tag-stats`, where such a tag isn't
+listed in `never_fired`. The `analytics` tag still runs and calls `afsa('debug')` first (and loads
+the tracker with `data-debug`), so those visits are analytics test traffic; `custom_html` and
+`custom_js` still run (the owner's code can check `afst('get','test')`); `live_only` tags are
+skipped. Every `/collect` hit carries `test: 1`.
+
+The server treats a hit as test when it carries `test`, any preview token (valid or not, so a
+token that expires mid-session doesn't turn the rest of it into real conversions), or
+`afsa_debug=1` in its `page_url` (as analytics does). Its conversions go to each destination's
+test mode or are skipped as above, analytics gets `debug: true`, webhooks `"test": true`, the
+event log row has `test: true` (`preview` is the older name for the same flag) and `/collect`
+answers `test: true`. Test hits never create, update or join a visitor (browser hits never link
+identities either); a test backend event naming such a `visitor_id` gets a note saying why it
+didn't join. They count toward the usual rate limits, quotas and budgets. A test hit from a
+headless browser (a user agent saying `Headless` and nothing else bot-like: Playwright,
+Puppeteer) is kept, as analytics does; without the flag it's dropped as a bot, and crawlers are
+dropped either way.
 
 Credentials are sealed with AES-GCM (`ENCRYPTION_KEY`) and never returned (responses show
 `"configured": true` plus non-secret ids). Creating a destination with the same platform id
@@ -383,8 +413,8 @@ id), it's logged but not sent server-side again.
 
 Runtime extras: GTM-compatible `dataLayer` (existing entries processed, `push` wrapped, objects
 deep-merge into the model, arrays replace, `eventCallback` honoured when GTM isn't present,
-`gtm.*` events ignored), `afst('event'|'consent'|'identify'|'get'|'debug', ...)` with a queue
-stub, CMPs calling `gtag('consent','update', ...)` are followed, Consent Mode v2 default/update
+`gtm.*` events ignored), `afst('event'|'consent'|'identify'|'get'|'debug'|'test', ...)` with a
+queue stub, CMPs calling `gtag('consent','update', ...)` are followed, Consent Mode v2 default/update
 passed to gtag, Meta/TikTok/UET consent APIs called on change, tags blocked by consent queue and
 fire once granted, Consent Mode v1-style updates (only `ad_storage`) carry `ad_user_data` and
 `ad_personalization` along, `history_change` starts a new "page" for `once_per_page`, debug log
@@ -428,7 +458,8 @@ Also from `@afs/shared`: `GET /v1/me`, `GET|POST /v1/keys`, `DELETE /v1/keys/:id
 Public (no key): `GET /c/:id.js` (header `x-afs-version: <live version>`; 403 for a suspended
 account), `POST /collect` (text/plain JSON, no preflight; the page host must be the container's
 domain, a subdomain or an `allowed_hostnames` entry (no wildcards over public suffixes like
-`*.com`); an unknown container id gets 404; known bots are ignored except preview traffic;
+`*.com`); an unknown container id gets 404; known bots are ignored except preview traffic and
+test traffic from a headless browser;
 `429 rate_limited` past the edge limits, `429 quota_exceeded` past the daily event quota,
 `507 storage_full`, `403 account_suspended`), both under any path prefix for proxying,
 `GET /llms.txt`.

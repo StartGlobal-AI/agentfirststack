@@ -911,3 +911,154 @@ describe("test and preview traffic never reaches a platform as a real conversion
     expect(toAnalytics[0]!.body!.events![0]!.props).not.toHaveProperty("test");
   });
 });
+
+describe("browser test traffic (?afsa_debug=1, afst('test', true)) is delivered like preview", () => {
+  it("a /collect conversion with test: 1 uses each platform's test mode or is skipped; analytics gets debug, webhooks test: true; no visitor is stored", async () => {
+    const platform: { url: string; body: Record<string, unknown> }[] = [];
+    const prior = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (/graph\.facebook\.com|api\.linkedin\.com/.test(url)) {
+        platform.push({ url, body: JSON.parse(String(init?.body)) });
+        return new Response('{"events_received":1}', { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return prior(input, init);
+    });
+    const t = await liveContainer("testtraffic.test");
+    const add = async (type: string, credentials: Record<string, unknown>) => {
+      const r = await t.api("POST", `/v1/containers/${t.C}/destinations`, { type, credentials });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.destination.id as string;
+    };
+    const metaCoded = await add("meta", { pixel_id: "3333333333333333", access_token: "meta-test-token-0000", test_event_code: "TEST456" });
+    const metaBare = await add("meta", { pixel_id: "4444444444444444", access_token: "meta-test-token-0000" });
+    const linkedin = await add("linkedin", { ad_account_id: "512345679", access_token: "linkedin-test-token-0000" });
+    const send_to = { analytics: { event_name: "purchase" }, meta: { event_name: "Lead" }, linkedin: { conversion_id: "1234567" } };
+    const draft = { triggers: purchaseDraft.triggers, conversions: [{ ...purchaseDraft.conversions[0], send_to }] };
+    expect((await t.api("PUT", `/v1/containers/${t.C}/draft`, draft)).status).toBe(200);
+    expect((await t.api("POST", `/v1/containers/${t.C}/publish`, {})).status).toBe(201);
+    const ip = { "cf-connecting-ip": "203.0.113.7" };
+
+    // A real visit stores its visitor; a test visit (or conversion) never does.
+    expect((await t.hit({ type: "visit", visitor_id: "vis_real_tt1", page_url: "https://testtraffic.test/" }, ip)).status).toBe(200);
+    expect((await t.api("GET", `/v1/containers/${t.C}/visitors/vis_real_tt1`)).status).toBe(200);
+    const visit = await json(
+      await t.hit(
+        {
+          type: "visit",
+          test: 1,
+          visitor_id: "vis_test_tt1",
+          click_ids: { gclid: "TEST-GCLID-1" },
+          page_url: "https://testtraffic.test/?afsa_debug=1",
+        },
+        ip,
+      ),
+    );
+    expect(visit).toMatchObject({ ok: true, test: true });
+    const conv = await json(
+      await t.hit(
+        {
+          type: "conversion",
+          test: 1,
+          event_id: "tt_evt_1",
+          name: "purchase",
+          value: 12,
+          currency: "USD",
+          visitor_id: "vis_test_tt1",
+          click_ids: { gclid: "TEST-GCLID-1" },
+          page_url: "https://testtraffic.test/thanks",
+        },
+        ip,
+      ),
+    );
+    expect(conv).toMatchObject({ ok: true, test: true, event_id: "tt_evt_1" });
+    expect((await t.api("GET", `/v1/containers/${t.C}/visitors/vis_test_tt1`)).status).toBe(404);
+
+    const [ev] = (await settled(t.api, t.C, 1)) as unknown as {
+      event_id: string;
+      test: boolean;
+      preview: boolean;
+      identity: { visitor_id: string; click_ids: string[] };
+      destinations: { destination_id: string; type: string; status: string; reason?: string }[];
+    }[];
+    expect(ev).toMatchObject({ event_id: "tt_evt_1", source: "browser", test: true, preview: true });
+    // What the hit itself carried (no stored visitor was joined).
+    expect(ev!.identity).toMatchObject({ visitor_id: "vis_test_tt1", click_ids: ["gclid"] });
+    const by = Object.fromEntries(ev!.destinations.map((d) => [d.destination_id, d]));
+    expect(by[metaCoded]!.status).toBe("delivered");
+    expect(by[metaBare]).toMatchObject({
+      status: "skipped",
+      reason: expect.stringMatching(/^test event, no test mode configured: .*test_event_code/),
+    });
+    expect(by[linkedin]).toMatchObject({
+      status: "skipped",
+      reason: expect.stringMatching(/^test event, no test mode configured: .*no test mode/),
+    });
+    expect(
+      ev!.destinations
+        .filter((d) => d.type === "analytics" || d.type === "webhook")
+        .map((d) => d.status)
+        .sort(),
+    ).toEqual(["delivered", "delivered"]);
+    // Only the coded pixel was called, with its test_event_code; nothing reached LinkedIn.
+    expect(platform.map((p) => new URL(p.url).pathname)).toEqual([expect.stringContaining("/3333333333333333/events")]);
+    expect(platform[0]!.body.test_event_code).toBe("TEST456");
+    const hook = sent.find((s) => s.url === "https://hooks.test/testtraffic.test")!;
+    expect(hook.body).toMatchObject({ type: "conversion", test: true, event: { event_id: "tt_evt_1", test: true } });
+    const an = sent.find((s) => s.url.startsWith("https://analytics.test/"))!;
+    expect((an.body.events as Record<string, unknown>[])[0]).toMatchObject({ name: "purchase", debug: true });
+
+    // The event log flags the test visit too; the real one isn't.
+    const all = (await t.api("GET", `/v1/containers/${t.C}/events?include_visits=true&limit=200`)).body.events as {
+      type: string;
+      visitor_id: string;
+      test: boolean;
+      preview: boolean;
+    }[];
+    expect(all.find((e) => e.type === "visit" && e.visitor_id === "vis_test_tt1")).toMatchObject({ test: true, preview: true });
+    expect(all.find((e) => e.type === "visit" && e.visitor_id === "vis_real_tt1")).toMatchObject({ test: false, preview: false });
+
+    // A test backend event naming that visitor is told why it didn't join.
+    const srv = await t.api("POST", `/v1/containers/${t.C}/events`, {
+      test: true,
+      events: [{ name: "purchase", order_id: "TT-1", value: 1, currency: "USD", visitor_id: "vis_test_tt1", consent: granted }],
+    });
+    expect(srv.body.results[0]).toMatchObject({ joined: { by: null }, note: expect.stringContaining("No stored visitor vis_test_tt1") });
+    await settled(t.api, t.C, 2); // let its deliveries finish while the platforms are still mocked
+  });
+
+  it("a headless browser is kept when its hit is test traffic; without the flag, and for crawlers, it's dropped", async () => {
+    const t = await liveContainer("headless.test");
+    const HEADLESS = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/130.0.0.0 Safari/537.36";
+    const post = async (body: object, ua: string) =>
+      json(await t.hit({ type: "visit", page_url: "https://headless.test/", ...body }, { "user-agent": ua }));
+
+    const kept = await post({ test: 1, event_id: "hl_kept_1" }, HEADLESS);
+    expect(kept).toMatchObject({ ok: true, test: true, event_id: "hl_kept_1" });
+    expect(kept.ignored).toBeUndefined();
+    // ?afsa_debug=1 in the page URL marks the hit too (e.g. a runtime cached from before the flag).
+    expect(await post({ event_id: "hl_kept_2", page_url: "https://headless.test/?afsa_debug=1" }, HEADLESS)).toMatchObject({
+      ok: true,
+      test: true,
+      event_id: "hl_kept_2",
+    });
+
+    expect(await post({ event_id: "hl_drop_1" }, HEADLESS)).toMatchObject({
+      ok: true,
+      ignored: "bot",
+      hint: expect.stringContaining("?afsa_debug=1"),
+    });
+    const googlebot = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+    expect(await post({ test: 1, event_id: "hl_drop_2" }, googlebot)).toMatchObject({ ignored: "bot" });
+    expect(await post({ test: 1, event_id: "hl_drop_3" }, "Mozilla/5.0 (compatible; Googlebot/2.1) HeadlessChrome/130.0")).toMatchObject({
+      ignored: "bot",
+    });
+
+    const visits = (await t.api("GET", `/v1/containers/${t.C}/events?include_visits=true&limit=200`)).body.events as {
+      event_id: string;
+      test: boolean;
+    }[];
+    expect(visits.map((e) => e.event_id).sort()).toEqual(["hl_kept_1", "hl_kept_2"]);
+    expect(visits.every((e) => e.test)).toBe(true);
+  });
+});

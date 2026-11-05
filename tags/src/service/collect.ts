@@ -7,7 +7,7 @@ import { CLICK_ID_DAYS, clickCookieName, VISITOR_COOKIE } from "../lib/clickids"
 import { eventQuotaError } from "./budget";
 import { containerStub, resyncById } from "./containers";
 import { type CollectHit, cleanClickIds, cleanCollectPayload, type Enrichment } from "./ingest";
-import { collectSchema } from "./ingest-schema";
+import { type CollectPayload, collectSchema } from "./ingest-schema";
 import { originHost } from "./origin";
 import { fromTrustedProxy } from "./proxy";
 import { overLimit, rateLimited } from "./ratelimit";
@@ -19,6 +19,24 @@ import { sha256Hex } from "@afs/shared";
 const BOT =
   /bot|crawl|spider|slurp|headless|lighthouse|pingdom|uptime|facebookexternalhit|preview|prerender|python-requests|go-http-client|scrapy|httpclient/i;
 export const MAX_COLLECT_BYTES = 64 * 1024;
+
+/**
+ * Browser test traffic: the runtime's flag (preview, ?afsa_debug=1 kept for the tab, afst('test',
+ * true)), any preview token (valid or not, so a token that expires mid-session never turns the
+ * session's hits into real conversions), or ?afsa_debug=1 in the page URL (as analytics reads it).
+ * Anyone can mark their own hits as test: that only ever sends less to the ad platforms.
+ */
+export function isTestHit(p: Pick<CollectPayload, "test" | "preview" | "page_url">): boolean {
+  return !!p.test || !!p.preview || /[?&]afsa_debug=1(?:[&#]|$)/.test(p.page_url ?? "");
+}
+
+/**
+ * A headless browser driven by an agent (HeadlessChrome, Playwright, Puppeteer): the user agent
+ * says Headless and nothing else in it reads as a bot. A crawler that also says Headless is still a bot.
+ */
+export function automatedBrowser(ua: string): boolean {
+  return /\bHeadless/i.test(ua) && !BOT.test(ua.replace(/\bHeadless/gi, ""));
+}
 
 export function geoFrom(req: Request): Enrichment["geo"] {
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf ?? {};
@@ -146,12 +164,15 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
     }
     const payload = cleanCollectPayload(parse(collectSchema, raw));
     const ua = req.headers.get("user-agent")?.slice(0, MAX_USER_AGENT) ?? undefined;
-    // Bots are dropped, except preview traffic (agents verify setups with headless browsers).
-    if (ua && BOT.test(ua) && !payload.preview)
+    const test = isTestHit(payload);
+    // Bots are dropped, except preview traffic and test traffic from an automated browser (agents
+    // verify setups with Playwright / Puppeteer). Test hits never reach an ad platform as a real
+    // conversion, so keeping them is safe; crawlers and other bots are dropped even then.
+    if (ua && BOT.test(ua) && !payload.preview && !(test && automatedBrowser(ua)))
       return json({
         ok: true,
         ignored: "bot",
-        hint: "Known bot/headless user agent. Use a preview link (POST /v1/containers/:id/preview) to test with a headless browser.",
+        hint: "Known bot/headless user agent. To test with a headless browser, mark the visit as test traffic: open the first page with ?afsa_debug=1 (or call afst('test', true)), or use a preview link (POST /v1/containers/:id/preview).",
       });
     // Rate limits before any storage is touched (the preview lookup reads D1).
     const ip = clientIpFrom(req, await fromTrustedProxy(env, req, payload.container_id));
@@ -193,6 +214,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
       },
       preview_config: preview,
       env_config: envConfig,
+      test,
     };
     const stub = containerStub(env, payload.container_id);
     let result: CollectResult = await stub.collect(hit);
@@ -232,6 +254,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
       {
         ok: true,
         event_id: result.event_id,
+        ...(test ? { test: true } : {}),
         ...(result.duplicate ? { duplicate: true } : {}),
         ...(result.destinations
           ? {

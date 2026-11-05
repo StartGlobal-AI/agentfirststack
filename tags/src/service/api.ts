@@ -639,6 +639,8 @@ export const ops = {
         error: n("error"),
         skipped: n("skipped"),
         excluded: n("excluded"),
+        // An ad pixel that would have fired on test traffic (it doesn't run there): it works, so not never_fired.
+        test_skipped: n("test_skipped"),
         last_at: mine.reduce<number | null>((a, r) => (a === null || r.last_at > a ? r.last_at : a), null),
       };
     });
@@ -648,9 +650,9 @@ export const ops = {
       since: from,
       reporting,
       tags,
-      never_fired: tags.filter((t) => t.enabled && !t.fired).map((t) => t.tag_id),
+      never_fired: tags.filter((t) => t.enabled && !t.fired && !t.test_skipped).map((t) => t.tag_id),
       failing: tags.filter((t) => t.error > 0).map((t) => t.tag_id),
-      note: "Counts come from browsers (blocked = waited for consent; skipped = schedule, live_only, once_per_page or a page blocklist). Kept 30 days.",
+      note: "Counts come from browsers (blocked = waited for consent; skipped = schedule, live_only, once_per_page or a page blocklist; test_skipped = an ad pixel that would have fired, on test traffic such as ?afsa_debug=1, where pixels don't run). Kept 30 days.",
       next_steps: reporting
         ? ["never_fired and failing list tags to look at; GET /coverage shows which pages sent hits."]
         : [

@@ -51,6 +51,9 @@ const PLATFORM_TAG: Record<string, Tag["type"]> = {
 };
 const GOOGLE_TAGS = { ga4: true, google_ads: true } as Record<string, boolean>;
 const SESSION_KEY = "_afst_s_";
+/** Tag types that run in test traffic (the platform's analytics, the owner's code); every other type is an ad or vendor pixel. */
+const TEST_RUNS = { analytics: 1, custom_html: 1, custom_js: 1 } as Record<string, number>;
+const TEST_SKIP = "test traffic: ad pixels don't fire in the browser; the server-side conversion is sent in test mode";
 
 interface Pending {
   required: ConsentType[];
@@ -119,6 +122,8 @@ export class Runtime implements VendorHost {
   private traceTimer = false;
   private fires: Record<string, Record<string, number>> = {};
   private firesTimer = false;
+  /** The test flag when sessionStorage is unavailable (it then lasts for this page only). */
+  private testMem = false;
 
   constructor(w: Window, d: Document, boot: BootConfig) {
     this.w = w as W;
@@ -168,6 +173,9 @@ export class Runtime implements VendorHost {
       q = null;
     }
     this.debug = !!this.boot.preview || !!this.cfg.settings?.debug || q?.get("afst_debug") === "1";
+    // ?afsa_debug=1 (=0) turns the tab's test flag on (off), as the analytics tracker does.
+    if (this.tab((/\bafsa_debug=([01])/.exec(w.location.search) || [])[1]) && !this.boot.preview)
+      this.log("info", `${TEST_SKIP}. ?afsa_debug=0 or afst('test', false) ends it.`);
     try {
       this.firstParty = new URL(this.base).host === w.location.host;
     } catch {
@@ -246,6 +254,26 @@ export class Runtime implements VendorHost {
     if (!token) return false;
     this.loadScript(`${this.base}/c/${this.boot.id}.js?preview=${encodeURIComponent(token)}`);
     return true;
+  }
+
+  /**
+   * The tab's test-traffic flag, shared with the analytics tracker and replay: sessionStorage
+   * afsa_debug "1" (?afsa_debug=1, afsa('debug'), afst('test', true)) or "0". Sets it when v is given.
+   */
+  private tab(v?: string): boolean {
+    if (v) this.testMem = v === "1";
+    try {
+      const ss = this.w.sessionStorage;
+      if (v) ss.setItem("afsa_debug", v);
+      return ss.getItem("afsa_debug") === "1";
+    } catch {
+      return this.testMem;
+    }
+  }
+
+  /** Test traffic (a preview build, or the tab flag): ad pixels don't run, hits go to /collect with test: 1. */
+  get test(): boolean {
+    return !!this.boot.preview || this.tab();
   }
 
   // ------------------------------------------------------------------ host helpers
@@ -491,9 +519,15 @@ export class Runtime implements VendorHost {
       if (isObj(b)) Object.assign(this.identity.raw, b);
       this.log("info", "identify", { user_id: this.identity.userId, fields: Object.keys(this.identity.raw) });
     } else if (cmd === "debug") this.debug = a !== false;
+    else if (cmd === "test") {
+      // afst('test', true | false): the tab's flag, shared with the analytics tracker (told at once).
+      this.tab(a === false ? "0" : "1");
+      if (typeof this.w.afsa === "function") (this.w.afsa as (...x: unknown[]) => void)("debug", this.test);
+    }
   }
 
   get(what: string): unknown {
+    if (what === "test") return this.test;
     if (what === "visitor_id") return this.visitorId;
     if (what === "consent") return { ...this.consent };
     if (what === "click_ids") return { ...this.clickIds };
@@ -1117,26 +1151,38 @@ export class Runtime implements VendorHost {
   /** Record a tag's outcome: the preview trace and the report_tag_fires counts. */
   private note(tr: Trace | null, tag: Tag, status: string, reason?: string, trigger?: string) {
     if (tr) tr.tags.push({ id: tag.id, type: tag.type, status, ...(reason ? { reason } : {}), ...(trigger ? { trigger } : {}) });
-    // fired and error are counted where they happen (fireNow), also for tags released later by consent.
+    // fired, error and test_skipped are counted where they happen (fireNow), also for tags released later by consent.
     if (status === "skipped" || status === "blocked" || status === "excluded") this.count(tag.id, status);
   }
 
-  /** Fire a tag now. Remembers the scripts it requested (for tags sequenced after it). */
-  private fireNow(tag: Tag, ctx: EventCtx): boolean {
+  /** An ad or vendor pixel in test traffic: it would fire, but doesn't. */
+  private held(tag: Tag) {
+    return !TEST_RUNS[tag.type] && this.test;
+  }
+
+  /**
+   * Fire a tag now: "fired", "error", or "test_skipped" (a pixel in test traffic). Remembers the
+   * scripts it requested (for tags sequenced after it).
+   */
+  private fireNow(tag: Tag, ctx: EventCtx): string {
     const n = Object.keys(this.scripts).length;
-    let ok = true;
+    let status = "fired";
     this.emitFired[tag.id] = true;
-    this.log("fire", `tag ${tag.id} (${tag.type})`);
-    try {
-      fireTag(this, tag, ctx);
-      this.count(tag.id, "fired");
-    } catch (e) {
-      ok = false;
-      this.log("error", `tag ${tag.id} failed`, String(e));
-      this.count(tag.id, "error");
+    if (this.held(tag)) {
+      status = "test_skipped";
+      this.log("skip", `tag ${tag.id} (${tag.type}): ${TEST_SKIP}`);
+    } else {
+      this.log("fire", `tag ${tag.id} (${tag.type})`);
+      try {
+        fireTag(this, tag, ctx);
+      } catch (e) {
+        status = "error";
+        this.log("error", `tag ${tag.id} failed`, String(e));
+      }
     }
-    this.seq[tag.id] = { srcs: Object.keys(this.scripts).slice(n), ok };
-    return ok;
+    this.count(tag.id, status);
+    this.seq[tag.id] = { srcs: Object.keys(this.scripts).slice(n), ok: status !== "error" };
+    return status;
   }
 
   private runTag(tag: Tag, ctx: EventCtx, tr: Trace | null, trigger?: string) {
@@ -1146,7 +1192,7 @@ export class Runtime implements VendorHost {
     };
     if (this.emitFired[tag.id]) return skip("already fired for this event (as a setup tag)");
     if (this.blocked[tag.type]) return skip(`${tag.type} is blocked on this page (data-afst-block)`);
-    if (tag.live_only && this.boot.preview) return skip("live_only: not fired in preview");
+    if (tag.live_only && this.test) return skip("live_only: not fired in test traffic (preview, ?afsa_debug=1)");
     if (tag.schedule) {
       const now = Date.now();
       const s = toMs(tag.schedule.start);
@@ -1164,9 +1210,9 @@ export class Runtime implements VendorHost {
       `tag ${tag.id} (${tag.type})`,
       () => {
         if (tag.after) {
-          status = "fired";
+          status = this.held(tag) ? "test_skipped" : "fired";
           this.sequence(tag, ctx);
-        } else status = this.fireNow(tag, ctx) ? "fired" : "error";
+        } else status = this.fireNow(tag, ctx);
       },
       this.googleAdvanced(tag),
     );
@@ -1174,7 +1220,13 @@ export class Runtime implements VendorHost {
       tr,
       tag,
       status,
-      status === "blocked" ? `waits for consent: ${this.missing(required)}` : tag.after ? `after setup tag ${tag.after.tag}` : undefined,
+      status === "blocked"
+        ? `waits for consent: ${this.missing(required)}`
+        : status === "test_skipped"
+          ? TEST_SKIP
+          : tag.after
+            ? `after setup tag ${tag.after.tag}`
+            : undefined,
       trigger,
     );
   }
@@ -1250,6 +1302,7 @@ export class Runtime implements VendorHost {
     this.lastEventId = data.event_id;
     const fired: string[] = [];
     const waiting: string[] = [];
+    const held: string[] = [];
     for (const platform of Object.keys(conv.send_to)) {
       const tagType = PLATFORM_TAG[platform];
       const tags = this.cfg.tags.filter((t) => t.type === tagType && !this.blocked[t.type]);
@@ -1262,6 +1315,10 @@ export class Runtime implements VendorHost {
           this.requiredConsent(tag),
           `conversion ${conv.name} -> ${platform} (${tag.id})`,
           () => {
+            if (this.held(tag)) {
+              held.push(platform);
+              return this.log("skip", `conversion ${conv.name} -> ${platform}: ${TEST_SKIP}`);
+            }
             const ran = fireConversionOn(this, platform, tag, conv, data);
             this.log("fire", `conversion ${conv.name} -> ${platform} via ${tag.id}`, {
               event_id: data.event_id,
@@ -1278,12 +1335,10 @@ export class Runtime implements VendorHost {
         }
       }
     }
-    tr?.conversions.push({
-      name: conv.name,
-      status: "fired",
-      platforms: fired,
-      ...(waiting.length ? { reason: `waits for consent: ${waiting.join(", ")}` } : {}),
-    });
+    const why = [waiting.length ? `waits for consent: ${waiting.join(", ")}` : "", held.length ? `${held.join(", ")}: ${TEST_SKIP}` : ""]
+      .filter(Boolean)
+      .join("; ");
+    tr?.conversions.push({ name: conv.name, status: "fired", platforms: fired, ...(why ? { reason: why } : {}) });
     this.send({
       type: "conversion",
       event_id: data.event_id,
@@ -1413,6 +1468,7 @@ export class Runtime implements VendorHost {
     const dom = this.cookieDomain();
     if (this.firstParty && dom) payload.cookie_domain = dom;
     if (this.boot.preview) payload.preview = this.boot.preview;
+    if (this.test) payload.test = 1;
     if (this.boot.env) payload.env = this.boot.env.token;
     for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
     const json = JSON.stringify(payload);

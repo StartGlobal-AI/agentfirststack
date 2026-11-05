@@ -24,6 +24,11 @@ export interface CollectHit {
   preview_config?: ContainerConfig;
   /** Environment snippet traffic (real, not test): that environment's config instead of the live one. */
   env_config?: ContainerConfig;
+  /**
+   * Browser test traffic (collect.ts isTestHit: preview, ?afsa_debug=1, afst('test', true)): delivered
+   * in each platform's test mode (or skipped), logged as test, and never stored as or joined to a visitor.
+   */
+  test?: boolean;
 }
 
 const CLICK_ID_SET = new Set<string>(CLICK_IDS);
@@ -159,7 +164,7 @@ export function browserDispatchEvent(
     name: p.name ?? conversion?.name ?? "event",
     ts,
     source: "browser",
-    test: !!hit.preview_config,
+    test: !!hit.test || !!hit.preview_config,
     value: p.value,
     currency: p.currency,
     transaction_id: p.transaction_id,
