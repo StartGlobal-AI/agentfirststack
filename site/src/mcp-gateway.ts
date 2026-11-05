@@ -228,7 +228,7 @@ async function callGatewayTool(env: Bindings, caller: Caller, name: string, args
         },
         true,
       );
-    return toolResult(await setupReport(env, caller.auth.accountId, { base: caller.base, domain, services }));
+    return toolResult(await setupReport(env, caller.auth.accountId, { base: caller.base, domain, services, record: true }));
   }
   if (name === TEST_TOOL.name || name === VISIT_TOOL.name) {
     const fail = (message: string, hint: string, code = "bad_request") => toolResult({ error: { code, message, hint } }, true);

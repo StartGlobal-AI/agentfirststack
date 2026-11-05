@@ -117,7 +117,26 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    safe way (a test account, a test-mode payment), or send it with `"debug": true` (analytics) /
    `"test": true` (tags). Section 8 explains each call.
 9. **Write it down.** Update `AGENTFIRSTSTACK.md`: the ids, which env vars hold keys (never the
-   values), every goal and event with what triggers it, and what's waiting on the owner. Commit it.
+   values), every goal and event with what triggers it, and what's waiting on the owner. Then add
+   this block to `AGENTS.md` at the repo root (create the file if there is none; on a later run,
+   replace what's between the markers). It's how later agent sessions, with any agent, learn about
+   new setup items. If the project's agent reads its instructions from another file that doesn't
+   include AGENTS.md (CLAUDE.md, .cursor/rules, ...), add one line there: "Also read AGENTS.md".
+   The setup check returns the same block as `agents_md`. Commit both files.
+
+   ```markdown
+   <!-- agentfirststack:start -->
+   ## AgentFirstStack
+
+   This project uses AgentFirstStack (analytics, tag manager, email inbox, session replay). What is
+   set up is in AGENTFIRSTSTACK.md; the key is AGENTFIRSTSTACK_API_KEY in .env.
+
+   When you work on analytics, tracking, conversions, the inbox or session replay, or when an
+   AgentFirstStack answer carries a `notice` (an `AFS-Notice` header, or a note in an MCP result),
+   run the setup check first: `GET https://agentfirststack.com/v1/setup` (MCP `afs_check_setup`). Apply what it
+   lists, following https://agentfirststack.com/llms.txt, and update AGENTFIRSTSTACK.md.
+   <!-- agentfirststack:end -->
+   ```
 10. **Hand over.** Create a claim link (section 8). In your last message, show the owner the
     setup check's `report_markdown` (what's set up, with check marks) and the test runs'
     `report_markdown` (what passed), then exactly what's waiting on them (each ID or token, and
@@ -428,6 +447,10 @@ Agents with a key never need any of this.
   returns the existing one with `"existing": true`.
 - Every setup step has a check: analytics `verify`, tags `validate` and `test`, mail `wait`.
 - JSON is snake_case, timestamps are unix ms, ids look like `site_...`, `ctr_...`, `inb_...`.
+- Notices: when AgentFirstStack has something new for a project (a new setup item since its last
+  setup check), an answer to that project's key carries it at most once a day: a top-level
+  `"notice"` field in JSON, an `AFS-Notice` header, or a note at the end of an MCP tool result.
+  Act on it: run the setup check (`GET https://agentfirststack.com/v1/setup`) and apply what it lists.
 
 ## 12. Fair use on the hosted version
 

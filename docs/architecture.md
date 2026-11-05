@@ -117,6 +117,15 @@ same path the dashboard uses), never forwards the caller's key and fetches nothi
 website: install status comes from what the services received and from the last `verify`. The
 dashboard's project page renders the same report.
 
+**New features reach projects that are already set up** through the setup catalog
+(`site/src/setup-catalog.ts`): each setup item with the catalog version it arrived in. The setup
+check records what the project's agent saw (`setup_state` in the identity DB) and says what's new
+since its last run. The site's daily cron writes a short notice (`project_notices`) for each active
+project that hasn't seen the current catalog; every service adds it to that project's next API or
+MCP answer at most once a day (`@afs/shared` notices), and the analytics weekly report shows it to
+the owner. Running the check clears it. Server behaviour and the hosted browser scripts need none
+of this: they change for everyone on deploy.
+
 The **setup test** (`site/src/setup-test.ts`, `/v1/setup/test`) sends test traffic through the same
 bindings: mail sends from the project's inbox to its own `+afs-test` address (delivered internally)
 and reads the code back; analytics gets a debug event; tags gets a `test: true` event no conversion

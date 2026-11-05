@@ -2,6 +2,8 @@ import { type AuthContext, badRequest, requireAuth, tooManyRequests } from "@afs
 import { Hono } from "hono";
 import type { Bindings, SiteEnv } from "./env";
 import { siteBase } from "./google";
+import { readSetupState, recordSetupCheck } from "./notices";
+import { AGENTS_MD_BLOCK } from "./setup-catalog";
 import {
   type ContainerItem,
   callService,
@@ -49,6 +51,8 @@ export interface SetupCheck {
   detail: string;
   /** The call that fixes it (only when it doesn't pass). */
   fix?: string;
+  /** This check didn't exist the last time the project's agent ran the setup check. */
+  new?: true;
 }
 
 export interface SetupReport {
@@ -67,6 +71,12 @@ export interface SetupReport {
   /** The rows as a markdown table with check marks: put it in your final message to the owner. */
   report_markdown: string;
   checked_at: number;
+  /** The AgentFirstStack block for the repo's AGENTS.md (the full setup's step 9). */
+  agents_md: string;
+  /** When the project's agent last ran the setup check before this run (null: this is the first). */
+  last_checked_at?: number | null;
+  /** Checks that are new since that run: features that arrived after the project was set up. */
+  new_since_last_check?: { id: string; title: string; status: CheckStatus; domain?: string }[];
 }
 
 export type RowStatus = CheckStatus | "none";
@@ -187,7 +197,7 @@ const NOT_CHECKED = [
   "That every main action from your site map has an event: compare the list in AGENTFIRSTSTACK.md with the tags events and analytics goals above.",
   "That the live pages are the ones you changed: this check fetches nothing. POST /v1/sites/:id/verify on analytics and replay fetch the live homepage.",
   'Backend conversions and payments, if the business has them: send each once with "debug": true and find it in analytics realtime?debug=only.',
-  "AGENTFIRSTSTACK.md (it lives in the repo) and the ad platform IDs or tokens still waiting on the owner.",
+  "AGENTFIRSTSTACK.md and the AgentFirstStack section of AGENTS.md (they live in the repo), and the ad platform IDs or tokens still waiting on the owner.",
 ];
 
 const ALERT_NAMES: Record<string, string> = {
@@ -314,7 +324,14 @@ function goalMatches(match: string, eventName: string) {
 export async function setupReport(
   env: Bindings,
   accountId: string,
-  opts: { base: string; domain?: string | null; services?: SetupService[] | null; resources?: Resources },
+  opts: {
+    base: string;
+    domain?: string | null;
+    services?: SetupService[] | null;
+    resources?: Resources;
+    /** The project's agent ran it (REST / MCP): remember what it saw and clear its notice. Not the dashboard. */
+    record?: boolean;
+  },
 ): Promise<SetupReport> {
   // Each check reads the services about 15 times: a burst limit per project (the dashboard counts too).
   if (env.SETUP_LIMITER) {
@@ -500,6 +517,28 @@ export async function setupReport(
     );
   if (notChecked.length) next_steps.push(`Check the other domains one at a time: GET ${opts.base}/v1/setup?domain=${notChecked[0]}`);
 
+  // What's new since the project's agent last ran this check: new features, as new check ids.
+  let history: Pick<SetupReport, "last_checked_at" | "new_since_last_check"> = {};
+  if (opts.record) {
+    const prev = await readSetupState(env.DB, accountId);
+    if (prev) {
+      const seen = new Set(prev.seen);
+      const fresh = checks.filter((c) => !seen.has(c.id));
+      for (const c of fresh) c.new = true;
+      history = {
+        last_checked_at: prev.checked_at,
+        new_since_last_check: fresh.map((c) => ({ id: c.id, title: c.title, status: c.status, ...(c.domain ? { domain: c.domain } : {}) })),
+      };
+      const todo = fresh.filter((c) => c.status !== "ok");
+      if (todo.length) next_steps.unshift(`New since the last setup check: ${list(todo.map((c) => c.title))}. Their fixes are below.`);
+    } else history = { last_checked_at: null };
+    await recordSetupCheck(
+      env.DB,
+      accountId,
+      checks.map((c) => c.id),
+    );
+  }
+
   const rows = reportRows(checks);
   return {
     project: { id: accountId, name, claimed },
@@ -514,6 +553,8 @@ export async function setupReport(
     rows,
     report_markdown: reportMarkdown({ project: { id: accountId, name, claimed }, ready, checks, counts }, rows),
     checked_at: Date.now(),
+    agents_md: AGENTS_MD_BLOCK(opts.base),
+    ...history,
   };
 }
 
@@ -1211,5 +1252,5 @@ setupApi.get("/v1/setup", requireAuth<SiteEnv>(), async (c) => {
       "`services` names a service that doesn't exist.",
       "A comma-separated list of analytics, tags, mail and replay, e.g. GET /v1/setup?services=analytics (default: all of them, the full setup).",
     );
-  return c.json(await setupReport(c.env, auth.accountId, { base: siteBase(c), domain, services }));
+  return c.json(await setupReport(c.env, auth.accountId, { base: siteBase(c), domain, services, record: true }));
 });

@@ -57,8 +57,9 @@ actions, creates an inbox, sets up analytics (goals, a weekly report for you), a
 an event for each main action, and replay; then it deploys, verifies each part as a visitor with
 test traffic (`POST /v1/setup/test`: a test email, test events through analytics, tags and each ad
 platform's test mode, then a browser test visit), runs the setup check (`GET /v1/setup`) until
-nothing is missing, writes what it did to `AGENTFIRSTSTACK.md`, and shows you a table of what's set
-up and what passed, with a claim link. Pasting the same prompt again later starts from the
+nothing is missing, writes what it did to `AGENTFIRSTSTACK.md` (and a short block to `AGENTS.md`, so later sessions with
+any agent pick up new features), and shows you a table of what's set up and what passed, with a
+claim link. Pasting the same prompt again later starts from the
 setup check and fills the gaps.
 
 Or do it by hand:

@@ -9,6 +9,7 @@ import { authRoutes, siteBase } from "./google";
 import { a2aEndpoint } from "./a2a";
 import { mcpGateway } from "./mcp-gateway";
 import { oauthApi, oauthPages } from "./oauth";
+import { noticeBase, refreshNotices } from "./notices";
 import { ownAnalytics, trackOwn } from "./own-analytics";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
@@ -171,5 +172,11 @@ export default {
   fetch: app.fetch,
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
+    // Projects that are already set up hear about new setup items (src/setup-catalog.ts).
+    ctx.waitUntil(
+      refreshNotices(env, noticeBase(env))
+        .then((n) => console.log(JSON.stringify({ event: "cron.notices", ...n })))
+        .catch((e) => console.error("cron.notices failed", e)),
+    );
   },
 } satisfies ExportedHandler<Bindings>;

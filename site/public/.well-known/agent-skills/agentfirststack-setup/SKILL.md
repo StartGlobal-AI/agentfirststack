@@ -89,7 +89,9 @@ of `next_steps` and run it again until `"ready": true`, then do what `not_checke
 ## 9. Hand it over
 
 1. Update `AGENTFIRSTSTACK.md` (ids, env var names, every goal and event and what triggers it;
-   never key values) and commit it.
+   never key values). Add the AgentFirstStack block (the setup check returns it as `agents_md`;
+   the manual's step 9 shows it) to `AGENTS.md` at the repo root, creating the file if needed, so
+   later agent sessions run the setup check when something is new. Commit both.
 2. `POST https://agentfirststack.com/v1/claim-link` (MCP `afs_create_claim_link`): a single-use
    `url`, valid for 7 days.
 3. Show the owner the setup check's `report_markdown` (what's set up, with check marks) and the

@@ -249,7 +249,7 @@ unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 |---|---|---|
 | `POST /v1/claim-link` | full-access API key (not OAuth) | a claim link (also MCP `afs_create_claim_link`) |
 | `POST /v1/setup/test`, `GET /v1/setup/test?since=` | write key / any key | the setup test: test traffic through every service, a browser plan, and the check of that visit (MCP `afs_test_setup`, `afs_check_test_visit`; `src/setup-test.ts`) |
-| `GET /v1/setup` | any API key | the setup check: the project against the full setup, each part with its status and fix (MCP gateway tool `afs_check_setup`; `src/setup-check.ts`) |
+| `GET /v1/setup` (records `setup_state`, clears the project's notice) | any API key | the setup check: the project against the full setup, each part with its status and fix (MCP gateway tool `afs_check_setup`; `src/setup-check.ts`) |
 | `GET /v1/me`, `PATCH /v1/me {name}` | API key (not read-only to rename) | the project and key; renames the project (every app; MCP gateway tool `afs_update_project`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `GET /signin` | none | sign-in page |

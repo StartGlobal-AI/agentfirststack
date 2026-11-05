@@ -92,7 +92,7 @@ export function resourceCounts(r: Resources): SafeHtml {
  * mark, what's there, and what's left; the prompt that has their agent finish it. Fixes are API
  * calls, so they're left to the agent: the owner sees what and why.
  */
-export function setupView(r: SetupReport, finishPrompt: string): SafeHtml {
+export function setupView(r: SetupReport, finishPrompt: string, news?: { never: boolean; labels: string[]; prompt: string }): SafeHtml {
   const todo = r.counts.missing + r.counts.failing + r.counts.unavailable;
   const multi = new Set(r.rows.map((x) => x.domain).filter(Boolean)).size > 1;
   return html`<section class="tile setup-check" aria-labelledby="setup-title">
@@ -102,6 +102,7 @@ export function setupView(r: SetupReport, finishPrompt: string): SafeHtml {
       ? "Everything in the full setup is in place."
       : `${plural(todo, "thing", "things")} to finish for the full setup (analytics, tags, email and replay). Your agent can do ${todo === 1 ? "it" : "them"}: open it in the project's folder and paste the prompt below.`
   }</p>
+  ${news && (news.never || news.labels.length) ? newsView(news) : ""}
   <div class="table-wrap"><table class="setup-table">
     <thead><tr><th scope="col">Status</th><th scope="col">Part</th><th scope="col">What's set up</th></tr></thead>
     <tbody>${r.rows.map(
@@ -113,6 +114,16 @@ export function setupView(r: SetupReport, finishPrompt: string): SafeHtml {
   </table></div>
   ${r.ready ? "" : askLine(finishPrompt, null)}
 </section>`;
+}
+
+/** New setup items the project's agent hasn't seen (src/setup-catalog.ts), with what to ask it. */
+function newsView(news: { never: boolean; labels: string[]; prompt: string }): SafeHtml {
+  return html`<div class="setup-news" role="note">
+    <p><b>${news.never ? "Your agent hasn't run the setup check on this project yet." : "New since your agent last checked this project:"}</b>${
+      news.labels.length ? html` ${news.never ? "New in AgentFirstStack: " : ""}${news.labels.join("; ")}.` : ""
+    }</p>
+    ${askLine(news.prompt, "Ask your agent")}
+  </div>`;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);

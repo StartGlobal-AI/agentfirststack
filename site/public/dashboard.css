@@ -2023,3 +2023,15 @@ body.app .nav {
 .forward-tile .inline-fields {
   flex-wrap: wrap;
 }
+
+.setup-news {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--orange);
+  border-radius: var(--r);
+  background: var(--ground);
+}
+.setup-news .ask-line {
+  margin-top: 8px;
+}

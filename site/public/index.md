@@ -119,7 +119,7 @@ First, ask me one question and wait for my answer: should email that reaches the
 
 5. Apart from that first question, don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
 
-6. Write what you set up in AGENTFIRSTSTACK.md at the repo root (ids, env var names, every goal and event and what triggers it; never key values) and commit it.
+6. Write what you set up in AGENTFIRSTSTACK.md at the repo root (ids, env var names, every goal and event and what triggers it; never key values), add the AgentFirstStack block from the manual to AGENTS.md (so later agent sessions see new features), and commit both.
 
 7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
 

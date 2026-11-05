@@ -7,6 +7,8 @@ import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page
 import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
 import { type BuildKind, buildPrompt } from "./dashboard-prompt";
 import { callService, projectResources } from "./services";
+import { readSetupState } from "./notices";
+import { itemsAfter } from "./setup-catalog";
 import { setupReport } from "./setup-check";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
 import { askLine, askText, forwardView, plural, resourceCounts, resourcesView, setupView } from "./views";
@@ -67,7 +69,7 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project, completely, and verify it yourself. First ask me one question: should the project's inbox email be forwarded to me as each one arrives, or as one daily digest (at what time)? Then read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Apart from that question, don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values), and show me the tables of what's set up and what passed, and send me a claim link for the project.";
+  "Set up AgentFirstStack for this project, completely, and verify it yourself. First ask me one question: should the project's inbox email be forwarded to me as each one arrives, or as one daily digest (at what time)? Then read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Apart from that question, don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values) and add the manual's AgentFirstStack block to AGENTS.md, and show me the tables of what's set up and what passed, and send me a claim link for the project.";
 
 /** For a project whose setup check isn't ready: the agent re-runs the check and fixes what it reports. */
 const finishPrompt = (base: string) =>
@@ -169,9 +171,10 @@ dashboard.get("/projects/:id", async (c) => {
   const s = c.var.session;
   const p = await requireProject(c.env.DB, s.user.id, projectId(c));
   const resources = await projectResources(c.env, p.id);
-  const [setup, keys, members] = await Promise.all([
+  const [setup, setupState, keys, members] = await Promise.all([
     // Rate-limited or failed: the page still renders, without the tile.
     setupReport(c.env, p.id, { base: siteBase(c), resources }).catch(() => null),
+    readSetupState(c.env.DB, p.id),
     c.env.DB.prepare("SELECT count(*) AS n FROM api_keys WHERE account_id = ? AND revoked_at IS NULL AND oauth_grant_id IS NULL")
       .bind(p.id)
       .first<number>("n"),
@@ -184,7 +187,15 @@ dashboard.get("/projects/:id", async (c) => {
     nav: "projects",
     body: html`${tabs(p, "overview")}
 ${resourcesView(resources, { asks: true })}
-${setup ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)))}</div>` : ""}
+${
+  setup
+    ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)), {
+        never: !setupState,
+        labels: itemsAfter(setupState?.catalog_version ?? 0).map((i) => i.label),
+        prompt: `Run the AgentFirstStack setup check (GET ${siteBase(c)}/v1/setup) and apply what it lists.`,
+      })}</div>`
+    : ""
+}
 ${(resources.inboxes ?? []).some((i) => i.forward) ? html`<div class="bento">${forwardView(p.id, resources.inboxes, { owner: p.role === "owner", csrf: csrfField(s) })}</div>` : ""}
 <div class="bento">
 <section class="tile build-own" aria-labelledby="build-title">

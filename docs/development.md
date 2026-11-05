@@ -116,6 +116,22 @@ budget enforced by `tags/test/config-pack.test.ts`; keep new code in `ext.ts` wh
 need it, and raise the budget only with a reason. The runtime tests run the real bundle in a
 small fake browser (`tags/test/fixtures/browser.ts`).
 
+## Shipping a feature that projects have to act on
+
+Server behaviour and the hosted browser scripts change for everyone on deploy: nothing to do. When
+a feature needs each project's agent to do something (a new setting, a snippet, a server event):
+
+1. Add a check for it to `site/src/setup-check.ts` (with its fix), and a row to `ROWS` if the
+   owner should see it.
+2. Add an entry to `site/src/setup-catalog.ts` with the next version number, a short label and the
+   check ids.
+3. Add the step to the full setup in `site/public/llms.txt` (and the prompt if it changes what the
+   agent asks).
+4. Deploy the site. Within a day the cron writes a notice for every active project that hasn't seen
+   the new version; their agents get it in the next API or MCP answer, owners in the weekly report
+   and the dashboard. Projects whose repo has the AgentFirstStack block in AGENTS.md also run the
+   check whenever an agent works on analytics, tags, mail or replay.
+
 ## Conventions
 
 The rules every service follows are in [`CLAUDE.md`](../CLAUDE.md). Briefly: one-request signup,
