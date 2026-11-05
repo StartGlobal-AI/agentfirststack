@@ -6,6 +6,7 @@ import { ContainerDO, type DispatchMessage } from "./do/container-do";
 import type { AppEnv, Bindings } from "./env";
 import { llmsTxt } from "./llms";
 import { mcpOptions } from "./mcp";
+import { account } from "./routes/account";
 import { dataPlane } from "./routes/public";
 import { v1 } from "./routes/v1";
 import { handleDispatchBatch } from "./service/dispatch";
@@ -60,6 +61,8 @@ app.all("/mcp", (c) =>
 
 app.use("/v1/*", requireAuth());
 app.route("/v1", v1);
+// DELETE /v1/account: the platform's purge of a deleted project (internal auth only).
+app.route("/v1", account);
 
 export { ContainerDO };
 

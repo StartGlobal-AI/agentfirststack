@@ -50,6 +50,7 @@ Public (no key):
 - \`GET /llms.txt\` (this), \`POST /mcp\` (MCP, needs a key).
 
 Account (from @afs/shared): \`GET /v1/me\`, \`GET /v1/keys\`, \`POST /v1/keys\` { name?, scope?: "*"|"read" }, \`DELETE /v1/keys/:id\`.
+Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me) stops its keys and ingest at once and erases this app's data 7 days later.
 
 Containers:
 - \`POST /v1/containers\` { domain, name?, allowed_hostnames? } -> 201 { container, install, next_steps }; same domain again -> 200 { existing: true }. install has the snippet and API guide but not the first-party proxy configs: their proxy key is a secret, so install.first_party_proxy.how_to_get points to GET /install?proxy=1.

@@ -204,6 +204,7 @@ input into a field), afs.scroll, afs.error, afs.event, afs.tag (afsr('set'), ide
 
 ### Account (shared)
 - POST /v1/signup -> \`{ api_key, account_id, mcp, next_steps }\` (no auth). GET /v1/me. GET, POST /v1/keys \`{name?, scope?: "*"|"read"}\`. DELETE /v1/keys/:id.
+- Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me) stops its keys and recording at once and erases this app's data 7 days later.
 
 ### Replay sites
 - POST /v1/sites \`{ domain, ...settings }\` -> 201 \`{ site, install, next_steps }\`; same domain again -> 200 \`existing: true\`. 403 quota_exceeded past MAX_SITES_PER_ACCOUNT, 403 verification_required past MAX_UNVERIFIED_SITES_PER_ACCOUNT, 400 for IPs, TLDs and public suffixes.

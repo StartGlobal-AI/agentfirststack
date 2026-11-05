@@ -5,7 +5,19 @@ import type { SiteEnv } from "./env";
 import { siteBase } from "./google";
 import { dashPage, projectHeader, projectId, projectName } from "./dashboard-frame";
 import { csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
-import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
+import {
+  type DeletedProject,
+  type Project,
+  deleteUser,
+  listDeletedProjects,
+  listMembers,
+  listProjects,
+  projectNotFound,
+  removeMember,
+  requireProject,
+  revokeGrant,
+} from "./identity";
+import { RESTORE_DAYS, cleanupPrompt, deleteProject, exportPrompt, restoreProject } from "./project-deletion";
 import { analyticsDashboard } from "./analytics-dashboard";
 import { serviceViews } from "./service-views";
 import { type BuildKind, buildPrompt } from "./dashboard-prompt";
@@ -81,9 +93,31 @@ const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; lab
 
 // ---------- projects ----------
 
+/** Projects page: the owner's deleted projects, restorable until their purge. */
+function deletedView(deleted: DeletedProject[], csrf: ReturnType<typeof csrfField>, justDeleted?: string) {
+  return html`<section class="deleted-projects" aria-labelledby="deleted-title">
+  <div class="section-head"><h2 id="deleted-title">Deleted projects</h2><p class="muted small">Restore one before its data is erased.</p></div>
+  <ul class="deleted-list">${deleted.map(
+    (d) => html`<li class="tile deleted-item">
+    <div class="deleted-copy">
+      <h3>${projectName(d)}</h3>
+      <p class="muted small">Deleted ${fmtDate(d.deleted_at)}. Its data is erased on ${fmtDate(d.purge_after)}.</p>
+    </div>
+    <form method="post" action="/dashboard/projects/${d.id}/restore">${csrf}<button class="btn btn-quiet" type="submit">Restore</button></form>
+    ${
+      d.id === justDeleted
+        ? html`<div class="deleted-cleanup">${askLine(cleanupPrompt(projectName(d)), "Now take it out of the site's code. Ask your agent")}</div>`
+        : html`<details class="deleted-cleanup"><summary class="small">Take it out of the site's code</summary>${askLine(cleanupPrompt(projectName(d)), null)}</details>`
+    }
+  </li>`,
+  )}</ul>
+</section>`;
+}
+
 async function projectsPage(c: Context<SiteEnv>) {
   const s = c.var.session;
-  const projects = await listProjects(c.env.DB, s.user.id);
+  const [projects, deleted] = await Promise.all([listProjects(c.env.DB, s.user.id), listDeletedProjects(c.env.DB, s.user.id)]);
+  const justDeleted = deleted.find((d) => d.id === c.req.query("deleted"));
   // Resources for the first 20 projects (each is four service calls); the cards' numbers and
   // charts are filled in by /dashboard-app.js from the analytics API.
   const shown = projects.slice(0, 20);
@@ -108,7 +142,7 @@ async function projectsPage(c: Context<SiteEnv>) {
     nav: "projects",
     scripts: ["/dashboard-app.js"],
     styles: ["/dashboard-app.css"],
-    body: html`<div class="page-head home-head">
+    body: html`${justDeleted ? notice(`${projectName(justDeleted)} is deleted. You can restore it until ${fmtDate(justDeleted.purge_after)}; then its data is erased.`, "ok") : ""}<div class="page-head home-head">
   <div>
     <h1>Projects</h1>
     <p class="lead">${
@@ -140,6 +174,7 @@ ${
 </div>`
 }
 </div>
+${deleted.length ? deletedView(deleted, csrfField(s), justDeleted?.id) : ""}
 <section class="tile hero home-asks" aria-labelledby="asks-title">
   <div class="hero-copy">
     <h2 id="asks-title">Or just ask your agent.</h2>
@@ -256,8 +291,41 @@ dashboard.get("/projects/:id/settings", async (c) => {
     <span class="stat-label">${members === 1 ? "person can see this" : "people can see this"}</span>
     <span class="stat-go">Members and invites</span>
   </a>
+  ${p.role === "owner" ? deleteTile(p, csrfField(s)) : ""}
 </div>`,
   });
+});
+
+/** Settings, General: deleting the project (its owner only). */
+function deleteTile(p: Project, csrf: ReturnType<typeof csrfField>) {
+  const name = projectName(p);
+  return html`<form class="tile stack danger-zone delete-project" method="post" action="/dashboard/projects/${p.id}/delete">
+  <h2>Delete project</h2>
+  <p class="small">Every key, connected app and invite link stops at once, and so do the project's tracking, recording and inbound mail. Its members lose access. For ${RESTORE_DAYS} days you can restore it from your projects page; after that its analytics, tags, recordings and mail are erased. Inbox addresses that received mail stay reserved for good, so nobody else can receive this project's email.</p>
+  ${askLine(exportPrompt(name), "First, to keep a copy, ask your agent")}
+  ${csrf}
+  <label class="field"><span>Type <b>${name}</b> to confirm</span><input type="text" name="confirm" required autocomplete="off" spellcheck="false"></label>
+  <p class="row"><button class="btn btn-danger" type="submit">Delete project</button></p>
+</form>`;
+}
+
+dashboard.post("/projects/:id/delete", async (c) => {
+  const form = await readForm(c);
+  const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
+  requireOwner(p, "delete it");
+  if ((form.confirm ?? "").trim() !== projectName(p))
+    throw new ApiError(400, "not_confirmed", "The project was not deleted.", `Type its name, ${projectName(p)}, in the box to confirm.`);
+  await deleteProject(c.env, p.id, c.var.session.user.id);
+  return redirect(`/dashboard?deleted=${p.id}`);
+});
+
+dashboard.post("/projects/:id/restore", async (c) => {
+  await readForm(c);
+  const id = projectId(c);
+  const mine = (await listDeletedProjects(c.env.DB, c.var.session.user.id)).some((d) => d.id === id);
+  if (!mine) throw projectNotFound();
+  await restoreProject(c.env, id);
+  return redirect(`/dashboard/projects/${id}`);
 });
 
 // Where an inbox's email goes (the mail service's PATCH /v1/inboxes/:id {forward}, as this project).

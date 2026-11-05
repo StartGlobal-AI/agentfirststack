@@ -1026,7 +1026,7 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
     const by = crawls.totals.by_category ?? {};
     const parts = Object.entries(CRAWL_NAMES)
       .filter(([k]) => by[k])
-      .map(([k, name]) => `${by[k]} ${name}`);
+      .map(([k, name]) => `${by[k]} from ${name}`);
     checks.push(
       at({
         id: "analytics.crawlers",

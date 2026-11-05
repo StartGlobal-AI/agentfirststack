@@ -657,6 +657,12 @@ that apply (`limits`) and whether the site is refusing events now (`status`). Co
 - **Suspension** (`accounts.suspended_at`, cached a minute per isolate): keys stop
   (`@afs/shared`), `/e` answers 403 (checked in the DO, which knows the site's account), payments are
   refused, share pages go dark.
+- **Project deletion** (`accounts.deleted_at` in the identity DB): reads as suspended, so keys and
+  ingest stop at once. 7 days later the site's cron calls `DELETE /v1/account` (internal auth only,
+  no MCP tool; API keys get `403 forbidden`), which runs `deleteSite()` for every site, then drops
+  any local `api_keys` copy. It keeps the bare `accounts` row and the fair-use counters. It answers
+  `{account_id, done, deleted: {sites, stripe_webhook_endpoints, api_keys}}`; `done: false` means
+  call again (about 20 s of work per call).
 - **Writes under a flood** of junk (dropped hostnames, bots) are coalesced: the DO writes its drop
   and warning counters at most every 10 seconds.
 

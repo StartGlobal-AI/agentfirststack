@@ -1,6 +1,8 @@
+import { accountStanding, ApiError } from "@afs/shared";
 import type { Bindings } from "../env";
 import { type SiteRow, siteStub } from "./context";
-import { purgeWebhookLogs } from "./webhooks";
+import { type ErasedRows, eraseSite, SITE_TABLES } from "./sites";
+import { forgetHooks, purgeWebhookLogs } from "./webhooks";
 
 const DAY = 86_400_000;
 /** Wall-time budget of one hourly run; what's left continues next hour. */
@@ -115,4 +117,83 @@ export async function runPurge(env: Bindings, now = Date.now(), budgetMs = PURGE
   ]);
   await purgeWebhookLogs(env, now).catch((e) => console.error(JSON.stringify({ event: "cron.webhook_logs_failed", error: String(e) })));
   return out;
+}
+
+/** Wall-time budget of one account purge call; with work left it answers done: false and is called again. */
+export const ACCOUNT_PURGE_BUDGET_MS = 20_000;
+const ACCOUNT_SITES_PER_ROUND = 50;
+
+/**
+ * Erase everything a deleted account owns here (409 not_deleted for a live one): every site (its
+ * Durable Object, D1 rows, and its R2 prefixes queued in r2_cleanup, which the hourly cron above
+ * deletes), then the account-level rows (webhooks for every site and their deliveries, verify_log). Kept: the bare `accounts` mirror
+ * row and the fair-use counters (account_usage, webhook_usage, heatmap_image_usage), which never go
+ * down and age out with the cron. The linked analytics site isn't told to unlink: it is being erased
+ * too (and would refuse the change for a deleted account).
+ *
+ * Bounded by a wall-time budget, at least one site per call; `done: false` = call again. Idempotent:
+ * an emptied account answers `done: true` with zero counts. A site that fails is logged and left
+ * for the next call (done stays false), so one bad site can't block the others.
+ */
+export async function purgeAccount(env: Bindings, accountId: string, opts: { budgetMs?: number } = {}) {
+  // Never a live project: only one the identity DB marks deleted (an unreadable standing refuses too).
+  if ((await accountStanding(env, accountId)).deleted !== true)
+    throw new ApiError(
+      409,
+      "not_deleted",
+      "This project isn't deleted, so its data isn't erased.",
+      "Projects are deleted on the platform first (dashboard, or DELETE https://agentfirststack.com/v1/me); the site erases them 7 days later.",
+    );
+  const deadline = Date.now() + (opts.budgetMs ?? ACCOUNT_PURGE_BUDGET_MS);
+  const deleted: ErasedRows & { verify_log: number } = {
+    sites: 0,
+    replay_links: 0,
+    ...(Object.fromEntries(SITE_TABLES.map((t) => [t, 0])) as Record<(typeof SITE_TABLES)[number], number>),
+    verify_log: 0,
+  };
+  let prefixesQueued = 0;
+  const failed = new Set<string>();
+  let more = false;
+  let worked = false;
+  sites: for (;;) {
+    const { results } = await env.DB.prepare("SELECT * FROM sites WHERE account_id = ? ORDER BY created_at, id LIMIT ?")
+      .bind(accountId, failed.size + ACCOUNT_SITES_PER_ROUND)
+      .all<SiteRow>();
+    const todo = results.filter((s) => !failed.has(s.id));
+    if (!todo.length) break;
+    for (const s of todo) {
+      if (worked && Date.now() >= deadline) {
+        more = true;
+        break sites;
+      }
+      worked = true;
+      try {
+        const r = await eraseSite(env, s, { unlinkAnalytics: false });
+        for (const [t, n] of Object.entries(r.rows)) deleted[t as keyof ErasedRows] += n;
+        prefixesQueued += r.prefixesQueued;
+      } catch (e) {
+        failed.add(s.id);
+        console.error(JSON.stringify({ event: "account_purge.site_failed", account: accountId, site: s.id, error: String(e) }));
+      }
+    }
+  }
+  if (!more && !failed.size) {
+    // Account-level rows: webhooks without a site (and any left over), their deliveries, verify calls.
+    const [deliveries, hooks, verify] = await env.DB.batch([
+      env.DB.prepare("DELETE FROM webhook_deliveries WHERE webhook_id IN (SELECT id FROM webhooks WHERE account_id = ?)").bind(accountId),
+      env.DB.prepare("DELETE FROM webhooks WHERE account_id = ?").bind(accountId),
+      env.DB.prepare("DELETE FROM verify_log WHERE account_id = ?").bind(accountId),
+    ]);
+    deleted.webhook_deliveries += deliveries?.meta.changes ?? 0;
+    deleted.webhooks += hooks?.meta.changes ?? 0;
+    deleted.verify_log += verify?.meta.changes ?? 0;
+    forgetHooks(accountId);
+  }
+  return {
+    account_id: accountId,
+    done: !more && !failed.size,
+    deleted,
+    r2_prefixes_queued: prefixesQueued,
+    ...(failed.size ? { site_errors: failed.size } : {}),
+  };
 }

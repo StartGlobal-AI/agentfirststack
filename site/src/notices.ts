@@ -89,7 +89,7 @@ export async function refreshNotices(env: Bindings, base: string, now = Date.now
     `SELECT a.id AS account_id, s.catalog_version AS seen
        FROM accounts a
        LEFT JOIN setup_state s ON s.account_id = a.id
-      WHERE a.suspended_at IS NULL
+      WHERE a.suspended_at IS NULL AND a.deleted_at IS NULL
         AND (s.catalog_version IS NULL OR s.catalog_version < ?)
         AND EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id AND k.revoked_at IS NULL AND k.last_used_at > ?)
       LIMIT ?`,

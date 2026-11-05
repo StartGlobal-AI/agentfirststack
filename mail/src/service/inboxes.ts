@@ -102,9 +102,9 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   const insert = async (username: string): Promise<{ row: InboxRow; existing: boolean } | null> => {
     const address = `${username}@${dom.domain}`;
     // One query for both, so a live address and a tombstoned one cost the same and answer the same.
-    // Tombstones lapse after ADDRESS_TOMBSTONE_DAYS.
+    // Tombstones lapse after ADDRESS_TOMBSTONE_DAYS; permanent ones (a deleted project's) never do.
     const found = await env.DB.prepare(
-      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address AND t.deleted_at > ?",
+      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address AND (t.permanent = 1 OR t.deleted_at > ?)",
     )
       .bind(address, tombCutoff)
       .first<InboxRow & { id: string | null; tomb_account: string | null }>();
@@ -313,21 +313,44 @@ export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<nu
   return n;
 }
 
-export async function deleteInbox(env: AppEnv, accountId: string, id: string, now = Date.now()) {
-  const row = await getInboxRow(env, accountId, id);
-  // Messages go in chunks first, so a huge inbox never needs one giant statement.
+/**
+ * Delete an inbox's messages (with their attachments; deliveries and forward_queue rows cascade) in
+ * chunks, so a huge inbox never needs one giant statement. Stops after the chunk during which
+ * `deadline` (a Date.now() value) passed: `more: true` then. R2 blobs are not touched.
+ */
+export async function deleteInboxMessages(env: AppEnv, inboxId: string, deadline = Number.POSITIVE_INFINITY) {
+  const chunk = "SELECT id FROM messages WHERE inbox_id = ?1 ORDER BY seq LIMIT ?2";
+  let deleted = 0;
   for (;;) {
-    const chunk = "SELECT id FROM messages WHERE inbox_id = ?1 ORDER BY seq LIMIT ?2";
     const [, msgs] = await env.DB.batch([
-      env.DB.prepare(`DELETE FROM attachments WHERE message_id IN (${chunk})`).bind(id, DELETE_CHUNK),
-      env.DB.prepare(`DELETE FROM messages WHERE id IN (${chunk})`).bind(id, DELETE_CHUNK),
+      env.DB.prepare(`DELETE FROM attachments WHERE message_id IN (${chunk})`).bind(inboxId, DELETE_CHUNK),
+      // RETURNING, not meta.changes: D1 counts the rows the delete triggers touch (FTS, usage) too.
+      env.DB.prepare(`DELETE FROM messages WHERE id IN (${chunk}) RETURNING id`).bind(inboxId, DELETE_CHUNK),
     ]);
-    if ((msgs?.meta.changes ?? 0) < DELETE_CHUNK) break;
+    const n = msgs?.results.length ?? 0;
+    deleted += n;
+    if (n < DELETE_CHUNK) return { deleted, more: false };
+    if (Date.now() >= deadline) return { deleted, more: true };
   }
+}
+
+export interface DeleteInboxOptions {
+  /**
+   * "permanent": the inbox's project is being erased (src/service/purge.ts) and can never come back,
+   * so an address that would be tombstoned is reserved for good (migrations/0015).
+   */
+  reserve?: "permanent";
+}
+
+export async function deleteInbox(env: AppEnv, accountId: string, id: string, now = Date.now(), opts: DeleteInboxOptions = {}) {
+  const row = await getInboxRow(env, accountId, id);
+  await deleteInboxMessages(env, id);
   // A shared-domain address that ever received mail may have been used to sign up somewhere, so it
-  // stays its old account's for ADDRESS_TOMBSTONE_DAYS (see migrations/0006 and 0009). One that
-  // never received mail is free again at once: create/delete loops reserve nothing.
+  // stays its old account's for ADDRESS_TOMBSTONE_DAYS (see migrations/0006 and 0009), or for good
+  // when its project is erased (0015). One that never received mail is free again at once:
+  // create/delete loops reserve nothing.
   const tombstone = row.domain === sharedDomain(env) && row.last_message_at !== null;
+  const permanent = tombstone && opts.reserve === "permanent";
   await env.DB.batch([
     env.DB.prepare("UPDATE domains SET catch_all_inbox_id = NULL WHERE catch_all_inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM threads WHERE inbox_id = ?").bind(id),
@@ -336,9 +359,10 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
     env.DB.prepare("DELETE FROM inboxes WHERE id = ?").bind(id),
     ...(tombstone
       ? [
+          // A permanent reservation is never downgraded.
           env.DB.prepare(
-            "INSERT INTO address_tombstones (address, account_id, deleted_at) VALUES (?, ?, ?) ON CONFLICT(address) DO UPDATE SET account_id = excluded.account_id, deleted_at = excluded.deleted_at",
-          ).bind(row.address, row.account_id, now),
+            "INSERT INTO address_tombstones (address, account_id, deleted_at, permanent) VALUES (?, ?, ?, ?) ON CONFLICT(address) DO UPDATE SET account_id = excluded.account_id, deleted_at = excluded.deleted_at, permanent = MAX(address_tombstones.permanent, excluded.permanent)",
+          ).bind(row.address, row.account_id, now, permanent ? 1 : 0),
         ]
       : []),
   ]);
@@ -347,7 +371,9 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
     deleted: id,
     address: row.address,
     blobs_deleted: blobs,
-    address_reserved_until: tombstone ? now + tombstoneDays(env) * DAY : null,
+    address_reserved_until: tombstone && !permanent ? now + tombstoneDays(env) * DAY : null,
+    // Only for the purge (the REST and MCP deletes never pass reserve).
+    ...(opts.reserve === "permanent" ? { address_reserved_permanently: permanent } : {}),
   };
 }
 
@@ -419,8 +445,9 @@ export async function purgeOldSharedMessages(env: AppEnv, now = Date.now(), budg
 /**
  * Cron: housekeeping rows that are no longer needed: daily counters older than a week (inbound,
  * per sender, per-account budgets), wait slots past their expiry (a Worker that died), address
- * tombstones older than ADDRESS_TOMBSTONE_DAYS, and mail that waited FORWARD_QUEUE_MAX_DAYS to be
- * forwarded (nobody claimed the project: nothing waits forever).
+ * tombstones older than ADDRESS_TOMBSTONE_DAYS (never a permanent one: a deleted project's), and
+ * mail that waited FORWARD_QUEUE_MAX_DAYS to be forwarded (nobody claimed the project: nothing
+ * waits forever).
  */
 export async function pruneCounters(env: AppEnv, now = Date.now()) {
   const weekAgo = utcDay(now - 7 * DAY);
@@ -429,7 +456,7 @@ export async function pruneCounters(env: AppEnv, now = Date.now()) {
     env.DB.prepare("DELETE FROM sender_counters WHERE day < ?").bind(weekAgo),
     env.DB.prepare("DELETE FROM account_daily WHERE day < ?").bind(weekAgo),
     env.DB.prepare("DELETE FROM active_waits WHERE expires_at < ?").bind(now),
-    env.DB.prepare("DELETE FROM address_tombstones WHERE deleted_at < ?").bind(now - tombstoneDays(env) * DAY),
+    env.DB.prepare("DELETE FROM address_tombstones WHERE permanent = 0 AND deleted_at < ?").bind(now - tombstoneDays(env) * DAY),
     env.DB.prepare("DELETE FROM forward_queue WHERE received_at < ?").bind(now - FORWARD_QUEUE_MAX_DAYS * DAY),
   ]);
   const n = (i: number) => r[i]?.meta.changes ?? 0;

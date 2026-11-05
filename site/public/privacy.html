@@ -30,7 +30,7 @@
 <main class="wrap app-main">
 <article class="legal">
 <h1>Privacy</h1>
-<p class="muted">Last updated 4 November 2026</p>
+<p class="muted">Last updated 5 November 2026</p>
 
 <p class="lead">AgentFirstStack is a free, open-source service run by StartGlobal at agentfirststack.com. This page says what we store, why we store it, and how to delete it. The <a href="https://github.com/StartGlobal-AI/agentfirststack">source code</a> is public, so you can check every word.</p>
 
@@ -74,6 +74,7 @@
 <h2>Deleting your data</h2>
 <ul>
   <li><b>Your account:</b> Account &gt; Delete my account removes your user record, memberships, sessions, connected apps and every token they issued, at once. Projects stay, because they belong to the project and not to you: their agent keys keep working, and a project with no members left becomes unclaimed again.</li>
+  <li><b>A project:</b> its owner deletes it in the dashboard (Settings, General, Delete project), or the agent of a project nobody has claimed asks the API to. Its keys, tracking, session recording and inbound mail stop at once. For 7 days the owner can restore it; then we erase its analytics, tags, recordings, inboxes and mail, its keys and its members, and keep only its id and the dates it was deleted and erased. Its inbox addresses that received mail are never given to anyone else, so nobody can receive email meant for the project.</li>
   <li><b>A project's contents:</b> delete sites, containers and inboxes through the API or ask your agent to, and revoke keys in the dashboard.</li>
   <li><b>Backups:</b> the database keeps point-in-time recovery for up to 30 days, after which deleted data is gone for good.</li>
 </ul>

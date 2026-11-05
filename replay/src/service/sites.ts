@@ -687,21 +687,41 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
 /** D1 tables with rows per site (deleted with it, besides replay_links and the site row). */
 export const SITE_TABLES = ["segments", "surveys", "webhooks", "webhook_deliveries", "event_definitions"] as const;
 
-export async function deleteSite(ctx: Ctx, siteId: string) {
-  const s = await loadSite(ctx, siteId);
+/** R2 prefixes of a site's objects: recording chunks, starred sessions' playback copies, cached heatmap images. */
+export const sitePrefixes = (siteId: string) => [`${siteId}/`, `starred/${siteId}/`, `heatmaps/${siteId}/`];
+
+/** Rows one eraseSite() removed, by table (replay_links, the SITE_TABLES and sites). */
+export type ErasedRows = Record<"replay_links" | (typeof SITE_TABLES)[number] | "sites", number>;
+
+/**
+ * Erase one site: its Durable Object (sessions, signals, heatmaps, survey responses; afterwards a
+ * tombstone that refuses ingest), its D1 rows, and its R2 prefixes queued in r2_cleanup for the
+ * hourly cron. The object goes first: if anything fails, the site row is still there and a retry
+ * erases what is left. `unlinkAnalytics: false` skips telling the linked analytics site to stop
+ * loading this recorder (the account purge: analytics is being erased too).
+ */
+export async function eraseSite(env: Bindings, s: SiteRow, opts: { unlinkAnalytics?: boolean } = {}) {
   // The analytics tracker must not keep loading a deleted site's loader (only if it still points here).
-  const unlink = s.analytics_site_id ? await unlinkAnalyticsSite(ctx.env, ctx.accountId, s.analytics_site_id, s.id) : null;
-  await ctx.env.DB.batch([
-    ctx.env.DB.prepare("DELETE FROM replay_links WHERE site_id = ?").bind(s.id),
-    ...SITE_TABLES.map((t) => ctx.env.DB.prepare(`DELETE FROM ${t} WHERE site_id = ?`).bind(s.id)),
-    ctx.env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, ctx.accountId),
-    ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`${s.id}/`, Date.now()),
-    // starred sessions' playback copies and cached heatmap images
-    ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`starred/${s.id}/`, Date.now()),
-    ctx.env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(`heatmaps/${s.id}/`, Date.now()),
+  const unlink =
+    opts.unlinkAnalytics !== false && s.analytics_site_id ? await unlinkAnalyticsSite(env, s.account_id, s.analytics_site_id, s.id) : null;
+  await siteStub(env, s.id).destroy();
+  const now = Date.now();
+  const res = await env.DB.batch([
+    env.DB.prepare("DELETE FROM replay_links WHERE site_id = ?").bind(s.id),
+    ...SITE_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE site_id = ?`).bind(s.id)),
+    env.DB.prepare("DELETE FROM sites WHERE id = ? AND account_id = ?").bind(s.id, s.account_id),
+    ...sitePrefixes(s.id).map((p) => env.DB.prepare("INSERT OR IGNORE INTO r2_cleanup (prefix, created_at) VALUES (?, ?)").bind(p, now)),
   ]);
   forgetSite(s.id);
-  await siteStub(ctx.env, s.id).destroy();
+  const tables = ["replay_links", ...SITE_TABLES, "sites"] as const;
+  const rows = Object.fromEntries(tables.map((t, i) => [t, res[i]?.meta.changes ?? 0])) as ErasedRows;
+  const prefixesQueued = res.slice(tables.length).reduce((n, r) => n + (r.meta.changes ?? 0), 0);
+  return { unlink, rows, prefixesQueued };
+}
+
+export async function deleteSite(ctx: Ctx, siteId: string) {
+  const s = await loadSite(ctx, siteId);
+  const { unlink } = await eraseSite(ctx.env, s);
   const stale = unlink && !unlink.ok && (loadsWithAnalytics(s) || unlink.status !== 503);
   return {
     deleted: s.id,

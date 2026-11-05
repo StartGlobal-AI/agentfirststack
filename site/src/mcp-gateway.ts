@@ -10,6 +10,7 @@ import {
   renameProject,
 } from "@afs/shared";
 import { claimLinkResponse, createClaimLink } from "./claims";
+import { deleteProject, deletionAnswer, isClaimed } from "./project-deletion";
 import type { Bindings } from "./env";
 import { SETUP_SERVICES, parseDomain, parseServices, setupReport } from "./setup-check";
 import { checkTestVisit, readSince, runSetupTest } from "./setup-test";
@@ -25,7 +26,7 @@ import { checkTestVisit, readSince, runSetupTest } from "./setup-test";
  * Tools prefixed `afs_` are the gateway's own (platform-wide, not one service's):
  * `afs_check_setup` and `afs_check_test_visit` (every key), `afs_test_setup` and `afs_update_project`
  * (keys that can write) and
- * `afs_create_claim_link` (full-access API keys only, not OAuth access tokens).
+ * `afs_create_claim_link` and `afs_delete_project` (full-access API keys only, not OAuth access tokens).
  *
  * Cost per HTTP request is bounded: a JSON-RPC batch holds at most MAX_BATCH messages (batching
  * left MCP in 2025-06-18; older clients still send small ones), and the merged tool list is built
@@ -90,6 +91,20 @@ const RENAME_TOOL: Tool = {
     additionalProperties: false,
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+};
+
+const DELETE_TOOL: Tool = {
+  name: "afs_delete_project",
+  title: "Delete this project",
+  description:
+    "Deletes this project, for an unclaimed project only (a claimed one is deleted by its owner in the dashboard). Every key (this one too) and the project's tracking, recording and inbound mail stop at once; its data in every service is erased 7 days later, and inbox addresses that received mail stay reserved for good. Only when the person asks you to: export what they want to keep first, then pass the project id as confirm. The answer lists what to remove from the codebase. Same as DELETE /v1/me {confirm}.",
+  inputSchema: {
+    type: "object",
+    properties: { confirm: { type: "string", description: "This project's id (acct_...), from GET /v1/me" } },
+    required: ["confirm"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 };
 
 const CHECK_TOOL: Tool = {
@@ -203,6 +218,7 @@ async function buildToolList(env: Bindings, caller: Caller): Promise<Tool[]> {
     VISIT_TOOL,
     ...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []),
     ...(canWrite(caller.auth) ? [RENAME_TOOL] : []),
+    ...(offersClaimTool(caller.auth) ? [DELETE_TOOL] : []),
     ...lists.flat(),
   ];
 }
@@ -262,6 +278,38 @@ async function callGatewayTool(env: Bindings, caller: Caller, name: string, args
     } catch (err) {
       const e = err as { toJSON?: () => unknown; message?: string };
       return toolResult(e.toJSON ? e.toJSON() : { error: { code: "internal", message: e.message ?? String(err) } }, true);
+    }
+  }
+  if (name === DELETE_TOOL.name) {
+    const fail = (err: unknown) => {
+      const e = err as { toJSON?: () => unknown; message?: string };
+      return toolResult(e.toJSON ? e.toJSON() : { error: { code: "internal", message: e.message ?? String(err) } }, true);
+    };
+    try {
+      if (!offersClaimTool(caller.auth))
+        throw new ApiError(
+          403,
+          "forbidden",
+          "Deleting the project needs the agent's own full-access key.",
+          'Use a key with scope "*" (not a read key or a connected app\'s token).',
+        );
+      if (args.confirm !== caller.auth.accountId)
+        throw new ApiError(
+          400,
+          "bad_request",
+          "To delete the project, confirm its id.",
+          `Pass {"confirm":"${caller.auth.accountId}"}, after the person asked for it.`,
+        );
+      if (await isClaimed(env.DB, caller.auth.accountId))
+        throw new ApiError(
+          403,
+          "owner_required",
+          "This project has an owner, so only they can delete it.",
+          `Ask them to delete it in the dashboard: ${caller.base}/dashboard/projects/${caller.auth.accountId}/settings (Settings, General, Delete project).`,
+        );
+      return toolResult(deletionAnswer(caller.auth.accountId, await deleteProject(env, caller.auth.accountId, "agent")));
+    } catch (err) {
+      return fail(err);
     }
   }
   if (name === CLAIM_TOOL.name) {

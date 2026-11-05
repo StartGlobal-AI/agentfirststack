@@ -1,7 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { sha256Hex, timingSafeEqual } from "./crypto";
-import { ApiError, accountSuspended, badRequest, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
+import { ApiError, accountSuspended, badRequest, forbidden, notFound, projectDeleted, tooManyRequests, unauthorized } from "./errors";
 import { clientAsn, clientNetwork, publicBaseUrl, readJson } from "./http";
 import { newId, randomString } from "./ids";
 import { noticeAttacher } from "./notices";
@@ -154,23 +154,30 @@ export async function authenticate(db: D1Database, token: string, waitUntil?: (p
     expires_at?: number | null;
     oauth_grant_id?: string | null;
     suspended_at?: number | null;
+    deleted_at?: number | null;
+    purge_after?: number | null;
   };
-  let row: KeyRow | null;
-  try {
-    row = await db
-      .prepare(
-        "SELECT k.*, a.suspended_at AS suspended_at FROM api_keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ? AND k.revoked_at IS NULL",
-      )
-      .bind(hash)
-      .first<KeyRow>();
-  } catch (e) {
-    // A database that hasn't run the account_standing migration yet: no suspension to check.
-    // Any other error (D1 unavailable) fails closed instead of skipping the suspension check.
-    if (!isSchemaError(e)) throw e;
-    row = await db.prepare("SELECT * FROM api_keys WHERE hash = ? AND revoked_at IS NULL").bind(hash).first<KeyRow>();
+  let row: KeyRow | null = null;
+  // Newest schema first. A database that hasn't run the account_standing (or project_deletion)
+  // migration yet falls back; any other error (D1 unavailable) fails closed instead of skipping
+  // the checks.
+  const queries = [
+    "SELECT k.*, a.suspended_at AS suspended_at, a.deleted_at AS deleted_at, a.purge_after AS purge_after FROM api_keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ? AND k.revoked_at IS NULL",
+    "SELECT k.*, a.suspended_at AS suspended_at FROM api_keys k JOIN accounts a ON a.id = k.account_id WHERE k.hash = ? AND k.revoked_at IS NULL",
+    "SELECT * FROM api_keys WHERE hash = ? AND revoked_at IS NULL",
+  ];
+  for (const [i, sql] of queries.entries()) {
+    try {
+      row = await db.prepare(sql).bind(hash).first<KeyRow>();
+      break;
+    } catch (e) {
+      if (!isSchemaError(e) || i === queries.length - 1) throw e;
+    }
   }
   if (!row) return null;
-  // A suspended account's keys all stop at once, with an error that says why.
+  // A deleted project's keys all stop at once (until its owner restores it), and so do a
+  // suspended account's, each with an error that says why.
+  if (row.deleted_at != null) throw projectDeleted(row.deleted_at, row.purge_after);
   if (row.suspended_at != null) throw accountSuspended();
   const now = Date.now();
   // Keys with an expiry (OAuth access tokens) stop working the moment it passes.
@@ -223,17 +230,29 @@ export async function internalAuth(env: AuthBindings, req: Request): Promise<Aut
   const accountId = req.headers.get("x-afs-account") ?? "";
   if (!ACCOUNT_ID.test(accountId)) return false;
   const idb = identityDb(env);
-  let row: { id: string; suspended_at?: number | null } | null;
-  try {
-    row = await idb.prepare("SELECT id, suspended_at FROM accounts WHERE id = ?").bind(accountId).first();
-  } catch (e) {
-    if (!isSchemaError(e)) throw e;
-    row = await idb.prepare("SELECT id FROM accounts WHERE id = ?").bind(accountId).first();
+  type Row = { id: string; suspended_at?: number | null; deleted_at?: number | null; purge_after?: number | null };
+  let row: Row | null = null;
+  const queries = [
+    "SELECT id, suspended_at, deleted_at, purge_after FROM accounts WHERE id = ?",
+    "SELECT id, suspended_at FROM accounts WHERE id = ?",
+    "SELECT id FROM accounts WHERE id = ?",
+  ];
+  for (const [i, sql] of queries.entries()) {
+    try {
+      row = await idb.prepare(sql).bind(accountId).first<Row>();
+      break;
+    } catch (e) {
+      if (!isSchemaError(e) || i === queries.length - 1) throw e;
+    }
   }
   if (!row) return false;
-  // A suspended account stays readable to the deployment's own Workers (the dashboard's
-  // inventory), but nothing may change it on its behalf.
-  if (row.suspended_at != null && req.method !== "GET" && req.method !== "HEAD") throw accountSuspended();
+  const reading = req.method === "GET" || req.method === "HEAD";
+  // A deleted project stays readable to the deployment's own Workers (its restore page), and
+  // deletable (the purge erases it with DELETE requests), but nothing else may change it.
+  if (row.deleted_at != null && !reading && req.method !== "DELETE") throw projectDeleted(row.deleted_at, row.purge_after);
+  // A suspended account stays readable to them too (the dashboard's inventory), but nothing may
+  // change it on its behalf (unless it is also deleted: then the purge may erase it).
+  if (row.suspended_at != null && row.deleted_at == null && !reading) throw accountSuspended();
   await ensureLocalAccount(env, accountId);
   return { accountId, keyId: INTERNAL_KEY_ID, scopes: ["*"] };
 }

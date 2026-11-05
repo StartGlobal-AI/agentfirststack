@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { type AppEnv, type Bindings, VERSION } from "./env";
 import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
+import { account } from "./routes/account";
 import { api, waitUntilOf } from "./routes/api";
 import { browserRoutes, playerRoutes } from "./routes/public";
 import { runPurge } from "./service/purge";
@@ -59,6 +60,7 @@ app.route(
 );
 app.use("/v1/*", requireAuth<AppEnv>());
 app.route("/v1", api);
+app.route("/v1", account);
 
 export default {
   fetch: app.fetch,

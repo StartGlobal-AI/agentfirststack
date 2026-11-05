@@ -1,4 +1,4 @@
-import { assertPermanentKey, isTemporaryCredential, parse, readJson, readQuery } from "@afs/shared";
+import { INTERNAL_KEY_ID, assertPermanentKey, forbidden, isTemporaryCredential, parse, readJson, readQuery } from "@afs/shared";
 import { analyzeMessage } from "../service/analysis";
 import { getAttachmentText } from "../service/attachment-text";
 import { Hono } from "hono";
@@ -41,6 +41,7 @@ import {
   updateMessage,
   updateThread,
 } from "../service/messages";
+import { purgeAccount } from "../service/purge";
 import { forwardMessage, replyToMessage, sendFromInbox } from "../service/send";
 import { getUsage } from "../service/usage";
 import { latestCode, waitForEmail } from "../service/wait";
@@ -79,6 +80,23 @@ const sendOpts = (c: {
 
 /** 201 for a new send, 202 for a scheduled one, 200 when an Idempotency-Key replayed an earlier one. */
 const sentStatus = (r: { idempotent_replay?: boolean; scheduled_at?: number }) => (r.idempotent_replay ? 200 : r.scheduled_at ? 202 : 201);
+
+// ---- account --------------------------------------------------------------------------------
+
+/**
+ * DELETE /v1/account: erase this account's mail (src/service/purge.ts). Platform plumbing: the
+ * site calls it over a service binding (internal auth) 7 days after the project was deleted, until
+ * it answers done: true. No MCP tool.
+ */
+api.delete("/account", async (c) => {
+  if (c.var.auth.keyId !== INTERNAL_KEY_ID) {
+    throw forbidden(
+      "Only the platform erases a project's mail.",
+      "Projects are deleted on the platform: the owner deletes it from the dashboard, or an agent of an unclaimed project calls DELETE https://agentfirststack.com/v1/me. This app's data is erased 7 days later; its inbox addresses that received mail stay reserved for good.",
+    );
+  }
+  return c.json(await purgeAccount(c.env, acct(c)));
+});
 
 // ---- inboxes --------------------------------------------------------------------------------
 

@@ -234,6 +234,30 @@ service reads the row and sets `shown_at`, nothing else; after deleting a row in
   keys keep working (they belong to the project, not the person); references to the user on the
   remaining key and claim-link rows are cleared. A project left with no members simply becomes
   unclaimed again.
+- **Deleting a project** (`src/project-deletion.ts`, migration `0007_project_deletion.sql`) has
+  three steps:
+  1. **Delete.** The owner deletes it in Settings, General by typing its name, or an unclaimed
+     project's own agent calls `DELETE /v1/me {"confirm":"<id>"}` or `afs_delete_project`. Either
+     way it needs a full-access permanent key. A claimed project's agent gets `403 owner_required`.
+     Deleting sets `accounts.deleted_at`, `deleted_by` (a user id or `agent`) and `purge_after`
+     (7 days later), and deletes unused claim links. From then on:
+     - `authenticate()` answers `403 project_deleted` for every key and OAuth token.
+     - `accountStanding()` reads the project as `{suspended: true, deleted: true}`, so every
+       ingest path refuses it within a minute.
+     - `internalAuth()` still lets the deployment's own Workers GET and DELETE, but nothing else.
+     - It disappears from members' dashboards; its owner sees it under "Deleted projects" with
+       Restore and a cleanup prompt.
+  2. **Restore.** Until `purge_after`, the owner restores it from the projects page, or the
+     operator does with `POST /v1/admin/accounts/:id/restore`.
+  3. **Purge.** The site's daily cron (`purgeDeletedProjects`) calls `DELETE /v1/account` on
+     analytics, tags, mail and replay over internal auth until each answers `done: true`. Each
+     service checks that the project really is deleted (`409 not_deleted` otherwise) and erases
+     everything it holds, apart from its bare `accounts` row and fair-use counters. Then the site
+     deletes its keys, grants, memberships, claim links, setup state and notice, clears its name
+     and email, and sets `purged_at`. If any service fails, nothing in the identity DB is erased,
+     and the next run carries on.
+  - Mail reserves the project's shared-domain addresses that ever received mail permanently, not
+    just for the usual 90 days.
 
 ### 7. Fair use for keys and grants
 
@@ -271,13 +295,16 @@ unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 | `POST /v1/setup/test`, `GET /v1/setup/test?since=` | write key / any key | the setup test: test traffic through every service, a browser plan, and the check of that visit (MCP `afs_test_setup`, `afs_check_test_visit`; `src/setup-test.ts`) |
 | `GET /v1/setup` (records `setup_state`, clears the project's notice) | any API key | the setup check: the project against the full setup, each part with its status and fix (MCP gateway tool `afs_check_setup`; `src/setup-check.ts`) |
 | `GET /v1/me`, `PATCH /v1/me {name}` | API key (not read-only to rename) | the project and key; renames the project (every app; MCP gateway tool `afs_update_project`) |
+| `DELETE /v1/me {confirm}` | full-access API key (not OAuth), unclaimed project | delete the project (MCP gateway tool `afs_delete_project`; `src/project-deletion.ts`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
+| `POST /v1/admin/accounts/:id/restore` | `ADMIN_TOKEN` | undo a project deletion before its purge |
 | `POST /v1/admin/notices/refresh` | `ADMIN_TOKEN` | write the project notices now (the daily cron does it otherwise) |
 | `GET /signin` | none | sign-in page |
 | `GET /auth/google`, `GET /auth/google/callback` | none | Google sign-in |
 | `GET /auth/dev-login` | `DEV_MODE=true` only | fake sign-in for dev and tests |
 | `POST /auth/signout` | session + CSRF | sign out |
 | `GET`, `POST /claim/:token` | session (+ CSRF to claim) | claim page |
+| `POST /dashboard/projects/:id/delete {confirm}`, `POST /dashboard/projects/:id/restore` | session + CSRF, owner | delete a project (its name typed), restore it within 7 days |
 | `GET`, `POST /dashboard/...` | session (+ CSRF; owner for keys and invites) | the pages above, incl. `POST /dashboard/projects/:id/invites/:ref/revoke` |
 | `GET /dashboard/projects/:id/data/<service>/<path>` | session, project member | the dashboard views' data: a read-only proxy to the service as the project (internal auth), JSON only (no `format=csv`), errors as JSON (`src/service-views.ts`). GET only, and only these paths. analytics: `rollup`, `sites`, `sites/:site` and its `stats`, `timeseries`, `breakdown`, `realtime`, `insights`, `crawlers`, `goals`, `funnels[/:id]`, `visitors`, `journeys`. tags: `containers`, `containers/:id` and its `tag-stats`, `destinations`, `events`, `versions`, `coverage` (never `install` or a visitor's stored identity). replay: `sites`, `sites/:id` and its `sessions`, `summary`, `errors`, `metrics`. mail: `inboxes`, `inboxes/:id` and its `messages`, `threads`, `messages/:id` (always `html=false`), `threads/:id`, `search` (never raw MIME or attachments) |
 | `POST /dashboard/projects/:id/replay/:site/sessions/:session/watch` | session, project member, `x-csrf` | a one-hour replay player link for a session (the replay service's `POST /v1/sites/:id/links`) |

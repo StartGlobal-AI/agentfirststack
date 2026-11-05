@@ -21,6 +21,7 @@ export function llmsTxt(base: string): string {
 Base URL: ${base}
 Source (AGPL-3.0): https://github.com/StartGlobal-AI/agentfirststack
 Auth: \`Authorization: Bearer <api_key>\` (or \`x-api-key\`). Keys are \`*\` (full) or \`read\` (GET + read-only MCP tools).
+Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me) stops its keys and ingest at once and erases this app's data 7 days later.
 Errors: \`{"error":{"code","message","hint","details"}}\`. The hint says how to recover.
 IDs: site_..., goal_..., shr_..., fnl_... (funnel), ann_... (annotation), pay_... (payment), s... (session), dst_... (destination), alr_... (alert), rpt_... (report), aev_... (delivery). Timestamps: unix ms. JSON is snake_case.
 

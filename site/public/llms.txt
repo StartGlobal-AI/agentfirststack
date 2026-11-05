@@ -425,7 +425,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 ## 9. MCP
 
 One MCP server for every service (241 tools: 236 prefixed `analytics_`, `tags_`, `mail_` and
-`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_check_setup`, `afs_test_setup` and `afs_check_test_visit`):
+`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_test_setup` and `afs_check_test_visit`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -495,6 +495,26 @@ Agents with a key never need any of this.
 - `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 8).
 - A key of a suspended account answers `403 account_suspended` everywhere (abuse of the free
   service). Operators use `/v1/admin/accounts/:id` (`ADMIN_TOKEN` only); agents never need it.
+
+### Deleting a project
+
+Only when the person asks for it. Export what they want to keep first (keys stop working the
+moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/containers/:id/draft`
+(tags), `GET /v1/messages/:id/raw` (each email as .eml), `GET /v1/sites/:id/sessions/:id/events`
+(a replay session).
+
+- An unclaimed project: `DELETE https://agentfirststack.com/v1/me {"confirm":"<project id>"}` with
+  its full-access key (MCP `afs_delete_project`). A claimed project answers `403 owner_required`:
+  its owner deletes it in the dashboard (Settings, General, Delete project).
+- At once: every key and OAuth token answers `403 project_deleted`, and tracking, recording,
+  inbound mail and forwarding stop (within a minute). Unused claim links die; members lose it.
+- For 7 days its owner can restore it from the projects page (an unclaimed one: the operator, on
+  request to privacy@agentfirststack.com). Then every service erases its data: sites and their
+  events, containers, inboxes and their mail, recordings, keys. Only the id and the dates remain.
+- Shared-domain inbox addresses that ever received mail stay reserved for good, so nobody else
+  can receive the project's password resets. Move any account that uses one before deleting.
+- The answer's `next_steps` say what to take out of the codebase: the snippets, the env var,
+  `AGENTFIRSTSTACK.md`, the AgentFirstStack block in `AGENTS.md`, custom mail domain DNS records.
 
 ## 11. How every service behaves
 

@@ -8,6 +8,7 @@
 //   pnpm afs check <profile>               end-to-end check of a live deployment (cleans up after itself)
 //   pnpm afs suspend <profile> <acct_id> --reason "..."   stop an abusive account: every key, every service
 //   pnpm afs unsuspend <profile> <acct_id>                undo a suspension
+//   pnpm afs restore <profile> <acct_id>                  undo a project deletion (before its purge, 7 days)
 //
 // Each app's wrangler.jsonc is the generic template (local dev, tests, self-host defaults). This
 // script never edits it; it derives a deploy config per app from the template plus the profile.
@@ -551,6 +552,29 @@ async function cmdSuspend(name, accountId, opts, suspend) {
   for (const step of out.next_steps ?? []) log(`  - ${step}`);
 }
 
+/** POST /v1/admin/accounts/:id/restore: undo a project deletion before the purge erases it. */
+async function cmdRestore(name, accountId) {
+  if (!ACCOUNT_ID.test(accountId ?? "")) die("Give the project id (acct_...).");
+  const profile = loadProfile(name);
+  const token = loadSecrets(name)?.ADMIN_TOKEN;
+  if (!token) die(`deploy/${name}.secrets.json has no ADMIN_TOKEN. \`pnpm afs init ${name}\` adds one; deploy before using it.`);
+  const res = await fetch(`https://${profile.domain}/v1/admin/accounts/${accountId}/restore`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: "{}",
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const e = json?.error;
+    die(e ? `${res.status} ${e.code}: ${e.message}${e.hint ? ` ${e.hint}` : ""}` : `HTTP ${res.status}`);
+  }
+  const a = json.account;
+  log(
+    `${json.restored ? "Restored" : "Not deleted, nothing to restore:"} ${a.id}: ${a.name ?? "unnamed"}, ${a.active_keys} active keys, ${a.members} members.`,
+  );
+  for (const step of json.next_steps ?? []) log(`  - ${step}`);
+}
+
 // ---------- main ----------
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -561,7 +585,7 @@ if (isMain) {
     log(
       readFileSync(fileURLToPath(import.meta.url), "utf8")
         .split("\n")
-        .slice(1, 14)
+        .slice(1, 15)
         .join("\n")
         .replace(/^\/\/ ?/gm, ""),
     );
@@ -584,6 +608,9 @@ if (isMain) {
     case "suspend":
     case "unsuspend":
       await cmdSuspend(name, rest[0], opts, cmd === "suspend");
+      break;
+    case "restore":
+      await cmdRestore(name, rest[0]);
       break;
     default:
       help();

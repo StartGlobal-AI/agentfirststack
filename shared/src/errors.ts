@@ -54,3 +54,19 @@ export const accountSuspended = () =>
     "This account has been suspended for abuse of the free service.",
     "If you think this is a mistake, email abuse@agentfirststack.com with the account id.",
   );
+
+const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Its owner (or, while unclaimed, its agent) deleted the project. Keys and public ingest stop at
+ * once; the data is erased at `purgeAfter`, and until then the owner can restore it.
+ */
+export const projectDeleted = (deletedAt?: number | null, purgeAfter?: number | null) =>
+  new ApiError(
+    403,
+    "project_deleted",
+    `This project was deleted${deletedAt ? ` on ${day(deletedAt)}` : ""}.`,
+    purgeAfter
+      ? `Its owner can restore it from https://agentfirststack.com/dashboard until ${day(purgeAfter)}; after that its data is erased. To start a new project: POST /v1/signup.`
+      : "To start a new project: POST /v1/signup.",
+  );

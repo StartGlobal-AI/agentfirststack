@@ -1,6 +1,7 @@
 import { accountRoutes, extractKey, onError, onNotFound, protectedResourceRoutes, timingSafeEqual } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import { adminApi } from "./admin";
+import { deletionApi, purgeDeletedProjects } from "./project-deletion";
 import { claimLinkApi, claimRoutes } from "./claims";
 import { purgeExpired } from "./cleanup";
 import { dashboard } from "./dashboard";
@@ -124,6 +125,7 @@ app.route("/", claimLinkApi);
 app.route("/", setupApi);
 app.route("/", setupTestApi);
 app.route("/", adminApi);
+app.route("/", deletionApi);
 app.route("/dashboard", dashboard);
 
 // A project created here is a conversion only the backend sees (agents sign up with curl): with
@@ -187,6 +189,12 @@ export default {
   fetch: app.fetch,
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
+    // Deleted projects whose 7 days to restore have passed: erased in every service.
+    ctx.waitUntil(
+      purgeDeletedProjects(env)
+        .then((n) => console.log(JSON.stringify({ event: "cron.project_purge", ...n })))
+        .catch((e) => console.error("cron.project_purge failed", e)),
+    );
     // Projects that are already set up hear about new setup items (src/setup-catalog.ts).
     ctx.waitUntil(
       refreshNotices(env, noticeBase(env))

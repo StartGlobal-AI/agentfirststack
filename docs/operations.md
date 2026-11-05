@@ -121,6 +121,16 @@ When something gets through, in order of escalation:
    shows an account's standing, key and member counts. Suspending twice keeps the first reason.
 3. **Remove its resources.** Delete its inboxes, sites and containers through the API with a
    temporary key, or with SQL on the app's database.
+
+**Deleted projects.** Owners delete projects in the dashboard, and an unclaimed project's agent
+can with `DELETE /v1/me` (see [accounts.md](accounts.md#6-privacy-and-deletion)). A deleted
+project stops at once. The site's daily cron (03:17 UTC) erases it 7 days later in every service
+(`cron.project_purge` in the site's logs lists `purged` and `pending` ids). A project stays
+pending while a service fails, and is retried the next day. To undo a deletion before the purge,
+for example when someone writes to privacy@ because an agent deleted their unclaimed project:
+```sh
+pnpm afs restore hosted acct_...
+```
 4. **Close signup** temporarily: set `vars.all.SIGNUP_MODE` to `token` and deploy. For a burst
    from many networks, `SIGNUP_GLOBAL_HOURLY_LIMIT` already pauses new signups deployment-wide
    (`429 signups_paused`, existing keys unaffected) without a deploy.

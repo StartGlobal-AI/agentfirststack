@@ -374,9 +374,10 @@ export async function updateContainer(
   return next;
 }
 
+/** Delete a container's D1 rows, then its Durable Object's storage. Returns the rows deleted per table. */
 export async function deleteContainer(env: Bindings, accountId: string, id: string) {
   await getContainerRow(env, accountId, id);
-  await env.DB.batch([
+  const [destinations, versions, previewTokens, environments, lookups] = await env.DB.batch([
     env.DB.prepare("DELETE FROM destinations WHERE container_id = ?").bind(id),
     env.DB.prepare("DELETE FROM container_versions WHERE container_id = ?").bind(id),
     env.DB.prepare("DELETE FROM preview_tokens WHERE container_id = ?").bind(id),
@@ -385,6 +386,14 @@ export async function deleteContainer(env: Bindings, accountId: string, id: stri
     env.DB.prepare("DELETE FROM containers WHERE id = ?").bind(id),
   ]);
   await containerStub(env, id).destroy();
+  const n = (r: D1Result | undefined) => r?.meta.changes ?? 0;
+  return {
+    destinations: n(destinations),
+    versions: n(versions),
+    preview_tokens: n(previewTokens),
+    environments: n(environments),
+    lookups: n(lookups),
+  };
 }
 
 export async function containerStats(env: Bindings, id: string) {

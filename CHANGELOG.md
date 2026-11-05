@@ -47,6 +47,15 @@ All notable changes to this project. The format follows
 
 ### Added
 
+- **Deleting a project.** The owner deletes it in Settings, General (typing its name). An unclaimed project's own agent can delete it with `DELETE https://agentfirststack.com/v1/me {"confirm":"<id>"}` or the `afs_delete_project` MCP tool. A claimed project's agent gets `403 owner_required`. Deleting does four things at once:
+  - Every key and OAuth token answers `403 project_deleted`, with the restore date in the hint.
+  - Tracking, recording, inbound mail and forwarding stop within a minute (account standing reads it as stopped).
+  - Unused claim links die, and members lose the project.
+  - The owner sees it under "Deleted projects" with Restore and a prompt for cleaning it out of the codebase.
+
+  After 7 days the site's daily cron erases it. Each service gets `DELETE /v1/account`, which is internal only and refuses with `409 not_deleted` for a project that isn't deleted: analytics sites and their events, tags containers, mail inboxes, messages and domains, replay recordings. Then the project's keys, grants, memberships and setup state go too, leaving only the id and the dates. The operator can undo a deletion before then with `pnpm afs restore`. Settings shows an export prompt before deleting. Site migration `0007`.
+- **Mail: a deleted project's inbox addresses stay reserved for good.** Shared-domain addresses that ever received mail are never given to anyone else, so nobody can receive the project's password resets. Deleting a single inbox still reserves its address for `ADDRESS_TOMBSTONE_DAYS`.
+
 - **Moving from another tool is part of the full setup.**
   - The agent first finds what the site uses today, from the code and the tags scan: GA4, Google Tag Manager, Plausible, DataFast, pixels, replay tools.
   - It asks the owner once, in the same message as the forwarding question, whether to bring their setup and history over and whether it may use their browser.

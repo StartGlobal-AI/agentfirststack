@@ -222,7 +222,7 @@ describe("setup check", () => {
     expect(md).toContain("| ✅ | Goals | 3 goals: Signed up, Copied, Read a guide. |");
     expect(md).toContain("| ✅ | Events | 2 events in version 2: sign_up, copy_prompt. |");
     expect(md).toContain("| ⏳ | Dashboard access |");
-    expect(md).toContain("| ✅ | AI crawlers | 42 bot requests in the last 7 days (30 AI training, 12 search engines). |");
+    expect(md).toContain("| ✅ | AI crawlers | 42 bot requests in the last 7 days (30 from AI training, 12 from search engines). |");
 
     // Once someone has claimed it, the last check passes too.
     await E.DB.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")

@@ -3,8 +3,11 @@ import { type AuthBindings, identityDb, isSchemaError } from "./auth";
 /**
  * An account's standing, for every app's hot paths (public ingest keyed by a site or container id,
  * where there is no API key to check):
- *   - suspended: the operator stopped the account (abuse). Keys stop working (authenticate()), and
- *     data planes refuse its traffic.
+ *   - suspended: the account is stopped. The operator suspended it (abuse) or it was deleted (then
+ *     `deleted` is true as well). Keys stop working (authenticate()), and data planes refuse its
+ *     traffic, so every hot path that checks `suspended` handles a deleted project too.
+ *   - deleted:   its owner (or, while unclaimed, its agent) deleted the project; its data is erased
+ *     at purge_after unless restored first.
  *   - claimed:   a person signed in with Google has claimed it (it has a membership). Unclaimed
  *     accounts are agent-only and get the lower UNCLAIMED_* caps, see capFor().
  *
@@ -15,6 +18,7 @@ import { type AuthBindings, identityDb, isSchemaError } from "./auth";
 export interface Standing {
   suspended: boolean;
   claimed: boolean;
+  deleted?: boolean;
 }
 
 const TTL_MS = 60_000;
@@ -27,26 +31,33 @@ export async function accountStanding(env: AuthBindings, accountId: string): Pro
   if (hit && now - hit.at < TTL_MS) return hit.standing;
   const db = identityDb(env);
   let standing: Standing = { suspended: false, claimed: true };
-  try {
-    const row = await db
-      .prepare(
-        "SELECT a.suspended_at AS suspended_at, EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = a.id) AS claimed FROM accounts a WHERE a.id = ?",
-      )
-      .bind(accountId)
-      .first<{ suspended_at: number | null; claimed: number }>();
-    if (row) standing = { suspended: row.suspended_at != null, claimed: !!row.claimed };
-  } catch (e) {
-    if (!isSchemaError(e)) return unreadable(e);
+  type Row = { suspended_at: number | null; deleted_at?: number | null; claimed?: number };
+  const of = (row: Row, claimed: boolean): Standing => {
+    const deleted = row.deleted_at != null;
+    return { suspended: row.suspended_at != null || deleted, claimed, ...(deleted ? { deleted } : {}) };
+  };
+  // Newest schema first; each fallback is an older (or site-less, self-hosted) schema.
+  const queries: [string, (r: Row) => Standing][] = [
+    [
+      "SELECT a.suspended_at AS suspended_at, a.deleted_at AS deleted_at, EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = a.id) AS claimed FROM accounts a WHERE a.id = ?",
+      (r) => of(r, !!r.claimed),
+    ],
+    [
+      "SELECT a.suspended_at AS suspended_at, EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = a.id) AS claimed FROM accounts a WHERE a.id = ?",
+      (r) => of(r, !!r.claimed),
+    ],
     // No memberships table (a single app self-hosted without the site): suspension only.
+    ["SELECT suspended_at FROM accounts WHERE id = ?", (r) => of(r, true)],
+  ];
+  for (const [sql, read] of queries) {
     try {
-      const row = await db
-        .prepare("SELECT suspended_at FROM accounts WHERE id = ?")
-        .bind(accountId)
-        .first<{ suspended_at: number | null }>();
-      if (row) standing = { suspended: row.suspended_at != null, claimed: true };
-    } catch (e2) {
-      // Older schema without suspended_at: nothing to enforce.
-      if (!isSchemaError(e2)) return unreadable(e2);
+      const row = await db.prepare(sql).bind(accountId).first<Row>();
+      if (row) standing = read(row);
+      break;
+    } catch (e) {
+      // Only an older schema may fall through; an outage must not read as "nothing to enforce".
+      // The oldest schema (no suspended_at at all) has nothing to enforce.
+      if (!isSchemaError(e)) return unreadable(e);
     }
   }
   if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
@@ -63,7 +74,7 @@ function unreadable(e: unknown): Standing {
   return { suspended: false, claimed: false };
 }
 
-/** Forget a cached standing (after suspending or claiming, in the same isolate). */
+/** Forget a cached standing (after suspending, deleting, restoring or claiming, in the same isolate). */
 export function forgetStanding(accountId: string): void {
   cache.delete(accountId);
 }

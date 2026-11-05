@@ -267,6 +267,9 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
 - \`POST /v1/signup\` \`{ name?, email?, signup_token? }\` -> \`{ api_key, account_id, inbox, mcp, next_steps }\`. Creates a default inbox.
 - \`GET /v1/me\` -> account and key info.
 - \`GET /v1/keys\`, \`POST /v1/keys\` \`{ name?, scope?: "*"|"read" }\`, \`DELETE /v1/keys/:id\`.
+- \`DELETE /v1/account\` is the platform's own (an API key gets 403 \`forbidden\`): it erases a deleted project's mail 7 days
+  after the deletion. Projects are deleted on the platform: the owner in the dashboard, or an unclaimed project's agent
+  with DELETE https://agentfirststack.com/v1/me.
 
 ### Inboxes
 - \`POST /v1/inboxes\` \`{ username?, domain?, display_name?, ttl_days?, forward? }\` -> 201 \`{ inbox, existing:false, next_steps }\` (200 + existing:true if you already own the address).
@@ -277,6 +280,9 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   409 \`conflict\` if another account holds the address. An address on ${sharedDomain} that received mail stays
   reserved after it is deleted (or expires): for ADDRESS_TOMBSTONE_DAYS (default 90) only the account that had it can
   create it again; for others it is the same 409. One that never received mail is free again at once.
+  Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me)
+  refuses its mail at once and erases its inboxes 7 days later; their addresses that ever received mail are then reserved
+  permanently, so nobody else can receive that project's password resets.
   Inbox creations per UTC day may be capped (429 \`daily_limit\`; reusing an address you own is not a creation).
   A custom \`domain\` must be yours with ownership verified (else 403 \`ownership_not_verified\`; see Domains).
   \`ttl_days\`: inbox and its mail are deleted after that many days. \`display_name\`: line breaks and other

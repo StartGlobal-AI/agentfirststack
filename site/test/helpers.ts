@@ -36,6 +36,13 @@ export const serviceCalls: {
   body: string | null;
 }[] = [];
 
+/** DELETE /v1/account calls each stub service got, by "<service>:<account>". */
+export const purges = new Map<string, number>();
+/** How many DELETE /v1/account calls to answer done:false before done:true, by "<service>:<account>". */
+export const purgeRounds = new Map<string, number>();
+/** "<service>:<account>" pairs whose DELETE /v1/account fails (a service that is down). */
+export const failingPurges = new Set<string>();
+
 /**
  * A stand-in for one service: the real requireAuth() (internal auth and API keys, against the
  * same identity DB) and the real handleMcp() with two tools, so tokens are checked as for real.
@@ -74,6 +81,15 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
         : c.json({ error: { code: "not_found", message: "Site not found." } }, 404),
     );
   }
+  // The purge of a deleted project (src/project-deletion.ts), through the real internal auth.
+  svc.delete("/v1/account", (c) => {
+    const key = `${service}:${c.var.auth.accountId}`;
+    purges.set(key, (purges.get(key) ?? 0) + 1);
+    if (failingPurges.has(key)) return c.json({ error: { code: "internal", message: "Down." } }, 500);
+    const left = purgeRounds.get(key) ?? 0;
+    if (left > 0) purgeRounds.set(key, left - 1);
+    return c.json({ account_id: c.var.auth.accountId, done: left === 0, deleted: { things: left === 0 ? 1 : 0 } });
+  });
   if (service === "tags") svc.get("/v1/containers", (c) => c.json({ containers: fixtures.get(c.var.auth.accountId)?.containers ?? [] }));
   if (service === "mail") svc.get("/v1/inboxes", (c) => c.json({ inboxes: fixtures.get(c.var.auth.accountId)?.inboxes ?? [] }));
   if (service === "replay") svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.replaySites ?? [] }));

@@ -48,20 +48,41 @@ export async function listProjects(db: D1Database, userId: string): Promise<Proj
     .prepare(
       `SELECT a.id, a.name, a.created_at, m.role, m.created_at AS joined_at
          FROM memberships m JOIN accounts a ON a.id = m.account_id
-        WHERE m.user_id = ? ORDER BY m.created_at`,
+        WHERE m.user_id = ? AND a.deleted_at IS NULL ORDER BY m.created_at`,
     )
     .bind(userId)
     .all<Project>();
   return results;
 }
 
-/** The user's membership of a project, or null (callers turn that into a 404). */
+export interface DeletedProject {
+  id: string;
+  name: string | null;
+  deleted_at: number;
+  purge_after: number;
+}
+
+/** Projects this person owns that were deleted and can still be restored. */
+export async function listDeletedProjects(db: D1Database, userId: string, now = Date.now()): Promise<DeletedProject[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT a.id, a.name, a.deleted_at, a.purge_after
+         FROM memberships m JOIN accounts a ON a.id = m.account_id
+        WHERE m.user_id = ? AND m.role = 'owner' AND a.deleted_at IS NOT NULL AND a.purged_at IS NULL AND a.purge_after > ?
+        ORDER BY a.deleted_at DESC`,
+    )
+    .bind(userId, now)
+    .all<DeletedProject>();
+  return results;
+}
+
+/** The user's membership of a project, or null (callers turn that into a 404). A deleted project is null too. */
 export async function getProject(db: D1Database, userId: string, accountId: string): Promise<Project | null> {
   return db
     .prepare(
       `SELECT a.id, a.name, a.created_at, m.role, m.created_at AS joined_at
          FROM memberships m JOIN accounts a ON a.id = m.account_id
-        WHERE m.user_id = ? AND m.account_id = ?`,
+        WHERE m.user_id = ? AND m.account_id = ? AND a.deleted_at IS NULL`,
     )
     .bind(userId, accountId)
     .first<Project>();

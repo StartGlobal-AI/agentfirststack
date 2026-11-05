@@ -3,6 +3,7 @@ import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { SiteEnv } from "./env";
 import { noticeBase, refreshNotices } from "./notices";
+import { restoreProject } from "./project-deletion";
 
 /**
  * Operator tools for abuse of the free platform, on the site (it owns the identity database):
@@ -10,6 +11,7 @@ import { noticeBase, refreshNotices } from "./notices";
  *   GET  /v1/admin/accounts/:id              an account's standing
  *   POST /v1/admin/accounts/:id/suspend      { "reason": "..." }  every key stops on every service
  *   POST /v1/admin/accounts/:id/unsuspend    keys work again
+ *   POST /v1/admin/accounts/:id/restore      undo a project deletion before its purge (src/project-deletion.ts)
  *
  * `Authorization: Bearer <ADMIN_TOKEN>` only (constant-time compare); without ADMIN_TOKEN the
  * routes refuse everyone. authenticate() reads suspended_at on every request, so keys stop at
@@ -42,6 +44,9 @@ interface AccountState {
   created_at: number;
   suspended_at: number | null;
   suspended_reason: string | null;
+  deleted_at: number | null;
+  purge_after: number | null;
+  purged_at: number | null;
   active_keys: number;
   members: number;
 }
@@ -49,7 +54,7 @@ interface AccountState {
 async function accountState(db: D1Database, id: string): Promise<AccountState> {
   const row = await db
     .prepare(
-      `SELECT a.id, a.name, a.created_at, a.suspended_at, a.suspended_reason,
+      `SELECT a.id, a.name, a.created_at, a.suspended_at, a.suspended_reason, a.deleted_at, a.purge_after, a.purged_at,
               (SELECT count(*) FROM api_keys k WHERE k.account_id = a.id AND k.revoked_at IS NULL
                  AND (k.expires_at IS NULL OR k.expires_at > ?)) AS active_keys,
               (SELECT count(*) FROM memberships m WHERE m.account_id = a.id) AS members
@@ -94,6 +99,20 @@ adminApi.post("/v1/admin/accounts/:id/suspend", async (c) => {
       "Public ingest for its sites and containers stops within a minute (each Worker caches standing for 60 s).",
       `Undo with POST /v1/admin/accounts/${id}/unsuspend.`,
     ],
+  });
+});
+
+// A deleted project's restore window: the operator can undo a deletion its agent made (an
+// unclaimed project has no owner to do it), until the purge erases it.
+adminApi.post("/v1/admin/accounts/:id/restore", async (c) => {
+  const id = accountId(c);
+  await accountState(c.env.DB, id);
+  const r = await restoreProject(c.env, id);
+  return c.json({
+    account: await accountState(c.env.DB, id),
+    restored: r.restored,
+    existing: r.existing,
+    next_steps: ["Its keys work again at once; public ingest and inbound mail resume within a minute."],
   });
 });
 
