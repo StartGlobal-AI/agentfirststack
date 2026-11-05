@@ -78,6 +78,7 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_COST_ROWS_PER_SITE` / `MAX_ITEMS_PER_EVENT` / `MAX_USER_PROP_KEYS_PER_SITE` / `MAX_IMPORTED_ROWS_PER_SITE` / `MAX_IMPORTS_PER_SITE` | analytics | 10,000 / 25 / 50 / 200,000 / 20 |
 | `MAX_CUSTOM_CODE_BYTES` / `MAX_TAGS_BYTES_PER_ACCOUNT` / `MAX_VISITORS_PER_CONTAINER` / `MAX_CONTAINER_DB_BYTES` | tags | 32 KB / 20 MB / 100,000 / 256 MB (plus `MAX_ENVIRONMENTS_PER_CONTAINER`, `MAX_LOOKUPS_PER_CONTAINER`, `MAX_LOOKUP_ROWS`, lower when unclaimed) |
 | `MAX_LIST_ENTRIES_PER_ACCOUNT` / `MAX_SCHEDULED_PER_ACCOUNT` / `MAX_CONCURRENT_WAITS_PER_INBOX` | mail | 100 / 20 / 2 |
+| `MAX_FORWARDS_PER_ACCOUNT_PER_DAY` | mail | 100 recipients a day of inbox mail forwarded to the project's members (own budget, not `SEND_DAILY_LIMIT`); past it the rest goes into one digest |
 | `MAX_UNVERIFIED_SITES_PER_ACCOUNT` / `MAX_CHUNKS_PER_SESSION` / `MAX_HEATMAP_RETENTION_DAYS` / `MAX_STARRED_RETENTION_DAYS` | replay | 1 / 600 / 90 / 14 |
 | `UNCLAIMED_<NAME>` | all | any account cap or daily budget has a lower value for accounts no person has claimed (`capFor()` in `@afs/shared`) |
 | Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows, crawler hits, export rows, alert deliveries, inbox creates, feed events, heatmap images | all | per site or container, per account and per deployment, counters never go down; values in the hosted profile |
