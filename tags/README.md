@@ -430,6 +430,7 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 |---|---|---|
 | POST | `/signup` | account + key (public) |
 | GET | `/schema` | JSON Schema for the config, tag/trigger/variable catalog with examples, destination credential schemas (public) |
+| GET | `/usage` | every cap for the account (its standing's values) with `label`, `used / limit / remaining / resets_at`, `unit`, `var`, `note`, `drops_data`, and `per` (every container, highest first, at most 25) for per-container caps; read keys and the platform's internal calls too |
 | POST, GET | `/containers` | `{ domain, name?, allowed_hostnames? }`; same domain returns existing |
 | GET, PATCH, DELETE | `/containers/:id` | GET includes destinations, last-24h stats and `container.last_scan` / `container.last_import` (null until there is one); PATCH `{ name?, allowed_hostnames? }` |
 | GET | `/containers/:id/install` | snippet, API guide and how to get the proxy configs; `?proxy=1` (full-access key) adds the first-party proxy configs (Cloudflare Worker, Next.js middleware, Vercel, netlify.toml, nginx) with the container's secret `proxy_key` |
@@ -480,7 +481,7 @@ content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`,
 `update_environment`, `reauthorize_environment`, `delete_environment`, `add_destination`,
 `list_destinations`, `update_destination`, `remove_destination`, `test_destination`, `put_lookup`,
 `list_lookups`, `get_lookup`, `delete_lookup`, `send_server_events`, `get_event_log`,
-`get_visitor`, `get_tag_stats`, `get_coverage`, `setup_conversion_tracking` (recipe: given
+`get_visitor`, `get_tag_stats`, `get_coverage`, `get_usage`, `setup_conversion_tracking` (recipe: given
 platforms + conversions in plain terms, writes a complete draft, creates destinations for
 platforms with credentials, validates it, and returns what's left to do, e.g. which IDs are
 missing and where to find them; a conversion gets `server: true` only when a destination will
@@ -540,6 +541,17 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   Destinations can't be added or re-pointed with an OAuth access token.
 - **Suspended accounts** (`accounts.suspended_at`, see `@afs/shared` `accountStanding`): their
   keys stop working, `/collect` and `/c/:id.js` answer 403 and queued deliveries are dropped.
+- **Usage** (`GET /v1/usage`, MCP `get_usage`, `src/service/usage.ts`): every account and
+  per-container cap and daily budget above with the value for the account's standing and what is
+  used now, in the item shape mail, analytics and replay share (`label`, `drops_data`, `per`), so the
+  platform site can warn owners before a limit. `drops_data: true` marks the daily event and
+  delivery budgets, `visitors_per_container` and `container_db_bytes`, where reaching the cap loses
+  incoming data rather than failing a call. It is cheap enough to read hourly: one D1 batch
+  (per-container counts through the `container_id` indexes, today's `usage_daily` and
+  `delivery_usage` rows) and one `ContainerDO.usageToday()` per container (point reads of the
+  `usage` table, the visitor count eviction keeps, the database size; at most 100 containers).
+  The account's daily event totals are each container's own count plus what containers deleted
+  today reported. Deployment-wide budgets are not listed.
 - **Project deletion** (`accounts.deleted_at` in the identity DB): reads as suspended, so keys and
   ingest stop at once. 7 days later the site's cron calls `DELETE /v1/account` (internal auth only,
   no MCP tool; API keys get `403 forbidden`; `src/service/purge.ts`), which runs

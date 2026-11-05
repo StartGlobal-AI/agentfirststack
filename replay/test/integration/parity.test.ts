@@ -474,6 +474,7 @@ describe("MCP and llms.txt cover every parity tool and route", () => {
     "get_session_transcript",
     "get_survey",
     "get_survey_results",
+    "get_usage",
     "get_visitor",
     "get_webhook",
     "list_errors",

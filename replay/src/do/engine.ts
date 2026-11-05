@@ -1735,6 +1735,46 @@ export function summary(db: Db, now: number) {
 
 export type Summary = ReturnType<typeof summary>;
 
+// ---------------------------------------------------------------------------------- usage (GET /v1/usage)
+
+/**
+ * This site's counters behind the fair-use caps, for GET /v1/usage: today's daily row (one key
+ * read), today's survey and export counters, and the counts the annotation caps check (starred
+ * sessions over a partial index, notes, distinct labels; each bounded by its own cap). Never a scan
+ * over sessions, events or chunks.
+ */
+export function usageToday(db: Db, now: number) {
+  const day = utcDay(now);
+  const d = dailyRow(db, day);
+  const n = (sql: string, args: SqlValue[] = []) => num(db.all(sql, args)[0]?.n);
+  const extra = db.all("SELECT upgraded, tags_forwarded FROM daily WHERE day = ?", [day])[0];
+  const sv = db.all(
+    "SELECT COALESCE(SUM(responses), 0) AS responses, COALESCE(SUM(test_responses), 0) AS test FROM survey_daily WHERE day = ?",
+    [day],
+  )[0];
+  return {
+    day,
+    sessions: d.sessions,
+    forced_sessions: d.forced,
+    upgraded_sessions: num(extra?.upgraded),
+    chunks: d.chunks,
+    bytes: d.bytes,
+    derived: d.derived,
+    forwarded_events: d.forwarded,
+    tags_events: num(extra?.tags_forwarded),
+    /** what this site counted today and hasn't reported to D1 account_usage yet */
+    unreported: localUnreported(d),
+    survey_responses: num(sv?.responses),
+    test_survey_responses: num(sv?.test),
+    export_bytes: n("SELECT bytes AS n FROM link_usage WHERE link_id = '__export' AND day = ?", [day]),
+    starred_sessions: n("SELECT COUNT(*) AS n FROM sessions WHERE starred = 1"),
+    notes: n("SELECT COUNT(*) AS n FROM notes"),
+    labels: n("SELECT COUNT(DISTINCT label) AS n FROM session_labels"),
+  };
+}
+
+export type SiteUsage = ReturnType<typeof usageToday>;
+
 /** The last batch sent to tags: HTTP status (0 = the binding failed), when, events accepted, dropped. */
 export interface TagsLast {
   status: number;

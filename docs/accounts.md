@@ -310,6 +310,8 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `account_deleted` | they deleted their account | them |
 | `setup_notice` (updates) | the daily notices found new setup items for a project whose agent ran the check before | the owner |
 | `setup_reminder` (updates) | 3 to 14 days after the claim, the last setup check wasn't ready (`setup_state.ready`, migration `0009`) or never ran | the owner, once |
+| `site_quiet` (alerts) | daily: an analytics site with steady page views (50+ in a week, on 4+ days) has had none for two whole days, and has no enabled `no_data` alert of its own | the owner and members, once per outage |
+| `limit_warning` (alerts) | hourly: a fair-use cap whose limit drops incoming data (`drops_data` in a service's `GET /v1/usage`) is at 80% or reached; a daily one isn't a "near" in its last hour | the owner and members, once a week per cap and level |
 
 - Every email is an `email_outbox` row first, keyed by `dedupe_key` (one per event and person),
   so a retried request or a repeated cron run never sends twice.
@@ -320,11 +322,17 @@ emails signed-in people at their Google address, never an address an agent suppl
   recorded as `skipped`.
 - Rows are deleted after 30 days, and at once when the person deletes their account (the
   `account_deleted` confirmation goes once it is sent).
-- Account emails always go out. "Updates" respect `users.email_updates` (Account, Emails) and carry
-  `List-Unsubscribe` plus `List-Unsubscribe-Post` (RFC 8058).
-  - The link is `/email/unsubscribe?u=<user>&s=<hmac>`, signed with `INTERNAL_TOKEN`.
-  - Its GET shows a button and its POST turns updates off, so mail scanners that open links don't
-    unsubscribe anyone.
+- Account emails always go out. "Updates" respect `users.email_updates` and "alerts"
+  `users.email_alerts` (Account, Emails; migration `0010`). Both carry `List-Unsubscribe` plus
+  `List-Unsubscribe-Post` (RFC 8058).
+  - The link is `/email/unsubscribe?u=<user>&s=<hmac>` (plus `&c=alerts` for alerts), signed with
+    `INTERNAL_TOKEN` for that person and category.
+  - Its GET shows a button and its POST turns that category off, so mail scanners that open links
+    don't unsubscribe anyone.
+- The alerts' checks are `src/project-health.ts`. They read claimed, live projects only (unclaimed
+  ones have nobody to tell), oldest check first (`project_health`), and remember what each
+  project's people were warned about (`limit_warnings`, kept 30 days). Both tables go when the
+  project is erased.
 - Account, Emails also lists the last 10 emails sent to the person.
 
 ## Routes
@@ -336,11 +344,12 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `GET /v1/setup` (records `setup_state`, clears the project's notice) | any API key | the setup check: the project against the full setup, each part with its status and fix (MCP gateway tool `afs_check_setup`; `src/setup-check.ts`) |
 | `GET /v1/me`, `PATCH /v1/me {name}` | API key (not read-only to rename) | the project and key; renames the project (every app; MCP gateway tool `afs_update_project`) |
 | `DELETE /v1/me {confirm}` | full-access API key (not OAuth), unclaimed project | delete the project (MCP gateway tool `afs_delete_project`; `src/project-deletion.ts`) |
+| `GET /v1/usage` | any API key | every service's fair-use caps for the project (each service's own `GET /v1/usage`) and `close_to_limits`, the caps at 80% or more (MCP gateway tool `afs_get_usage`; `src/project-health.ts`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `POST /v1/admin/accounts/:id/restore` | `ADMIN_TOKEN` | undo a project deletion before its purge |
 | `POST /v1/admin/emails/test {email}` | `ADMIN_TOKEN` | send the welcome email to someone who signed in, now (`pnpm afs email-test`) |
-| `GET`, `POST /email/unsubscribe?u=&s=` | the signed link | turn off "updates" emails (GET asks, POST does it; mail apps' one-click POST too) |
-| `POST /dashboard/account/emails {updates}` | session + CSRF | turn updates emails on or off |
+| `GET`, `POST /email/unsubscribe?u=&s=[&c=alerts]` | the signed link | turn off "updates" or "alerts" emails (GET asks, POST does it; mail apps' one-click POST too) |
+| `POST /dashboard/account/emails {updates, alerts}` | session + CSRF | turn updates and alerts emails on or off |
 | `POST /v1/admin/notices/refresh` | `ADMIN_TOKEN` | write the project notices now (the daily cron does it otherwise) |
 | `GET /signin` | none | sign-in page |
 | `GET /auth/google`, `GET /auth/google/callback` | none | Google sign-in |
@@ -366,7 +375,9 @@ token, code and session column holds a SHA-256. Each app's own database gets `ap
 too (`analytics/0004`, `tags/0004`, `mail/0007`), because `authenticate()` selects it in
 standalone mode. Then `0005_account_standing.sql` (suspension), `0006_project_notices.sql`
 (`setup_state`, `project_notices`), `0007_project_deletion.sql`, `0008_email.sql`
-(`email_outbox`, `users.email_updates`) and `0009_setup_ready.sql` (`setup_state.ready`, `todo`).
+(`email_outbox`, `users.email_updates`), `0009_setup_ready.sql` (`setup_state.ready`, `todo`) and
+`0010_alerts.sql` (`users.email_alerts`, the `alerts` outbox category, `project_health`,
+`limit_warnings`).
 
 ## Operator setup
 

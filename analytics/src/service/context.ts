@@ -25,6 +25,7 @@ import type { SubscriptionOutcome } from "../do/subscriptions";
 import type { CostInput, CostOutcome } from "../do/costs";
 import type { CrawlHit } from "../do/crawlers";
 import type { ImportRow } from "../lib/imports";
+import type { SiteUsage } from "../do/usage";
 
 /** What every service call needs: bindings, the caller's account, and the public base URL. */
 export interface Ctx {
@@ -100,6 +101,7 @@ export interface SiteStub {
   sql(q: string, opts?: { budgetMs?: number }): Promise<Obj | DoError>;
   chargeSql(ms: number, budgetMs: number): Promise<void>;
   summary(): Promise<SiteSummary | DoError>;
+  usage(): Promise<SiteUsage | null>;
   destroy(): Promise<{ ok: true }>;
   movers(q: Obj): Promise<Obj | DoError>;
   insights(q: Obj): Promise<Obj | DoError>;

@@ -2457,3 +2457,20 @@ body.app .nav {
 .delete-project > * {
   max-width: 760px;
 }
+
+/* A project close to its fair-use limits (dashboard.ts limitsView). */
+.limits-tile {
+  grid-column: 1 / -1;
+  border-color: #f2c48d;
+  background: #fffaf3;
+}
+.limit-list {
+  margin: 4px 0 12px;
+  padding-left: 1.1em;
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+.limit-list li.reached {
+  font-weight: 600;
+}

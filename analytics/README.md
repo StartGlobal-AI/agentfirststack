@@ -228,6 +228,7 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | GET | `/sites/:id/crawlers` | crawler hits by bot, operator, category, page or status; daily series per category |
 | GET | `/crawlers` | the maintained crawler list and a prefilter regex (no key) |
 | GET | `/rollup` | every site of the account: per-site totals for a period (optional compare) and sums |
+| GET | `/usage` | every fair-use limit for the account with `label`, `used`, `limit`, `remaining`, `resets_at`, `unit`, `var`, `drops_data` and, for per-site caps, `per` (every site, highest first); see Fair use |
 | GET | `/sites/:id/realtime` | visitors in last 5 / 30 min, top pages/countries/sources (30 min), a 1-60 minute `window` (`minutes`, `breakdown`), recent events (`since`, `limit`); `filters` and `debug=only` (the debug view) apply to all of it |
 | GET | `/sites/:id/funnel?steps=...` | funnel (or `funnel_id=`): `mode=ordered\|any`, `window=session\|1h\|1d\|7d\|30d` (by person across sessions), revenue per step, `compare`, `compare_segments` |
 | GET | `/sites/:id/attribution` | conversions and revenue credited by `model` (`last_non_direct`, `last_touch`, `first_touch`, `linear`, `position_based`, `time_decay`) over the person's sessions in `lookback_days`, by `breakdown`; `paths=true` for conversion paths |
@@ -606,7 +607,7 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
 `get_realtime`, `get_funnel`, `get_paths`, `get_attribution`, `track_events`, `create_goal`, `list_goals`, `delete_goal`,
 `query_sql`, `create_share_link`, `revoke_share_links`, `list_share_links`, `list_visitors`, `get_visitor`,
 `get_session`, `get_journeys`, `get_retention`, `get_stripe_integration`, `connect_stripe`, `connect_stripe_key`, `backfill_stripe`, `disconnect_stripe`,
-`get_fx_rates`, `get_billing_integration`, `connect_billing_provider`, `disconnect_billing_provider`, `record_payments`, `list_payments`, `delete_payment`, `record_subscriptions`, `list_subscriptions`, `get_mrr`, `record_costs`, `list_costs`, `delete_costs`, `get_items`, `list_user_props`, `list_sessions`, `get_realtime_map`, `get_account_rollup`, `record_crawls`, `get_crawlers`, `import_csv`, `list_imports`, `compare_import`, `delete_import`, `export_events`, `list_annotations`, `create_annotation`,
+`get_fx_rates`, `get_billing_integration`, `connect_billing_provider`, `disconnect_billing_provider`, `record_payments`, `list_payments`, `delete_payment`, `record_subscriptions`, `list_subscriptions`, `get_mrr`, `record_costs`, `list_costs`, `delete_costs`, `get_items`, `list_user_props`, `list_sessions`, `get_realtime_map`, `get_account_rollup`, `get_usage`, `record_crawls`, `get_crawlers`, `import_csv`, `list_imports`, `compare_import`, `delete_import`, `export_events`, `list_annotations`, `create_annotation`,
 `update_annotation`, `delete_annotation`, `get_exclusions`, `list_funnels`, `create_funnel`,
 `update_funnel`, `delete_funnel`, `create_destination`, `list_destinations`, `test_destination`,
 `delete_destination`, `create_alert`, `list_alerts`, `get_alert`, `update_alert`, `delete_alert`,
@@ -625,6 +626,17 @@ A free deployment with one-request signup needs a budget on every write path. Ev
 for accounts no person has claimed (`capFor` in `@afs/shared`); `GET /sites/:id` shows the ones
 that apply (`limits`) and whether the site is refusing events now (`status`). Code:
 `src/lib/limits.ts`, `SiteDO` (`src/do/site-do.ts`).
+
+`GET /v1/usage` (MCP `get_usage`, `src/service/usage.ts`) lists every account and per-site cap with
+what is used now, in the item shape mail, tags and replay share (`label` for a person, `drops_data`
+on caps whose limit silently loses incoming data, `per` for per-site caps). The platform site reads
+it hourly for every claimed project to warn owners before a cap, so it is cheap: one D1 batch of
+indexed counts (sites, goals, funnels, segments, share links, alerts, destinations, reports,
+`alert_usage`, `usage_daily`, `crawl_usage_daily`) and one small RPC per site (`SiteDO.usage()`,
+`src/do/usage.ts`: today's `usage`, `crawl_usage` and `export_usage` rows, the database size, and
+counts of small tables; user property keys by an index skip-scan), never a scan of events. At most
+100 sites' Durable Objects are asked per call, the busiest today first. Deployment-wide budgets
+(`DAILY_EVENT_BUDGET`, `MAX_CRAWL_HITS_PER_DAY`) are not shown.
 
 - **Rate limits** (Workers rate-limit bindings, per Cloudflare location, `wrangler.jsonc`
   namespaces 42001-42007): `/e` per client network (the shared `networkKey`; the visitor's IP behind

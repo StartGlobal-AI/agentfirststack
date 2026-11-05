@@ -19,7 +19,15 @@ import {
 } from "./identity";
 import { RESTORE_DAYS, cleanupPrompt, deleteProject, exportPrompt, restoreProject } from "./project-deletion";
 import { recentEmails, waitUntilOf } from "./email";
-import { emailAccountDeleted, emailMemberRemoved, emailProjectDeleted, emailProjectRestored } from "./email-messages";
+import {
+  emailAccountDeleted,
+  emailMemberRemoved,
+  emailProjectDeleted,
+  emailProjectRestored,
+  limitLine,
+  limitsPrompt,
+} from "./email-messages";
+import { type LimitHit, limitHits, projectUsage } from "./project-health";
 import { analyticsDashboard } from "./analytics-dashboard";
 import { serviceViews } from "./service-views";
 import { type BuildKind, buildPrompt, finishPrompt } from "./dashboard-prompt";
@@ -195,11 +203,13 @@ dashboard.get("/projects/:id", async (c) => {
   const s = c.var.session;
   const p = await requireProject(c.env.DB, s.user.id, projectId(c));
   const resources = await projectResources(c.env, p.id);
-  const [setup, setupState] = await Promise.all([
+  const [setup, setupState, usage] = await Promise.all([
     // Rate-limited or failed: the page still renders, without the tile.
     setupReport(c.env, p.id, { base: siteBase(c), resources }).catch(() => null),
     readSetupState(c.env.DB, p.id),
+    projectUsage(c.env, p.id).catch(() => null),
   ]);
+  const limits = usage ? limitHits(usage) : [];
   const project = { id: p.id, name: projectName(p) };
   const ids = {
     sites: (resources.sites ?? []).map((x) => x.id),
@@ -215,6 +225,7 @@ dashboard.get("/projects/:id", async (c) => {
     styles: ["/dashboard-app.css"],
     body: html`${projectHeader(p, "overview")}
 <div class="afa afa-week" id="afa" data-view="project-overview" data-project="${p.id}" data-ids="${JSON.stringify(ids)}"></div>
+${limits.length ? html`<div class="bento">${limitsView(limits, limitsPrompt(siteBase(c), projectName(p), limits))}</div>` : ""}
 ${
   setup
     ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)), {
@@ -243,6 +254,17 @@ ${resourcesView(resources, { asks: true, projectId: p.id })}
 </div>`,
   });
 });
+
+/** The caps the project is at 80% of or past (the same lines as the limit warning email). */
+function limitsView(hits: LimitHit[], prompt: string) {
+  const reached = hits.some((h) => h.level === "reached");
+  return html`<section class="tile limits-tile" id="limits" aria-labelledby="limits-title">
+  <h2 id="limits-title">${reached ? "This project reached a fair-use limit" : "This project is close to a fair-use limit"}</h2>
+  <ul class="limit-list">${hits.slice(0, 12).map((h) => html`<li class="${h.level}">${limitLine(h)}</li>`)}</ul>
+  <p class="small">${hits.some((h) => h.resets_at !== null) ? "Daily limits reset at 00:00 UTC. " : ""}Your agent can see what's using ${hits.length === 1 ? "it" : "them"} up and cut what isn't needed.</p>
+  ${askLine(prompt, "Ask your agent")}
+</section>`;
+}
 
 // Settings: General (rename, the project's facts); API keys and Members are their own pages.
 dashboard.get("/projects/:id/settings", async (c) => {
@@ -724,8 +746,10 @@ dashboard.post("/apps/:grant/revoke", async (c) => {
 
 dashboard.get("/account", async (c) => {
   const s = c.var.session;
-  const [updates, emails] = await Promise.all([
-    c.env.DB.prepare("SELECT email_updates FROM users WHERE id = ?").bind(s.user.id).first<number>("email_updates"),
+  const [prefs, emails] = await Promise.all([
+    c.env.DB.prepare("SELECT email_updates, email_alerts FROM users WHERE id = ?")
+      .bind(s.user.id)
+      .first<{ email_updates: number; email_alerts: number }>(),
     recentEmails(c.env.DB, s.user.id),
   ]);
   const saved = c.req.query("emails") === "saved";
@@ -748,7 +772,8 @@ dashboard.get("/account", async (c) => {
   ${saved ? notice("Saved.", "ok") : ""}
   <p class="small">We email ${s.user.email} when something happens to your projects: you claim one, someone joins or is removed, you connect an app, a project is deleted or suspended. Those always go out.</p>
   ${csrfField(s)}
-  <label class="check"><input type="checkbox" name="updates" value="on"${updates === 0 ? "" : html` checked`}> <span>Also tell me when there's something new to set up in my projects</span></label>
+  <label class="check"><input type="checkbox" name="alerts" value="on"${prefs?.email_alerts === 0 ? "" : html` checked`}> <span>Alert me when a site stops sending analytics data, or a project gets close to a fair-use limit</span></label>
+  <label class="check"><input type="checkbox" name="updates" value="on"${prefs?.email_updates === 0 ? "" : html` checked`}> <span>Tell me when there's something new to set up in my projects</span></label>
   <p class="row"><button class="btn btn-quiet" type="submit">Save</button></p>
   ${
     emails.length
@@ -772,8 +797,8 @@ dashboard.get("/account", async (c) => {
 
 dashboard.post("/account/emails", async (c) => {
   const form = await readForm(c);
-  await c.env.DB.prepare("UPDATE users SET email_updates = ? WHERE id = ?")
-    .bind(form.updates === "on" ? 1 : 0, c.var.session.user.id)
+  await c.env.DB.prepare("UPDATE users SET email_updates = ?, email_alerts = ? WHERE id = ?")
+    .bind(form.updates === "on" ? 1 : 0, form.alerts === "on" ? 1 : 0, c.var.session.user.id)
     .run();
   return redirect("/dashboard/account?emails=saved#emails");
 });

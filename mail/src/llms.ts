@@ -479,9 +479,14 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
 - \`GET /v1/lists?inbox_id=\`, \`GET /v1/lists/:direction/:kind\`, \`DELETE /v1/lists/:direction/:kind/:entry?inbox_id=\`
 
 ### Usage and limits
-- \`GET /v1/usage?days=\` -> \`{ day, resets_at, claimed, limits: { <name>: { used, limit, remaining, resets_at, unit, var } },
-  delivery: { days, sent, delivered, bounced, ... }, policy, next_steps }\`. Every cap for your account with this
-  deployment's values (limit null = no cap; daily ones reset at 00:00 UTC). Read it before you hit a 429.
+- \`GET /v1/usage?days=\` -> \`{ day, resets_at, claimed, limits: { <name>: { label, used, limit, remaining, resets_at, unit,
+  var, note?, drops_data?, per? } }, delivery: { days, sent, delivered, bounced, ... }, policy, next_steps }\`. Every cap for
+  your account with this deployment's values (limit null = no cap; daily ones reset at 00:00 UTC). Read it before you hit
+  a 429. \`label\` is a short name for a person ("Inbound mail a day"). \`drops_data: true\` marks caps where reaching them
+  silently loses incoming mail rather than failing your own call: \`inbound_per_day\` (rejected at SMTP),
+  \`messages_per_inbox\` (oldest evicted), \`storage_bytes\` (new mail rejected), \`text_bytes\` (new mail keeps an excerpt).
+  \`messages_per_inbox.per\` lists every inbox \`{ id, label (its address), used, remaining }\`, fullest first, at most 25
+  (\`used\` on the item is the fullest one).
 - Every 429 (daily limits, rate limits, too_many_waits, Email Service throttling) has a \`Retry-After\` header (seconds) and
   \`error.details.retry_after_s\`: to 00:00 UTC for daily limits, the window for rate limits.
 
@@ -530,7 +535,7 @@ Read-only keys see only the read tools. Operator-only arguments (\`auto_configur
 | add_list_entry { direction, kind, entry, inbox_id?, reason? } | allow / block | POST /v1/lists/:direction/:kind |
 | list_list_entries { direction?, kind?, inbox_id? } | | GET /v1/lists |
 | delete_list_entry { direction, kind, entry, inbox_id? } | | DELETE /v1/lists/:direction/:kind/:entry |
-| get_usage { days? } | every limit, used / limit | GET /v1/usage |
+| get_usage { days? } | every limit: label, used / limit, drops_data, per inbox | GET /v1/usage |
 | add_domain { domain, receiving?, auto_configure?, force?, catch_all_inbox_id? } | returns DNS records | POST /v1/domains |
 | list_domains {} | | GET /v1/domains |
 | get_domain { domain } | | GET /v1/domains/:domain |

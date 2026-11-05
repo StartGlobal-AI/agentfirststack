@@ -36,6 +36,13 @@ export const serviceCalls: {
   body: string | null;
 }[] = [];
 
+/** GET /v1/usage answers, by "<service>:<account>" (default: no limits). */
+export const usageFixtures = new Map<string, unknown>();
+/** Analytics daily page views for GET /v1/sites/:id/timeseries, by site id (oldest first, ending today). */
+export const timeseriesFixtures = new Map<string, { date: string; pageviews: number }[]>();
+/** Analytics alerts for GET /v1/sites/:id/alerts, by site id. */
+export const alertFixtures = new Map<string, { type: string; enabled: boolean }[]>();
+
 /** DELETE /v1/account calls each stub service got, by "<service>:<account>". */
 export const purges = new Map<string, number>();
 /** How many DELETE /v1/account calls to answer done:false before done:true, by "<service>:<account>". */
@@ -61,8 +68,19 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
     }),
   );
   svc.use("/v1/*", requireAuth());
+  // Usage and limits (src/project-health.ts), per service and account.
+  svc.get("/v1/usage", (c) => c.json(usageFixtures.get(`${service}:${c.var.auth.accountId}`) ?? { limits: {} }));
   if (service === "analytics") {
     svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.sites ?? [] }));
+    // The quiet-site check's reads, for sites given a fixture; the rest fall through.
+    svc.get("/v1/sites/:id/timeseries", (c, next) => {
+      const days = timeseriesFixtures.get(c.req.param("id"));
+      return days ? c.json({ site_id: c.req.param("id"), interval: "day", results: days }) : next();
+    });
+    svc.get("/v1/sites/:id/alerts", (c, next) => {
+      const alerts = alertFixtures.get(c.req.param("id"));
+      return alerts || timeseriesFixtures.has(c.req.param("id")) ? c.json({ alerts: alerts ?? [] }) : next();
+    });
     svc.post("/v1/sites/:id/events", (c) => c.json({ accepted: 1, rejected: 0 }, 202));
     // Reports for the analytics dashboard's proxy (test/analytics-dashboard.test.ts): only sites
     // whose id starts site_dash, echoing the query; other tests keep getting 404s here.

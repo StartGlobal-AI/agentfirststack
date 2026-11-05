@@ -14,13 +14,20 @@ import { type Bindings, DAY } from "./env";
  *     once (or by the next hourly run, for bulk), and retried after 15 minutes and 2 hours if
  *     sending failed. Rows are deleted after 30 days, and when the person deletes their account.
  *   - Categories: "account" (claims, members, connected apps, deletion, suspension) always goes
- *     out; "updates" (new setup items) respects users.email_updates and carries a one-click
- *     unsubscribe (List-Unsubscribe, RFC 8058) signed for that person.
+ *     out; "updates" (new setup items) respects users.email_updates and "alerts" (a site stopped
+ *     sending data, a project is close to a fair-use limit) users.email_alerts. Both carry a
+ *     one-click unsubscribe (List-Unsubscribe, RFC 8058) signed for that person and category.
  *   - At most MAX_EMAILS_PER_PERSON_PER_DAY (default 20) to one address a day; beyond that the
  *     email is recorded as skipped.
  */
 
-export type EmailCategory = "account" | "updates";
+export type EmailCategory = "account" | "updates" | "alerts";
+/** The categories a person can turn off, and the users column that does. */
+export type OptionalCategory = Exclude<EmailCategory, "account">;
+export const OPT_OUT_COLUMN: Record<OptionalCategory, "email_updates" | "email_alerts"> = {
+  updates: "email_updates",
+  alerts: "email_alerts",
+};
 
 export interface EmailContent {
   subject: string;
@@ -76,20 +83,37 @@ const esc = (s: string) =>
 
 // ---------- unsubscribe links ----------
 
-async function unsubscribeSig(env: Bindings, userId: string): Promise<string | null> {
+async function unsubscribeSig(env: Bindings, userId: string, category: OptionalCategory): Promise<string | null> {
   if (!env.INTERNAL_TOKEN) return null;
-  return hmacSha256Hex(env.INTERNAL_TOKEN, `afs-email-updates-off:${userId}`);
+  return hmacSha256Hex(env.INTERNAL_TOKEN, `afs-email-${category}-off:${userId}`);
 }
 
-/** The signed link that turns off "updates" emails for one person, or null without a secret. */
-export async function unsubscribeUrl(env: Bindings, base: string, userId: string): Promise<string | null> {
-  const sig = await unsubscribeSig(env, userId);
-  return sig ? `${base}/email/unsubscribe?u=${encodeURIComponent(userId)}&s=${sig}` : null;
+/** The signed link that turns off one category of emails for one person, or null without a secret. */
+export async function unsubscribeUrl(
+  env: Bindings,
+  base: string,
+  userId: string,
+  category: OptionalCategory = "updates",
+): Promise<string | null> {
+  const sig = await unsubscribeSig(env, userId, category);
+  // Links without c= (the first ones sent) are for updates.
+  return sig ? `${base}/email/unsubscribe?u=${encodeURIComponent(userId)}&s=${sig}${category === "updates" ? "" : `&c=${category}`}` : null;
 }
 
-export async function validUnsubscribe(env: Bindings, userId: string, sig: string): Promise<boolean> {
-  const want = await unsubscribeSig(env, userId);
+export async function validUnsubscribe(
+  env: Bindings,
+  userId: string,
+  sig: string,
+  category: OptionalCategory = "updates",
+): Promise<boolean> {
+  const want = await unsubscribeSig(env, userId, category);
   return !!want && /^usr_[0-9a-z]{1,64}$/.test(userId) && timingSafeEqual(sig, want);
+}
+
+/** The c= of an unsubscribe link (none = updates); null when it names no category. */
+export function optionalCategory(raw: string | undefined): OptionalCategory | null {
+  if (!raw) return "updates";
+  return raw === "updates" || raw === "alerts" ? raw : null;
 }
 
 // ---------- rendering ----------
@@ -155,12 +179,13 @@ async function footerFor(env: Bindings, base: string, e: OutgoingEmail): Promise
       ],
       unsubscribe: null,
     };
-  const unsubscribe = e.to.userId ? await unsubscribeUrl(env, base, e.to.userId) : null;
+  const unsubscribe = e.to.userId ? await unsubscribeUrl(env, base, e.to.userId, e.category) : null;
+  const what = e.category === "alerts" ? "alerts" : "updates";
   return {
     lines: [
       ...reply,
       `Sent to ${e.to.email} because you're a member of a project on AgentFirstStack.`,
-      unsubscribe ? `Turn off these updates: ${unsubscribe}` : `Turn off these updates in ${base}/dashboard/account`,
+      unsubscribe ? `Turn off these ${what}: ${unsubscribe}` : `Turn off these ${what} in ${base}/dashboard/account`,
     ],
     unsubscribe,
   };
@@ -201,8 +226,9 @@ export async function queueEmail(
   if (!EMAIL_RE.test(e.to.email)) return "skipped";
   const db = env.DB;
   const now = opts.now ?? Date.now();
-  if (e.category === "updates" && e.to.userId) {
-    const on = await db.prepare("SELECT email_updates FROM users WHERE id = ?").bind(e.to.userId).first<number>("email_updates");
+  if (e.category !== "account" && e.to.userId) {
+    const col = OPT_OUT_COLUMN[e.category];
+    const on = await db.prepare(`SELECT ${col} FROM users WHERE id = ?`).bind(e.to.userId).first<number>(col);
     if (on === 0) return "opted_out";
   }
   const sentToday = await db
@@ -269,8 +295,8 @@ export async function deliver(env: Bindings, id: string, base: string, now = Dat
   const from = senderOf(env.NOTIFY_EMAIL_FROM ?? "");
   if (!row || row.status !== "pending" || !env.EMAIL || !from) return false;
   const headers: Record<string, string> = { "X-AFS-Email": "notification" };
-  if (row.category === "updates" && row.user_id) {
-    const url = await unsubscribeUrl(env, base, row.user_id);
+  if (row.category !== "account" && row.user_id) {
+    const url = await unsubscribeUrl(env, base, row.user_id, row.category);
     if (url) {
       headers["List-Unsubscribe"] = `<${url}>`;
       headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";

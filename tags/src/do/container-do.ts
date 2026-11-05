@@ -48,6 +48,15 @@ export interface ContainerState {
   live_version: number | null;
 }
 
+/** One container's share of GET /v1/usage (ContainerDO.usageToday). */
+export interface ContainerUsage {
+  browser_events: number;
+  server_events: number;
+  deliveries: number;
+  visitors: number;
+  db_bytes: number;
+}
+
 export interface DispatchMessage {
   container_id: string;
   destination_id: string;
@@ -334,7 +343,10 @@ export class ContainerDO extends DurableObject<Bindings> {
    * recently seen 1% are deleted (random visitor ids posted to /collect can't grow the table).
    */
   private makeRoomForVisitor(cap: number) {
-    if (!Number.isFinite(cap)) return;
+    if (!Number.isFinite(cap)) {
+      if (this.visitorCount !== null) this.visitorCount++; // keep a count usageToday() read in step
+      return;
+    }
     this.visitorCount ??= this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM visitors").toArray()[0]?.n ?? 0;
     if (this.visitorCount >= cap) {
       const extra = this.visitorCount - cap + Math.max(1, Math.ceil(cap / 100));
@@ -1199,6 +1211,23 @@ export class ContainerDO extends DurableObject<Bindings> {
       // Browser hits or backend events refused by the account's or the platform's daily budget.
       account_quota_reached: reached(totals?.account, budgets.perAccount),
       platform_quota_reached: reached(totals?.platform, budgets.platform),
+    };
+  }
+
+  /**
+   * For GET /v1/usage (called hourly by the platform for every claimed project, so no scans):
+   * `day`'s counters (point reads), the visitor count eviction keeps (counted once per object
+   * lifetime) and the database size. No D1 call; an object never synced answers zeros.
+   */
+  async usageToday(day: string): Promise<ContainerUsage> {
+    if (!this.ready) return { browser_events: 0, server_events: 0, deliveries: 0, visitors: 0, db_bytes: 0 };
+    this.visitorCount ??= this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM visitors").toArray()[0]?.n ?? 0;
+    return {
+      browser_events: this.usage(day, "browser_events"),
+      server_events: this.usage(day, "server_events"),
+      deliveries: this.usage(day, "deliveries"),
+      visitors: this.visitorCount,
+      db_bytes: this.sql.databaseSize,
     };
   }
 

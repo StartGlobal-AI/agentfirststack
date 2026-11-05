@@ -163,6 +163,8 @@ export async function purgeProject(env: Bindings, accountId: string, deadline: n
     env.DB.prepare("DELETE FROM claim_links WHERE account_id = ?").bind(accountId),
     env.DB.prepare("DELETE FROM setup_state WHERE account_id = ?").bind(accountId),
     env.DB.prepare("DELETE FROM project_notices WHERE account_id = ?").bind(accountId),
+    env.DB.prepare("DELETE FROM project_health WHERE account_id = ?").bind(accountId),
+    env.DB.prepare("DELETE FROM limit_warnings WHERE account_id = ?").bind(accountId),
     // The row stays (ids are never reused, and it records when the project was deleted and erased).
     env.DB.prepare("UPDATE accounts SET name = NULL, email = NULL, purged_at = ? WHERE id = ?").bind(now, accountId),
   ]);

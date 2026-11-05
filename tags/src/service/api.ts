@@ -88,6 +88,7 @@ import {
 } from "./draft-items";
 import { KEY_FIELD, type ItemKind } from "../config/diff";
 import { type ImportInput, importDraft } from "./import";
+import { getUsage } from "./usage";
 
 /**
  * Every operation, shaped for agents (the thing needed next + next_steps). REST routes and MCP
@@ -840,6 +841,11 @@ export const ops = {
 
   async currentDraft(o: OpCtx, id: string) {
     return draftConfig(await getContainerRow(o.env, o.auth.accountId, id));
+  },
+
+  /** Every cap for this account with what it has used (src/service/usage.ts). */
+  async usage(o: OpCtx) {
+    return getUsage(o.env, o.auth.accountId);
   },
 };
 

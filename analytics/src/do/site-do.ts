@@ -13,6 +13,7 @@ import * as sessionsList from "./sessions-list";
 import * as crawlers from "./crawlers";
 import * as imports from "./imports";
 import * as exporter from "./export";
+import { type SiteUsage, siteUsage } from "./usage";
 import type { ImportRow } from "../lib/imports";
 import { type CompareRequest, compareImports } from "./import-compare";
 import type { SubscriptionOutcome } from "./subscriptions";
@@ -650,6 +651,12 @@ export class SiteDO extends DurableObject<Bindings> {
       this.writeDrops(true);
       return { ...engine.summary(this.db), database_bytes: this.ctx.storage.sql.databaseSize };
     });
+  }
+
+  /** The counters GET /v1/usage reads (no scan of events). null for an id that was never configured. */
+  usage(): SiteUsage | null {
+    if (!this.ready) return null;
+    return { ...siteUsage(this.db), database_bytes: this.ctx.storage.sql.databaseSize };
   }
 
   /** The DO's schema version (meta.schema_version), for operators and tests. */

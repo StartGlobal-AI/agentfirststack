@@ -96,6 +96,24 @@ export function listUserProps(db: Db, limit = 50) {
   };
 }
 
+/**
+ * The keys in use against their two budgets (a key counts as a server key once a server set it,
+ * as in setUserProps). Cheap whatever the number of users: the distinct keys are found by
+ * skipping through the (key, value) index one key at a time, and each key stops at its first server row.
+ */
+export function userPropKeyCounts(db: Db): { server: number; browser: number } {
+  const rows = db.all(
+    `WITH RECURSIVE k(key, n) AS (
+       SELECT MIN(key), 1 FROM user_props
+       UNION ALL
+       SELECT (SELECT MIN(key) FROM user_props WHERE key > k.key), n + 1 FROM k WHERE k.key IS NOT NULL AND n < 10000
+     )
+     SELECT EXISTS (SELECT 1 FROM user_props u WHERE u.key = k.key AND u.source = 'server') AS srv FROM k WHERE k.key IS NOT NULL`,
+  );
+  const server = rows.filter((r) => num(r.srv) === 1).length;
+  return { server, browser: rows.length - server };
+}
+
 export function userPropsOf(db: Db, userId: string): Record<string, string> {
   return Object.fromEntries(
     db.all("SELECT key, value FROM user_props WHERE user_id = ? ORDER BY key", [userId]).map((r) => [String(r.key), String(r.value)]),

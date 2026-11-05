@@ -52,10 +52,12 @@ deploy.
   month, OAuth clients nobody authorized, and `signup_log` rows older than two days (the shared
   signup counters; signup itself never prunes). Logged as `cron.purge` with counts. It also
   prunes emails older than 30 days (`cron.email_prune`), writes setup notices (`cron.notices`),
-  queues setup reminders (`cron.setup_reminders`) and erases deleted projects past their 7 days
-  (`cron.project_purge`).
-- **site**, hourly at :47: sends queued and retried emails and the reminders the day before a
-  deleted project is erased (`cron.email`).
+  queues setup reminders (`cron.setup_reminders`), looks for analytics sites that went quiet
+  (`cron.quiet_sites`), forgets limit warnings older than a month (`cron.limit_warnings_prune`)
+  and erases deleted projects past their 7 days (`cron.project_purge`).
+- **site**, hourly at :47: the reminders the day before a deleted project is erased, the usage of
+  every claimed project (warnings for caps close to their limit), then sends queued and retried
+  emails (`cron.email`, with `limits: {checked, warned}`).
 - **analytics**, every 5 minutes: alerts, reports, Stripe backfills and exchange rates.
 - **mail**, hourly at :17: retention purges and forwarding digests (see the mail README).
 - **replay**, hourly at :23: retention and R2 cleanup (see the replay README).
@@ -179,6 +181,15 @@ Reply-To `support@` (`NOTIFY_REPLY_TO`), which an Email Routing rule forwards to
 `p=reject`; DMARC aggregate reports go to Cloudflare DMARC Management (zone, Email, DMARC
 Management), which shows who sends as the domain and their pass rate.
 
+Alerts (`site/src/project-health.ts`) go to claimed projects' owners and members, who can turn them
+off. `limit_warning`: a cap that drops data (incoming events, mail or sessions) is at 80% of its
+limit or reached, at most once a week per cap and level. `site_quiet`: an analytics site that had
+steady page views has had none for two whole days. The warnings name the caps a project is close to,
+and the people can reply to `support@` if a project needs more, so these emails are also where
+requests for higher limits come from. To see what a project is close to:
+`curl -H "Authorization: Bearer $KEY" https://agentfirststack.com/v1/usage` with one of its keys, or
+query `limit_warnings` in the identity DB for what was sent.
+
 ## Deleted projects
 
 Owners delete projects in the dashboard, and an unclaimed project's agent
@@ -203,6 +214,7 @@ pnpm afs restore hosted acct_...
 | Raw mail, attachments | R2 | Durable storage; deleted with the message or inbox |
 | Replay recordings | R2 chunks, Durable Object per site | Retention per site (14 days hosted), R2 lifecycle backstop |
 | Emails to people | D1 `email_outbox` | 30 days, deleted with the person's account |
+| Alert state | D1 `project_health`, `limit_warnings` | Warnings kept 30 days; both erased with the project |
 
 ## Dependencies and runtime
 

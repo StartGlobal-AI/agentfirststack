@@ -11,6 +11,7 @@ import {
 } from "@afs/shared";
 import { claimLinkResponse, createClaimLink } from "./claims";
 import { deleteProject, deletionAnswer, isClaimed } from "./project-deletion";
+import { usageReport } from "./project-health";
 import type { Bindings } from "./env";
 import { SETUP_SERVICES, parseDomain, parseServices, setupReport } from "./setup-check";
 import { checkTestVisit, readSince, runSetupTest } from "./setup-test";
@@ -24,7 +25,7 @@ import { checkTestVisit, readSince, runSetupTest } from "./setup-test";
  * scoping, read-only keys and errors behave exactly as on the service itself.
  *
  * Tools prefixed `afs_` are the gateway's own (platform-wide, not one service's):
- * `afs_check_setup` and `afs_check_test_visit` (every key), `afs_test_setup` and `afs_update_project`
+ * `afs_check_setup`, `afs_get_usage` and `afs_check_test_visit` (every key), `afs_test_setup` and `afs_update_project`
  * (keys that can write) and
  * `afs_create_claim_link` and `afs_delete_project` (full-access API keys only, not OAuth access tokens).
  *
@@ -127,6 +128,15 @@ const CHECK_TOOL: Tool = {
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
+const USAGE_TOOL: Tool = {
+  name: "afs_get_usage",
+  title: "Get this project's usage and fair-use limits",
+  description:
+    "Every fair-use cap of every service for this project (analytics, tags, mail, replay) with used / limit / remaining, when daily budgets reset (00:00 UTC), and close_to_limits: the caps at 80% or more, most urgent first. drops_data: true marks caps where reaching the limit loses incoming data (events, mail, sessions) instead of failing your own call; the project's people get an email when one gets close. Same as GET /v1/usage; each service's own get_usage has the details.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+};
+
 const TEST_TOOL: Tool = {
   name: "afs_test_setup",
   title: "Test the setup with real test traffic",
@@ -216,6 +226,7 @@ async function buildToolList(env: Bindings, caller: Caller): Promise<Tool[]> {
     CHECK_TOOL,
     ...(canWrite(caller.auth) ? [TEST_TOOL] : []),
     VISIT_TOOL,
+    USAGE_TOOL,
     ...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []),
     ...(canWrite(caller.auth) ? [RENAME_TOOL] : []),
     ...(offersClaimTool(caller.auth) ? [DELETE_TOOL] : []),
@@ -246,6 +257,7 @@ async function callGatewayTool(env: Bindings, caller: Caller, name: string, args
       );
     return toolResult(await setupReport(env, caller.auth.accountId, { base: caller.base, domain, services, record: true }));
   }
+  if (name === USAGE_TOOL.name) return toolResult(await usageReport(env, caller.auth.accountId));
   if (name === TEST_TOOL.name || name === VISIT_TOOL.name) {
     const fail = (message: string, hint: string, code = "bad_request") => toolResult({ error: { code, message, hint } }, true);
     const raw = typeof args.domain === "string" ? args.domain : "";

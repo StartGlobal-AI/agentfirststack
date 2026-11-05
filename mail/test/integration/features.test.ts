@@ -278,6 +278,55 @@ describe("6. GET /v1/usage and get_usage", () => {
     expect(after.limits.sends_per_day.limit).toBe(6);
     expect(after.limits.inboxes.limit).toBe(10);
   });
+
+  it("every item has a label; drops_data marks the caps that lose incoming mail; messages_per_inbox lists every inbox", async () => {
+    const s = await signup();
+    const env = hosted({ MAX_MESSAGES_PER_INBOX: "10", UNCLAIMED_MAX_MESSAGES_PER_INBOX: "10" });
+    const busy = (await call("POST", "/v1/inboxes", { key: s.key, body: { username: uniq("busy") } })).json.inbox;
+    const quiet = (await call("POST", "/v1/inboxes", { key: s.key, body: { username: uniq("quiet") } })).json.inbox;
+    const mail = (to: string, n: number) =>
+      deliver(`sender${n}@partner.example`, to, eml({ from: `sender${n}@partner.example`, to, subject: `Hi ${n}`, body: "Hello" }), env);
+    await mail(busy.address, 1);
+    await mail(busy.address, 2);
+    await mail(busy.address, 3);
+    await mail(s.inbox.address, 4);
+
+    const u = await call("GET", "/v1/usage", { key: s.key, env });
+    const limits = u.json.limits as Record<string, { label: string; drops_data?: true; per?: unknown }>;
+    for (const [name, it] of Object.entries(limits)) {
+      expect(typeof it.label, name).toBe("string");
+      expect(it.label.length, name).toBeGreaterThan(0);
+      expect(it.label[0], name).toBe(it.label[0]!.toUpperCase());
+    }
+    expect(limits.inbound_per_day!.label).toBe("Inbound mail a day");
+    expect(limits.storage_bytes!.label).toBe("Mail storage");
+    expect(limits.messages_per_inbox!.label).toBe("Messages in one inbox");
+    expect(limits.sends_per_day!.label).toBe("Recipients sent a day");
+    const dropping = Object.keys(limits).filter((n) => limits[n]!.drops_data === true);
+    expect(dropping.sort()).toEqual(["inbound_per_day", "messages_per_inbox", "storage_bytes", "text_bytes"]);
+    // Absent, not false, everywhere else; only messages_per_inbox has per.
+    expect(
+      Object.keys(limits)
+        .filter((n) => "drops_data" in limits[n]!)
+        .sort(),
+    ).toEqual(dropping.sort());
+    expect(Object.keys(limits).filter((n) => "per" in limits[n]!)).toEqual(["messages_per_inbox"]);
+
+    expect(u.json.limits.messages_per_inbox).toMatchObject({ used: 3, limit: 10, remaining: 7 });
+    expect(u.json.limits.messages_per_inbox.per).toEqual([
+      { id: busy.id, label: busy.address, used: 3, remaining: 7 },
+      { id: s.inbox.id, label: s.inbox.address, used: 1, remaining: 9 },
+      { id: quiet.id, label: quiet.address, used: 0, remaining: 10 },
+    ]);
+    // The same over MCP; with no cap configured, remaining is null on the item and on each inbox.
+    const open = await mcp(s.key, "get_usage", {});
+    expect(open.limits.messages_per_inbox).toMatchObject({ used: 3, limit: null, remaining: null, drops_data: true });
+    expect(open.limits.messages_per_inbox.per.map((p: { id: string; remaining: null }) => [p.id, p.remaining])).toEqual([
+      [busy.id, null],
+      [s.inbox.id, null],
+      [quiet.id, null],
+    ]);
+  });
 });
 
 describe("7. Retry-After on mail's 429s", () => {

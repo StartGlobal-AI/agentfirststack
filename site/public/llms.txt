@@ -349,7 +349,10 @@ they claim it, when someone joins, when they connect a chat app, when a project 
 the restore date), the day before it's erased, and when it's suspended; members when they're
 removed or the project is deleted or restored. Owners also get an email when there are new setup
 items their agent hasn't applied, and 3 days after claiming if the setup check still isn't ready,
-each with the prompt to paste into you (they can turn those off).
+each with the prompt to paste into you. Owners and members get alerts when an analytics site with
+steady traffic records no page view for two days, and when a cap that drops data (incoming events,
+mail, sessions) reaches 80% of its limit, also with a prompt for you (section 12). They can turn
+updates and alerts off.
 
 ## 8. Check and test the setup, then let the owner claim it
 
@@ -432,8 +435,8 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (242 tools: 236 prefixed `analytics_`, `tags_`, `mail_` and
-`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_test_setup` and `afs_check_test_visit`):
+One MCP server for every service (246 tools: 239 prefixed `analytics_`, `tags_`, `mail_` and
+`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_get_usage`, `afs_test_setup` and `afs_check_test_visit`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -551,8 +554,21 @@ moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/conta
   and 2 MB, recordings kept up to 14 days, 5 active share links per site.
 - Inbox forwarding to the project's people: up to 100 a day per account; past that, the rest goes
   into one digest.
+- Projects nobody has claimed get lower limits than claimed ones.
 
-Need more? Self-host: every service is a Cloudflare Worker (see the repository README).
+Every limit with what the project has used: `GET https://agentfirststack.com/v1/usage` (MCP
+`afs_get_usage`), all four services in one answer. Each service also has its own `GET /v1/usage`
+(MCP `analytics_get_usage`, `tags_get_usage`, `mail_get_usage`, `replay_get_usage`). Every cap has
+`label`, `used`, `limit`, `remaining`, `resets_at` (daily budgets reset at 00:00 UTC), `unit`, and
+`per` (each site, container or inbox) where it applies to each one. `drops_data: true` marks the
+caps where reaching the limit loses incoming data instead of failing your own call. The site-wide
+answer's `close_to_limits` lists the caps at 80% or more, most urgent first. When a `drops_data`
+cap gets there, the project's people get an email with a prompt that asks you to find what is
+using it up and cut what isn't needed (bot or test traffic, old data, old mail).
+
+Need more? The owner can reply to any AgentFirstStack email or write to
+support@agentfirststack.com. Or self-host: every service is a Cloudflare Worker (see the
+repository README).
 
 ## Guides and comparisons (for people)
 

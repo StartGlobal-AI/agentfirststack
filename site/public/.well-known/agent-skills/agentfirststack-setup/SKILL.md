@@ -104,6 +104,9 @@ curl -s https://agentfirststack.com/v1/setup -H "Authorization: Bearer $AGENTFIR
 `warning`, `waiting_on_owner` or `unavailable`, with the call that fixes it. Fix them in the order
 of `next_steps` and run it again until `"ready": true`, then do what `not_checked` lists.
 
+Fair-use limits: `GET https://agentfirststack.com/v1/usage` (MCP `afs_get_usage`) shows every cap
+with what the project uses. When the owner forwards a limit warning, start there.
+
 ## 9. Hand it over
 
 1. Update `AGENTFIRSTSTACK.md` (ids, env var names, every goal and event and what triggers it;

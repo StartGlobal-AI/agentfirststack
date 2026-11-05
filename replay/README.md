@@ -309,6 +309,7 @@ rating answer only.
 | POST, GET, DELETE | `/sites/:id/event-definitions[/:evd_id]` | events from clicks / page visits after the fact |
 | POST, GET, DELETE | `/webhooks[/:id]` | signed webhooks (secret once); POST `/webhooks/:id/test` |
 | GET | `/manual` | `?section=`: the manual by section |
+| GET | `/usage` | every fair-use cap for the account: `label`, `used` / `limit` / `remaining`, `resets_at`, `unit`, `var`, `drops_data` (reaching it silently loses sessions, chunks, signals, answers or webhook events), `per` (per-site caps: every site, busiest first, at most 25). Read keys too; the platform site reads it hourly over internal auth to warn a project's people (`src/service/usage.ts`: D1 counters plus one read-only call to each site's Durable Object, no scans) |
 
 Session filters: `period` (`1h`, `24h`, `today`, `yesterday`, `7d`, `30d`, `90d`, `180d`, `365d`,
 `all`) or `from`/`to`, `page`, `entry_page`, `exit_page` (path globs, `*` = anything), `signal`,
@@ -340,7 +341,7 @@ overrides and zero-width characters are removed when chunks are stored.
 `create_segment`, `list_segments`, `update_segment`, `delete_segment`, `create_survey`, `list_surveys`, `get_survey`,
 `update_survey`, `delete_survey`, `test_survey`, `list_survey_responses`, `get_survey_results`, `delete_survey_response`,
 `create_webhook`, `list_webhooks`, `get_webhook`, `delete_webhook`, `test_webhook`, and since wave 2
-`get_heatmap_image` (51 tools). Each calls the same service function as its REST route;
+`get_heatmap_image`, and `get_usage` (52 tools). Each calls the same service function as its REST route;
 write tools are hidden from read-only keys; tools that return recorded content say in their
 description that it is untrusted.
 

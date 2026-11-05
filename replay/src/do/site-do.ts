@@ -523,6 +523,11 @@ export class ReplaySiteDO extends DurableObject<Bindings> {
     return queries.findVisitorSessions(this.db, q);
   }
 
+  /** Today's counters behind the fair-use caps (GET /v1/usage): a handful of key and index reads, no writes. */
+  usageToday(): engine.SiteUsage {
+    return engine.usageToday(this.db, Date.now());
+  }
+
   /** Instance counters (rows read/written since it started) and the schema version: measurements, ops. */
   usageStats() {
     return { ...this.stats, schema_version: engine.schemaVersion(this.db) };

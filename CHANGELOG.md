@@ -47,6 +47,7 @@ All notable changes to this project. The format follows
 
 ### Added
 
+- **Usage and alerts.** Every service answers `GET /v1/usage` (MCP `get_usage`; analytics, tags and replay are new, mail gains the fields) with each fair-use cap in one shape: `label`, `used`, `limit`, `remaining`, `resets_at`, `unit`, `var`, `note`, `per` (each site, container or inbox) and `drops_data` (reaching it loses incoming data instead of failing the agent's call). The site's `GET /v1/usage` (MCP `afs_get_usage`) merges the four and adds `close_to_limits` (80% or more). Two new emails, in a new "alerts" category that people can turn off (Account, or the one-click link): `limit_warning` (hourly; a `drops_data` cap of a claimed project is at 80% or reached, once a week per cap and level) and `site_quiet` (daily; an analytics site with steady page views has had none for two days, unless it has its own `no_data` alert). Site migration `0010_alerts.sql` (`users.email_alerts`, the outbox's `alerts` category, `project_health`, `limit_warnings`).
 - **Docs and landing pages** now describe the dashboard, imports from other tools, GTM import, crawler reporting, project deletion, emails to people and inbox forwarding everywhere. The comparison pages are corrected: GA4 history and GTM import, surveys, mail labels. The setup prompts (landing page, skill, dashboard) match the manual's Full setup.
 - **Hosted email:** replies to platform emails go to support@ (`NOTIFY_REPLY_TO`). DMARC aggregate reports go to Cloudflare DMARC Management.
 

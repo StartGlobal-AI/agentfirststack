@@ -36,7 +36,8 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 - **Humans optional.** When it's done, the agent hands its person a claim link. They sign in with
   Google to see the project's analytics, tags, replay and mail in a dashboard, manage keys and
   teammates, connect Claude or ChatGPT over OAuth, and delete the project. We email them about
-  their projects ([docs/accounts.md](docs/accounts.md)).
+  their projects, and alert them when a site stops sending data or a project gets close to a
+  fair-use limit ([docs/accounts.md](docs/accounts.md)).
 
 ## Services
 

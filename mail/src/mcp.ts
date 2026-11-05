@@ -557,7 +557,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Get usage and limits",
       description:
-        "Every limit that applies to this account with used / limit / remaining and when daily budgets reset (00:00 UTC): sends, inbound mail, inboxes, webhooks, waits, storage, text, lists, events, and more, plus delivery outcomes of the last `days` days (default 30). limit null = no cap. Read it before a 429, not after.",
+        "Every limit that applies to this account with used / limit / remaining and when daily budgets reset (00:00 UTC): sends, inbound mail, inboxes, webhooks, waits, storage, text, lists, events, and more, plus delivery outcomes of the last `days` days (default 30). Each limit has label (a short name for a person), unit, var; drops_data: true marks caps where reaching them silently loses incoming mail (inbound a day, messages per inbox, storage, text) instead of failing your call; messages_per_inbox has per: every inbox { id, label (its address), used, remaining }, fullest first, at most 25. limit null = no cap. Read it before a 429, not after.",
       input: { days: z.number().int().min(1).max(30).optional() },
     },
     (i) => getUsage(env, a, i),

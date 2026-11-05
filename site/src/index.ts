@@ -5,6 +5,7 @@ import { deliverDue, pruneOutbox } from "./email";
 import { emailPurgeReminders, emailSetupReminders } from "./email-messages";
 import { emailRoutes } from "./email-routes";
 import { deletionApi, purgeDeletedProjects } from "./project-deletion";
+import { checkProjectLimits, checkQuietSites, pruneLimitWarnings, usageApi } from "./project-health";
 import { claimLinkApi, claimRoutes } from "./claims";
 import { purgeExpired } from "./cleanup";
 import { dashboard } from "./dashboard";
@@ -129,6 +130,7 @@ app.route("/", setupApi);
 app.route("/", setupTestApi);
 app.route("/", adminApi);
 app.route("/", deletionApi);
+app.route("/", usageApi);
 app.route("/", emailRoutes);
 app.route("/dashboard", dashboard);
 
@@ -196,12 +198,13 @@ export default {
   fetch: app.fetch,
   async scheduled(controller, env, ctx) {
     if (controller.cron === HOURLY_CRON) {
-      // Emails: the reminders before a deleted project is erased, then everything due (queued in
-      // bulk, or waiting for a retry).
+      // Emails: the reminders before a deleted project is erased, warnings for projects close to a
+      // fair-use limit, then everything due (queued in bulk, or waiting for a retry).
       const base = noticeBase(env);
       ctx.waitUntil(
         emailPurgeReminders(env, base)
-          .then(async (reminders) => ({ reminders, ...(await deliverDue(env, base)) }))
+          .then(async (reminders) => ({ reminders, limits: await checkProjectLimits(env, base) }))
+          .then(async (n) => ({ ...n, ...(await deliverDue(env, base)) }))
           .then((n) => console.log(JSON.stringify({ event: "cron.email", ...n })))
           .catch((e) => console.error("cron.email failed", e)),
       );
@@ -209,6 +212,13 @@ export default {
     }
     ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
     ctx.waitUntil(pruneOutbox(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.email_prune", deleted: n }))));
+    ctx.waitUntil(pruneLimitWarnings(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.limit_warnings_prune", deleted: n }))));
+    // Analytics sites that had steady page views and have had none for two days (sent by the hourly run).
+    ctx.waitUntil(
+      checkQuietSites(env, noticeBase(env))
+        .then((n) => console.log(JSON.stringify({ event: "cron.quiet_sites", ...n })))
+        .catch((e) => console.error("cron.quiet_sites failed", e)),
+    );
     // Owners of projects claimed 3 to 14 days ago whose setup isn't finished: one reminder each.
     ctx.waitUntil(
       emailSetupReminders(env, noticeBase(env))

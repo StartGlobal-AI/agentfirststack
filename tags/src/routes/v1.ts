@@ -35,6 +35,8 @@ const installQuery = z.object({ proxy: z.enum(["1", "0", "true", "false"]).optio
 const truthyFlag = (v: string | undefined) => v === "1" || v === "true";
 const rawJson = async (c: Context<AppEnv>) => readJson(c, z.unknown());
 
+v1.get("/usage", async (c) => c.json(await ops.usage(opCtx(c))));
+
 v1.post("/containers", async (c) => {
   const r = await ops.createContainer(opCtx(c), await readJson(c, containerInput));
   return c.json(r.body, r.status as 200 | 201);

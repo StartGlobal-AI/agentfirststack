@@ -356,7 +356,11 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`) next to `x-signature`. Changing
   or re-pointing a webhook needs the project's own key (OAuth tokens may only disable).
 - **Usage** (`GET /v1/usage`): every cap with the configured value for the account's standing and
-  what it has used; every mail 429 has `Retry-After` and `details.retry_after_s`. `/llms.txt`
+  what it has used; every mail 429 has `Retry-After` and `details.retry_after_s`. Each item has a
+  `label` for people, `drops_data: true` where reaching the cap silently loses incoming mail
+  (`inbound_per_day`, `messages_per_inbox`, `storage_bytes`, `text_bytes`), and
+  `messages_per_inbox.per` lists every inbox (address, used, remaining), fullest first, at most 25:
+  the same item shape as analytics, tags and replay, which the platform site reads to warn owners. `/llms.txt`
   renders this deployment's configured limits per request.
 - **Cron** (hourly): sends forward digests (see Forward to the owner), deletes expired inboxes,
   shared-domain mail older than `SHARED_RETENTION_DAYS`, webhook delivery logs older than 7 days,
@@ -400,7 +404,7 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 | GET | `/events` | the account's event feed: `?after=latest\|<next_after>&types=&inbox_id=&limit=&timeout=` (long-poll, 7 days kept) |
 | POST, GET | `/lists/:direction/:kind` | `receive/allow`, `receive/block`, `send/block`: `{ entry, inbox_id?, reason? }` / list; `GET /lists` = all |
 | DELETE | `/lists/:direction/:kind/:entry` | `?inbox_id=` for an inbox-scoped entry |
-| GET | `/usage` | every cap with `used / limit / remaining / resets_at`, delivery counts (`?days=`) |
+| GET | `/usage` | every cap with `label`, `used / limit / remaining / resets_at`, `drops_data`, `per` (inboxes), delivery counts (`?days=`) |
 | POST, GET | `/domains` | add `{ domain, receiving?, auto_configure?, force?, catch_all_inbox_id? }` (`records[0]` = ownership challenge; 409 if another account owns it; `auto_configure`/`force` need header `x-admin-token`, else 403 `admin_required`; `receiving: false` = send-only) / list (+ shared domain) |
 | GET, PATCH, DELETE | `/domains/:domain` | records + status (`ownership`, `receiving`, `sending`); PATCH `{ catch_all_inbox_id?, receiving?, auto_configure?, force? }`; DELETE `?delete_inboxes=true` |
 | GET | `/domains/:domain/zone-file` | the records as a BIND zone file (`text/dns`) |

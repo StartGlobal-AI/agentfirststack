@@ -26,6 +26,7 @@ import {
   updateSurvey,
 } from "../service/surveys";
 import { createSegment, deleteSegment, listSegments, updateSegment } from "../service/segments";
+import { getUsage } from "../service/usage";
 import { createSite, deleteSite, getInstall, getSite, listSites, updateSite } from "../service/sites";
 import { verifyInstall } from "../service/verify";
 
@@ -88,6 +89,8 @@ r.get("/sites/:id/sessions/:sid/events", async (c) => {
 });
 r.get("/sites/:id/visitors", async (c) => c.json(await getVisitor(ctxOf(c), c.req.param("id"), c.req.query())));
 api.get("/manual", (c) => c.json(getManual(ctxOf(c), c.req.query())));
+// Every fair-use cap with what this account uses (read keys too; the platform site reads it hourly over internal auth).
+r.get("/usage", async (c) => c.json(await getUsage(ctxOf(c))));
 r.get("/sites/:id/sessions/:sid", async (c) => c.json(await getSession(ctxOf(c), c.req.param("id"), c.req.param("sid"))));
 r.get("/sites/:id/sessions/:sid/transcript", async (c) =>
   c.json(await getTranscript(ctxOf(c), c.req.param("id"), c.req.param("sid"), c.req.query())),

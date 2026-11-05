@@ -9,6 +9,7 @@ import { ingestRoutes } from "./routes/ingest";
 import { shareRoutes } from "./routes/share";
 import { webhookRoutes } from "./routes/webhooks";
 import { siteRoutes } from "./routes/sites";
+import { usageRoutes } from "./routes/usage";
 import { runCron } from "./service/cron";
 import { getFxRates } from "./service/fx";
 import { getRollup } from "./service/reads";
@@ -79,6 +80,8 @@ app.use("/v1/*", requireAuth<AppEnv>());
 app.route("/v1/sites", siteRoutes);
 // Erasing a deleted project's data (the platform's purge, internal auth only).
 app.route("/v1/account", accountPurgeRoutes);
+// Every fair-use cap for the account with what it uses now (the platform site reads it hourly).
+app.route("/v1/usage", usageRoutes);
 // Every site of the account at once (totals per site and summed).
 app.get("/v1/rollup", async (c) => c.json(await getRollup(ctxOf(c), c.req.query())));
 // The exchange rates conversion to a site currency uses (ECB reference rates, stored per day).

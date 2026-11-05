@@ -1,6 +1,7 @@
 import { type OutgoingEmail, type QueueResult, queueEmail } from "./email";
 import type { Bindings } from "./env";
 import { finishPrompt } from "./dashboard-prompt";
+import type { LimitHit } from "./project-health";
 import { cleanupPrompt } from "./project-deletion";
 import { itemsAfter } from "./setup-catalog";
 
@@ -23,6 +24,11 @@ import { itemsAfter } from "./setup-catalog";
  *
  *   setup_notice        new setup items for a project its agent hasn't applied   to the owner
  *   setup_reminder      3 days after the claim, the setup isn't finished         to the owner
+ *
+ * Alerts (off with one click, or in Account; src/project-health.ts decides when):
+ *
+ *   site_quiet          a site with steady page views has had none for 2 days    to the owner and members
+ *   limit_warning       a cap that drops data is at 80% or reached               to the owner and members
  */
 
 type WaitUntil = ((p: Promise<unknown>) => void) | undefined;
@@ -476,6 +482,135 @@ export async function emailSetupReminders(env: Bindings, base: string, now = Dat
           askFirst: true,
           ask: finishPrompt(base),
           action: { label: "See what's set up", url: projectUrl(base, r.id) },
+        },
+      },
+      true,
+    );
+    if (res === "queued") queued++;
+  }
+  return queued;
+}
+
+// ---------- alerts ----------
+
+const serviceBase = (base: string, svc: string) => {
+  const u = new URL(base);
+  return `${u.protocol}//${svc}.${u.host}`;
+};
+/** "2026-11-03" -> "3 November 2026" */
+const dateLabel = (ymd: string) => {
+  const t = Date.parse(`${ymd}T12:00:00Z`);
+  return Number.isFinite(t) ? day(t) : ymd;
+};
+
+/** Daily cron: an analytics site that had steady page views has had none for two whole days. */
+export async function emailSiteQuiet(
+  env: Bindings,
+  base: string,
+  p: { accountId: string; name: string | null; site: { id: string; domain: string }; lastDate: string; perDay: number },
+) {
+  const name = nameOf(p.name);
+  const last = dateLabel(p.lastDate);
+  const analytics = serviceBase(base, "analytics");
+  let queued = 0;
+  for (const person of await projectPeople(env.DB, p.accountId)) {
+    const res = await send(
+      env,
+      base,
+      undefined,
+      {
+        kind: "site_quiet",
+        category: "alerts",
+        dedupeKey: `site_quiet:${p.site.id}:${p.lastDate}:${person.userId}`,
+        to: person,
+        accountId: p.accountId,
+        content: {
+          subject: `${p.site.domain} stopped sending analytics data`,
+          body: [
+            `AgentFirstStack hasn't recorded a page view on ${p.site.domain} (project ${name}) since ${last}. In the week before, it recorded about ${p.perDay.toLocaleString("en-GB")} a day.`,
+            "That usually means the tracking snippet was removed or changed in a deploy, a Content Security Policy now blocks it, or the site is down. If you took the site down on purpose, you can ignore this.",
+            "Your agent can find out which and fix it. Paste this into it:",
+          ],
+          askFirst: true,
+          ask: `AgentFirstStack analytics stopped recording page views on ${p.site.domain} after ${last}. Find out why and fix it: run the install check (MCP analytics_verify_install, or POST ${analytics}/v1/sites/${p.site.id}/verify), make sure the live site still loads the tracking snippet, fix what's wrong, then confirm page views arrive again.`,
+          action: { label: "Open analytics", url: `${projectUrl(base, p.accountId)}/analytics` },
+          after: [
+            "We send this once each time a site goes quiet. To get it somewhere else too, like Slack, ask your agent to add a no_data alert to the site.",
+          ],
+        },
+      },
+      true,
+    );
+    if (res === "queued") queued++;
+  }
+  return queued;
+}
+
+const fmtBytes = (n: number) => {
+  const units: [number, string][] = [
+    [1024 ** 3, "GB"],
+    [1024 ** 2, "MB"],
+    [1024, "KB"],
+  ];
+  for (const [size, unit] of units) if (n >= size) return `${Number((n / size).toFixed(n >= 10 * size ? 0 : 1))} ${unit}`;
+  return `${n.toLocaleString("en-GB")} bytes`;
+};
+const isBytes = (h: LimitHit) => h.limit_name.endsWith("_bytes") || /\bbytes\b/i.test(h.unit);
+const amount = (h: LimitHit, n: number) => (isBytes(h) ? fmtBytes(n) : n.toLocaleString("en-GB"));
+const firstSentence = (s: string) => /^(.+?[.!?])(?:\s|$)/.exec(s)?.[1] ?? s;
+
+/** One line per cap: "Inbound mail a day: 85 of 100 today (85%). Mail beyond it is rejected." */
+export function limitLine(h: LimitHit) {
+  const what = `${h.label}${h.resource ? ` (${h.resource.label})` : ""}`;
+  const daily = h.resets_at !== null;
+  const note = h.note ? ` ${firstSentence(h.note)}` : "";
+  return `${what}: ${amount(h, h.used)} of ${amount(h, h.limit)}${daily ? " today" : ""} (${h.percent}%${h.level === "reached" ? ", reached" : ""}).${note}`;
+}
+
+/** The prompt that asks the project's agent to bring it back under its limits (email and dashboard). */
+export function limitsPrompt(base: string, name: string, hits: LimitHit[]) {
+  const labels = [...new Set(hits.slice(0, 8).map((h) => h.label.toLowerCase()))].join(", ");
+  return `Our AgentFirstStack project ${name} is close to its fair-use limits (${labels}). Read GET ${base}/v1/usage (MCP afs_get_usage), find what's using them up, cut what we don't need (bot or test traffic, old data, old mail), and tell me what you changed.`;
+}
+
+/** Hourly cron: caps that drop data are close to (80%) or at their limit; one email per project. */
+export async function emailLimitWarning(
+  env: Bindings,
+  base: string,
+  p: { accountId: string; name: string | null; hits: LimitHit[]; now: number },
+) {
+  const name = nameOf(p.name);
+  const reached = p.hits.filter((h) => h.level === "reached").length;
+  const n = p.hits.length;
+  const subject = reached
+    ? `${name} reached ${reached === 1 ? "a fair-use limit" : `${reached} fair-use limits`}`
+    : `${name} is close to ${n === 1 ? "a fair-use limit" : `${n} fair-use limits`}`;
+  const shown = p.hits.slice(0, 8);
+  const daily = shown.some((h) => h.resets_at !== null);
+  let queued = 0;
+  for (const person of await projectPeople(env.DB, p.accountId)) {
+    const res = await send(
+      env,
+      base,
+      undefined,
+      {
+        kind: "limit_warning",
+        category: "alerts",
+        dedupeKey: `limit_warning:${p.accountId}:${Math.floor(p.now / 3_600_000)}:${person.userId}`,
+        to: person,
+        accountId: p.accountId,
+        content: {
+          subject,
+          body: [
+            `AgentFirstStack is free, so every project has fair-use limits. When ${name} reaches ${n === 1 ? "this one" : "these"}, new data stops being kept:`,
+            ...shown.map(limitLine),
+            ...(n > shown.length ? [`And ${n - shown.length} more.`] : []),
+            `${daily ? "Daily limits reset at 00:00 UTC. " : ""}Your agent can see what's using ${n === 1 ? "it" : "them"} up and cut what isn't needed. Paste this into it:`,
+          ],
+          askFirst: true,
+          ask: limitsPrompt(base, name, shown),
+          action: { label: "Open the project", url: `${projectUrl(base, p.accountId)}#limits` },
+          after: env.NOTIFY_REPLY_TO ? ["If the project needs more than these limits, reply to this email and tell us about it."] : [],
         },
       },
       true,

@@ -113,6 +113,12 @@ the site Worker and the identity database (`site/migrations/0003_*` to `0008_*`)
   projects (claims, members, connected apps, deletion, suspension, new setup items). Each email
   is an `email_outbox` row first, keyed per event and person, so nothing is sent twice; the hourly
   cron sends the queued ones and retries.
+- **Usage and alerts** (`site/src/project-health.ts`): every service answers `GET /v1/usage` with
+  its fair-use caps in one shape (`label`, `used`, `limit`, `resets_at`, `per` resource,
+  `drops_data`), and the site's `GET /v1/usage` (MCP `afs_get_usage`) merges the four. Hourly, the
+  site reads it for every claimed project and emails its people when a cap that drops data is at
+  80% or reached; daily, it reads each analytics site's page views and emails them when a site
+  that had steady traffic has had none for two days.
 - **OAuth 2.1 server** for MCP connectors: RFC 8414 metadata, dynamic registration of public
   clients, consent with a project picker, PKCE S256, exact redirect URIs, single-use 10-minute
   codes, `iss` on the redirect, rotating refresh tokens (reuse revokes the grant). Access tokens
@@ -137,10 +143,10 @@ recover.
 The site also runs an **MCP gateway** at `/mcp` (`site/src/mcp-gateway.ts`): a stateless JSON-RPC
 router that merges every service's tools with an `analytics_` / `tags_` / `mail_` / `replay_`
 prefix and forwards each call over a service binding with the caller's own key, so one connector
-covers the whole platform with the same scoping and errors as the services themselves. It adds six
+covers the whole platform with the same scoping and errors as the services themselves. It adds seven
 tools of its own: `afs_check_setup` (`GET /v1/setup`), `afs_test_setup` and `afs_check_test_visit`
-(`/v1/setup/test`), `afs_create_claim_link`, `afs_update_project` (`PATCH /v1/me`) and
-`afs_delete_project` (`DELETE /v1/me`).
+(`/v1/setup/test`), `afs_get_usage` (`GET /v1/usage`), `afs_create_claim_link`, `afs_update_project`
+(`PATCH /v1/me`) and `afs_delete_project` (`DELETE /v1/me`).
 
 The **setup check** (`site/src/setup-check.ts`, `GET /v1/setup`) is the full setup in `llms.txt` as a
 list of checks. It reads each service as the project with internal auth over the bindings (the
