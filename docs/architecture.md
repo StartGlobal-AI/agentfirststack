@@ -67,8 +67,17 @@ config; tags, labels, notes, responses and attention data live in the DO with th
   `x-afs-account: acct_...` (an existing account) is a full-access caller for that account in
   `requireAuth()`. The site's dashboard uses it over service bindings. A wrong token is a `401`;
   without the secret the headers are ignored.
+- **Project notices.** When the platform has something new for a project (a row in the identity
+  DB's `project_notices`, which the site writes and deletes), every service tells the project's
+  agent in its answers: `requireAuth()` adds `AFS-Notice: <notice>` to every answer, and at most
+  once a day a top-level `"notice"` field to a 2xx JSON object answer to a GET (under 256 KB; never
+  arrays, NDJSON, CSV, downloads or errors); `handleMcp()` adds one text item to a successful
+  `tools/call` result at most once a day. "Once a day" is the row's `shown_at`, set by an atomic
+  `UPDATE ... RETURNING`, shared by every service and channel. API keys and OAuth tokens only (never
+  internal auth, `/v1/signup` or the site's `/v1/setup`). A per-isolate cache (10 minutes) keeps
+  most requests free of any query; errors, a missing table or a slow lookup mean no notice.
 
-Code: `shared/src/auth.ts`, `shared/src/resource.ts` (RFC 9728 metadata).
+Code: `shared/src/auth.ts`, `shared/src/notices.ts`, `shared/src/resource.ts` (RFC 9728 metadata).
 
 ## People and OAuth (optional)
 

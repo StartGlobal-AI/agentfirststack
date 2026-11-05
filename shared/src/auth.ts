@@ -4,6 +4,7 @@ import { sha256Hex, timingSafeEqual } from "./crypto";
 import { ApiError, accountSuspended, badRequest, forbidden, notFound, tooManyRequests, unauthorized } from "./errors";
 import { clientAsn, clientNetwork, publicBaseUrl, readJson } from "./http";
 import { newId, randomString } from "./ids";
+import { noticeAttacher } from "./notices";
 import { accountStanding, capFor } from "./standing";
 import { cleanName } from "./text";
 
@@ -271,7 +272,11 @@ export function requireAuth<E extends AuthEnv>(): MiddlewareHandler<E> {
     const path = new URL(c.req.url).pathname;
     if (method !== "GET" && method !== "HEAD" && !path.startsWith("/mcp")) assertWrite(auth);
     c.set("auth", auth);
+    // The project's notice, if the platform has one (notices.ts): looked up (cached) while the
+    // handler runs, then added to the answer. API-key and OAuth callers only, never internal ones.
+    const attach = noticeAttacher(c.env, auth.accountId, c.req.raw);
     await next();
+    if (attach) await attach(c);
   };
 }
 
