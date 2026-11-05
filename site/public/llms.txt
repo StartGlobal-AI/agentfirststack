@@ -424,7 +424,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (241 tools: 236 prefixed `analytics_`, `tags_`, `mail_` and
+One MCP server for every service (242 tools: 236 prefixed `analytics_`, `tags_`, `mail_` and
 `replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_test_setup` and `afs_check_test_visit`):
 
 ```sh
