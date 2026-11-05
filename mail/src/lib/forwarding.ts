@@ -62,12 +62,17 @@ function formatter(timeZone: string): Intl.DateTimeFormat {
   return f;
 }
 
-/** The canonical IANA name ("europe/berlin" -> "Europe/Berlin"), or null when it is not one. */
+/**
+ * The IANA name as the owner wrote it, with its case fixed ("europe/berlin" -> "Europe/Berlin"), or
+ * null when it is not one. The runtime resolves some current names to older aliases
+ * ("Asia/Kolkata" -> "Asia/Calcutta"); those are the same zone, so the name given is kept.
+ */
 export function canonicalTimezone(tz: string): string | null {
   const t = tz.trim();
   if (!t || t.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(t)) return null;
   try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: t }).resolvedOptions().timeZone;
+    const resolved = new Intl.DateTimeFormat("en-US", { timeZone: t }).resolvedOptions().timeZone;
+    return resolved.toLowerCase() === t.toLowerCase() ? resolved : t;
   } catch {
     return null;
   }

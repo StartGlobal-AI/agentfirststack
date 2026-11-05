@@ -326,3 +326,11 @@ describe("the contract: inbox JSON forward", () => {
     expect(inboxJson(row, { recipients: 1, forwarded_today: 0, daily_limit: 100 }).forward.recipients).toBe(1);
   });
 });
+
+describe("canonicalTimezone keeps the name given", () => {
+  it("fixes case and keeps current names over older aliases", () => {
+    expect(canonicalTimezone("europe/berlin")).toBe("Europe/Berlin");
+    expect(canonicalTimezone("Asia/Kolkata")).toBe("Asia/Kolkata");
+    expect(canonicalTimezone("Mars/Base")).toBeNull();
+  });
+});
