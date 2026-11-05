@@ -224,6 +224,20 @@ describe("mode each", () => {
     expect((await forwardEach(env, msgs[0].id)).status).toBe("not_queued");
   });
 
+  it("forwards machine notices (Auto-Submitted: auto-generated): codes and password resets carry it", async () => {
+    const s = await setup({ mode: "each" }, { members: 1 });
+    const { env, to } = spyEnv();
+    const state = await deliver(
+      "noreply@github.com",
+      s.inbox.address,
+      mail(s.inbox.address, "Reset your password", { headers: ["Auto-Submitted: auto-generated"] }),
+      env,
+    );
+    expect(state.rejected).toBeNull();
+    expect(to(s.emails[0]!)).toHaveLength(1);
+    expect(to(s.emails[0]!)[0]!.subject).toBe(`[${s.inbox.address}] Reset your password`);
+  });
+
   it("never forwards unauthenticated mail, the setup test, bounces, auto-replies, its own forwards, members' or own inboxes' mail", async () => {
     const s = await setup({ mode: "each" }, { members: 1 });
     const { env, to } = spyEnv();
@@ -239,7 +253,6 @@ describe("mode each", () => {
       ["noreply@github.com", `${user}+afs-test@${dom}`, mail(`${user}+afs-test@${dom}`, "setup test")],
       ["", a, eml({ from: "mailer-daemon@mx.example", to: a, subject: "Undelivered", body: "bounce" })],
       ["noreply@github.com", a, mail(a, "Out of office", { headers: ["Auto-Submitted: auto-replied"] })],
-      ["noreply@github.com", a, mail(a, "notice", { headers: ["Auto-Submitted: auto-generated"] })],
       ["noreply@github.com", a, mail(a, "our own forward", { headers: ["X-AFS-Forwarded: msg_123"] })],
       [s.emails[0]!, a, eml({ from: s.emails[0]!, to: a, subject: "Re: [x] reply from the owner", body: "thanks" })],
     ];
@@ -387,8 +400,9 @@ describe("mode each", () => {
 
 describe("mode digest", () => {
   it("the scheduled handler sends one digest per member at digest_hour in the inbox's time zone, once a day", async () => {
-    // Tokyo is UTC+9 all year: its local hour now is the UTC hour + 9.
-    const hour = (new Date().getUTCHours() + 9) % 24;
+    // Tokyo is UTC+9 all year: its local hour is the UTC hour + 9.
+    const tokyoHour = (ms: number) => (new Date(ms).getUTCHours() + 9) % 24;
+    const hour = tokyoHour(Date.now());
     const s = await setup({ mode: "digest", digest_hour: hour, timezone: "Asia/Tokyo" }, { members: 2 });
     const { env, to } = spyEnv();
     await deliver("noreply@github.com", s.inbox.address, mail(s.inbox.address, "Your code"), env);
@@ -406,9 +420,16 @@ describe("mode digest", () => {
     );
     for (const e of s.emails) expect(to(e)).toHaveLength(0); // nothing is forwarded on its own
 
+    // The cron runs at one pinned instant (its scheduledTime), after the mail arrived; the digest
+    // hour follows it, so the test can't straddle an hour boundary.
+    const at = Date.now() + 1;
+    if (tokyoHour(at) !== hour)
+      expect(
+        (await call("PATCH", `/v1/inboxes/${s.inbox.id}`, { key: s.key, body: { forward: { digest_hour: tokyoHour(at) } } })).status,
+      ).toBe(200);
     const cron = async () => {
       const ctx = createExecutionContext();
-      await worker.scheduled({ cron: "17 * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController, env, ctx);
+      await worker.scheduled({ cron: "17 * * * *", scheduledTime: at, noRetry() {} } as ScheduledController, env, ctx);
       await waitOnExecutionContext(ctx);
     };
     await cron();

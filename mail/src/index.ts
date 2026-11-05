@@ -157,7 +157,7 @@ export default {
         // Fallback for scheduled sends whose inbox alarm did not fire.
         run("scheduled", runScheduled(env, null)),
         // Digests to the project's members (digest hour, catch-up after a claim, what mode each left).
-        run("forward", runForwards(env)),
+        run("forward", runForwards(env, _controller.scheduledTime || Date.now())),
         run("sweep", sweepOrphanBlobs(env)),
       ]).then((parts) => console.log(JSON.stringify(Object.assign({ event: "cron.purge" }, ...parts)))),
     );

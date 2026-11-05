@@ -39,9 +39,10 @@ describe("forwardEligibility: what may be forwarded", () => {
     expect(forwardEligibility({ ...ok, headers: [h("Auto-Submitted", "no")] })).toEqual({ kind: "forward" });
   });
 
-  it("machine notices (auto-generated) are listed in digests only", () => {
-    expect(forwardEligibility({ ...ok, headers: [h("Auto-Submitted", "auto-generated")] })).toEqual({ kind: "list" });
-    expect(forwardEligibility({ ...ok, headers: [h("Auto-Submitted", "Auto-Notified; owner-email=x")] })).toEqual({ kind: "list" });
+  it("machine notices (auto-generated: codes, resets, service notices) are forwarded; auto-replies aren't", () => {
+    expect(forwardEligibility({ ...ok, headers: [h("Auto-Submitted", "auto-generated")] })).toEqual({ kind: "forward" });
+    expect(forwardEligibility({ ...ok, headers: [h("Auto-Submitted", "Auto-Notified; owner-email=x")] })).toEqual({ kind: "forward" });
+    expect(forwardEligibility({ ...ok, headers: [h("Auto-Submitted", "auto-replied")] })).toEqual({ skip: "auto_reply" });
   });
 
   it("never: unauthenticated, internal, our own forwards, the setup test, bounces, auto-replies", () => {

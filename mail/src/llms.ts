@@ -243,8 +243,8 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   count), bounces and delivery reports, auto-replies (\`Auto-Submitted\` other than "no", X-Autoreply, X-Autorespond,
   Precedence: auto_reply), mail from this account's own inboxes or from a member (no loops), anything carrying our
   \`X-AFS-Forwarded\` header (our own forwards and digests carry it), the setup test's mail (\`+afs-test\`), and mail
-  refused at SMTP time (block lists, limits). Machine notices (\`Auto-Submitted: auto-generated\`) are not forwarded one by
-  one, but digests list them. You can still read all of it here.
+  refused at SMTP time (block lists, limits). Machine notices (\`Auto-Submitted: auto-generated\`: codes, password
+  resets, service notices) are forwarded. You can still read all of it here.
 - Before anyone claims the project there is nobody to send to: \`forward.waiting_for_owner\` is true and nothing is sent.
   Give your person a claim link (\`POST /v1/claim-link\` on the platform site). After they claim it, the next hourly run
   sends ONE catch-up digest of what arrived while forwarding was on (mail waits at most 30 days), then the chosen mode
