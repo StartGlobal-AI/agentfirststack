@@ -91,17 +91,31 @@ Sign out is `POST /auth/signout` (with CSRF): the session row is deleted and the
 
 ### 3. Dashboard (`/dashboard`)
 
-Server-rendered pages in the site Worker, in the landing page's visual language (one stylesheet,
-`dashboard.css`: square tiles on a 12-column grid, CSS-only motion that honours
-`prefers-reduced-motion`). It deliberately shows no analytics, conversion or mail data: people
-ask their agent, or have it build a dashboard of their own. The only script is
-`public/dashboard.js` (CSP `script-src 'self'`), which adds Copy buttons to prompts, new keys,
-invite links and the MCP URL; without it they stay click-to-select:
+Server-rendered pages in the site Worker, in the landing page's visual language (`dashboard.css`:
+square tiles on a 12-column grid, motion that honours `prefers-reduced-motion`). The top bar has a
+project switcher (All projects, then each project; switching keeps the tab you're on) and a menu
+under your name (Account, Connected apps, Sign out); both are `<details>` menus that work without
+JavaScript. A project has six tabs: Overview, Analytics, Tags, Replay, Mail and Settings (General,
+API keys, Members). `public/dashboard.js` (CSP `script-src 'self'`) adds Copy buttons and closes the
+menus; the projects page, Overview and the four service tabs also load `public/dashboard-app.js` and
+`dashboard-app.css`, which draw them from the services' own answers through the read-only data route
+(see Routes). Nothing on the service tabs changes anything, apart from Watch (a one-hour replay
+player link). Moving between dashboard pages doesn't reload: `dashboard-app.js` fetches the next
+page's HTML and swaps the content in (a short crossfade; back and forward work). Pages you've opened
+stay alive with their scroll, filters and period, and refresh in place after a minute away. When a
+page settles, the project's other tabs are fetched in the background, their views rendered
+off-screen so their data is ready, and hovering a link fetches its page. Data answers are shared for
+a minute (live counts for 5 seconds); Refresh asks again. Forms still post and load normally:
 
 | Page | What it does |
 |---|---|
-| `/dashboard` | "You don't need this dashboard": prompts to give your agent; projects with resource counts; "Set up a new project" (a setup prompt for the agent, plus the claim-link prompt for projects an agent already made) |
-| `/dashboard/projects/:id` | What's set up (the setup check's table, with a prompt that has the owner's agent finish anything missing) and where each inbox's email goes (each email, a daily digest or nothing; the owner changes it, `POST /dashboard/projects/:id/inboxes/:inbox/forward`, which is the mail service's `PATCH /v1/inboxes/:id {forward}` over internal auth). Then an inventory, no numbers: where analytics is installed, which tag containers exist, which inboxes the project uses, where replay records; key and member counts; rename. "Want a dashboard?" gives four prompts (`src/dashboard-prompt.ts`: analytics dashboard, conversion tracking panel, inbox client, session review screen) that name the project's resources and have the owner's agent build the screen from the API inside their own app, with the key kept server-side (read-only unless the screen edits tags, sends mail or opens a replay) |
+| `/dashboard` | A card per project (up to 20): its visitors over the last 30 days (a chart and the number) and what it has set up; "Set up a new project" (a setup prompt for the agent, plus the claim-link prompt for projects an agent already made); questions to ask your agent instead. `/dashboard/analytics` redirects here |
+| `/dashboard/projects/:id` | Overview: the last 7 days of each service (visitors, tags fired, sessions recorded, unread emails, each opening its tab); what's set up (the setup check's table, with a prompt that has the owner's agent finish anything missing); where each inbox's email goes (each email, a daily digest or nothing; the owner changes it, `POST /dashboard/projects/:id/inboxes/:inbox/forward`, the mail service's `PATCH /v1/inboxes/:id {forward}` over internal auth); the inventory (each site, container, inbox and replay site opening its tab); prompts (`src/dashboard-prompt.ts`) that have the owner's agent build these screens inside their own app |
+| `/dashboard/projects/:id/analytics/:site` | Analytics (`/dashboard/projects/:id/analytics` opens the first site): visitors, revenue, conversion rate, revenue per visitor, bounce rate, session time and visitors online, each with its change on the previous period; visitors (area) and revenue (new and renewal bars) over time with an optional previous-period line; channels (donut), referrers, campaigns, keywords; pages, entry and exit pages, hostnames; countries, regions, cities; browsers, OS, devices (each with a Details table of 100 rows); goals over time, saved funnels and recent visitors; AI and search crawlers by category and bot; a live view (visitors in the last 5 minutes, sources, countries, pages and recent activity, every 10 s) and insights (revenue share, top sources and countries by revenue and conversion rate, time and visits to convert, events that convert, a weekday-by-hour heatmap; for a purchase or any goal). Periods (today, yesterday, 24 hours, 7, 30 and 90 days, month and year to date, 12 months, all, custom, with previous / next and keyboard shortcuts), interval, compare and filters (click any row, or add one) live in the URL |
+| `/dashboard/projects/:id/tags[/:container]` | Tags: the live version, tags firing, fired / blocked by consent / errors for 24 hours, 7 or 30 days; every tag's counts (failing and never-fired marked); recent events by status (delivered, failed, pending, logged) and where each went; server-side destinations (credentials never shown); versions with their notes; the pages sending hits |
+| `/dashboard/projects/:id/replay[/:site]` | Replay: sessions, pageviews, length, active time, frustration and JS errors over time; sessions (most frustrated first, most recent or longest) with their signals and a Watch button (`POST /dashboard/projects/:id/replay/:site/sessions/:session/watch` with the page's CSRF token in `x-csrf`: the replay service's `POST /v1/sites/:id/links`, one hour); signs of frustration; devices, browsers, countries; JS errors |
+| `/dashboard/projects/:id/mail[/:inbox]` | Mail: where the inbox's email goes, its messages newest first (search, older pages) and a reader: sender, recipients, sender verification, extracted codes and links, the text body as plain text (never the HTML). Reading doesn't mark mail read |
+| `/dashboard/projects/:id/settings` | Settings, General: rename (also `POST /dashboard/projects/:id/rename`), the project's id, your role and dates, key and member counts |
 | `/dashboard/projects/:id/keys` | Keys (name, prefix, scope, created by, created, last used). The owner creates (shown once) and revokes; members see the list. "Created by" is the person who made a key here, or "An agent (API)" for the signup key and keys from `POST /v1/keys`. Creating one counts against the same per-account cap and rate limits as `POST /v1/keys`. OAuth access tokens are listed under connected apps instead |
 | `/dashboard/projects/:id/members` | Members and roles. The owner invites with a claim link (shown once), sees every open invite and claim link (who made it, when it expires; never the token) and revokes them, and removes members; anyone can leave. Removing someone, or leaving, revokes the apps they connected to that project, the API keys they created in the dashboard, and their unused invite links |
 | `/dashboard/apps` | Connected apps (OAuth grants): app name, redirect host, project, access, last used; disconnect |
@@ -265,6 +279,8 @@ unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 | `POST /auth/signout` | session + CSRF | sign out |
 | `GET`, `POST /claim/:token` | session (+ CSRF to claim) | claim page |
 | `GET`, `POST /dashboard/...` | session (+ CSRF; owner for keys and invites) | the pages above, incl. `POST /dashboard/projects/:id/invites/:ref/revoke` |
+| `GET /dashboard/projects/:id/data/<service>/<path>` | session, project member | the dashboard views' data: a read-only proxy to the service as the project (internal auth), JSON only (no `format=csv`), errors as JSON (`src/service-views.ts`). GET only, and only these paths. analytics: `rollup`, `sites`, `sites/:site` and its `stats`, `timeseries`, `breakdown`, `realtime`, `insights`, `crawlers`, `goals`, `funnels[/:id]`, `visitors`, `journeys`. tags: `containers`, `containers/:id` and its `tag-stats`, `destinations`, `events`, `versions`, `coverage` (never `install` or a visitor's stored identity). replay: `sites`, `sites/:id` and its `sessions`, `summary`, `errors`, `metrics`. mail: `inboxes`, `inboxes/:id` and its `messages`, `threads`, `messages/:id` (always `html=false`), `threads/:id`, `search` (never raw MIME or attachments) |
+| `POST /dashboard/projects/:id/replay/:site/sessions/:session/watch` | session, project member, `x-csrf` | a one-hour replay player link for a session (the replay service's `POST /v1/sites/:id/links`) |
 | `GET /.well-known/oauth-authorization-server` | none | RFC 8414 metadata |
 | `GET /.well-known/oauth-protected-resource[/mcp]` | none | RFC 9728 metadata (every host) |
 | `POST /oauth/register` | none (rate-limited) | RFC 7591 |

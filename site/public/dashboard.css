@@ -1213,6 +1213,16 @@ pre {
   font-size: 11.5px;
   color: var(--ink-3);
 }
+.items .item-link {
+  min-width: 0;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 3px;
+}
+.items .item-link:hover {
+  text-decoration-color: currentColor;
+}
 .items .item-note {
   margin-right: auto;
   font-size: 12px;
@@ -2034,4 +2044,374 @@ body.app .nav {
 }
 .setup-news .ask-line {
   margin-top: 8px;
+}
+
+/* ---------- top bar: project switcher and the menu under your name ---------- */
+/* <details> menus: open without JavaScript; dashboard.js closes them on an outside click or Escape. */
+
+.topbar-mid {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.pick {
+  position: relative;
+}
+.pick > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition:
+    background-color 140ms var(--ease),
+    border-color 140ms var(--ease);
+}
+.pick > summary::-webkit-details-marker {
+  display: none;
+}
+.pick > summary:hover,
+.pick[open] > summary {
+  background: var(--ground);
+  border-color: var(--line);
+}
+.pick > summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.switcher > summary {
+  border-color: var(--line-2);
+  background: var(--paper);
+  min-width: 180px;
+  justify-content: space-between;
+}
+.pick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pick-caret {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: -4px 2px 0 4px;
+  border-right: 1.5px solid var(--ink-3);
+  border-bottom: 1.5px solid var(--ink-3);
+  transform: rotate(45deg);
+  transition: transform 200ms var(--ease);
+}
+.pick[open] .pick-caret {
+  transform: translateY(3px) rotate(225deg);
+}
+.pick-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  display: grid;
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  padding: 6px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow:
+    0 10px 30px rgba(15, 22, 38, 0.14),
+    0 1px 3px rgba(15, 22, 38, 0.08);
+  transform-origin: top left;
+  animation: pick-in 160ms var(--ease) both;
+}
+.pick-menu-end {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+.pick-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease);
+}
+.pick-item:hover,
+.pick-item:focus-visible {
+  background: var(--ground);
+  outline: none;
+}
+.pick-item.is-current {
+  font-weight: 650;
+}
+.pick-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-2);
+}
+.pick-item.is-current .pick-dot {
+  background: var(--orange);
+}
+.pick-head {
+  padding: 6px 10px 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.pick-who {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 450;
+}
+.pick-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--line);
+}
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.user-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+@keyframes pick-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+/* ---------- a project's tabs ---------- */
+
+.project-head {
+  gap: 0;
+}
+/* The tab row, with "Ask your agent" (this tab's prompt, with a Copy button) at its end. */
+.ptabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line-2);
+}
+.ptabs-row .tabs {
+  margin-top: 0;
+  border-bottom: 0;
+  min-width: 0;
+  /* Not a scroll box on wide screens: the selected tab's underline sits on the row's border, 1px
+     below the tabs, and a scroll box would clip it (and show a scrollbar). */
+  overflow: visible;
+}
+/* No title above the tabs any more, so the page starts close to the top bar. */
+.app-main:has(.project-head) {
+  padding-top: 14px;
+}
+.page-head.project-head {
+  /* Above the content below it, so the "Ask your agent" menu opens over the cards. */
+  position: relative;
+  z-index: 15;
+  margin-bottom: 18px;
+}
+.project-ask {
+  flex: none;
+}
+.project-ask > summary {
+  height: 32px;
+  padding: 0 10px;
+  border-color: var(--line-2);
+  background: var(--paper);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.project-ask-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--orange);
+}
+.project-ask-panel {
+  width: min(420px, calc(100vw - 24px));
+  gap: 6px;
+  padding: 10px 12px 12px;
+}
+.project-ask-panel .pick-head {
+  padding: 0;
+}
+.project-ask-panel .ask-line {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.project-ask-panel .ask-q {
+  background: var(--ground);
+  white-space: normal;
+}
+@media (max-width: 720px) {
+  .ptabs-row {
+    flex-wrap: wrap;
+    border-bottom: 0;
+  }
+  /* Narrow screens: the tabs scroll sideways, with the underline drawn inside the box. */
+  .ptabs-row .tabs {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: 1px solid var(--line-2);
+  }
+  .ptabs-row .tabs a::after {
+    bottom: 0;
+  }
+}
+.ptabs {
+  margin-top: 0;
+}
+.ptab::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: var(--c, var(--ink));
+  vertical-align: 1px;
+  opacity: 0.85;
+}
+.ptab-overview::before,
+.ptab-settings::before {
+  display: none;
+}
+.ptab-analytics {
+  --c: var(--orange);
+}
+.ptab-tags {
+  --c: var(--yellow);
+}
+.ptab-mail {
+  --c: var(--blue);
+}
+.ptab-replay {
+  --c: var(--emerald);
+}
+.subtabs {
+  display: flex;
+  gap: 4px;
+  margin: -8px 0 18px;
+}
+.subtabs a {
+  padding: 6px 12px;
+  border-radius: var(--r);
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--ink-2);
+  text-decoration: none;
+  transition:
+    background-color 140ms var(--ease),
+    color 140ms var(--ease);
+}
+.subtabs a:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.subtabs a[aria-current="page"] {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+/* ---------- the projects page ---------- */
+
+.home-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+.newproj {
+  position: relative;
+}
+.newproj > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.newproj > summary::-webkit-details-marker {
+  display: none;
+}
+.newproj-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(560px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+  box-shadow:
+    0 10px 30px rgba(15, 22, 38, 0.14),
+    0 1px 3px rgba(15, 22, 38, 0.08);
+  animation: pick-in 180ms var(--ease) both;
+}
+.home-asks {
+  margin-top: 28px;
+}
+.home-asks h2 {
+  font-size: clamp(20px, 2vw, 24px);
+  letter-spacing: -0.02em;
+}
+@media (max-width: 720px) {
+  .home-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .newproj-panel {
+    left: 0;
+    right: auto;
+  }
+  .switcher > summary {
+    min-width: 0;
+  }
+  .user-name {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pick-menu,
+  .newproj-panel {
+    animation: none;
+  }
 }

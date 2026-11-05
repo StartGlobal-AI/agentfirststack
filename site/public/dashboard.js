@@ -9,6 +9,8 @@
   status.className = "sr-only";
   status.setAttribute("aria-live", "polite");
   document.body.append(status);
+  // Exposed so pages swapped in without a reload (dashboard-app.js) get the same buttons.
+  window.afsEnhance = (scope) => enhance(scope || document);
 
   const selectText = (el) => {
     const range = document.createRange();
@@ -54,30 +56,57 @@
     place(button);
   };
 
-  // Hero prompts: the whole card copies, and a button shows where the "Select" chip was.
-  for (const card of document.querySelectorAll(".ask")) {
-    const q = card.querySelector(".ask-q");
-    addButton(q, (b) => card.append(b), "Copy", "copy-on-ink copy-corner");
-  }
-  // Inline prompts ("Ask your agent ...").
-  for (const q of document.querySelectorAll(".ask-line .ask-q")) {
-    addButton(q, (b) => q.after(b), "Copy");
-  }
-  // New keys and invite links (shown once).
-  for (const s of document.querySelectorAll(".secret")) {
-    addButton(s, (b) => s.after(b), "Copy", "copy-on-ink copy-wide");
-  }
-  // "Have your agent build it": one Copy button per card, outside the collapsed prompt.
-  for (const card of document.querySelectorAll(".build")) {
-    const s = card.querySelector(".prompt-block");
-    const details = card.querySelector("details");
-    if (s && details) addButton(s, (b) => card.insertBefore(b, details), "Copy prompt", "copy-on-ink");
-  }
-  // URLs such as the MCP endpoint.
-  for (const s of document.querySelectorAll(".url-chip .select")) {
-    addButton(s, (b) => s.after(b), "Copy");
-  }
+  function enhance(scope) {
+    // Hero prompts: the whole card copies, and a button shows where the "Select" chip was.
+    for (const card of scope.querySelectorAll(".ask")) {
+      const q = card.querySelector(".ask-q");
+      addButton(q, (b) => card.append(b), "Copy", "copy-on-ink copy-corner");
+    }
+    // Inline prompts ("Ask your agent ...").
+    for (const q of scope.querySelectorAll(".ask-line .ask-q")) {
+      addButton(q, (b) => q.after(b), "Copy");
+    }
+    // New keys and invite links (shown once).
+    for (const s of scope.querySelectorAll(".secret")) {
+      addButton(s, (b) => s.after(b), "Copy", "copy-on-ink copy-wide");
+    }
+    // "Have your agent build it": one Copy button per card, outside the collapsed prompt.
+    for (const card of scope.querySelectorAll(".build")) {
+      const s = card.querySelector(".prompt-block");
+      const details = card.querySelector("details");
+      if (s && details) addButton(s, (b) => card.insertBefore(b, details), "Copy prompt", "copy-on-ink");
+    }
+    // URLs such as the MCP endpoint.
+    for (const s of scope.querySelectorAll(".url-chip .select")) {
+      addButton(s, (b) => s.after(b), "Copy");
+    }
 
-  const hint = document.querySelector(".hero-hint[data-js-text]");
-  if (hint) hint.textContent = hint.dataset.jsText;
+    const hint = scope.querySelector(".hero-hint[data-js-text]");
+    if (hint) hint.textContent = hint.dataset.jsText;
+    for (const d of scope.querySelectorAll("details.pick, details.newproj")) {
+      if (d.dataset.menuReady) continue;
+      d.dataset.menuReady = "1";
+      d.addEventListener("toggle", () => {
+        if (!d.open) return;
+        for (const o of document.querySelectorAll("details.pick[open], details.newproj[open]")) if (o !== d) o.removeAttribute("open");
+      });
+    }
+  }
+  enhance(document);
+})();
+
+// The top bar's <details> menus (project switcher, your account) and the projects page's
+// "Set up a new project": close on an outside click or Escape, and one at a time.
+(() => {
+  const menus = () => document.querySelectorAll("details.pick[open], details.newproj[open]");
+  document.addEventListener("click", (e) => {
+    for (const d of menus()) if (!d.contains(e.target)) d.removeAttribute("open");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    for (const d of menus()) {
+      d.removeAttribute("open");
+      d.querySelector("summary")?.focus();
+    }
+  });
 })();

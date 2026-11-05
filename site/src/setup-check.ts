@@ -87,6 +87,17 @@ export interface ReportRow {
   details: string;
 }
 
+/** Crawler categories as the owner reads them. */
+const CRAWL_NAMES: Record<string, string> = {
+  ai_assistant: "AI answers",
+  ai_search: "AI search",
+  ai_training: "AI training",
+  search: "search engines",
+  seo: "SEO tools",
+  preview: "link previews",
+  other: "other bots",
+};
+
 /** The owner's view: each part of the setup, and which checks' details say what it is. */
 const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] = [
   { part: "Project", ids: ["project.named"], show: ["project.named"] },
@@ -98,6 +109,7 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
     perDomain: true,
   },
   { part: "Goals", ids: ["analytics.goals", "analytics.goals_counted"], show: ["analytics.goals"], perDomain: true },
+  { part: "AI crawlers", ids: ["analytics.crawlers"], show: ["analytics.crawlers"], perDomain: true },
   {
     part: "Reports and alerts",
     ids: ["analytics.owner_email", "analytics.weekly_report", "analytics.alerts"],
@@ -661,13 +673,14 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
       siteId: null,
     };
   const p = `/v1/sites/${site.id}`;
-  const [detail, goalsRes, goalStats, dests, reports, alerts] = await Promise.all([
+  const [detail, goalsRes, goalStats, dests, reports, alerts, crawls] = await Promise.all([
     x.read<AnalyticsSite>("analytics", p),
     x.read<{ goals: Goal[] }>("analytics", `${p}/goals`),
     x.read<{ breakdown?: { results?: GoalRow[] } }>("analytics", `${p}/stats?period=30d&breakdown=goal&debug=include&limit=100`),
     x.read<{ destinations: AnalyticsDestination[]; email_available?: boolean }>("analytics", `${p}/destinations`),
     x.read<{ reports: Report[] }>("analytics", `${p}/reports`),
     x.read<{ alerts: Alert[] }>("analytics", `${p}/alerts`),
+    x.read<{ totals?: { hits?: number; by_category?: Record<string, number> } }>("analytics", `${p}/crawlers?period=7d&by=category`),
   ]);
   const checks: SetupCheck[] = [
     at({ id: "analytics.site", status: "ok", title: "Analytics has a site for the website", detail: `${site.id} (${site.domain}).` }),
@@ -794,6 +807,34 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
         title: "Conversions only the backend knows arrive as server events",
         detail: "No server events yet. Ignore this if the business has no backend conversions (a verified sign-up, a paid order).",
         fix: `POST ${A}${p}/events {"events":[{"name":"sign_up","visitor_id":"<afsa.visitorId() from the page>","debug":true}]}`,
+      }),
+    );
+
+  // AI crawlers and search bots (a hint: a site on static hosting has no server to report them)
+  const crawlTitle = "AI crawler and search bot visits are reported from the site's server";
+  if (!crawls) checks.push(unavailable("analytics.crawlers", crawlTitle));
+  else if (crawls.totals?.hits) {
+    const by = crawls.totals.by_category ?? {};
+    const parts = Object.entries(CRAWL_NAMES)
+      .filter(([k]) => by[k])
+      .map(([k, name]) => `${by[k]} ${name}`);
+    checks.push(
+      at({
+        id: "analytics.crawlers",
+        status: "ok",
+        title: crawlTitle,
+        detail: `${plural(crawls.totals.hits, "bot request")} in the last 7 days${parts.length ? ` (${parts.join(", ")})` : ""}.`,
+      }),
+    );
+  } else
+    checks.push(
+      at({
+        id: "analytics.crawlers",
+        status: "warning",
+        title: crawlTitle,
+        detail:
+          "None reported in the last 7 days. Bots don't run the tracker, so the site's server reports them. Ignore this if the site is on static hosting with no server or edge code (GitHub Pages, a plain bucket).",
+        fix: `In the site's server or edge middleware, for requests whose user agent matches the prefilter from GET ${A}/v1/crawlers, POST ${A}${p}/crawls {"user_agent","path","status"} without waiting for it (code in "AI crawlers" in ${A}/llms.txt), then check GET ${A}${p}/crawlers`,
       }),
     );
 

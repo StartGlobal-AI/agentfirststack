@@ -27,15 +27,16 @@ const SERVICES = {
 
 /**
  * What a project has set up, as four tiles: where analytics is installed, which tag containers
- * exist, which inboxes it uses, where replay records. No numbers or reports on purpose: those are
- * for the owner's agent to fetch (or to build into a dashboard of their own, see
- * dashboard-prompt.ts). With `asks`, empty tiles suggest what to ask the agent.
+ * exist, which inboxes it uses, where replay records. No numbers here: with `projectId`, each site
+ * links to its analytics dashboard (analytics-dashboard.ts); the rest is for the owner's agent to
+ * fetch, or to build into a dashboard of their own (dashboard-prompt.ts). With `asks`, empty tiles
+ * suggest what to ask the agent.
  */
-export function resourcesView(r: Resources, opts: { asks?: boolean } = {}): SafeHtml {
+export function resourcesView(r: Resources, opts: { asks?: boolean; projectId?: string } = {}): SafeHtml {
   const tile = <T>(
     svc: keyof typeof SERVICES,
     list: T[] | null,
-    line: (x: T) => { main: string; id: string; note?: string },
+    line: (x: T) => { main: string; id: string; note?: string; href?: string },
     empty: SafeHtml,
   ) => {
     const s = SERVICES[svc];
@@ -47,7 +48,7 @@ export function resourcesView(r: Resources, opts: { asks?: boolean } = {}): Safe
       : list.length
         ? html`<ul class="items">${list.map((x) => {
             const l = line(x);
-            return html`<li><b>${l.main}</b>${l.note ? html`<span class="item-note">${l.note}</span>` : ""}<code>${l.id}</code></li>`;
+            return html`<li>${l.href ? html`<a class="item-link" href="${l.href}"><b>${l.main}</b></a>` : html`<b>${l.main}</b>`}${l.note ? html`<span class="item-note">${l.note}</span>` : ""}<code>${l.id}</code></li>`;
           })}</ul>`
         : empty
   }
@@ -56,13 +57,37 @@ export function resourcesView(r: Resources, opts: { asks?: boolean } = {}): Safe
   const none = (what: string, ask: string) =>
     html`<p class="muted small">No ${what} yet.</p>${opts.asks ? askLine(ask, "Ask your agent") : ""}`;
   return html`<div class="bento resources">
-  ${tile("analytics", r.sites, (s) => ({ main: s.domain, id: s.id }), none("sites", "Add analytics to my website."))}
-  ${tile("tags", r.containers, (t) => ({ main: t.domain, id: t.id }), none("tag containers", "Track sign-ups as Meta and Google Ads conversions."))}
-  ${tile("mail", r.inboxes, (i) => ({ main: i.address, id: i.id }), none("inboxes", "Create an inbox for our sign-up emails."))}
+  ${tile(
+    "analytics",
+    r.sites,
+    (s) => ({
+      main: s.domain,
+      id: s.id,
+      href: opts.projectId ? `/dashboard/projects/${opts.projectId}/analytics/${s.id}` : undefined,
+    }),
+    none("sites", "Add analytics to my website."),
+  )}
+  ${tile(
+    "tags",
+    r.containers,
+    (t) => ({ main: t.domain, id: t.id, href: opts.projectId ? `/dashboard/projects/${opts.projectId}/tags/${t.id}` : undefined }),
+    none("tag containers", "Track sign-ups as Meta and Google Ads conversions."),
+  )}
+  ${tile(
+    "mail",
+    r.inboxes,
+    (i) => ({ main: i.address, id: i.id, href: opts.projectId ? `/dashboard/projects/${opts.projectId}/mail/${i.id}` : undefined }),
+    none("inboxes", "Create an inbox for our sign-up emails."),
+  )}
   ${tile(
     "replay",
     r.replaySites,
-    (s) => ({ main: s.domain, id: s.id, note: s.enabled === false ? "paused" : undefined }),
+    (s) => ({
+      main: s.domain,
+      id: s.id,
+      note: s.enabled === false ? "paused" : undefined,
+      href: opts.projectId ? `/dashboard/projects/${opts.projectId}/replay/${s.id}` : undefined,
+    }),
     none("replay sites", "Turn on session replay for my website."),
   )}
 </div>`;
@@ -135,7 +160,7 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 export function forwardView(projectId: string, inboxes: InboxItem[] | null, opts: { owner: boolean; csrf: SafeHtml }): SafeHtml {
   const withSetting = (inboxes ?? []).filter((i) => i.forward);
   if (!withSetting.length) return html``;
-  return html`<section class="tile forward-tile" aria-labelledby="forward-title">
+  return html`<section class="tile forward-tile" id="forwarding" aria-labelledby="forward-title">
   <div class="tile-head"><h2 id="forward-title">Email from your inbox</h2></div>
   <p class="muted small">Your agent uses ${withSetting.length === 1 ? "this inbox" : "these inboxes"} for sign-ups and codes. Its email comes to everyone on this project, as each one arrives or as one daily digest.</p>
   ${withSetting.map((i) => {

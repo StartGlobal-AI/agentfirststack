@@ -48,7 +48,10 @@ Forward its mail to the owner the way they chose, so nothing is missed after you
 2. A goal for every conversion and main action (`POST /v1/sites/:id/goals`).
 3. Conversions only the backend knows as server events (`POST /v1/sites/:id/events`), with
    `afsa.visitorId()` passed through the request so they join the visit. Payments: connect the provider.
-4. For the owner: an email destination, a weekly report and alerts for a traffic drop and for no data.
+4. AI crawlers and search bots: if the site has a server or edge code, report bot requests from
+   there (`POST /v1/sites/:id/crawls`, only for user agents matching `GET /v1/crawlers` ->
+   `prefilter`, without waiting for the answer). On static hosting, skip it and say so.
+5. For the owner: an email destination, a weekly report and alerts for a traffic drop and for no data.
 
 ## 5. Tags
 

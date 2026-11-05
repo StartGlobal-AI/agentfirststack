@@ -3,8 +3,11 @@ import { type Context, Hono } from "hono";
 import { type OpenLink, createClaimLink, listOpenLinks, revokeOpenLink } from "./claims";
 import type { SiteEnv } from "./env";
 import { siteBase } from "./google";
-import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
+import { dashPage, projectHeader, projectId, projectName } from "./dashboard-frame";
+import { csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
 import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
+import { analyticsDashboard } from "./analytics-dashboard";
+import { serviceViews } from "./service-views";
 import { type BuildKind, buildPrompt } from "./dashboard-prompt";
 import { callService, projectResources } from "./services";
 import { readSetupState } from "./notices";
@@ -24,14 +27,6 @@ dashboard.use("*", requireSession);
 
 dashboard.onError(htmlErrorHandler);
 
-const PROJECT_ID = /^acct_[0-9a-z]{1,64}$/;
-const projectId = (c: Context<SiteEnv>) => {
-  const id = c.req.param("id") ?? "";
-  if (!PROJECT_ID.test(id)) throw new ApiError(404, "not_found", "Project not found.");
-  return id;
-};
-const projectName = (p: { name: string | null }) => p.name || "Untitled project";
-
 /**
  * Keys and invites are access to the project, so only its owner hands them out or takes them
  * back. Members see the lists.
@@ -46,21 +41,6 @@ function requireOwner(p: Project, what: string) {
   );
 }
 
-function tabs(p: Project, active: "overview" | "keys" | "members"): SafeHtml {
-  const tab = (key: string, href: string, label: string) =>
-    html`<a href="${href}"${key === active ? html` aria-current="page"` : ""}>${label}</a>`;
-  return html`<div class="page-head">
-  <p class="crumbs"><a href="/dashboard">Projects</a><span aria-hidden="true">/</span></p>
-  <h1>${projectName(p)}</h1>
-  <p class="meta"><code>${p.id}</code><span>You're ${p.role === "owner" ? "the owner" : "a member"}</span><span>Created ${fmtDay(p.created_at)}</span></p>
-  <nav class="tabs" aria-label="Project">
-    ${tab("overview", `/dashboard/projects/${p.id}`, "Overview")}
-    ${tab("keys", `/dashboard/projects/${p.id}/keys`, "API keys")}
-    ${tab("members", `/dashboard/projects/${p.id}/members`, "Members")}
-  </nav>
-</div>`;
-}
-
 const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
   msg ? html`<p class="notice ${kind === "ok" ? "notice-ok" : "notice-error"}" role="status">${msg}</p>` : "";
 
@@ -69,7 +49,7 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project, completely, and verify it yourself. First ask me one question: should the project's inbox email be forwarded to me as each one arrives, or as one daily digest (at what time)? Then read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Apart from that question, don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values) and add the manual's AgentFirstStack block to AGENTS.md, and show me the tables of what's set up and what passed, and send me a claim link for the project.";
+  "Set up AgentFirstStack for this project, completely, and verify it yourself. First ask me one question: should the project's inbox email be forwarded to me as each one arrives, or as one daily digest (at what time)? Then read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, AI crawler reporting if the site has a server, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Apart from that question, don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values) and add the manual's AgentFirstStack block to AGENTS.md, and show me the tables of what's set up and what passed, and send me a claim link for the project.";
 
 /** For a project whose setup check isn't ready: the agent re-runs the check and fixes what it reports. */
 const finishPrompt = (base: string) =>
@@ -104,89 +84,104 @@ const ASKS: { text: string; svc: "analytics" | "tags" | "mail" | "projects"; lab
 async function projectsPage(c: Context<SiteEnv>) {
   const s = c.var.session;
   const projects = await listProjects(c.env.DB, s.user.id);
-  // Resources for the first 20 projects (each is four service calls).
+  // Resources for the first 20 projects (each is four service calls); the cards' numbers and
+  // charts are filled in by /dashboard-app.js from the analytics API.
   const shown = projects.slice(0, 20);
   const resources = await Promise.all(shown.map((p) => projectResources(c.env, p.id)));
-  const projectTile = (p: Project, i: number) => {
+  const card = (p: Project, i: number) => {
     const r = resources[i];
-    return html`<li class="tile project">
-      <div class="project-top">
-        <h3><a class="project-link" href="/dashboard/projects/${p.id}">${projectName(p)}</a></h3>
+    return html`<li><a class="afa-card pcard" href="/dashboard/projects/${p.id}" data-pcard="${p.id}" data-sites="${JSON.stringify(
+      (r?.sites ?? []).map((x) => x.id),
+    )}">
+      <span class="pcard-top">
+        <span class="afa-favicon" aria-hidden="true">${projectName(p).charAt(0).toUpperCase()}</span>
+        <span class="pcard-name">${projectName(p)}</span>
         <span class="role">${p.role}</span>
-      </div>
-      <code class="project-id">${p.id}</code>
-      <div class="project-bottom">
-        ${r ? resourceCounts(r) : html`<p class="muted small">Open it to see its sites, containers, inboxes and replay sites.</p>`}
-        <p class="project-foot">Created ${fmtDay(p.created_at)}</p>
-      </div>
-    </li>`;
+      </span>
+      <span class="pcard-spark" aria-hidden="true"></span>
+      <span class="pcard-stat">${r?.sites?.length ? html`<b data-visitors>–</b> visitors in the last 30 days` : html`<span class="muted">No analytics yet</span>`}</span>
+      <span class="pcard-foot">${r ? resourceCounts(r) : html`<span class="muted small">Couldn't load what's set up.</span>`}</span>
+    </a></li>`;
   };
-  return page({
+  return dashPage(c, {
     title: "Projects",
-    session: s,
     nav: "projects",
-    body: html`<div class="bento home-top">
-  <section class="tile hero" aria-labelledby="hero-title">
-    <div class="hero-copy">
-      <h1 id="hero-title">You don't really need this dashboard.</h1>
-      <p>${
-        projects.length
-          ? "Your agent set these projects up, and it can read any of this back to you. Just ask, in plain words."
-          : "Your agent sets things up for you, and can read any of it back to you later. Just ask, in plain words."
-      }</p>
-    </div>
-    <ul class="asks">${ASKS.map(
-      (a) =>
-        html`<li class="ask ask-${a.svc}">${askText(a.text)}<span class="ask-tag"><span class="swatch" aria-hidden="true"></span>${a.label}</span></li>`,
-    )}</ul>
-    <p class="hero-hint" data-js-text="Copy a question, then paste it into your agent.">Click a question to select it, then copy it into your agent.</p>
-  </section>
-  <section class="tile add" aria-labelledby="add-title">
-    <h2 id="add-title">Set up a new project</h2>
-    <p class="muted small">Open your agent in the new project's folder and paste this. It gets the project its own key, sets up what it needs, checks each step, and sends you a claim link that adds it here.</p>
-    ${askLine(SETUP_PROMPT, null)}
-    <p class="muted small add-also">Already set up by an agent? Ask it:</p>
-    ${askLine("Send me a claim link for our AgentFirstStack project.", null)}
-  </section>
+    scripts: ["/dashboard-app.js"],
+    styles: ["/dashboard-app.css"],
+    body: html`<div class="page-head home-head">
+  <div>
+    <h1>Projects</h1>
+    <p class="lead">${
+      projects.length
+        ? `${plural(projects.length, "project", "projects")} your agents set up. Open one for its analytics, tags, replay and mail.`
+        : "When your agent sets AgentFirstStack up, it sends you a claim link. Open it and the project shows up here."
+    }</p>
+  </div>
+  <details class="newproj">
+    <summary class="btn btn-primary">Set up a new project</summary>
+    <section class="tile add newproj-panel" aria-label="Set up a new project">
+      <p class="muted small">Open your agent in the new project's folder and paste this. It gets the project its own key, sets up what it needs, checks each step, and sends you a claim link that adds it here.</p>
+      ${askLine(SETUP_PROMPT, null)}
+      <p class="muted small add-also">Already set up by an agent? Ask it:</p>
+      ${askLine("Send me a claim link for our AgentFirstStack project.", null)}
+    </section>
+  </details>
 </div>
-<div class="section-head">
-  <h2>Projects</h2>
-  <p class="muted small">${plural(projects.length, "project", "projects")}. Each is what one API key belongs to: its sites, tag containers, inboxes and replay sites.</p>
-</div>
+<div class="afa" id="afa" data-view="home">
 ${
   projects.length
-    ? html`<ul class="projects">${projects.map(projectTile)}</ul>`
+    ? html`<ul class="pcards">${shown.map(card)}</ul>${
+        projects.length > shown.length ? html`<p class="fine">Showing the first ${shown.length} of ${projects.length} projects.</p>` : ""
+      }`
     : html`<div class="tile empty">
   <h3>No projects yet</h3>
   <p>When your agent has set something up, ask it for a claim link and open it: the project shows up here.</p>
   <p class="muted small">Agents create claim links with <code>POST /v1/claim-link</code> or the <code>afs_create_claim_link</code> tool.</p>
 </div>`
-}`,
+}
+</div>
+<section class="tile hero home-asks" aria-labelledby="asks-title">
+  <div class="hero-copy">
+    <h2 id="asks-title">Or just ask your agent.</h2>
+    <p>Everything here, your agent can read back to you, in plain words.</p>
+  </div>
+  <ul class="asks">${ASKS.map(
+    (a) =>
+      html`<li class="ask ask-${a.svc}">${askText(a.text)}<span class="ask-tag"><span class="swatch" aria-hidden="true"></span>${a.label}</span></li>`,
+  )}</ul>
+  <p class="hero-hint" data-js-text="Copy a question, then paste it into your agent.">Click a question to select it, then copy it into your agent.</p>
+</section>`,
   });
 }
 
 dashboard.get("/", (c) => projectsPage(c));
+dashboard.route("/", analyticsDashboard);
+dashboard.route("/", serviceViews);
 
 dashboard.get("/projects/:id", async (c) => {
   const s = c.var.session;
   const p = await requireProject(c.env.DB, s.user.id, projectId(c));
   const resources = await projectResources(c.env, p.id);
-  const [setup, setupState, keys, members] = await Promise.all([
+  const [setup, setupState] = await Promise.all([
     // Rate-limited or failed: the page still renders, without the tile.
     setupReport(c.env, p.id, { base: siteBase(c), resources }).catch(() => null),
     readSetupState(c.env.DB, p.id),
-    c.env.DB.prepare("SELECT count(*) AS n FROM api_keys WHERE account_id = ? AND revoked_at IS NULL AND oauth_grant_id IS NULL")
-      .bind(p.id)
-      .first<number>("n"),
-    c.env.DB.prepare("SELECT count(*) AS n FROM memberships WHERE account_id = ?").bind(p.id).first<number>("n"),
   ]);
   const project = { id: p.id, name: projectName(p) };
-  return page({
+  const ids = {
+    sites: (resources.sites ?? []).map((x) => x.id),
+    containers: (resources.containers ?? []).map((x) => x.id),
+    inboxes: (resources.inboxes ?? []).map((x) => x.id),
+    replay: (resources.replaySites ?? []).map((x) => x.id),
+  };
+  return dashPage(c, {
     title: projectName(p),
-    session: s,
-    nav: "projects",
-    body: html`${tabs(p, "overview")}
-${resourcesView(resources, { asks: true })}
+    project: p,
+    tab: "overview",
+    scripts: ["/dashboard-app.js"],
+    styles: ["/dashboard-app.css"],
+    body: html`${projectHeader(p, "overview")}
+<div class="afa afa-week" id="afa" data-view="project-overview" data-project="${p.id}" data-ids="${JSON.stringify(ids)}"></div>
 ${
   setup
     ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)), {
@@ -197,11 +192,12 @@ ${
     : ""
 }
 ${(resources.inboxes ?? []).some((i) => i.forward) ? html`<div class="bento">${forwardView(p.id, resources.inboxes, { owner: p.role === "owner", csrf: csrfField(s) })}</div>` : ""}
+${resourcesView(resources, { asks: true, projectId: p.id })}
 <div class="bento">
 <section class="tile build-own" aria-labelledby="build-title">
   <div class="build-copy">
-    <h2 id="build-title">Want a dashboard? Have your agent build it.</h2>
-    <p>This page only lists what's set up. For a screen of your own, paste one of these into Claude, Cursor or any coding agent. It builds it inside your app, from the API, already pointed at this project.</p>
+    <h2 id="build-title">Want these screens in your own app? Have your agent build them.</h2>
+    <p>Paste one of these into Claude, Cursor or any coding agent. It builds the screen from the API inside your app, already pointed at this project.</p>
   </div>
   <ul class="builds">${BUILDS.map(
     (b) => html`<li class="build svc-${b.kind}">
@@ -211,8 +207,45 @@ ${(resources.inboxes ?? []).some((i) => i.forward) ? html`<div class="bento">${f
   </li>`,
   )}</ul>
 </section>
-</div>
+</div>`,
+  });
+});
+
+// Settings: General (rename, the project's facts); API keys and Members are their own pages.
+dashboard.get("/projects/:id/settings", async (c) => {
+  const s = c.var.session;
+  const p = await requireProject(c.env.DB, s.user.id, projectId(c));
+  const [keys, members] = await Promise.all([
+    c.env.DB.prepare("SELECT count(*) AS n FROM api_keys WHERE account_id = ? AND revoked_at IS NULL AND oauth_grant_id IS NULL")
+      .bind(p.id)
+      .first<number>("n"),
+    c.env.DB.prepare("SELECT count(*) AS n FROM memberships WHERE account_id = ?").bind(p.id).first<number>("n"),
+  ]);
+  return dashPage(c, {
+    title: `Settings · ${projectName(p)}`,
+    project: p,
+    tab: "settings",
+    settingsTab: "general",
+    body: html`${projectHeader(p, "settings", "general")}
 <div class="bento project-more">
+  <form class="tile stack rename" method="post" action="/dashboard/projects/${p.id}/rename">
+    <h2>Project name</h2>
+    ${csrfField(s)}
+    <div class="inline-fields">
+      <label class="field"><span>Name</span><input type="text" name="name" maxlength="200" value="${p.name ?? ""}" placeholder="acme.com"></label>
+      <button class="btn btn-quiet" type="submit">Save</button>
+    </div>
+    ${askLine("Rename our AgentFirstStack project.", "Or ask your agent")}
+  </form>
+  <section class="tile account">
+    <h2>About this project</h2>
+    <dl class="facts">
+      <div><dt>Project id</dt><dd><code>${p.id}</code></dd></div>
+      <div><dt>Your role</dt><dd>${p.role === "owner" ? "Owner" : "Member"}</dd></div>
+      <div><dt>Created</dt><dd>${fmtDate(p.created_at)}</dd></div>
+      <div><dt>You joined</dt><dd>${fmtDate(p.joined_at)}</dd></div>
+    </dl>
+  </section>
   <a class="tile stat-tile" href="/dashboard/projects/${p.id}/keys">
     <span class="stat-num">${keys ?? 0}</span>
     <span class="stat-label">${keys === 1 ? "active API key" : "active API keys"}</span>
@@ -223,14 +256,6 @@ ${(resources.inboxes ?? []).some((i) => i.forward) ? html`<div class="bento">${f
     <span class="stat-label">${members === 1 ? "person can see this" : "people can see this"}</span>
     <span class="stat-go">Members and invites</span>
   </a>
-  <form class="tile stack rename" method="post" action="/dashboard/projects/${p.id}/rename">
-    <h2>Rename</h2>
-    ${csrfField(s)}
-    <div class="inline-fields">
-      <label class="field"><span>Name</span><input type="text" name="name" maxlength="200" value="${p.name ?? ""}" placeholder="acme.com"></label>
-      <button class="btn btn-quiet" type="submit">Save</button>
-    </div>
-  </form>
 </div>`,
   });
 });
@@ -273,7 +298,7 @@ dashboard.post("/projects/:id/rename", async (c) => {
   const form = await readForm(c);
   const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
   await c.env.DB.prepare("UPDATE accounts SET name = ? WHERE id = ?").bind(cleanName(form.name, 200), p.id).run();
-  return redirect(`/dashboard/projects/${p.id}`);
+  return redirect(`/dashboard/projects/${p.id}/settings`);
 });
 
 // ---------- keys ----------
@@ -309,12 +334,13 @@ async function keysPage(c: Context<SiteEnv>, p: Project, extra: KeysPageExtra = 
   const createdBy = (k: KeyRow) => (k.created_by_email ? k.created_by_email : html`<span class="muted">An agent (API)</span>`);
   const access = (scopes: string) =>
     scopes === "*" ? html`<span class="tag tag-full">Full access</span>` : html`<span class="tag">Read only</span>`;
-  return page({
+  return dashPage(c, {
     title: `API keys · ${projectName(p)}`,
-    session: s,
-    nav: "projects",
+    project: p,
+    tab: "settings",
+    settingsTab: "keys",
     status: created ? 201 : (extra.error?.status ?? 200),
-    body: html`${tabs(p, "keys")}
+    body: html`${projectHeader(p, "settings", "keys")}
 ${notice(extra.error?.message)}
 <div class="bento">
 ${
@@ -425,12 +451,13 @@ async function membersPage(c: Context<SiteEnv>, p: Project, invite?: { url: stri
       : l.created_by_key_prefix
         ? html`An agent (key <code>${l.created_by_key_prefix}…</code>)`
         : html`<span class="muted">Unknown</span>`;
-  return page({
+  return dashPage(c, {
     title: `Members · ${projectName(p)}`,
-    session: s,
-    nav: "projects",
+    project: p,
+    tab: "settings",
+    settingsTab: "members",
     status: invite ? 201 : 200,
-    body: html`${tabs(p, "members")}
+    body: html`${projectHeader(p, "settings", "members")}
 <div class="bento">
 ${
   invite
@@ -564,9 +591,8 @@ dashboard.get("/apps", async (c) => {
   )
     .bind(s.user.id)
     .all<GrantRow>();
-  return page({
+  return dashPage(c, {
     title: "Connected apps",
-    session: s,
     nav: "apps",
     body: html`<div class="page-head">
   <h1>Connected apps</h1>
@@ -615,9 +641,8 @@ dashboard.post("/apps/:grant/revoke", async (c) => {
 
 dashboard.get("/account", async (c) => {
   const s = c.var.session;
-  return page({
+  return dashPage(c, {
     title: "Account",
-    session: s,
     nav: "account",
     body: html`<div class="page-head"><h1>Account</h1></div>
 <div class="bento">

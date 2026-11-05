@@ -99,7 +99,13 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     // An inventory only: where analytics is installed, which containers and inboxes exist, where replay records.
     expect(project.text).toContain("acme.test");
     expect(project.text).toContain("acme-signups@afs.test");
-    expect(project.text).toMatch(/<b>www\.acme\.test<\/b><span class="item-note">paused<\/span><code>rsite_acme000000000000<\/code>/);
+    expect(project.text).toMatch(
+      /<a class="item-link" href="\/dashboard\/projects\/acct_[0-9a-z]+\/replay\/rsite_acme000000000000"><b>www\.acme\.test<\/b><\/a><span class="item-note">paused<\/span><code>rsite_acme000000000000<\/code>/,
+    );
+    // The project's tabs, and the switcher showing this project.
+    for (const tab of ["analytics", "tags", "replay", "mail", "settings"])
+      expect(project.text).toContain(`href="/dashboard/projects/${agent.accountId}/${tab}"`);
+    expect(project.text).toMatch(/<summary aria-label="Switch project"><span class="pick-label">[^<]+<\/span>/);
     // No numbers, no tag publishing state, no analytics share button: the owner's agent does that.
     expect(project.text).not.toContain("visitors, 7 days");
     expect(project.text).not.toContain("version 2 live");
@@ -107,7 +113,7 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     // The setup check is the one status on the page: what's done and what the agent still has to do.
     expect(project.text).toContain("What's set up");
     // Instead, prompts that have the agent build each screen from the API, naming this project's resources.
-    expect(project.text).toContain("Want a dashboard? Have your agent build it.");
+    expect(project.text).toContain("Want these screens in your own app? Have your agent build them.");
     expect(project.text).toContain("Build me an analytics dashboard for my AgentFirstStack project");
     expect(project.text).toContain("Build me a conversion tracking panel for my AgentFirstStack project");
     expect(project.text).toContain("Build me a small email client for my AgentFirstStack project");

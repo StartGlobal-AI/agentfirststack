@@ -92,9 +92,13 @@ the site Worker and the identity database (`site/migrations/0003_*`, `0004_*`).
   looks the membership up first; a non-member gets a 404.
 - **Claim links** (`POST /v1/claim-link`, the gateway tool `afs_create_claim_link`) are single-use,
   7-day tokens a full-access key can mint, so the person behind an agent can claim its project.
-- **Dashboard** (`/dashboard`): server-rendered HTML without JavaScript, `frame-ancestors 'none'`,
-  every form a POST with a CSRF token. Resource lists come from the services over their service
-  bindings with internal auth.
+- **Dashboard** (`/dashboard`): server-rendered HTML, `frame-ancestors 'none'`, every form a POST
+  with a CSRF token, scripts from its own origin only. Resource lists come from the services over
+  their service bindings with internal auth. A project's tabs (Overview, Analytics, Tags, Replay,
+  Mail, Settings) and the projects page's cards are drawn in the browser by
+  `public/dashboard-app.js` from the services' own answers, read through a read-only proxy on the
+  site (`/dashboard/projects/:id/data/<service>/...`, GET and listed report paths only); the one
+  write is a one-hour replay player link (Watch, with the page's CSRF token).
 - **OAuth 2.1 server** for MCP connectors: RFC 8414 metadata, dynamic registration of public
   clients, consent with a project picker, PKCE S256, exact redirect URIs, single-use 10-minute
   codes, `iss` on the redirect, rotating refresh tokens (reuse revokes the grant). Access tokens

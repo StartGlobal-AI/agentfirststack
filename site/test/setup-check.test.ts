@@ -67,6 +67,7 @@ function healthy(): Record<"analytics" | "tags" | "mail" | "replay", Routes> {
         email_available: true,
       },
       "/v1/sites/site_acme/reports": { reports: [{ id: "rpt_1", enabled: true }] },
+      "/v1/sites/site_acme/crawlers": { totals: { hits: 42, by_category: { ai_training: 30, search: 12 } } },
       "/v1/sites/site_acme/alerts": {
         alerts: [
           { type: "traffic_drop", enabled: true },
@@ -201,6 +202,7 @@ describe("setup check", () => {
       ["Inbox", "ok"],
       ["Analytics", "ok"],
       ["Goals", "ok"],
+      ["AI crawlers", "ok"],
       ["Reports and alerts", "ok"],
       ["Tag manager", "ok"],
       ["Events", "ok"],
@@ -213,6 +215,7 @@ describe("setup check", () => {
     expect(md).toContain("| ✅ | Goals | 3 goals: Signed up, Copied, Read a guide. |");
     expect(md).toContain("| ✅ | Events | 2 events in version 2: sign_up, copy_prompt. |");
     expect(md).toContain("| ⏳ | Dashboard access |");
+    expect(md).toContain("| ✅ | AI crawlers | 42 bot requests in the last 7 days (30 AI training, 12 search engines). |");
 
     // Once someone has claimed it, the last check passes too.
     await E.DB.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
@@ -224,6 +227,24 @@ describe("setup check", () => {
     const again = await call("GET", "/v1/setup", { key: agent.key, env });
     expect(byId(again.json.checks)("project.claimed").status).toBe("ok");
     expect(again.json.counts.ok).toBe(again.json.checks.length);
+  });
+
+  it("warns, without holding up ready, when no crawler visits are reported", async () => {
+    const agent = await signup("acme.test");
+    const routes = healthy();
+    routes.analytics["/v1/sites/site_acme/crawlers"] = { totals: { hits: 0, by_category: {} } };
+    const { env } = envWith(routes);
+    const r = await call("GET", "/v1/setup", { key: agent.key, env });
+    const c = byId(r.json.checks)("analytics.crawlers");
+    expect(c.status).toBe("warning");
+    expect(c.detail).toContain("Ignore this if the site is on static hosting");
+    expect(c.fix).toContain("/v1/sites/site_acme/crawls");
+    expect(c.fix).toContain("GET https://analytics.afs.test/v1/crawlers");
+    // Only the claim is still open, as before: a warning doesn't count against ready.
+    expect(
+      r.json.checks.filter((x: SetupCheck) => ["missing", "failing", "unavailable"].includes(x.status)).map((x: SetupCheck) => x.id),
+    ).toEqual(["project.claimed"]);
+    expect(r.json.rows.find((x: { part: string }) => x.part === "AI crawlers").status).toBe("warning");
   });
 
   it("says exactly what's broken, with the call that fixes it", async () => {

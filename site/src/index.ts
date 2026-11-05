@@ -10,7 +10,8 @@ import { a2aEndpoint } from "./a2a";
 import { mcpGateway } from "./mcp-gateway";
 import { oauthApi, oauthPages } from "./oauth";
 import { noticeBase, refreshNotices } from "./notices";
-import { ownAnalytics, trackOwn } from "./own-analytics";
+import { ownAnalytics, trackCrawl, trackOwn } from "./own-analytics";
+import { servePage, withAssetHeaders } from "./static-pages";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
 import { setupTestApi } from "./setup-test";
@@ -26,6 +27,12 @@ import { setupTestApi } from "./setup-test";
 const app = new Hono<SiteEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+
+// AI crawler and search bot requests for the public pages go to the deployment's own analytics.
+app.use("*", async (c, next) => {
+  await next();
+  trackCrawl(c, c.res.status);
+});
 
 // People-facing pages live on one host (PUBLIC_BASE_URL), so cookies and the Google callback match.
 const canonicalHost: MiddlewareHandler<SiteEnv> = async (c, next) => {
@@ -80,7 +87,7 @@ app.on(["GET", "HEAD"], "/", async (c) => {
     headers.set("content-type", "text/markdown; charset=utf-8");
     headers.set("x-markdown-tokens", String(Math.ceil(text.length / 4)));
   }
-  return new Response(c.req.method === "HEAD" ? null : asset.body, { status: asset.status, headers });
+  return withAssetHeaders("/", new Response(c.req.method === "HEAD" ? null : asset.body, { status: asset.status, headers }));
 });
 
 // /mcp is the MCP endpoint, and also a page for people: a browser (Accept: text/html, no event
@@ -91,7 +98,7 @@ app.on(["GET", "HEAD"], "/mcp", async (c, next) => {
   const asset = await c.env.ASSETS.fetch(new URL("/mcp", c.req.url));
   const headers = new Headers(asset.headers);
   headers.append("vary", "Accept");
-  return new Response(c.req.method === "HEAD" ? null : asset.body, { status: asset.status, headers });
+  return withAssetHeaders("/mcp", new Response(c.req.method === "HEAD" ? null : asset.body, { status: asset.status, headers }));
 });
 app.all("/mcp", (c) => mcpGateway(c.req.raw, c.env));
 app.all("/a2a", (c) => a2aEndpoint(c.req.raw, c.env));
@@ -165,6 +172,14 @@ app.route(
     ],
   }),
 );
+
+// Every other page is a static file from public/. wrangler.jsonc runs this Worker first for pages
+// (not images, fonts, CSS or JS) so bot visits can be reported above; the file gets the headers
+// public/_headers gives it. API, gateway and people paths that matched nothing stay a JSON 404.
+app.on(["GET", "HEAD"], "*", (c) => {
+  if (/^\/(?:v1|mcp|a2a|oauth|auth|dashboard|claim|signin)(?:\/|$)/.test(new URL(c.req.url).pathname)) return c.notFound();
+  return servePage(c);
+});
 
 export { app };
 

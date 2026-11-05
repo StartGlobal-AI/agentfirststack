@@ -64,6 +64,12 @@ export const SETUP_CATALOG: CatalogItem[] = [
     label: "an AgentFirstStack section in the repo's AGENTS.md, so later agent sessions see updates like this one",
     checks: [],
   },
+  {
+    version: 3,
+    label:
+      "reporting AI crawler and search bot visits from the site's server (sites with a server or edge code; static hosting skips it), so analytics shows which bots read which pages",
+    checks: ["analytics.crawlers"],
+  },
 ];
 
 export const CATALOG_VERSION = Math.max(...SETUP_CATALOG.map((i) => i.version));

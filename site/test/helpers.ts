@@ -57,10 +57,40 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
   if (service === "analytics") {
     svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.sites ?? [] }));
     svc.post("/v1/sites/:id/events", (c) => c.json({ accepted: 1, rejected: 0 }, 202));
+    // Reports for the analytics dashboard's proxy (test/analytics-dashboard.test.ts): only sites
+    // whose id starts site_dash, echoing the query; other tests keep getting 404s here.
+    const own = (c: { var: { auth: AuthContext } }, id: string) =>
+      id.startsWith("site_dash") ? fixtures.get(c.var.auth.accountId)?.sites?.find((x) => x.id === id) : undefined;
+    svc.get("/v1/rollup", (c) => c.json({ sites: [], totals: { sites: 0 }, query: c.req.query() }));
+    svc.get("/v1/sites/:id", (c) => {
+      const site = own(c, c.req.param("id"));
+      return site
+        ? c.json({ site: { ...site, currency: null, timezone: "UTC" } })
+        : c.json({ error: { code: "not_found", message: "Site not found." } }, 404);
+    });
+    svc.get("/v1/sites/:id/*", (c) =>
+      own(c, c.req.param("id"))
+        ? c.json({ report: new URL(c.req.url).pathname, query: c.req.query() })
+        : c.json({ error: { code: "not_found", message: "Site not found." } }, 404),
+    );
   }
   if (service === "tags") svc.get("/v1/containers", (c) => c.json({ containers: fixtures.get(c.var.auth.accountId)?.containers ?? [] }));
   if (service === "mail") svc.get("/v1/inboxes", (c) => c.json({ inboxes: fixtures.get(c.var.auth.accountId)?.inboxes ?? [] }));
   if (service === "replay") svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.replaySites ?? [] }));
+  // Reports for the dashboard's data route (test/dashboard-views.test.ts): only ids with "dash" in
+  // them answer, echoing the path and query; everything else keeps getting 404s here.
+  const echo = (c: { req: { url: string; query: () => Record<string, string> }; json: (b: unknown) => Response }) =>
+    c.json({ report: new URL(c.req.url).pathname, query: c.req.query() });
+  if (service !== "analytics") svc.get("/v1/*", (c, next) => (new URL(c.req.url).pathname.includes("_dash") ? echo(c) : next()));
+  if (service === "replay")
+    svc.post("/v1/sites/:id/links", async (c) =>
+      c.req.param("id").startsWith("rsite_dash")
+        ? c.json(
+            { link: { url: `https://replay.afs.test/play/rpt_${(await c.req.json<{ session_id: string }>()).session_id}`, expires_at: 1 } },
+            201,
+          )
+        : c.json({ error: { code: "not_found", message: "Site not found." } }, 404),
+    );
 
   return {
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {

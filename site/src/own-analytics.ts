@@ -74,3 +74,37 @@ export function trackOwn(c: Context<SiteEnv>, ev: OwnEvent): void {
     /* no execution context: the promise still runs */
   }
 }
+
+/**
+ * AI crawlers and search bots don't run the tracker, so this Worker reports the bot requests it
+ * serves (the public pages: not the API, the MCP gateway or the pages for people) to the same
+ * analytics site, as POST /v1/sites/:id/crawls hits. Analytics classifies them by user agent
+ * (unknown ones are ignored) and never counts them as visitors. Fire and forget: the page isn't
+ * slowed down. The same prefilter idea as the analytics manual's "AI crawlers" middleware.
+ */
+const BOTS =
+  /gptbot|oai-searchbot|chatgpt-user|claudebot|claude-user|claude-searchbot|anthropic-ai|perplexity|googlebot|google-extended|bingbot|applebot|ccbot|bytespider|amazonbot|meta-external|duckassistbot|mistralai|cohere|youbot|diffbot|bot\b|bot\/|crawl|spider|slurp/i;
+const NOT_CONTENT = /^\/(?:v1|mcp|a2a|oauth|auth|dashboard|claim|signin)(?:\/|$)/;
+
+export function trackCrawl(c: Context<SiteEnv>, status: number): void {
+  const target = ownAnalytics(c.env);
+  if (!target) return;
+  const ua = c.req.header("user-agent") ?? "";
+  if (!ua || !BOTS.test(ua)) return;
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") return;
+  const path = new URL(c.req.url).pathname;
+  if (NOT_CONTENT.test(path)) return;
+  const send = callService(c.env, "analytics", target.account, `/v1/sites/${target.site}/crawls`, {
+    method: "POST",
+    body: { user_agent: ua.slice(0, 512), path, status },
+  })
+    .then((r) => {
+      if (!r.ok) console.warn(JSON.stringify({ event: "own_crawls.failed", status: r.status }));
+    })
+    .catch(() => {});
+  try {
+    c.executionCtx.waitUntil(send);
+  } catch {
+    /* no execution context: the promise still runs */
+  }
+}

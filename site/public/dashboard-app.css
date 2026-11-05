@@ -1,0 +1,2553 @@
+/* The analytics dashboard (/dashboard/analytics, /dashboard/projects/:id/analytics/:site), drawn
+   by /analytics.js. Loaded after dashboard.css, so it uses its tokens: Host Grotesk, ink #0F1626,
+   hairline borders, one 4px radius. Floating layers (menus, tooltips, the live sheet, dialogs) are
+   the only things with a shadow.
+
+   Chart colours, checked with the dataviz palette validator (CVD and normal-vision separation
+   pass): visitors #2F6BFF and revenue #FF6A2B; categorical lines (goals, crawlers) in fixed order
+   #2A78D6 #EB6834 #1BAF7A #EDA100 #E87BA4 #008300 #6250D6 #E34948. Several sit below 3:1 on
+   white, so every chart has a legend, hover values, and a list or table beside it. */
+
+/* On :root: the dock, tooltip, live sheet and dialogs live outside .afa (this file loads only on
+   the analytics pages). */
+:root {
+  --vis: #2f6bff;
+  --vis-soft: rgba(47, 107, 255, 0.1);
+  --vis-hover: rgba(47, 107, 255, 0.16);
+  --rev: #ff6a2b;
+  --rev-soft: rgba(255, 106, 43, 0.22);
+  --num-ink: #b33a08; /* orange for big numbers, 5.4:1 on white */
+  --live: #16a34a;
+  --float: 0 10px 30px rgba(15, 22, 38, 0.14), 0 1px 3px rgba(15, 22, 38, 0.08);
+}
+.afa {
+  padding-bottom: 48px; /* room for the dock */
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- controls ---------- */
+
+.afa-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.afa-ctl {
+  position: relative;
+  display: inline-flex;
+}
+.afa-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color 140ms var(--ease),
+    background-color 140ms var(--ease);
+}
+.afa-btn:hover {
+  border-color: var(--ink-3);
+}
+.afa-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: var(--line-2);
+}
+.afa-btn-ghost {
+  height: 30px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: none;
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+.afa-btn-ghost:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+.afa-icon-btn {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+}
+.afa-icon {
+  flex: none;
+}
+.afa-ctl-site .afa-btn:first-child,
+.afa-ctl-period .afa-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.afa-ctl-site .afa-btn + .afa-btn,
+.afa-ctl-period .afa-btn + .afa-btn {
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.afa-ctl-period .afa-period-btn {
+  border-radius: 0;
+  min-width: 168px;
+  justify-content: space-between;
+}
+.afa-ctl-site .afa-btn:hover,
+.afa-ctl-period .afa-btn:hover {
+  position: relative;
+  z-index: 1;
+}
+.afa-site-btn {
+  font-weight: 650;
+}
+.afa-caret {
+  width: 7px;
+  height: 7px;
+  margin: -4px 2px 0 2px;
+  border-right: 1.5px solid var(--ink-3);
+  border-bottom: 1.5px solid var(--ink-3);
+  transform: rotate(45deg);
+}
+.afa-compare {
+  border-style: dashed;
+  color: var(--ink-2);
+}
+.afa-compare.is-on {
+  border-style: solid;
+  border-color: var(--vis);
+  background: var(--vis-soft);
+  color: var(--ink);
+}
+.afa-favicon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r);
+  background: var(--ink);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+.afa-favicon-sm {
+  width: 18px;
+  height: 18px;
+  background: var(--ground);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  font-size: 10.5px;
+}
+.afa-plain {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.afa-link {
+  appearance: none;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.afa-select,
+.afa-search {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+}
+/* dashboard.css styles every .app select / text input at 40px, full width */
+.app .afa-select,
+.app .afa-search {
+  width: auto;
+  max-width: 100%;
+  height: 32px;
+  font-size: 13.5px;
+}
+.app .afa-select {
+  padding: 0 32px 0 10px;
+  background-position: right 11px center;
+}
+.app .afa-filter-form input,
+.app .afa-filter-form select {
+  height: 34px;
+  font-size: 13.5px;
+}
+.afa-search {
+  width: 200px;
+}
+
+/* menus */
+.afa-menu {
+  position: absolute;
+  z-index: 50;
+  min-width: 220px;
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  padding: 6px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--float);
+  transform-origin: top left;
+  animation: afa-pop 160ms var(--ease) both;
+}
+.afa-menu.is-closing {
+  animation: afa-pop-out 130ms var(--ease) forwards;
+  pointer-events: none;
+}
+.afa-menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.afa-menu-item > span:first-child {
+  flex: 1;
+}
+.afa-menu-item:hover,
+.afa-menu-item:focus-visible {
+  background: var(--ground);
+}
+.afa-menu-item.is-current {
+  font-weight: 650;
+}
+.afa-menu-item kbd {
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.afa-menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--line);
+}
+.afa-menu-note {
+  margin: 2px 10px 6px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.afa-menu-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.afa-more summary {
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink-3);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.afa-more summary:hover {
+  background: var(--ground);
+}
+.afa-custom,
+.afa-filter-form {
+  display: grid;
+  gap: 8px;
+  padding: 6px 10px 8px;
+}
+.afa-filter-form {
+  width: 280px;
+}
+.afa-custom-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.afa-custom input,
+.afa-filter-form input,
+.afa-filter-form select {
+  height: 34px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  font: inherit;
+  font-size: 13.5px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* filter chips */
+.afa-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 12px;
+}
+.afa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--vis);
+  border-radius: var(--r);
+  background: var(--vis-soft);
+  font-size: 13.5px;
+}
+.afa-chip b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.afa-chip-x {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.afa-chip-x:hover {
+  background: rgba(15, 22, 38, 0.08);
+  color: var(--ink);
+}
+
+/* ---------- cards ---------- */
+
+.afa-card {
+  min-width: 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.afa-main {
+  padding: 16px 20px 10px;
+}
+.afa-kpis {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.afa-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: max-content;
+  padding: 2px 24px 4px;
+  border-left: 1px solid var(--line);
+}
+.afa-kpi:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.afa-kpi-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.afa-kpi-num {
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+.afa-kpi-ch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 18px;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.afa-kpi-ch.is-good {
+  color: var(--green);
+}
+.afa-kpi-ch.is-bad {
+  color: var(--red);
+}
+.afa-kpi-ch.is-flat {
+  color: var(--ink-3);
+  font-weight: 450;
+}
+.afa-online-num:hover {
+  color: var(--vis);
+}
+.afa-live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5);
+  animation: afa-pulse 2s ease-out infinite;
+}
+
+/* charts */
+.afa-chart {
+  position: relative;
+  margin-top: 10px;
+}
+.afa-plot {
+  min-height: 300px;
+}
+.afa-chart-goals {
+  min-height: 260px;
+}
+.afa-svg {
+  display: block;
+  overflow: visible;
+}
+.afa-gridline {
+  stroke: var(--line);
+  stroke-dasharray: 3 4;
+}
+.afa-axis {
+  stroke: var(--line-2);
+}
+.afa-tick {
+  font-size: 11.5px;
+  fill: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.afa-line {
+  fill: none;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.afa-line-thin {
+  stroke-width: 2;
+}
+.afa-line-spark {
+  stroke-width: 1.75;
+}
+.afa-line-dash {
+  stroke-dasharray: 5 5;
+}
+.afa-line-prev {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.afa-cross {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  pointer-events: none;
+}
+.afa-dot {
+  stroke: #fff;
+  stroke-width: 2;
+  pointer-events: none;
+}
+.afa-bar path {
+  transition: opacity 120ms var(--ease);
+}
+.afa-bar.is-dim path {
+  opacity: 0.4;
+}
+.afa-hit {
+  cursor: crosshair;
+}
+.afa-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 6px 0 4px 40px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.afa-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.afa-key {
+  display: inline-block;
+  flex: none;
+}
+.afa-key-line {
+  width: 16px;
+  height: 2.5px;
+  border-radius: 2px;
+  background: var(--vis);
+}
+.afa-key-bar {
+  width: 9px;
+  height: 11px;
+  border-radius: 2px 2px 0 0;
+  background: var(--rev);
+}
+.afa-key-prev {
+  width: 16px;
+  border-top: 1.5px dashed #8f99aa;
+}
+
+/* tooltip */
+.afa-tip {
+  position: fixed;
+  z-index: 100;
+  min-width: 210px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: var(--float);
+  pointer-events: none;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  will-change: transform, opacity;
+  transition:
+    opacity 140ms var(--ease),
+    transform 160ms var(--ease);
+}
+.afa-tip.is-on {
+  opacity: 1;
+}
+.afa-tip-head {
+  margin-bottom: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.afa-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1.5px 0;
+}
+.afa-tip-row > span:not(.afa-sw) {
+  flex: 1;
+  min-width: 0;
+  color: var(--on-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-tip-row b {
+  font-weight: 650;
+}
+.afa-sw {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.afa-tip-split {
+  margin: 3px 0 4px 18px;
+}
+.afa-tip-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+.afa-tip-track > span {
+  display: block;
+  height: 100%;
+  background: #8fb0ff;
+}
+.afa-tip-sub {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--on-ink-3);
+}
+.afa-tip-sep {
+  height: 1px;
+  margin: 6px 0;
+  background: rgba(255, 255, 255, 0.12);
+}
+.afa-tip-note {
+  font-size: 11.5px;
+  color: var(--on-ink-3);
+}
+
+/* ---------- panels ---------- */
+
+.afa-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.afa-wide {
+  grid-column: 1 / -1;
+}
+.afa-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 470px;
+}
+.afa-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 6px;
+}
+.afa-panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.afa-panel-title {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.afa-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r);
+  background: var(--ground);
+}
+.afa-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.afa-tab:hover {
+  color: var(--ink);
+}
+.afa-tab[aria-selected="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.afa-tab-count {
+  font-size: 12px;
+  font-weight: 450;
+  color: var(--ink-3);
+}
+.afa-panel-body {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 12px 10px;
+}
+.afa-panel-foot {
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid var(--line);
+}
+.afa-details {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.afa-details:hover {
+  color: var(--ink);
+}
+
+/* bar rows */
+.afa-rows {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-row {
+  appearance: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 35px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+.afa-row-static {
+  cursor: default;
+}
+.afa-row-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+.afa-row-bar {
+  height: 100%;
+  background: var(--vis-soft);
+  transition:
+    background-color 120ms var(--ease),
+    width 320ms var(--ease);
+}
+.afa-row-rev {
+  height: 100%;
+  background: var(--rev-soft);
+  transition: width 320ms var(--ease);
+}
+.afa-row:hover .afa-row-bar {
+  background: var(--vis-hover);
+}
+.afa-row:hover {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.afa-row-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.afa-row-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-row-val {
+  position: relative;
+  flex: none;
+  margin-left: 14px;
+  font-weight: 600;
+}
+.afa-flag {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* channel donut */
+.afa-donut-wrap {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding-top: 6px;
+}
+.afa-donut {
+  display: block;
+}
+.afa-slice {
+  stroke: #fff;
+  stroke-width: 2;
+  cursor: pointer;
+  transition: opacity 120ms var(--ease);
+}
+.afa-slice.is-whole {
+  stroke: none;
+}
+.afa-slice:hover {
+  opacity: 0.82;
+}
+.afa-donut-num {
+  font-size: 24px;
+  font-weight: 650;
+  fill: var(--ink);
+}
+.afa-donut-label {
+  font-size: 12px;
+  fill: var(--ink-3);
+}
+
+/* chart + list side by side (goals, crawlers) */
+.afa-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  align-items: start;
+}
+.afa-split-side {
+  max-height: 290px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+/* funnel */
+.afa-funnel {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(120px, 1fr);
+  gap: 14px;
+  margin: 0;
+  padding: 8px 4px 4px;
+  list-style: none;
+  overflow-x: auto;
+}
+.afa-funnel-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.afa-funnel-rate {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.afa-funnel-col {
+  display: flex;
+  align-items: flex-end;
+  height: 190px;
+  border-radius: 3px;
+  background: var(--ground);
+  overflow: hidden;
+}
+.afa-funnel-fill {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--vis);
+  transition: height 420ms var(--ease);
+}
+.afa-funnel-num {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.afa-funnel-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.afa-funnel-drop {
+  font-size: 12.5px;
+  color: var(--red);
+}
+
+/* tables */
+.afa-table-wrap {
+  overflow-x: auto;
+}
+.afa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.afa-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-3);
+  text-align: left;
+  white-space: nowrap;
+}
+.afa-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.afa-table td .afa-row-label {
+  max-width: 360px;
+}
+.afa-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.afa-table tbody tr:hover {
+  background: var(--ground);
+}
+.afa-dialog .afa-table tbody tr {
+  cursor: pointer;
+}
+.afa-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.afa-tag-money {
+  border-color: var(--rev);
+  color: var(--num-ink);
+}
+.afa-mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+/* states */
+.afa-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--ink-2);
+}
+.afa-empty.has-ask {
+  padding: 32px 16px 28px;
+}
+.afa-empty p {
+  max-width: 58ch;
+}
+.afa-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fff, var(--ground));
+  color: var(--ink-2);
+}
+.afa-empty-icon .afa-icon {
+  width: 22px;
+  height: 22px;
+}
+.afa-empty-title {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.afa-empty-text {
+  font-size: 14px;
+  line-height: 1.55;
+}
+.afa-empty-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  width: min(820px, 100%);
+  margin: 8px 0 4px;
+  text-align: left;
+}
+/* With the cards above it, the prompt is as wide as they are: one column, edges aligned. */
+.afa-empty.has-chips .afa-empty-chips,
+.afa-empty.has-chips .afa-askcard {
+  width: 100%;
+}
+.afa-empty.has-chips .afa-askcard {
+  margin-top: 4px;
+}
+.afa-empty-chip {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--paper);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.afa-empty-chip b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.afa-empty-more {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* A prompt for the agent, with a Copy button. */
+.afa-askcard {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label label"
+    "text copy";
+  align-items: center;
+  gap: 8px 14px;
+  width: min(720px, 100%);
+  margin-top: 8px;
+  padding: 14px 14px 14px 16px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--on-ink);
+  text-align: left;
+}
+.afa-askcard-label {
+  grid-area: label;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--on-ink-3);
+}
+.afa-askcard-label .afa-icon {
+  width: 13px;
+  height: 13px;
+  color: #ffb08f;
+}
+.afa-askcard-text {
+  grid-area: text;
+  margin: 0;
+  max-width: none;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--on-ink);
+  user-select: all;
+}
+.afa-empty .afa-askcard-text {
+  max-width: none;
+}
+.afa-copy {
+  grid-area: copy;
+  align-self: end;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--on-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--ease),
+    border-color 140ms var(--ease),
+    transform 120ms var(--ease);
+}
+.afa-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.afa-copy:active {
+  transform: scale(0.97);
+}
+.afa-copy.is-done {
+  border-color: rgba(74, 222, 128, 0.6);
+  background: rgba(74, 222, 128, 0.14);
+  color: #bbf7d0;
+}
+.afa-copy .afa-icon {
+  width: 14px;
+  height: 14px;
+}
+.afa-copy:focus-visible {
+  outline: 2px solid #8fb0ff;
+  outline-offset: 2px;
+}
+@media (max-width: 620px) {
+  .afa-askcard {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "label"
+      "text"
+      "copy";
+  }
+  .afa-copy {
+    justify-self: start;
+  }
+}
+.afa-error {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--red);
+}
+.afa-skel {
+  border-radius: var(--r);
+  background: linear-gradient(90deg, var(--ground) 0%, #eceef3 50%, var(--ground) 100%);
+  background-size: 200% 100%;
+  animation: afa-shimmer 1.3s linear infinite;
+}
+.afa-skel-kpi {
+  flex: none;
+  width: 104px;
+  height: 64px;
+  margin-right: 18px;
+}
+.afa-skel-chart {
+  height: 300px;
+}
+.afa-skel-rows {
+  height: 360px;
+}
+.afa-skel-table {
+  height: 280px;
+}
+.afa-skel-card {
+  height: 172px;
+}
+.afa-skel-spark {
+  height: 64px;
+}
+.afa-skel-line {
+  display: inline-block;
+  width: min(520px, 70vw);
+  height: 30px;
+}
+
+/* ---------- dock, live sheet, dialogs ---------- */
+
+.afa-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 40;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--ink);
+  box-shadow: var(--float);
+  transform: translateX(-50%);
+}
+.afa-dock-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--on-ink);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.afa-dock-btn:hover,
+.afa-dock-btn[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.12);
+}
+.afa-sheet {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  width: min(430px, 100vw);
+  overflow-y: auto;
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--float);
+  animation: afa-slide 220ms var(--ease) both;
+}
+.afa-sheet-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px 20px 28px;
+}
+.afa-live-big {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 19px;
+}
+.afa-live-big b {
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+.afa-live-group {
+  display: grid;
+  gap: 6px;
+}
+.afa-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.afa-pill {
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-pill b {
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.afa-feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-feed li {
+  display: flex;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.afa-feed-icon {
+  flex: none;
+  color: var(--vis);
+}
+.afa-feed code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--ground);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.afa-feed-time {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.afa-dialog {
+  width: min(960px, calc(100vw - 32px));
+  max-height: 86vh;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--float);
+}
+.afa-dialog::backdrop {
+  background: rgba(15, 22, 38, 0.38);
+}
+.afa-dialog-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.afa-dialog-head h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 650;
+}
+.afa-dialog-head h2 .muted {
+  font-weight: 450;
+}
+.afa-dialog-head .afa-select,
+.afa-dialog-head input {
+  flex: none;
+}
+.afa-dialog-body {
+  padding: 12px 16px 18px;
+}
+.afa-dialog-body > .fine {
+  margin-top: 10px;
+}
+
+/* insights */
+.afa-insights {
+  width: min(1200px, calc(100vw - 32px));
+  background: var(--ground);
+}
+.afa-insights .afa-dialog-body {
+  padding: 14px;
+}
+.afa-ins-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.afa-ins {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--paper);
+}
+.afa-ins-pair {
+  grid-template-columns: 1fr 1fr;
+}
+.afa-ins-wide,
+.afa-ins-heat {
+  grid-column: span 2;
+}
+.afa-ins-big {
+  display: grid;
+  gap: 2px;
+}
+.afa-ins-big b {
+  font-size: 34px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--num-ink);
+}
+.afa-ins-big span {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.afa-ins-line {
+  font-size: 15px;
+}
+.afa-ins-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.afa-ins-list {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13.5px;
+}
+.afa-ins-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.afa-ins-list li > :first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-ins-list code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.afa-hist {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  height: 128px;
+}
+.afa-hist-col {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.afa-hist-track {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+}
+.afa-hist-bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--rev);
+}
+.afa-hist-label {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.afa-heat {
+  display: grid;
+  grid-template-columns: 30px repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.afa-heat-day {
+  text-align: center;
+}
+.afa-heat-hour {
+  line-height: 10px;
+}
+.afa-heat-cell {
+  height: 10px;
+  border-radius: 2px;
+  background: var(--ground);
+}
+.afa-ins-notes {
+  grid-column: 1 / -1;
+}
+
+/* ---------- every site ---------- */
+
+.afa-over-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.app h1.afa-greet {
+  font-size: clamp(18px, 1.9vw, 21px);
+  font-weight: 450;
+  letter-spacing: -0.01em;
+  color: var(--ink-2);
+}
+.afa-greet b {
+  font-weight: 650;
+  color: var(--ink);
+}
+.afa-inline-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 1px;
+  border: 0;
+  border-bottom: 1.5px dashed var(--line-2);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.afa-inline-btn:hover {
+  border-bottom-color: var(--ink-3);
+}
+.afa-over-tools {
+  display: flex;
+  gap: 8px;
+}
+.afa-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+.afa-site-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 160ms var(--ease);
+}
+a.afa-site-card:hover {
+  border-color: var(--ink-3);
+}
+.afa-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+.afa-card-domain {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-spark {
+  height: 64px;
+}
+.afa-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.afa-card-foot b {
+  font-weight: 650;
+  color: var(--ink);
+}
+.afa-dot-sep {
+  width: 3px;
+  height: 3px;
+  margin: 0 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.afa-card-project {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  max-width: 40%;
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- the projects page: a card per project ---------- */
+
+.pcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pcard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 16px 18px;
+  color: var(--ink);
+  text-decoration: none;
+  transition:
+    border-color 200ms var(--ease),
+    transform 240ms var(--ease),
+    box-shadow 240ms var(--ease);
+}
+.pcard:hover {
+  border-color: var(--ink-3);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(15, 22, 38, 0.07);
+}
+.pcard:focus-visible {
+  outline: 2px solid var(--vis);
+  outline-offset: 2px;
+}
+.pcard-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.pcard-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pcard-spark {
+  display: block;
+  height: 64px;
+}
+.pcard-spark.is-empty {
+  height: 64px;
+  border-radius: var(--r);
+  background: repeating-linear-gradient(135deg, var(--ground) 0 6px, transparent 6px 12px);
+  opacity: 0.7;
+}
+.pcard-stat {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.pcard-stat b {
+  font-weight: 650;
+  color: var(--ink);
+}
+.pcard-foot .counts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* ---------- a project's Overview: the last 7 days ---------- */
+
+.afa-week {
+  padding-bottom: 0;
+  margin-bottom: 12px;
+}
+.week-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.week-head h2 {
+  font-size: 15px;
+}
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.week-card {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 150px;
+  padding: 14px 16px;
+  color: var(--ink);
+  text-decoration: none;
+  overflow: hidden;
+  transition:
+    border-color 200ms var(--ease),
+    transform 240ms var(--ease),
+    box-shadow 240ms var(--ease);
+}
+.week-card:hover {
+  border-color: var(--ink-3);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(15, 22, 38, 0.07);
+}
+.week-card.is-alert {
+  border-color: #efc2bd;
+}
+.week-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.week-num {
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+.week-sub {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.week-spark {
+  display: block;
+  height: 40px;
+  margin-top: 6px;
+}
+
+/* ---------- shared pieces of the Tags, Replay and Mail tabs ---------- */
+
+.afa-static {
+  cursor: default;
+}
+.afa-static:hover {
+  border-color: var(--line-2);
+}
+.afa-panel-plain {
+  display: flex;
+  flex-direction: column;
+}
+.afa-panel-h {
+  font-size: 15px;
+  font-weight: 650;
+}
+.afa-panel-head .afa-panel-h {
+  padding: 4px 2px;
+}
+.afa-panel-note {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.afa-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 1px 4px 1px 0;
+  padding: 1px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: 1px;
+}
+.afa-badge.is-good {
+  border-color: rgba(11, 122, 69, 0.35);
+  background: rgba(11, 122, 69, 0.07);
+  color: var(--green);
+}
+.afa-badge.is-bad {
+  border-color: rgba(179, 38, 30, 0.35);
+  background: rgba(179, 38, 30, 0.06);
+  color: var(--red);
+}
+.afa-badge.is-warn {
+  border-color: rgba(180, 120, 0, 0.4);
+  background: rgba(244, 180, 0, 0.1);
+  color: #855c00;
+}
+.afa-badge.is-info {
+  border-color: rgba(47, 107, 255, 0.35);
+  background: rgba(47, 107, 255, 0.07);
+  color: #2450c8;
+}
+.afa-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+td .afa-badge,
+td .afa-badges {
+  margin-left: 6px;
+}
+td .afa-badges .afa-badge {
+  margin-left: 0;
+}
+.afa-table td.is-bad {
+  color: var(--red);
+  font-weight: 600;
+}
+.afa-kpi-ch.is-good {
+  color: var(--green);
+}
+.afa-kpi-ch.is-bad {
+  color: var(--red);
+}
+.afa-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.afa-list > li:last-child {
+  border-bottom: 0;
+}
+.afa-list-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.afa-version-note {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.afa-row-bar.is-bad {
+  background: rgba(179, 38, 30, 0.12);
+}
+.afa-row-sm {
+  height: 30px;
+  font-size: 13.5px;
+}
+.afa-minis {
+  display: grid;
+  gap: 14px;
+}
+.afa-mini {
+  display: grid;
+  gap: 6px;
+}
+.afa-plot-short {
+  min-height: 220px;
+}
+.afa-path {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-meter {
+  display: inline-block;
+  width: 64px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: var(--ground);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.afa-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--vis);
+  transition: width 700ms var(--ease);
+}
+.afa-meter-fill.is-warn {
+  background: var(--yellow);
+}
+.afa-meter-fill.is-bad {
+  background: var(--red);
+}
+.afa-meter-num {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.afa-watch {
+  white-space: nowrap;
+}
+.afa-sessions td {
+  vertical-align: middle;
+}
+.afa-sessions td:first-child,
+.afa-sessions td:nth-child(3),
+.afa-sessions td:nth-child(6),
+.afa-sessions td:last-child {
+  white-space: nowrap;
+}
+.afa-sessions .afa-path {
+  max-width: 220px;
+}
+.afa-cell-sub {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.afa-cell-sub + .afa-badges {
+  margin-left: 0;
+}
+/* Long tables scroll inside their card. */
+.afa-panel-plain .afa-table-wrap {
+  max-height: 560px;
+  overflow: auto;
+}
+.afa-search-wide {
+  width: min(360px, 100%);
+}
+
+/* ---------- Mail: a list and a reader ---------- */
+
+.afa-fwd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.afa-fwd .swatch {
+  background: var(--blue);
+}
+.mail {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  min-height: 560px;
+}
+.mail-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: 72vh;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+.mail-list {
+  display: grid;
+}
+.mail-item {
+  appearance: none;
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--ease),
+    border-color 140ms var(--ease);
+}
+.mail-item:hover {
+  background: var(--ground);
+}
+.mail-item.is-current {
+  border-left-color: var(--blue);
+  background: rgba(47, 107, 255, 0.06);
+}
+.mail-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.mail-from {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail-item.is-unread .mail-from::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--blue);
+  vertical-align: 1px;
+}
+.mail-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.mail-subject {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink-3);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.mail-more {
+  margin: 4px auto 10px;
+}
+.mail-reader {
+  min-width: 0;
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+}
+.mail-h {
+  margin-bottom: 10px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.mail-meta {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.mail-meta > div {
+  display: flex;
+  gap: 10px;
+}
+.mail-meta dt {
+  flex: none;
+  width: 40px;
+  color: var(--ink-3);
+}
+.mail-meta dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mail-flags {
+  margin-bottom: 12px;
+}
+.mail-extract {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--ground);
+}
+.mail-code {
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line-2);
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  user-select: all;
+}
+.mail-links {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+.mail-links a,
+.mail-links span {
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+}
+.mail-text {
+  margin: 0;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mail-untrusted {
+  margin-top: 18px;
+}
+.mail-skel,
+.mail-skel-read {
+  display: grid;
+  gap: 10px;
+}
+.mail-skel-item {
+  display: grid;
+  gap: 7px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 860px) {
+  .mail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mail-col {
+    max-height: 42vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+/* ---------- moving between pages (dashboard-app.js) ---------- */
+
+#main:focus {
+  outline: none;
+}
+.afa-dock[hidden] {
+  display: none;
+}
+/* After the first page, pages are swapped in already rendered: no page-level rise replaying. */
+html.afa-nav .nav-page :is(.page-head, .tile, .notice, .section-head, .hero-hint) {
+  animation: none;
+}
+/* The dock rises in once, not every time its page comes back. */
+html.afa-nav .afa-dock {
+  animation: none;
+}
+
+/* ---------- motion ---------- */
+
+/* Anything a frame must not animate (first placement of a tooltip, crosshair, tab highlight). */
+.no-anim,
+.no-anim * {
+  transition: none !important;
+}
+
+/* The thin progress bar under the top bar while anything loads. */
+.afa-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 70;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 260ms var(--ease);
+}
+.afa-progress.is-on {
+  opacity: 1;
+}
+.afa-progress > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--vis), #6f97ff);
+  box-shadow: 0 0 8px rgba(47, 107, 255, 0.45);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms var(--ease);
+}
+
+/* New content fades and rises a few pixels; stagger with --i. "backwards" so hover transforms still work after. */
+.afa-enter {
+  animation: afa-in 420ms var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+.afa-stagger {
+  animation: afa-in-row 380ms var(--ease) backwards;
+  animation-delay: calc(min(var(--i, 0), 14) * 28ms);
+}
+/* While a new period or filter loads, the old numbers stay, dimmed. */
+.afa-panel-body,
+.afa-chart,
+.afa-kpis,
+.afa-cards,
+.afa-over-head,
+.afa-dialog-body {
+  transition:
+    opacity 220ms var(--ease),
+    filter 220ms var(--ease);
+}
+.is-loading {
+  opacity: 0.45;
+  filter: saturate(0.6);
+  pointer-events: none;
+  cursor: progress;
+}
+
+/* Bars and funnel columns grow to their size (their width / height is set a frame later). */
+.afa-row-bar,
+.afa-row-rev {
+  transition:
+    width 620ms var(--ease),
+    background-color 140ms var(--ease);
+}
+.afa-funnel-fill,
+.afa-hist-bar {
+  transition: height 700ms var(--ease);
+}
+/* SVG bars grow up from the axis. */
+.afa-grow {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: afa-bar 640ms var(--ease) backwards;
+  animation-delay: calc(min(var(--i, 0), 40) * 16ms + 120ms);
+}
+
+/* Crosshair and dots glide between buckets. */
+.afa-hover {
+  opacity: 0;
+  transition:
+    transform 170ms var(--ease),
+    opacity 140ms var(--ease);
+}
+.afa-hover.is-on {
+  opacity: 1;
+}
+
+/* The selected tab's highlight slides between tabs. */
+.afa-tabs {
+  position: relative;
+}
+.afa-tab {
+  position: relative;
+  z-index: 1;
+  transition: color 180ms var(--ease);
+}
+.afa-tab-ind {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: 3px;
+  background: var(--paper);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 1px 2px rgba(15, 22, 38, 0.06);
+  transition:
+    transform 320ms var(--ease),
+    width 320ms var(--ease),
+    height 320ms var(--ease);
+}
+.afa-tabs:has(.afa-tab-ind) .afa-tab[aria-selected="true"] {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Presses, hovers. */
+.afa-btn,
+.afa-tab,
+.afa-row,
+.afa-dock-btn,
+.afa-details,
+.afa-menu-item {
+  transition:
+    border-color 140ms var(--ease),
+    background-color 140ms var(--ease),
+    color 140ms var(--ease),
+    box-shadow 140ms var(--ease),
+    transform 120ms var(--ease);
+}
+.afa-btn:active:not(:disabled),
+.afa-dock-btn:active,
+.afa-details:active {
+  transform: scale(0.97);
+}
+.afa-row:active {
+  transform: scale(0.995);
+}
+a.afa-site-card {
+  transition:
+    border-color 200ms var(--ease),
+    transform 240ms var(--ease),
+    box-shadow 240ms var(--ease);
+}
+a.afa-site-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(15, 22, 38, 0.07);
+}
+.afa-slice {
+  transform-box: view-box;
+  transform-origin: 92px 92px;
+  transition:
+    transform 200ms var(--ease),
+    opacity 160ms var(--ease);
+}
+.afa-slice:hover {
+  transform: scale(1.035);
+  opacity: 1;
+}
+
+/* Dialogs and the live sheet open and close. */
+.afa-dialog[open] {
+  animation: afa-dialog-in 260ms var(--ease) both;
+}
+.afa-dialog[open]::backdrop {
+  animation: afa-fade 260ms var(--ease) both;
+}
+.afa-dialog.is-closing {
+  animation: afa-dialog-out 170ms var(--ease) forwards;
+}
+.afa-dialog.is-closing::backdrop {
+  animation: afa-fade-out 170ms var(--ease) forwards;
+}
+.afa-sheet.is-closing {
+  animation: afa-slide-out 200ms var(--ease) forwards;
+}
+.afa-feed-new {
+  animation: afa-feed-in 700ms var(--ease) backwards;
+}
+.afa-chip-new {
+  animation: afa-chip-in 260ms var(--ease) backwards;
+}
+.afa-heat-cell {
+  animation: afa-fade 420ms var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 28ms);
+}
+.afa-dock {
+  animation: afa-dock-in 520ms var(--ease) 350ms backwards;
+}
+
+/* Skeletons shaped like the content that replaces them. */
+.afa-bone {
+  display: block;
+  flex: none;
+  border-radius: 3px;
+}
+.afa-kpi-skel {
+  gap: 7px;
+}
+.afa-skel-chartbox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px 12px 28px 40px;
+}
+.afa-skel-grid {
+  display: block;
+  height: 1px;
+  background: var(--line);
+  opacity: 0.7;
+}
+.afa-skel-wave {
+  position: absolute;
+  left: 40px;
+  right: 12px;
+  bottom: 28px;
+  height: 46%;
+  border-radius: 4px 4px 0 0;
+  -webkit-mask: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.25) 100%);
+  mask: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.25) 100%);
+}
+.afa-skel-rows {
+  display: grid;
+  gap: 2px;
+}
+.afa-skel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 35px;
+}
+.afa-skel-row .afa-bone-bar {
+  opacity: 0.8;
+}
+.afa-skel-trow {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 38px;
+  border-bottom: 1px solid var(--line);
+}
+.afa-skel-ring {
+  width: 184px;
+  height: 184px;
+  border-radius: 50%;
+  -webkit-mask: radial-gradient(circle, transparent 55px, #000 56px, #000 84px, transparent 85px);
+  mask: radial-gradient(circle, transparent 55px, #000 56px, #000 84px, transparent 85px);
+}
+.afa-card-skel {
+  pointer-events: none;
+}
+.afa-ins-skel {
+  min-height: 132px;
+}
+.afa-live-skel {
+  display: grid;
+  gap: 14px;
+}
+
+@keyframes afa-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes afa-in-row {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+@keyframes afa-bar {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes afa-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes afa-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes afa-pop-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+@keyframes afa-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+@keyframes afa-dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+@keyframes afa-slide-out {
+  to {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+@keyframes afa-feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+    background-color: rgba(47, 107, 255, 0.12);
+  }
+  40% {
+    opacity: 1;
+    transform: none;
+    background-color: rgba(47, 107, 255, 0.1);
+  }
+}
+@keyframes afa-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+@keyframes afa-dock-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px);
+  }
+}
+
+/* ---------- focus, reduced motion, small screens ---------- */
+
+.afa :focus-visible,
+.afa-dock :focus-visible,
+.afa-sheet :focus-visible,
+.afa-dialog :focus-visible,
+.afa-menu :focus-visible {
+  outline: 2px solid var(--vis);
+  outline-offset: 2px;
+}
+
+@keyframes afa-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+@keyframes afa-slide {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes afa-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes afa-pulse {
+  70% {
+    box-shadow: 0 0 0 6px rgba(22, 163, 74, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .afa,
+  .afa *,
+  .afa-dock,
+  .afa-dock *,
+  .afa-sheet,
+  .afa-sheet *,
+  .afa-dialog,
+  .afa-dialog *,
+  .afa-dialog::backdrop,
+  .afa-menu,
+  .afa-tip,
+  .afa-progress,
+  .afa-progress * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (max-width: 960px) {
+  .afa-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .afa-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .afa-ins-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 620px) {
+  .afa-main {
+    padding: 14px 14px 8px;
+  }
+  .afa-kpi {
+    padding: 2px 16px 4px;
+  }
+  .afa-kpi-num {
+    font-size: 23px;
+  }
+  .afa-donut-wrap {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+  .afa-donut-wrap .afa-rows {
+    width: 100%;
+  }
+  .afa-ins-grid,
+  .afa-ins-cols,
+  .afa-ins-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .afa-ins-wide,
+  .afa-ins-heat {
+    grid-column: auto;
+  }
+  .afa-ctl-period .afa-period-btn {
+    min-width: 0;
+  }
+  .afa-panel {
+    min-height: 0;
+  }
+}

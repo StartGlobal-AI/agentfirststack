@@ -11,26 +11,29 @@
   // Regenerates public/.well-known/agent-skills/index.json (sha256 digests) before dev/deploy.
   "build": { "command": "node scripts/build-discovery.mjs", "watch_dir": "public/.well-known/agent-skills" },
 
-  // Static landing page, llms.txt, privacy/terms and /.well-known/* from public/. The Worker runs
-  // first for "/" (markdown negotiation + Link headers), the MCP gateway, the API, the pages for
-  // people (sign-in, claim links, dashboard) and the OAuth authorization server.
+  // Static landing page, llms.txt, guides, privacy/terms and /.well-known/* from public/, served by
+  // the Worker; plus its own routes: "/" (markdown negotiation + Link headers), the MCP gateway, the
+  // API, the pages for people (sign-in, claim links, dashboard) and the OAuth authorization server.
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
+    // The Worker runs first for every page, not just its own routes, so it can report AI crawler
+    // and search bot visits to the deployment's own analytics (src/own-analytics.ts trackCrawl).
+    // It then serves the page from public/ with the rules of public/_headers (src/static-pages.ts).
+    // Images, fonts, CSS and JS skip it.
     "run_worker_first": [
-      "/",
-      "/mcp",
-      "/a2a",
-      "/v1/*",
-      "/.well-known/oauth-protected-resource",
-      "/.well-known/oauth-protected-resource/*",
-      "/.well-known/oauth-authorization-server",
-      "/oauth/*",
-      "/signin",
-      "/auth/*",
-      "/claim/*",
-      "/dashboard",
-      "/dashboard/*"
+      "/*",
+      "!/fonts/*",
+      "!/brand/*",
+      "!/og/*",
+      "!/*.css",
+      "!/*.js",
+      "!/*.svg",
+      "!/*.png",
+      "!/*.jpg",
+      "!/*.webp",
+      "!/*.ico",
+      "!/*.woff2"
     ]
   },
 

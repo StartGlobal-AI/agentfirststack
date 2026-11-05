@@ -5,7 +5,8 @@ import type { Session, SiteEnv } from "./env";
 /**
  * Server-rendered HTML for the human pages (sign-in, claim, dashboard, consent). Everything
  * interpolated into `html```  is escaped unless it is itself an `html``` fragment, so a value can
- * only become markup by being written as markup here. Pages ship no JavaScript.
+ * only become markup by being written as markup here. Pages load only same-origin scripts:
+ * dashboard.js (copy buttons) everywhere, analytics.js on the analytics dashboard.
  */
 
 export class SafeHtml {
@@ -64,7 +65,42 @@ export const googleButton = (href: string, label: "Sign in with Google" | "Conti
 
 export type NavItem = "projects" | "apps" | "account";
 
-function topbar(session: Session | null | undefined, active?: NavItem) {
+/** The project switcher in the top bar (dashboard pages). */
+export interface Switcher {
+  projects: { id: string; name: string }[];
+  /** The project being looked at; none on All projects, Account and Connected apps. */
+  current?: { id: string; name: string };
+  /** Where switching goes in the other project: the same tab ("tags", "settings/keys", ...). */
+  tab?: string;
+}
+
+const CARET = html`<span class="pick-caret" aria-hidden="true"></span>`;
+
+/**
+ * The project switcher and the menu under the person's name are <details> menus: they work
+ * without JavaScript (dashboard.js only closes them on an outside click or Escape).
+ */
+function switcherMenu(sw: Switcher) {
+  const suffix = sw.tab ? `/${sw.tab}` : "";
+  return html`<details class="pick switcher">
+  <summary aria-label="Switch project"><span class="pick-label">${sw.current ? sw.current.name : "All projects"}</span>${CARET}</summary>
+  <div class="pick-menu">
+    <a class="pick-item${sw.current ? "" : " is-current"}" href="/dashboard"${sw.current ? "" : html` aria-current="page"`}>All projects</a>
+    ${
+      sw.projects.length
+        ? html`<div class="pick-sep"></div><p class="pick-head">Projects</p>${sw.projects.map(
+            (p) =>
+              html`<a class="pick-item${sw.current?.id === p.id ? " is-current" : ""}" href="/dashboard/projects/${p.id}${suffix}"${
+                sw.current?.id === p.id ? html` aria-current="page"` : ""
+              }><span class="pick-dot" aria-hidden="true"></span>${p.name}</a>`,
+          )}`
+        : ""
+    }
+  </div>
+</details>`;
+}
+
+function topbar(session: Session | null | undefined, active?: NavItem, sw?: Switcher) {
   if (!session) {
     return html`<header class="topbar">
   <div class="shell topbar-inner">
@@ -73,19 +109,28 @@ function topbar(session: Session | null | undefined, active?: NavItem) {
   </div>
 </header>`;
   }
+  const who = session.user.name || session.user.email;
   const item = (key: NavItem, href: string, label: string) =>
-    html`<a href="${href}"${key === active ? html` aria-current="page"` : ""}>${label}</a>`;
+    html`<a class="pick-item${key === active ? " is-current" : ""}" href="${href}"${key === active ? html` aria-current="page"` : ""}>${label}</a>`;
   return html`<header class="topbar">
   <div class="shell topbar-inner">
-    ${BRAND}
-    <nav class="topnav" aria-label="Main">
-      ${item("projects", "/dashboard", "Projects")}
-      ${item("apps", "/dashboard/apps", "Connected apps")}
-      ${item("account", "/dashboard/account", "Account")}
-    </nav>
+    <a class="brand" href="/dashboard" aria-label="AgentFirstStack dashboard">${MARK}<span>AgentFirstStack</span></a>
+    <div class="topbar-mid">${
+      sw
+        ? switcherMenu(sw)
+        : html`<nav class="topnav" aria-label="Main"><a href="/dashboard"${active === "projects" ? html` aria-current="page"` : ""}>Projects</a></nav>`
+    }</div>
     <div class="topbar-end">
-      <span class="topbar-user">${session.user.email}</span>
-      <form method="post" action="/auth/signout" class="nav-form">${csrfField(session)}<button type="submit" class="btn btn-quiet btn-small">Sign out</button></form>
+      <details class="pick usermenu">
+        <summary aria-label="Your account"><span class="avatar" aria-hidden="true">${who.charAt(0).toUpperCase()}</span><span class="user-name">${who}</span>${CARET}</summary>
+        <div class="pick-menu pick-menu-end">
+          <p class="pick-head pick-who">${session.user.email}</p>
+          ${item("account", "/dashboard/account", "Account")}
+          ${item("apps", "/dashboard/apps", "Connected apps")}
+          <div class="pick-sep"></div>
+          <form method="post" action="/auth/signout" class="nav-form">${csrfField(session)}<button type="submit" class="pick-item">Sign out</button></form>
+        </div>
+      </details>
     </div>
   </div>
 </header>`;
@@ -105,6 +150,11 @@ export interface PageOptions {
   allowExternalFormRedirect?: boolean;
   /** Extra response headers (e.g. Set-Cookie). */
   headers?: HeadersInit;
+  /** Extra same-origin scripts and stylesheets (the dashboard app's). */
+  scripts?: string[];
+  styles?: string[];
+  /** The project switcher (dashboard pages). */
+  switcher?: Switcher;
 }
 
 export function pageHeaders(allowExternalFormRedirect = false): Record<string, string> {
@@ -112,8 +162,10 @@ export function pageHeaders(allowExternalFormRedirect = false): Record<string, s
     "content-type": "text/html; charset=utf-8",
     "content-security-policy": [
       "default-src 'none'",
-      // Only our own dashboard.js (copy buttons); no inline scripts, no third parties.
+      // Only our own scripts (dashboard.js, analytics.js); no inline scripts, no third parties.
       "script-src 'self'",
+      // analytics.js reads the dashboard's data proxy on this origin.
+      "connect-src 'self'",
       "style-src 'self'",
       "font-src 'self'",
       "img-src 'self' data:",
@@ -143,11 +195,13 @@ export function page(opts: PageOptions): Response {
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/dashboard.css">
+${(opts.styles ?? []).map((h) => html`<link rel="stylesheet" href="${h}">`)}
 <script src="/dashboard.js" defer></script>
+${(opts.scripts ?? []).map((h) => html`<script src="${h}" defer></script>`)}
 </head>
 <body class="app">
 <a class="skip" href="#main">Skip to content</a>
-${topbar(opts.session, opts.nav)}
+${topbar(opts.session, opts.nav, opts.switcher)}
 <main class="shell app-main" id="main">
 ${opts.body}
 </main>

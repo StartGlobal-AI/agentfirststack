@@ -89,6 +89,13 @@ The two server events are sent by `site/src/own-analytics.ts` over the ANALYTICS
 `9be8241c`). The first real ones arrive with the next project created or claimed on agentfirststack.com. Signups made on the service hosts
 (`analytics.`, `tags.`, `mail.`, `replay.agentfirststack.com/v1/signup`) aren't counted.
 
+AI crawler and search bot visits: the site Worker runs first for every page (`run_worker_first` in
+`site/wrangler.jsonc`, except images, fonts, CSS and JS), serves it from `public/` with the
+`public/_headers` rules (`site/src/static-pages.ts`), and for a bot user agent reports the request
+to the same site as a crawler hit (`trackCrawl` in `site/src/own-analytics.ts`, `POST
+/v1/sites/site_6hmh1a6dbbn8mdfp/crawls` over the binding, fire and forget). Check:
+`GET https://analytics.agentfirststack.com/v1/sites/site_6hmh1a6dbbn8mdfp/crawlers?period=7d`.
+
 ## Tags container settings
 
 - Consent: `mode: opt_in` with every storage type denied by default, so the runtime sets no

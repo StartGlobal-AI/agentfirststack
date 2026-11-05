@@ -74,6 +74,13 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
      pageview goals for thank-you pages.
    - Conversions only the backend knows go in as server events (`POST /v1/sites/:id/events`), with
      `afsa.visitorId()` passed through the checkout or sign-up request so they join the visit.
+   - AI crawlers and search bots: bots don't run the tracker, so if the site has a server or edge
+     code (Workers, Next.js middleware, Express, a Rails or Django app), report their requests
+     from there: for requests whose user agent matches the prefilter from `GET /v1/crawlers`,
+     `POST /v1/sites/:id/crawls {"user_agent","path","status"}` without waiting for the answer, so
+     pages aren't slowed down (code for each in the analytics manual's "AI crawlers"). They're
+     counted by bot and page, never as visitors. On static hosting (GitHub Pages, a plain bucket or
+     CDN with no functions) skip it, and say so in `AGENTFIRSTSTACK.md` and your last message.
    - Payments: if the business takes them, connect the provider (Stripe in one call with a
      restricted key; Polar, Paddle, LemonSqueezy by webhook). The key is the owner's: if you don't
      have it, list it as waiting on the owner.
