@@ -1025,7 +1025,7 @@ describe("browser test traffic (?afsa_debug=1, afst('test', true)) is delivered 
     });
     expect(srv.body.results[0]).toMatchObject({ joined: { by: null }, note: expect.stringContaining("No stored visitor vis_test_tt1") });
     await settled(t.api, t.C, 2); // let its deliveries finish while the platforms are still mocked
-  });
+  }, 20_000); // every platform delivers and settles: ~4 s locally, more on CI runners
 
   it("a headless browser is kept when its hit is test traffic; without the flag, and for crawlers, it's dropped", async () => {
     const t = await liveContainer("headless.test");
