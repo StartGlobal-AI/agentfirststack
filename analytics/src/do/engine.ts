@@ -15,7 +15,15 @@ import { ITEMS_SQL, insertItems } from "./items";
 import { DEFAULT_MAX_BROWSER_USER_PROP_KEYS, DEFAULT_MAX_USER_PROP_KEYS, USER_PROPS_SQL, setUserProps } from "./user-props";
 import { CRAWLERS_SQL } from "./crawlers";
 import { EXPORT_SQL } from "./export";
-import { IMPORTS_SQL, IMPORT_NOTE_FILTERED, importedByBucket, importedByValue, importedTotals, mergeTotals } from "./imports";
+import {
+  IMPORTS_SQL,
+  IMPORTS_V10_SQL,
+  IMPORT_NOTE_FILTERED,
+  importedByBucket,
+  importedByValue,
+  importedTotals,
+  mergeTotals,
+} from "./imports";
 import { DEFAULT_MAX_ITEMS_PER_EVENT, ECOMMERCE_SET } from "../lib/items";
 import {
   COSTS_SQL,
@@ -115,7 +123,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export const ATTR_COLS = [
   "referrer",
@@ -344,6 +352,15 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       addColumn(db, "events", "no_visit", "INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    // Imports from any tool: imports.tool (source other's tool slug, '' otherwise) joins the
+    // natural key, so the table is rebuilt (SQLite can't alter a UNIQUE constraint); ids and rows kept.
+    version: 10,
+    up: (db) => {
+      for (const s of IMPORTS_SQL) db.run(s); // IF NOT EXISTS: a no-op after version 8
+      if (!hasColumn(db, "imports", "tool")) for (const s of IMPORTS_V10_SQL) db.run(s);
+    },
+  },
 ];
 
 /** Columns and their meaning, for llms.txt / the query_sql tool description. */
@@ -375,7 +392,7 @@ event_items(id, event_rowid [events.id], ts, event_name [view_item_list|select_i
 user_props(user_id, key, value [text], source [server|browser], ts)
 costs(day [site timezone YYYY-MM-DD], source, campaign ['' = none], medium, cost, currency, original_cost, original_currency, fx_rate, clicks, impressions, created_at, updated_at)
 crawler_hits(day, bot, operator, category [ai_training|ai_search|ai_assistant|search|seo|preview|other], path, status [status class x 100, 0 unknown], hits, last_at)
-imports(id, source [plausible|ga4], kind [visitors|pages|sources|countries|devices], file_name, from_day, to_day, rows, created_at, updated_at)
+imports(id, source [plausible|ga4|other], tool [source other: the tool's slug, e.g. fathom; '' otherwise], kind [visitors|pages|sources|countries|devices], file_name, from_day, to_day, rows, created_at, updated_at)
 imported_rows(import_id, kind, day, value ['' for visitors], visitors, visits, pageviews, bounces, visit_duration [total seconds])`;
 
 export function migrate(db: Db): void {

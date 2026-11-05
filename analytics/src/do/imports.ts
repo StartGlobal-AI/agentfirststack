@@ -24,10 +24,35 @@ export const IMPORTS_SQL = [
   "CREATE INDEX IF NOT EXISTS imported_rows_kind_day ON imported_rows(kind, day)",
 ];
 
+/**
+ * Migration 10: imports gain `tool` (source other's tool slug; '' for plausible and ga4, so the
+ * key stays unique) and the natural key becomes (source, tool, kind, from_day, to_day). SQLite
+ * can't change a UNIQUE constraint in place, so the table is rebuilt with its ids and rows kept.
+ */
+export const IMPORTS_V10_SQL = [
+  `CREATE TABLE imports_v10 (
+    id TEXT PRIMARY KEY, source TEXT NOT NULL, tool TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, file_name TEXT,
+    from_day TEXT NOT NULL, to_day TEXT NOT NULL, rows INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    UNIQUE (source, tool, kind, from_day, to_day)
+  )`,
+  `INSERT INTO imports_v10 (id, source, tool, kind, file_name, from_day, to_day, rows, created_at, updated_at)
+   SELECT id, source, '', kind, file_name, from_day, to_day, rows, created_at, updated_at FROM imports`,
+  "DROP TABLE imports",
+  "ALTER TABLE imports_v10 RENAME TO imports",
+];
+
+export interface ImportMeta {
+  source: ImportSource;
+  /** source other: the tool's slug; null otherwise */
+  tool: string | null;
+  kind: ImportKind;
+  file_name: string | null;
+}
+
 export function saveImport(
   db: Db,
   id: string,
-  meta: { source: ImportSource; kind: ImportKind; file_name: string | null },
+  meta: ImportMeta,
   rows: ImportRow[],
   caps: { maxRows: number; maxImports: number },
   now = Date.now(),
@@ -35,9 +60,11 @@ export function saveImport(
   const days = rows.map((r) => r.day).sort();
   const from = days[0]!;
   const to = days.at(-1)!;
+  const tool = meta.tool ?? "";
   return db.transaction(() => {
-    const cur = db.all("SELECT * FROM imports WHERE source = ? AND kind = ? AND from_day = ? AND to_day = ?", [
+    const cur = db.all("SELECT * FROM imports WHERE source = ? AND tool = ? AND kind = ? AND from_day = ? AND to_day = ?", [
       meta.source,
+      tool,
       meta.kind,
       from,
       to,
@@ -61,7 +88,7 @@ export function saveImport(
         },
       };
     const importId = cur ? String(cur.id) : id;
-    // The same file (source, kind, date range) again replaces its rows: retries are safe.
+    // The same file (source, tool, kind, date range) again replaces its rows: retries are safe.
     if (cur) db.run("DELETE FROM imported_rows WHERE import_id = ?", [importId]);
     for (const r of rows)
       db.run(
@@ -77,27 +104,44 @@ export function saveImport(
       ]);
     else
       db.run(
-        "INSERT INTO imports (id, source, kind, file_name, from_day, to_day, rows, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [importId, meta.source, meta.kind, meta.file_name, from, to, rows.length, now, now],
+        "INSERT INTO imports (id, source, tool, kind, file_name, from_day, to_day, rows, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [importId, meta.source, tool, meta.kind, meta.file_name, from, to, rows.length, now, now],
       );
     const live = firstLiveDay(db);
     return {
-      import: { id: importId, source: meta.source, kind: meta.kind, file_name: meta.file_name, from, to, rows: rows.length },
+      import: {
+        id: importId,
+        source: meta.source,
+        tool: meta.tool,
+        kind: meta.kind,
+        file_name: meta.file_name,
+        from,
+        to,
+        rows: rows.length,
+      },
       existing: !!cur,
       ...(cur ? { replaced_rows: existingRows } : {}),
       live_data_from: live,
       ...(live && to >= live
-        ? { note: `Days from ${live} on already have live data: reports use live data for them and the import only before.` }
+        ? {
+            note: `Days from ${live} on already have live data: reports use live data for them and the import only before${
+              meta.kind === "visitors" ? " (GET /v1/sites/:id/imports/compare compares those days)" : ""
+            }.`,
+          }
         : {}),
     };
   });
 }
 
+/** The tool of a stored import: null unless source other. */
+const toolOf = (r: { source?: unknown; tool?: unknown }) => (r.source === "other" && r.tool ? String(r.tool) : null);
+
 export function listImports(db: Db) {
   return {
-    imports: db.all("SELECT * FROM imports ORDER BY source, kind, from_day").map((r) => ({
+    imports: db.all("SELECT * FROM imports ORDER BY source, tool, kind, from_day").map((r) => ({
       id: r.id,
       source: r.source,
+      tool: toolOf(r),
       kind: r.kind,
       file_name: r.file_name ?? null,
       from: r.from_day,
@@ -120,6 +164,41 @@ export function deleteImport(db: Db, id: string) {
     db.run("DELETE FROM imports WHERE id = ?", [id]);
     return { deleted: true, rows_deleted: n };
   });
+}
+
+export interface ImportedDays {
+  source: ImportSource;
+  tool: string | null;
+  /** day -> imported visitors (where files overlap, the most recently updated one) */
+  days: Map<string, number>;
+  updated_at: number;
+}
+
+/** Imported daily visitor totals (kind visitors) of [from, to], per (source, tool). */
+export function importedDailyVisitors(db: Db, from: string, to: string): ImportedDays[] {
+  const out = new Map<string, ImportedDays>();
+  for (const r of db.all(
+    `SELECT i.source, i.tool, i.updated_at, r.day, r.visitors FROM imported_rows r JOIN imports i ON i.id = r.import_id
+     WHERE r.kind = 'visitors' AND r.day >= ? AND r.day <= ? ORDER BY i.updated_at, i.id`,
+    [from, to],
+  )) {
+    const tool = toolOf(r);
+    const k = `${r.source}\u0000${tool ?? ""}`;
+    const cur = out.get(k) ?? { source: String(r.source) as ImportSource, tool, days: new Map<string, number>(), updated_at: 0 };
+    cur.days.set(String(r.day), num(r.visitors));
+    cur.updated_at = Math.max(cur.updated_at, num(r.updated_at));
+    out.set(k, cur);
+  }
+  return [...out.values()];
+}
+
+/** The latest daily-visitors import (of one source), for naming the tool when nothing overlaps. */
+export function latestVisitorsImport(db: Db, source?: ImportSource): { source: ImportSource; tool: string | null } | null {
+  const r = db.all(
+    `SELECT source, tool FROM imports WHERE kind = 'visitors'${source ? " AND source = ?" : ""} ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    source ? [source] : [],
+  )[0];
+  return r ? { source: String(r.source) as ImportSource, tool: toolOf(r) } : null;
 }
 
 /** The site-timezone day of the first live (non-payment) event, or null. */

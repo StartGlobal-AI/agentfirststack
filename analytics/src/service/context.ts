@@ -144,6 +144,7 @@ export interface SiteStub {
     vars?: LimitVars,
   ): Promise<Obj | DoError>;
   listImports(): Promise<Obj | DoError>;
+  compareImports(q: { source?: string; tool?: string }): Promise<Obj | DoError>;
   exportEvents(q: Obj, dailyBudget: number): Promise<Obj | DoError>;
   deleteImport(id: string): Promise<Obj | DoError>;
   listSessions(q: Obj, replay: { site_id: string; base: string } | null): Promise<Obj | DoError>;

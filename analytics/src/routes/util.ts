@@ -17,19 +17,21 @@ export const ctxOf = (c: Context<AppEnv>): Ctx => ({
 /** Largest JSON body any /v1 route reads (a batch of 100 server events fits easily). */
 export const MAX_JSON_BODY_BYTES = 1024 * 1024;
 
-const tooLarge = () =>
-  new ApiError(
-    413,
-    "payload_too_large",
-    `Request bodies are limited to ${MAX_JSON_BODY_BYTES / 1024 / 1024} MB.`,
-    "Send fewer events or payments per request (at most 100), with shorter props.",
-  );
+const DEFAULT_TOO_LARGE_HINT = "Send fewer events or payments per request (at most 100), with shorter props.";
+const tooLarge = (maxBytes: number, hint: string) =>
+  new ApiError(413, "payload_too_large", `Request bodies are limited to ${maxBytes / 1024 / 1024} MB.`, hint);
 
-/** JSON body as-is (empty = {}), never buffering more than MAX_JSON_BODY_BYTES; services validate it. */
-export async function body(c: Context<AppEnv>): Promise<unknown> {
-  if (Number(c.req.header("content-length")) > MAX_JSON_BODY_BYTES) throw tooLarge();
-  const { text, truncated } = await readTextCapped(c.req.raw.body, MAX_JSON_BODY_BYTES);
-  if (truncated) throw tooLarge();
+/**
+ * JSON body as-is (empty = {}), never buffering more than MAX_JSON_BODY_BYTES (or the route's own
+ * cap: imports take larger bodies); services validate it.
+ */
+export async function body(
+  c: Context<AppEnv>,
+  { maxBytes = MAX_JSON_BODY_BYTES, hint = DEFAULT_TOO_LARGE_HINT }: { maxBytes?: number; hint?: string } = {},
+): Promise<unknown> {
+  if (Number(c.req.header("content-length")) > maxBytes) throw tooLarge(maxBytes, hint);
+  const { text, truncated } = await readTextCapped(c.req.raw.body, maxBytes);
+  if (truncated) throw tooLarge(maxBytes, hint);
   if (!text.trim()) return {};
   try {
     return JSON.parse(text);
