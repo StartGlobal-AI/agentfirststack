@@ -19,7 +19,7 @@ this first on every later run and update it instead of starting over. Never writ
 | Analytics | site `agentfirststack.com` | `site_6hmh1a6dbbn8mdfp` |
 | Tags | container `agentfirststack.com`, version 2 live | `ctr_6znmv02cawfa9pb9` |
 | Replay | site `agentfirststack.com`, linked to the analytics site | `rsite_szw52yv28by1qy3b` |
-| Mail | inbox `agentfirststack-signups@agentfirststack.com` | `inb_kn2pyr0nsx1zem8p` |
+| Mail | inbox `agentfirststack-signups@agentfirststack.com`, forwards each email to the owner as it arrives (Asia/Kolkata) | `inb_kn2pyr0nsx1zem8p` |
 
 ## The site map
 
