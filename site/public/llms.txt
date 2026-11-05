@@ -91,36 +91,34 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    turn it off.
 7. **Deploy** the site changes. If you can't deploy, stop here and tell the owner exactly what to
    deploy; the checks below need the snippets live.
-8. **Verify like a visitor.** Use a real browser if you have one (a browser tool, Playwright,
-   Puppeteer); otherwise fetch the pages. Open each main page, click each main action, and submit a
-   form only where it's harmless (a test-mode checkout, a newsletter form you can unsubscribe).
-   Don't click `mailto:` or `tel:` links (they open your user's mail or phone app): check their
-   triggers in the tags preview log instead. After you publish tags, use a fresh window or a hard
-   reload: a browser that loaded the container in the last 5 minutes still runs the old version.
-   Mark your visits as test traffic so the owner's reports stay clean: open the first page with
-   `?afsa_debug=1&afsr=1` (test traffic for the rest of the tab, and a forced replay recording that
-   is marked as a test too). Then check each service:
-   - analytics: `verify` passes, `realtime?debug=only` shows your visit, and each goal you created
-     has counted (stats with `goal==<name>` and `debug=include`);
-   - tags: the event log (`GET /v1/containers/:id/events?since=1h`) shows each event with every
-     destination's answer, `tag-stats` shows each tag firing, `test` passes for each destination;
-   - replay: `verify` passes, and the transcript of your recorded session shows your clicks;
-   - inbox: `GET /v1/inboxes/:id` returns it; the first real email to it shows up in its messages;
-   - backend conversions: trigger each one once if the app has a safe way (a test account, a
-     test-mode payment); otherwise send the event yourself with `"debug": true` and find it in
-     `realtime?debug=only`.
-   Fix what fails and check it again. Then run the setup check (`GET https://agentfirststack.com/v1/setup`,
-   MCP `afs_check_setup`, section 8) and fix everything it reports as `missing` or `failing`, in
-   the order of its `next_steps`, until it says `"ready": true`.
+8. **Test it, end to end.** Three calls, in this order; fix what fails and run that call again.
+   1. `POST https://agentfirststack.com/v1/setup/test` (MCP `afs_test_setup`): sends test traffic
+      through everything the server can reach: a test email from the inbox to itself (sent,
+      received, code read back), analytics and replay `verify` on the live homepage, a test event
+      into analytics, one through the tag manager to analytics, and each conversion to each ad
+      platform in its test mode. It returns `browser_plan`, built from the live tags config.
+   2. Do the `browser_plan` in a real browser (a browser tool, Playwright or Puppeteer): open its
+      `start_url` (`?afsa_debug=1&afsr=1`: the whole tab is test traffic, kept out of the owner's
+      reports, recorded as a test replay, and never sent to an ad platform as a real conversion),
+      then each step. Use a fresh window after publishing tags (a browser that loaded the container
+      in the last 5 minutes runs the old version). Don't click `mailto:` or `tel:` links; the plan
+      lists them under `not_in_browser`. Then `GET https://agentfirststack.com/v1/setup/test?since=<started_at>`
+      (MCP `afs_check_test_visit`): test pageviews, each expected event in analytics and the tag
+      manager, none sent live to an ad platform, and the test recording.
+   3. `GET https://agentfirststack.com/v1/setup` (MCP `afs_check_setup`) until `"ready": true`.
+   Backend-only conversions (a paid order, a verified sign-up): trigger each once if the app has a
+   safe way (a test account, a test-mode payment), or send it with `"debug": true` (analytics) /
+   `"test": true` (tags). Section 8 explains each call.
 9. **Write it down.** Update `AGENTFIRSTSTACK.md`: the ids, which env vars hold keys (never the
    values), every goal and event with what triggers it, and what's waiting on the owner. Commit it.
-10. **Hand over.** Create a claim link (section 8). In your last message, tell the owner what you set
-    up, how you verified each part (with the numbers you saw), exactly what's waiting on them (each
-    ID or token, and where they find it), and give them the claim link.
+10. **Hand over.** Create a claim link (section 8). In your last message, show the owner the
+    setup check's `report_markdown` (what's set up, with check marks) and the test runs'
+    `report_markdown` (what passed), then exactly what's waiting on them (each ID or token, and
+    where they find it), and give them the claim link.
 
-You're done when every main action from step 2 shows up in analytics and the tags event log, the
-three `verify` checks pass, a replay transcript shows your test visit, the setup check says
-`"ready": true`, and the owner has the claim link.
+You're done when the setup test passes, the browser test visit passes with every main action from
+step 2 among its expected events, the setup check says `"ready": true`, and the owner has the
+claim link and both tables.
 
 ## 4. Common tasks
 
@@ -264,7 +262,7 @@ test event in the platform's test mode and returns the platform's own answer.
 
 Everything else (signup, sites, containers, conversions, inboxes, verification) you can do alone.
 
-## 8. Check the setup, then let the owner claim it
+## 8. Check and test the setup, then let the owner claim it
 
 ### The setup check
 
@@ -295,6 +293,32 @@ curl -s https://agentfirststack.com/v1/setup -H "$H"     # ?domain=example.com  
   use all four; the default is the full setup. `domain=` checks one website.
 - Any key works, read-only ones too. MCP: `afs_check_setup` (`{"domain": "...", "services": [...]}`, both optional).
 
+### The setup test
+
+The setup check reads what's configured; the setup test proves it works by sending test traffic
+through it. Test traffic never reaches the owner's reports (analytics stores it as debug and
+deletes it after 7 days), never reaches an ad platform as a real conversion, and never matches a
+goal, so it can't make a goal look verified.
+
+```sh
+curl -s -X POST https://agentfirststack.com/v1/setup/test -H "$H"   # {"domain":"example.com"} or {"services":[...]}
+# -> { "passed": true, "started_at": 1793000000000, "summary": "Server tests: 6 passed, 1 skipped.",
+#      "tests": [ { "id": "mail.roundtrip", "status": "passed", "title": "Test email: sent, received and read back",
+#                   "detail": "Sent from shop@... to shop+afs-test@..., received in 140 ms, and its code read back." }, ... ],
+#      "browser_plan": { "start_url": "https://example.com/?afsa_debug=1&afsr=1",
+#                        "steps": [ { "action": "Click an element matching `#signup`.", "expect": ["sign_up_click"] }, ... ],
+#                        "expected_events": [ ... ], "not_in_browser": [ ... ], "check": "https://..." },
+#      "report_markdown": "| | Test | Result | ..." }
+curl -s "https://agentfirststack.com/v1/setup/test?since=1793000000000" -H "$H"   # after the browser plan
+```
+
+- Statuses: `passed`, `failed` (with `fix`), `skipped` (not set up, or the ad platform has no test
+  mode: LinkedIn and X can only be checked with a real conversion; Meta, TikTok and Reddit need a
+  test event code in the destination's credentials).
+- The test email uses 1 of the day's sends. The run needs a key that can write; at most 3 runs a
+  minute. The browser check reads the last hour, so run it within an hour of the test.
+- Webhook destinations receive the test conversions with `"test": true`: they should ignore those.
+
 ### The claim link
 
 Finish every setup by giving the person you work for a claim link. It's a single-use URL, valid
@@ -318,8 +342,8 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (238 tools: 235 prefixed `analytics_`, `tags_`, `mail_` and
-`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project` and `afs_check_setup`):
+One MCP server for every service (240 tools: 235 prefixed `analytics_`, `tags_`, `mail_` and
+`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_check_setup`, `afs_test_setup` and `afs_check_test_visit`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -384,6 +408,8 @@ Agents with a key never need any of this.
   An account holds at most 25 active keys (10 until a person claims it) (`409 too_many_keys`: revoke ones you don't use); reuse
   keys rather than minting one per run.
 - `GET https://agentfirststack.com/v1/setup`: the setup check (section 8).
+- `POST https://agentfirststack.com/v1/setup/test`, `GET .../v1/setup/test?since=`: the setup test
+  and the browser test visit (section 8).
 - `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 8).
 - A key of a suspended account answers `403 account_suspended` everywhere (abuse of the free
   service). Operators use `/v1/admin/accounts/:id` (`ADMIN_TOKEN` only); agents never need it.

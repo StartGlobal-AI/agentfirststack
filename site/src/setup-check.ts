@@ -61,7 +61,119 @@ export interface SetupReport {
   next_steps: string[];
   not_checked: string[];
   domains_not_checked?: string[];
+  /** What's set up, one row per part, for the owner (the dashboard renders the same rows). */
+  rows: ReportRow[];
+  /** The rows as a markdown table with check marks: put it in your final message to the owner. */
+  report_markdown: string;
   checked_at: number;
+}
+
+export type RowStatus = CheckStatus | "none";
+export interface ReportRow {
+  part: string;
+  domain?: string;
+  status: RowStatus;
+  details: string;
+}
+
+/** The owner's view: each part of the setup, and which checks' details say what it is. */
+const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] = [
+  { part: "Project", ids: ["project.named"], show: ["project.named"] },
+  { part: "Inbox", ids: ["mail.inbox"], show: ["mail.inbox"] },
+  {
+    part: "Analytics",
+    ids: ["analytics.site", "analytics.receiving", "analytics.domain_verified", "analytics.server_events"],
+    show: ["analytics.site", "analytics.receiving"],
+    perDomain: true,
+  },
+  { part: "Goals", ids: ["analytics.goals", "analytics.goals_counted"], show: ["analytics.goals"], perDomain: true },
+  {
+    part: "Reports and alerts",
+    ids: ["analytics.owner_email", "analytics.weekly_report", "analytics.alerts"],
+    show: ["analytics.weekly_report", "analytics.alerts"],
+    perDomain: true,
+  },
+  {
+    part: "Tag manager",
+    ids: ["tags.container", "tags.installed", "tags.published", "tags.firing"],
+    show: ["tags.published"],
+    perDomain: true,
+  },
+  { part: "Events", ids: ["tags.events", "tags.to_analytics", "tags.goals_for_events"], show: ["tags.events"], perDomain: true },
+  { part: "Ad platforms", ids: ["tags.destinations"], show: ["tags.destinations"], perDomain: true },
+  {
+    part: "Session replay",
+    ids: ["replay.site", "replay.linked", "replay.verified", "replay.recording", "replay.consent"],
+    show: ["replay.site", "replay.recording"],
+    perDomain: true,
+  },
+  { part: "Dashboard access", ids: ["project.claimed"], show: ["project.claimed"] },
+];
+const SEVERITY: CheckStatus[] = ["failing", "missing", "unavailable", "warning", "waiting_on_owner", "ok"];
+export const STATUS_MARK: Record<RowStatus, string> = {
+  ok: "✅",
+  missing: "❌",
+  failing: "❌",
+  warning: "⚠️",
+  waiting_on_owner: "⏳",
+  unavailable: "❔",
+  none: "—",
+};
+export const STATUS_WORD: Record<RowStatus, string> = {
+  ok: "Done",
+  missing: "Missing",
+  failing: "Not working",
+  warning: "Worth a look",
+  waiting_on_owner: "Waiting on you",
+  unavailable: "Couldn't check",
+  none: "None",
+};
+
+/** Group the checks into the owner's rows: a row is as good as its worst check. */
+export function reportRows(checks: SetupCheck[]): ReportRow[] {
+  const domains = [...new Set(checks.map((c) => c.domain).filter((d): d is string => !!d))];
+  const rows: ReportRow[] = [];
+  for (const def of ROWS) {
+    for (const domain of def.perDomain ? domains : [undefined]) {
+      const cs = checks.filter((c) => def.ids.includes(c.id) && c.domain === domain);
+      if (!cs.length) {
+        // A container without ad platform destinations: say so, it's not a failure.
+        const tagsOk = checks.some((c) => c.id === "tags.container" && c.domain === domain && c.status === "ok");
+        if (def.part === "Ad platforms" && tagsOk)
+          rows.push({
+            part: def.part,
+            domain,
+            status: "none",
+            details: "None connected. Conversions go to analytics only; add platforms when you run ads.",
+          });
+        continue;
+      }
+      const status = SEVERITY.find((st) => cs.some((c) => c.status === st)) ?? "ok";
+      const details = cs
+        .filter((c) => c.status !== "ok" || def.show.includes(c.id))
+        .map((c) =>
+          c.status === "ok" ? c.detail : `${STATUS_WORD[c.status]}: ${c.title.charAt(0).toLowerCase()}${c.title.slice(1)}. ${c.detail}`,
+        )
+        .join(" ");
+      rows.push({ part: def.part, ...(domain ? { domain } : {}), status, details });
+    }
+  }
+  return rows;
+}
+
+const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+
+export function reportMarkdown(r: Pick<SetupReport, "project" | "ready" | "checks" | "counts">, rows: ReportRow[]): string {
+  const multi = new Set(rows.map((x) => x.domain).filter(Boolean)).size > 1;
+  const todo = r.counts.missing + r.counts.failing + r.counts.unavailable;
+  const head = r.ready
+    ? `**AgentFirstStack setup for ${r.project.name ?? r.project.id}: ready** (${r.checks.length - todo} of ${r.checks.length} checks pass)`
+    : `**AgentFirstStack setup for ${r.project.name ?? r.project.id}: ${todo} ${todo === 1 ? "thing" : "things"} left to fix**`;
+  const lines = [head, "", "| | Part | What's set up |", "|---|---|---|"];
+  for (const row of rows)
+    lines.push(`| ${STATUS_MARK[row.status]} | ${cell(row.part)}${multi && row.domain ? ` (${row.domain})` : ""} | ${cell(row.details)} |`);
+  lines.push("", "✅ done · ❌ missing or not working · ⚠️ worth a look · ⏳ waiting on you · — not used");
+  return lines.join("\n");
 }
 
 /** Each extra domain costs about a dozen service reads; the rest are named with how to check them. */
@@ -75,6 +187,14 @@ const NOT_CHECKED = [
   'Backend conversions and payments, if the business has them: send each once with "debug": true and find it in analytics realtime?debug=only.',
   "AGENTFIRSTSTACK.md (it lives in the repo) and the ad platform IDs or tokens still waiting on the owner.",
 ];
+
+const ALERT_NAMES: Record<string, string> = {
+  traffic_drop: "traffic drop",
+  no_data: "tracking stopped",
+  traffic_spike: "traffic spike",
+  goal: "goal threshold",
+  payment: "new payment",
+};
 
 const STATUS_ORDER: CheckStatus[] = ["ok", "missing", "failing", "warning", "waiting_on_owner", "unavailable"];
 
@@ -133,6 +253,7 @@ interface AnalyticsDestination {
 interface Report {
   id: string;
   enabled: boolean;
+  cadence?: string;
 }
 interface Alert {
   type: string;
@@ -148,7 +269,8 @@ interface TagsContainer {
 }
 interface TagStats {
   reporting: boolean;
-  tags: { tag_id: string; fired: number }[];
+  /** test_skipped: ad pixels that would have fired on test traffic (they don't run in test tabs). */
+  tags: { tag_id: string; fired: number; test_skipped?: number }[];
   never_fired: string[];
   failing: string[];
 }
@@ -165,6 +287,7 @@ interface ReplaySite {
     enabled: boolean;
     analytics_site_id: string | null;
     require_consent: string | null;
+    mask_mode?: string;
     verification?: { verified?: boolean } | null;
   };
   data: { sessions_total: number; last_session_started_at: number | null } | null;
@@ -371,6 +494,7 @@ export async function setupReport(
     );
   if (notChecked.length) next_steps.push(`Check the other domains one at a time: GET ${opts.base}/v1/setup?domain=${notChecked[0]}`);
 
+  const rows = reportRows(checks);
   return {
     project: { id: accountId, name, claimed },
     services: SETUP_SERVICES.filter((x) => has[x]),
@@ -381,6 +505,8 @@ export async function setupReport(
     next_steps,
     not_checked: NOT_CHECKED,
     ...(notChecked.length ? { domains_not_checked: notChecked } : {}),
+    rows,
+    report_markdown: reportMarkdown({ project: { id: accountId, name, claimed }, ready, checks, counts }, rows),
     checked_at: Date.now(),
   };
 }
@@ -470,7 +596,7 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
     x.read<{ alerts: Alert[] }>("analytics", `${p}/alerts`),
   ]);
   const checks: SetupCheck[] = [
-    at({ id: "analytics.site", status: "ok", title: "Analytics has a site for the website", detail: `${site.id} (${site.domain})` }),
+    at({ id: "analytics.site", status: "ok", title: "Analytics has a site for the website", detail: `${site.id} (${site.domain}).` }),
   ];
   const unavailable = (id: string, title: string) =>
     at({ id, status: "unavailable", title, detail: "The analytics service didn't answer this read.", fix: `GET ${A}${p}` });
@@ -560,7 +686,10 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
         id: "analytics.goals",
         status: "ok",
         title: "There is a goal for each conversion and main action",
-        detail: plural(goals.length, "goal"),
+        detail: `${plural(goals.length, "goal")}: ${list(
+          goals.map((g) => g.name),
+          30,
+        )}.`,
       }),
     );
     const counted = new Map((goalStats?.breakdown?.results ?? []).map((r) => [r.value, r.conversions ?? 0]));
@@ -653,7 +782,7 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
             id: "analytics.weekly_report",
             status: "ok",
             title: reportTitle,
-            detail: plural(reports.reports.filter((r) => r.enabled).length, "report"),
+            detail: `${list([...new Set(reports.reports.filter((r) => r.enabled).map((r) => r.cadence ?? "scheduled"))])} report.`,
           })
         : at({
             id: "analytics.weekly_report",
@@ -677,7 +806,7 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
             detail: `Missing: ${lacking.join(", ")}.`,
             fix: `POST ${A}${p}/alerts {"name":"...","type":"${lacking[0]}","destination_ids":["<the email destination id>"]} for each (MCP analytics_create_alert)`,
           })
-        : at({ id: "analytics.alerts", status: "ok", title: alertTitle, detail: `${plural(on.size, "alert type")} on.` }),
+        : at({ id: "analytics.alerts", status: "ok", title: alertTitle, detail: `On: ${list([...on].map((t) => ALERT_NAMES[t] ?? t))}.` }),
     );
   }
   return { checks, goals, siteId: site.id };
@@ -746,7 +875,7 @@ function tagsChecksFor(
   // The snippet is on the pages
   const seen =
     d.container?.container.domain_verified ||
-    (d.stats?.tags ?? []).some((t) => t.fired > 0) ||
+    (d.stats?.tags ?? []).some((t) => t.fired > 0 || (t.test_skipped ?? 0) > 0) ||
     (d.container?.stats?.today?.browser_events ?? 0) > 0;
   const installedTitle = "The container snippet is on the pages";
   checks.push(
@@ -797,7 +926,17 @@ function tagsChecksFor(
         }),
       );
     else {
-      checks.push(at({ id: "tags.events", status: "ok", title: evTitle, detail: `${plural(conv.length, "event")} in version ${live}.` }));
+      checks.push(
+        at({
+          id: "tags.events",
+          status: "ok",
+          title: evTitle,
+          detail: `${plural(conv.length, "event")} in version ${live}: ${list(
+            conv.map((c) => c.name),
+            30,
+          )}.`,
+        }),
+      );
       const toAnalytics = conv.filter((c) => c.send_to?.analytics);
       if (!toAnalytics.length)
         checks.push(
@@ -908,7 +1047,7 @@ function tagsChecksFor(
             id: "tags.destinations",
             status: "ok",
             title: "Conversions reach every ad platform",
-            detail: `${plural(dests.length, "destination")}, none failing.`,
+            detail: `${list(dests.map((t) => t.name ?? t.type))}, none failing.`,
           }),
     );
   }
@@ -948,7 +1087,12 @@ async function replayChecks(domain: string, rsite: ReplaySiteItem | null, analyt
     ];
   const checks: SetupCheck[] = [
     d.site.enabled
-      ? at({ id: "replay.site", status: "ok", title: "Replay records the website", detail: rsite.id })
+      ? at({
+          id: "replay.site",
+          status: "ok",
+          title: "Replay records the website",
+          detail: `${rsite.id}${d.site.mask_mode ? `, ${d.site.mask_mode} masking` : ""}.`,
+        })
       : at({
           id: "replay.site",
           status: "warning",

@@ -108,14 +108,21 @@ The site also runs an **MCP gateway** at `/mcp` (`site/src/mcp-gateway.ts`): a s
 router that merges every service's tools with an `analytics_` / `tags_` / `mail_` / `replay_`
 prefix and forwards each call over a service binding with the caller's own key, so one connector
 covers the whole platform with the same scoping and errors as the services themselves. It adds two
-tools of its own: `afs_check_setup` (`GET /v1/setup`), `afs_create_claim_link` and `afs_update_project`
-(`PATCH /v1/me`).
+tools of its own: `afs_check_setup` (`GET /v1/setup`), `afs_test_setup` and `afs_check_test_visit`
+(`/v1/setup/test`), `afs_create_claim_link` and `afs_update_project` (`PATCH /v1/me`).
 
 The **setup check** (`site/src/setup-check.ts`, `GET /v1/setup`) is the full setup in `llms.txt` as a
 list of checks. It reads each service as the project with internal auth over the bindings (the
 same path the dashboard uses), never forwards the caller's key and fetches nothing from the
 website: install status comes from what the services received and from the last `verify`. The
 dashboard's project page renders the same report.
+
+The **setup test** (`site/src/setup-test.ts`, `/v1/setup/test`) sends test traffic through the same
+bindings: mail sends from the project's inbox to its own `+afs-test` address (delivered internally)
+and reads the code back; analytics gets a debug event; tags gets a `test: true` event no conversion
+uses (so it reaches analytics only) and the live conversions with `destinations` limited to the ad
+platforms, which deliver in their test modes. Test events never match a goal, so they can't stand in
+for the browser visit, which the second call checks from realtime, the tags event log and replay.
 
 ## Discovery
 

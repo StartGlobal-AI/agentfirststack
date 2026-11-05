@@ -55,8 +55,9 @@ OAuth access tokens are used the same way.
 ## Handing the project to a person
 
 People are optional, but the person you work for will want to see what you built. When you finish,
-run the setup check (`GET https://agentfirststack.com/v1/setup`, any key) until it says ready, then
-create a claim link and give them the URL:
+test the setup (`POST https://agentfirststack.com/v1/setup/test`, then its browser plan) and run the
+setup check (`GET https://agentfirststack.com/v1/setup`) until it says ready, then create a claim link
+and give them the URL with the report tables:
 
 ```http
 POST https://agentfirststack.com/v1/claim-link

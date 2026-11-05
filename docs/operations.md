@@ -144,7 +144,8 @@ breaker). Set them under `vars.all` so every app's `/v1/signup` and `/v1/keys` a
 
 Bindings on the site: `SIGNUP_LIMITER` (5 per minute per network, signup and OAuth registration)
 `KEY_LIMITER` (namespace 42041, 10 key creations per minute per account) and `SETUP_LIMITER`
-(namespace 42042, 30 setup checks per minute per project; each reads the services about 15 times).
+(namespace 42042, 30 setup checks per minute per project; each reads the services about 15 times)
+and `SETUP_TEST_LIMITER` (namespace 42043, 3 setup test runs per minute per project).
 
 Reports arrive at `abuse@<domain>`. Role addresses (abuse, postmaster, security, admin and others)
 can't be claimed by users, so route them to a person: in the dashboard under Email > Email

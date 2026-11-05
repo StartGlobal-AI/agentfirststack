@@ -6,7 +6,7 @@ and hosted for free at https://agentfirststack.com.
 
 | App | What it replaces | Hosted at | Local port |
 |---|---|---|---|
-| [`site/`](site) | Landing page, master `llms.txt` (with the full-setup procedure the prompt points to), the setup check (`GET /v1/setup`, `src/setup-check.ts`), platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard, OAuth 2.1 server for MCP connectors (see `docs/accounts.md`) | agentfirststack.com | 8786 |
+| [`site/`](site) | Landing page, master `llms.txt` (with the full-setup procedure the prompt points to), the setup check and test (`/v1/setup`, `/v1/setup/test`, `src/setup-check.ts`, `src/setup-test.ts`), platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard, OAuth 2.1 server for MCP connectors (see `docs/accounts.md`) | agentfirststack.com | 8786 |
 | [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue, subscriptions/MRR, ad spend, ecommerce items, AI crawlers, alerts and reports) | analytics.agentfirststack.com | 8787 |
 | [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap, X) with dedup | tags.agentfirststack.com | 8788 |
 | [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
@@ -72,7 +72,7 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
 | `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (`429 signups_paused`) |
 | `MAX_KEYS_PER_ACCOUNT` / `KEYS_HOURLY_LIMIT` (+ `KEY_LIMITER` binding) | all | 25 active (10 unclaimed) / 20 created an hour |
-| `SETUP_LIMITER` binding | site | 30 setup checks (`GET /v1/setup`) per project a minute |
+| `SETUP_LIMITER` / `SETUP_TEST_LIMITER` bindings | site | 30 setup checks / 3 setup test runs per project a minute |
 | `PROJECTS_PER_USER_DAILY_LIMIT` | site | 5 new projects a day per signed-in person (OAuth consent "new project"), on top of the signup limits |
 | `MAX_ALERTS_PER_SITE` / `MAX_ALERT_DESTINATIONS_PER_SITE` / `MAX_REPORTS_PER_SITE` / `MAX_SEGMENTS_PER_SITE` | analytics | 20 / 5 / 5 / 50 |
 | `MAX_COST_ROWS_PER_SITE` / `MAX_ITEMS_PER_EVENT` / `MAX_USER_PROP_KEYS_PER_SITE` / `MAX_IMPORTED_ROWS_PER_SITE` / `MAX_IMPORTS_PER_SITE` | analytics | 10,000 / 25 / 50 / 200,000 / 20 |

@@ -195,6 +195,24 @@ describe("setup check", () => {
     expect(calls.every((x) => x.internal === E.INTERNAL_TOKEN && x.authorization === null)).toBe(true);
     // Nothing a visitor sent comes back.
     expect(r.text).not.toContain(PLANTED);
+    // The owner's table: one row per part, with what's there.
+    expect(r.json.rows.map((x: { part: string; status: string }) => [x.part, x.status])).toEqual([
+      ["Project", "ok"],
+      ["Inbox", "ok"],
+      ["Analytics", "ok"],
+      ["Goals", "ok"],
+      ["Reports and alerts", "ok"],
+      ["Tag manager", "ok"],
+      ["Events", "ok"],
+      ["Ad platforms", "ok"],
+      ["Session replay", "ok"],
+      ["Dashboard access", "waiting_on_owner"],
+    ]);
+    const md = r.json.report_markdown as string;
+    expect(md).toMatch(/^\*\*AgentFirstStack setup for acme\.test: ready\*\*/);
+    expect(md).toContain("| ✅ | Goals | 3 goals: Signed up, Copied, Read a guide. |");
+    expect(md).toContain("| ✅ | Events | 2 events in version 2: sign_up, copy_prompt. |");
+    expect(md).toContain("| ⏳ | Dashboard access |");
 
     // Once someone has claimed it, the last check passes too.
     await E.DB.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
@@ -246,6 +264,10 @@ describe("setup check", () => {
     expect(c("replay.verified").status).toBe("missing");
     expect(c("replay.recording").fix).toContain("?afsa_debug=1&afsr=1");
     expect(c("replay.consent").status).toBe("warning");
+    const goalsRow = r.json.rows.find((x: { part: string }) => x.part === "Goals");
+    expect(goalsRow).toMatchObject({ status: "failing", details: expect.stringContaining("Not working: every goal has counted") });
+    expect(r.json.report_markdown).toContain("left to fix**");
+    expect(r.json.report_markdown).toContain("| ❌ | Inbox |");
     // next_steps: the blocking ones, in step order (inbox before analytics before tags before replay).
     const steps = r.json.next_steps as string[];
     expect(steps[0]).toMatch(/^The project has an inbox/);
@@ -300,6 +322,7 @@ describe("setup check", () => {
     expect(only.json.services).toEqual(["analytics"]);
     expect(only.json.ready).toBe(true);
     expect(only.json.checks.every((c: SetupCheck) => c.service === "analytics" || c.service === "project")).toBe(true);
+    expect(only.json.rows.some((x: { part: string }) => x.part === "Ad platforms" || x.part === "Inbox")).toBe(false);
     expect((await call("GET", "/v1/setup?services=analytics,crm", { key: agent.key, env })).json.error.code).toBe("bad_request");
     const tool = await mcp(agent.key, env, "tools/call", { name: "afs_check_setup", arguments: { services: ["analytics"] } });
     expect(JSON.parse(tool.json.result.content[0].text).ready).toBe(true);

@@ -465,7 +465,7 @@ pnpm afs deploy mystack</pre>
    - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
    - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
 
-4. Deploy, then verify like a visitor: open the main pages in a real browser if you can, click the main actions, and check that each one shows up in analytics and in the tags event log, that each service's verify passes, and that a replay transcript shows your visit. Fix what fails and check again. Then run the setup check (GET https://agentfirststack.com/v1/setup, or the afs_check_setup MCP tool) and fix everything it reports until it says ready.
+4. Deploy, then test it end to end (the manual's step 8): run the setup test (POST https://agentfirststack.com/v1/setup/test, or afs_test_setup), do its browser plan in a real browser and check that visit (afs_check_test_visit), then run the setup check (GET https://agentfirststack.com/v1/setup, or afs_check_setup) until it says ready. Fix what fails and test again.
 
 5. Don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
 
@@ -473,7 +473,7 @@ pnpm afs deploy mystack</pre>
 
 7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
 
-When you're done, tell me what you set up, how you verified each part (with the numbers you saw), what's waiting on me, and give me the claim link.</template>
+When you're done, show me the setup check's table of what's set up and the test results table, then what's waiting on me, and give me the claim link.</template>
 
 <script src="/app.js" defer></script>
 </body>

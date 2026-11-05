@@ -127,6 +127,9 @@ aren't recorded. Retention 14 days. To turn replay off:
 
 - Everything at once: `GET https://agentfirststack.com/v1/setup` (MCP `afs_check_setup`) lists each
   part of the full setup with its status and the fix; run it first on every later run.
+- Test it end to end: `POST https://agentfirststack.com/v1/setup/test` (MCP `afs_test_setup`) sends a
+  test email, a test event into analytics and through tags, and runs both `verify`s; then do its
+  `browser_plan` in a real browser and `GET /v1/setup/test?since=<started_at>` (`afs_check_test_visit`).
 - Analytics: `POST /v1/sites/site_6hmh1a6dbbn8mdfp/verify`; goals with
   `GET /v1/sites/site_6hmh1a6dbbn8mdfp/stats?period=7d&breakdown=goal`.
 - Tags: `GET /v1/containers/ctr_6znmv02cawfa9pb9/events?since=1h`, `/tag-stats?since=7d`.
@@ -156,5 +159,9 @@ aren't recorded. Retention 14 days. To turn replay off:
   check is old local-dev chunks from `127.0.0.1` (nothing to change).
 - Mail: a message from the inbox to `agentfirststack-signups+setupcheck@` arrived in 115 ms and
   `latest-code` extracted its code.
+- Setup test (2026-11-05): server tests 4 passed, 2 skipped (tags reach analytics from the browser;
+  no ad platforms); the test email came back in 2.1 s. Browser visit in real Chrome: 3 test pages,
+  all 9 click events in analytics and the tags event log (each `test: true`), replay session
+  `rs_vcwk8qzqrnhp6yg0` (6 pages, 10 clicks).
 - Setup check (`GET /v1/setup`): ready, 22 of 22, after one test (`debug`) `signup` and
   `project_claimed` server event each: the two server goals had never counted.
