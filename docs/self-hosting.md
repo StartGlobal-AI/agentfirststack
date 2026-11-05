@@ -54,7 +54,8 @@ For a private deployment (`token` or `closed`), leave the fair-use vars unset.
 
 ## Fair-use vars for public deployments
 
-agentfirststack.com sets all of these (its profile is kept private). All are off when unset.
+agentfirststack.com sets all of these (its profile is kept private). All are off when unset. Each
+app's `GET /v1/usage` (MCP `get_usage`) shows the ones it enforces, with what an account has used.
 
 | Var | App | Effect |
 |---|---|---|
@@ -166,10 +167,12 @@ Emails to people (optional): the site template carries a `send_email` binding (`
 Set `NOTIFY_EMAIL_FROM` under `vars.site` (for example `"Your Stack <notifications@example.com>"`,
 an address on a domain onboarded for Cloudflare Email Sending) and the site emails signed-in
 people about their projects: claims, members, connected apps, project deletion and suspension,
-and new setup items (see [accounts.md](accounts.md#9-emails-to-people)). Optional:
+and new setup items (see [accounts.md](accounts.md#9-emails-to-people)). They also get alerts: an
+analytics site with steady traffic stopped sending page views, or a project is close to a fair-use
+limit that drops data (only the limits you set count; see `GET /v1/usage` on any app). Optional:
 `NOTIFY_REPLY_TO`, and `MAX_EMAILS_PER_PERSON_PER_DAY` (default 20). Without the var nothing is
 sent. Reserve the sender's username (`EXTRA_RESERVED_USERNAMES` on mail) so nobody can create an
-inbox with it. The site's hourly cron (`47 * * * *`) sends queued emails and retries.
+inbox with it. The site's hourly cron (`47 * * * *`) checks usage, sends queued emails and retries.
 
 ## Sign-in for people (optional)
 

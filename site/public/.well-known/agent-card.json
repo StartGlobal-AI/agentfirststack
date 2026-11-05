@@ -102,7 +102,7 @@
     {
       "id": "account",
       "name": "Account and handover",
-      "description": "Run afs_* tools: afs_check_setup says what the setup still lacks and how to fix it; afs_test_setup and afs_check_test_visit send test traffic through every service and check a browser test visit; afs_update_project renames the project; afs_create_claim_link gives the owner a link to claim the project with Google sign-in; afs_delete_project deletes an unclaimed project (restorable for 7 days).",
+      "description": "Run afs_* tools: afs_check_setup says what the setup still lacks and how to fix it; afs_test_setup and afs_check_test_visit send test traffic through every service and check a browser test visit; afs_get_usage lists every fair-use limit with what the project has used and the ones it's close to; afs_update_project renames the project; afs_create_claim_link gives the owner a link to claim the project with Google sign-in; afs_delete_project deletes an unclaimed project (restorable for 7 days).",
       "tags": ["account", "setup check", "claim"],
       "examples": ["{\"tool\":\"afs_check_setup\",\"arguments\":{}}", "{\"tool\":\"afs_create_claim_link\",\"arguments\":{}}"],
       "inputModes": ["application/json"],
