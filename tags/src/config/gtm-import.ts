@@ -14,8 +14,9 @@ import {
 } from "./schema";
 
 /**
- * GTM container export (Admin > Export container, exportFormatVersion 2, or the Tag Manager API's
- * containerVersion) -> this platform's config. Pure. Every GTM tag, trigger and variable ends up
+ * GTM container export (Admin > Export container, exportFormatVersion 2), the Tag Manager API's
+ * containerVersion, or the API's tag / trigger / variable lists (normalizeGtmData) -> this
+ * platform's config. Pure. Every GTM tag, trigger and variable ends up
  * in exactly one list of the report: mapped (same behaviour), adapted (works, with a difference
  * the note explains) or unmapped (left out, with the reason and what to do instead). Nothing is
  * dropped silently. The export is untrusted input: its shape is validated, its size and depth are
@@ -136,7 +137,6 @@ const gtmVersion = z.object({
     .max(500)
     .optional(),
 });
-const gtmExport = z.union([z.object({ containerVersion: gtmVersion }), gtmVersion]);
 type GtmVersion = z.infer<typeof gtmVersion>;
 type GtmTag = z.infer<typeof gtmTag>;
 type GtmTrigger = z.infer<typeof gtmTrigger>;
@@ -280,17 +280,119 @@ const TEMPLATE_PLATFORMS: [RegExp, keyof typeof ID_PATTERNS | "replay"][] = [
   [/hotjar|clarity/i, "replay"],
 ];
 
+// ------------------------------------------------------------------ accepted shapes
+
+/**
+ * What `data` may be. GTM API v2 objects (and Google's Tag Manager MCP server, which returns
+ * them) have the same fields as an export's (name, type, parameter, firingTriggerId, tagId,
+ * triggerId, ...) plus API-only ones (path, fingerprint, tagManagerUrl, ...), which are ignored.
+ */
+export type GtmShape = "export" | "container_version" | "api_lists";
+export const GTM_SHAPES = `data is one of: (1) the export file from GTM Admin > Export Container, { "exportFormatVersion": 2, "containerVersion": { ... } }; (2) a containerVersion on its own (GTM API versions.get / versions.live), { "container": {...}, "tag": [...], "trigger": [...], "variable": [...], ... }; (3) GTM API v2 or Tag Manager MCP lists, { "tag": [...], "trigger": [...], "variable": [...], "builtInVariable"?: [...], "customTemplate"?: [...] } (plural keys tags, triggers, variables, builtInVariables, customTemplates or templates work too, and each may be the list response as returned, e.g. { "tag": { "tag": [...] } }).`;
+
+/** containerVersion lists: the export's key first, then the names API clients use. */
+const VERSION_LISTS: Record<string, string[]> = {
+  tag: ["tag", "tags"],
+  trigger: ["trigger", "triggers"],
+  variable: ["variable", "variables"],
+  builtInVariable: ["builtInVariable", "builtInVariables"],
+  customTemplate: ["customTemplate", "customTemplates", "template", "templates"],
+  folder: ["folder", "folders"],
+  client: ["client", "clients"],
+  zone: ["zone", "zones"],
+};
+/** Fields only a containerVersion has (single tags, triggers and variables have path, fingerprint, name...). */
+const VERSION_FIELDS = ["container", "containerVersionId"];
+const isPlain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Bring any accepted shape to a containerVersion (export field names). Lists may come under
+ * plural keys or as the API's list response ({ tag: [...], nextPageToken? }); a list response with
+ * no items has no array at all ({} or { nextPageToken }), as the API returns it. Pure.
+ */
+export function normalizeGtmData(raw: unknown): { version: unknown; shape: GtmShape; notes: string[] } {
+  if (Array.isArray(raw))
+    throw new ImportShapeError("data is an array: GTM items must be grouped by kind.", [
+      { path: "data", message: 'Wrap them by kind, e.g. { "tag": [...], "trigger": [...], "variable": [...] }.' },
+    ]);
+  if (!isPlain(raw)) throw new ImportShapeError("data must be a JSON object.", [{ path: "data", message: GTM_SHAPES }]);
+  const notes: string[] = [];
+  if ("containerVersion" in raw) {
+    if (!isPlain(raw.containerVersion))
+      throw new ImportShapeError("containerVersion must be an object.", [{ path: "containerVersion", message: GTM_SHAPES }]);
+    return { version: lists(raw.containerVersion, "containerVersion.", notes).version, shape: "export", notes };
+  }
+  const r = lists(raw, "", notes);
+  if (!r.found && !VERSION_FIELDS.some((k) => k in raw)) {
+    // One tag, trigger or variable on its own (e.g. a get_tag result): say how to wrap it.
+    const kind = "tagId" in raw ? "tag" : "triggerId" in raw ? "trigger" : "variableId" in raw ? "variable" : null;
+    if (kind || ("name" in raw && "type" in raw))
+      throw new ImportShapeError(`data is a single GTM ${kind ?? "item"}, not a container or lists.`, [
+        { path: "data", message: `Wrap it by kind, e.g. { "${kind ?? "tag"}": [ <it> ] }, with the triggers and variables it uses.` },
+      ]);
+    throw new ImportShapeError("No GTM tags, triggers or variables in data.", [
+      { path: "data", message: `Keys seen: ${Object.keys(raw).slice(0, 10).join(", ").slice(0, 300) || "none"}. ${GTM_SHAPES}` },
+    ]);
+  }
+  const asVersion = !r.renamed && VERSION_FIELDS.some((k) => k in raw);
+  if (typeof raw.nextPageToken === "string") notes.push(pageNote("this list"));
+  return { version: r.version, shape: asVersion ? "container_version" : "api_lists", notes };
+}
+
+function pageNote(what: string) {
+  return `${what} has more pages (nextPageToken): fetch every page and send all the items in one import, so tags keep the triggers and variables they reference.`;
+}
+
+function lists(src: Record<string, unknown>, prefix: string, notes: string[]) {
+  const version: Record<string, unknown> = {};
+  let found = false;
+  let renamed = false;
+  for (const [k, v] of Object.entries(src)) if (!Object.values(VERSION_LISTS).some((names) => names.includes(k))) version[k] = v;
+  for (const [key, names] of Object.entries(VERSION_LISTS)) {
+    const present = names.filter((n) => src[n] !== undefined);
+    if (!present.length) continue;
+    if (present.length > 1)
+      throw new ImportShapeError(`data has both ${present.map((n) => prefix + n).join(" and ")}.`, [
+        { path: prefix + present[1], message: `Send the ${key} list once, under one of ${names.join(", ")}.` },
+      ]);
+    const name = present[0]!;
+    if (name !== key) renamed = true;
+    found = true;
+    let value = src[name];
+    if (isPlain(value)) {
+      // The API's list response passed through: { tag: [...], nextPageToken? }.
+      const inner = names.filter((n) => value && (value as Record<string, unknown>)[n] !== undefined);
+      const rest = Object.keys(value).filter((k) => !names.includes(k) && k !== "nextPageToken");
+      if (inner.length > 1 || rest.length)
+        throw new ImportShapeError(`${prefix}${name} isn't a list of GTM ${key}s.`, [
+          { path: prefix + name, message: `Send an array, or the API list response { "${key}": [...] }. ${GTM_SHAPES}` },
+        ]);
+      if (typeof value.nextPageToken === "string") notes.push(pageNote(`The ${key} list`));
+      value = inner.length ? value[inner[0]!] : [];
+      renamed = true;
+    }
+    version[key] = value;
+  }
+  return { version, found, renamed };
+}
+
 // ------------------------------------------------------------------ the mapper
 
-export function mapGtmExport(raw: unknown): { config: ContainerConfig; report: ImportReport } {
+export function mapGtmExport(raw: unknown): { config: ContainerConfig; report: ImportReport; shape: GtmShape; notes: string[] } {
   if (jsonDepth(raw) > MAX_DEPTH) throw new ImportShapeError(`The export is nested deeper than ${MAX_DEPTH} levels.`);
-  const parsed = gtmExport.safeParse(raw);
+  const input = normalizeGtmData(raw);
+  const parsed = gtmVersion.safeParse(input.version);
   if (!parsed.success)
     throw new ImportShapeError(
-      "This doesn't look like a GTM container export.",
-      parsed.error.issues.slice(0, 20).map((i) => ({ path: i.path.join("."), message: i.message })),
+      input.shape === "api_lists"
+        ? "These Tag Manager API lists don't have the fields of GTM tags, triggers and variables."
+        : "This doesn't look like a GTM container export.",
+      parsed.error.issues.slice(0, 20).map((i) => ({
+        path: (input.shape === "export" ? ["containerVersion", ...i.path] : i.path).join("."),
+        message: i.message,
+      })),
     );
-  const cv: GtmVersion = "containerVersion" in parsed.data ? parsed.data.containerVersion : parsed.data;
+  const cv: GtmVersion = parsed.data;
   const report: ImportReport = { container: cv.container?.publicId, mapped: [], adapted: [], unmapped: [] };
   const out = { variables: [] as Variable[], triggers: [] as Trigger[], tags: [] as Tag[] };
   const taken = { variables: new Set(Object.keys(BUILTIN_VARIABLES)), triggers: new Set<string>(), tags: new Set<string>() };
@@ -1074,6 +1176,11 @@ export function mapGtmExport(raw: unknown): { config: ContainerConfig; report: I
             hint: "This platform's replay app records sessions (replay.<domain>).",
           };
         if (hit) return platformTag(hit[1] as keyof typeof ID_PATTERNS, P, tmpl!.name);
+        if (m && !tmpl && !(cv.customTemplate ?? []).length)
+          return {
+            reason: `GTM tag type "${t.type}" is a custom template, and the import has no customTemplate list to say which one.`,
+            hint: "Import again with the templates too: the export file has them; with the Tag Manager API add customTemplate (templates.list -> template). Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap, X and UET templates map to built-in tags.",
+          };
         return {
           reason: tmpl ? `Custom template "${tmpl.name}" has no built-in equivalent.` : `GTM tag type "${t.type}" has no equivalent here.`,
           hint: "Use a built-in tag type, or custom_html (custom code: needs a verified domain and a claimed account).",
@@ -1119,7 +1226,7 @@ export function mapGtmExport(raw: unknown): { config: ContainerConfig; report: I
   if (out.variables.length) config.variables = out.variables;
   if (out.triggers.length) config.triggers = out.triggers;
   if (out.tags.length) config.tags = out.tags;
-  return { config, report };
+  return { config, report, shape: input.shape, notes: input.notes };
 }
 
 function cssId(id: string | undefined): string | undefined {

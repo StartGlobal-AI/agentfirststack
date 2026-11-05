@@ -7,6 +7,7 @@ import { isIpLiteral, isPublicSuffix, numericTld } from "../lib/domain";
 import type { DestinationInfo } from "./dispatch-plan";
 import { limits } from "./limits";
 import { PROXY_KEY_HEADER } from "./proxy";
+import type { LastScan } from "./scan";
 import { customCodeProblem, verificationInfo } from "./verify";
 
 export interface ContainerRow {
@@ -25,6 +26,37 @@ export interface ContainerRow {
   /** Domain verification (migration 0006): needed to publish custom code. */
   verified_at?: number | null;
   verified_method?: string | null;
+  /** JSON (migration 0009): the last scan's tools (LastScan) and the last non-dry-run import (LastImport). */
+  last_scan?: string | null;
+  last_import?: string | null;
+}
+
+/** container.last_import: written by every draft/import that isn't a dry run. */
+export interface LastImport {
+  at: number;
+  format: "gtm" | "afst";
+  mode: "merge" | "overwrite";
+  summary: { tags: number; triggers: number; variables: number; conversions: number; skipped: number };
+}
+
+/** A stored JSON column (written by this code): null when empty or unreadable. */
+function storedJson<T>(s: string | null | undefined): T | null {
+  if (!s) return null;
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    return null;
+  }
+}
+export const lastScanOf = (row: Pick<ContainerRow, "last_scan">) => storedJson<LastScan>(row.last_scan);
+export const lastImportOf = (row: Pick<ContainerRow, "last_import">) => storedJson<LastImport>(row.last_import);
+
+/** Remember a scan on the container (not a settings change: updated_at stays). */
+export async function recordScan(env: Bindings, id: string, scan: LastScan) {
+  await env.DB.prepare("UPDATE containers SET last_scan = ? WHERE id = ?").bind(JSON.stringify(scan), id).run();
+}
+export async function recordImport(env: Bindings, id: string, imp: LastImport) {
+  await env.DB.prepare("UPDATE containers SET last_import = ? WHERE id = ?").bind(JSON.stringify(imp), id).run();
 }
 
 /** "https://www.Example.com/path" -> "example.com". */
@@ -93,6 +125,9 @@ export function publicContainer(row: ContainerRow, base: string) {
     domain_verified: !!row.verified_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    // What the site had at the last scan, and the last import: null until there is one.
+    last_scan: lastScanOf(row),
+    last_import: lastImportOf(row),
   };
 }
 
