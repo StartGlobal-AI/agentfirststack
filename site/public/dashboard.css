@@ -2009,3 +2009,17 @@ body.app .nav {
 .setup-check .table-wrap {
   overflow-x: auto;
 }
+
+/* ---------- inbox forwarding (project page) ---------- */
+
+.forward-tile .forward-form + .forward-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.forward-tile .forward-form > p {
+  margin-bottom: 8px;
+}
+.forward-tile .inline-fields {
+  flex-wrap: wrap;
+}

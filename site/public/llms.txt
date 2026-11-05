@@ -41,7 +41,9 @@ curl -s -X POST https://agentfirststack.com/v1/signup
 
 ## 3. Full setup (what "set up AgentFirstStack" means)
 
-Do the whole setup in one run, in this order, without stopping to ask the owner anything. Every
+Do the whole setup in one run, in this order. Ask the owner one thing, at the start: should the
+inbox's email be forwarded to them as each one arrives, or as one daily digest (at what hour, in
+their time zone)? If they can't answer, forward each one. Don't stop to ask anything else. Every
 step ends with a check you run yourself; don't move on until it passes, or note why it can't yet.
 Every create call is safe to repeat: it returns the existing thing (`"existing": true`).
 
@@ -61,7 +63,12 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    - the ad and analytics tags already on the site (the tags `scan` reports them).
    Put this list in `AGENTFIRSTSTACK.md`. The steps below cover every item on it.
 3. **Inbox.** Create one for the project (mail manual). Use its address whenever the setup needs an
-   email for a third-party service, and `wait_for_email` / `latest-code` for the code.
+   email for a third-party service, and `wait_for_email` / `latest-code` for the code. Forward its
+   mail to the owner the way they chose, so nothing is missed once you stop:
+   `PATCH /v1/inboxes/:id {"forward":{"mode":"each"}}` or
+   `{"forward":{"mode":"digest","digest_hour":8,"timezone":"Europe/Berlin"}}`. It goes to everyone
+   who claims the project (their Google sign-in email) and starts when the owner claims it; they can
+   change it in the dashboard.
 4. **Analytics.** Create the site for the production domain (analytics manual).
    - A goal for every conversion and main action from step 2: event goals for clicks and forms,
      pageview goals for thank-you pages.

@@ -62,12 +62,24 @@ export interface ContainerItem {
   live_version: number | null;
   created_at: number;
 }
+export interface InboxForward {
+  mode: "each" | "digest" | "off";
+  digest_hour: number;
+  timezone: string;
+  /** Members with a verified email: who the mail goes to (the addresses are never returned). */
+  recipients: number;
+  waiting_for_owner: boolean;
+  last_forwarded_at?: number | null;
+  last_digest_at?: number | null;
+}
 export interface InboxItem {
   id: string;
   address: string;
   display_name: string | null;
   last_message_at: number | null;
   created_at: number;
+  /** Where the inbox's mail goes once the agent stops reading it (absent on older mail deployments). */
+  forward?: InboxForward;
 }
 
 export interface ReplaySiteItem {

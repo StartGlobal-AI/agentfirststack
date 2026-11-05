@@ -5,6 +5,7 @@ import { siteBase } from "./google";
 import {
   type ContainerItem,
   callService,
+  type InboxForward,
   type InboxItem,
   projectResources,
   type ReplaySiteItem,
@@ -79,7 +80,7 @@ export interface ReportRow {
 /** The owner's view: each part of the setup, and which checks' details say what it is. */
 const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] = [
   { part: "Project", ids: ["project.named"], show: ["project.named"] },
-  { part: "Inbox", ids: ["mail.inbox"], show: ["mail.inbox"] },
+  { part: "Inbox", ids: ["mail.inbox", "mail.forwarding"], show: ["mail.forwarding"] },
   {
     part: "Analytics",
     ids: ["analytics.site", "analytics.receiving", "analytics.domain_verified", "analytics.server_events"],
@@ -155,7 +156,8 @@ export function reportRows(checks: SetupCheck[]): ReportRow[] {
           c.status === "ok" ? c.detail : `${STATUS_WORD[c.status]}: ${c.title.charAt(0).toLowerCase()}${c.title.slice(1)}. ${c.detail}`,
         )
         .join(" ");
-      rows.push({ part: def.part, ...(domain ? { domain } : {}), status, details });
+      // A row whose usual detail check isn't there (an older service): say what its first check found.
+      rows.push({ part: def.part, ...(domain ? { domain } : {}), status, details: details || cs[0]!.detail });
     }
   }
   return rows;
@@ -370,7 +372,11 @@ export async function setupReport(
   );
 
   // Step 3: an inbox.
-  if (has.mail) checks.push(inboxCheck(resources.inboxes, M));
+  if (has.mail) {
+    checks.push(inboxCheck(resources.inboxes, M));
+    const fwd = forwardCheck(resources.inboxes, M);
+    if (fwd) checks.push(fwd);
+  }
 
   // Steps 4-6, per domain.
   const domainsOf = (items: { domain: string }[] | null) => (items ?? []).map((i) => normDomain(i.domain));
@@ -509,6 +515,33 @@ export async function setupReport(
     report_markdown: reportMarkdown({ project: { id: accountId, name, claimed }, ready, checks, counts }, rows),
     checked_at: Date.now(),
   };
+}
+
+/** "each email as it arrives" / "a daily digest at 08:00 (Europe/Berlin)" */
+export function forwardText(f: InboxForward): string {
+  if (f.mode === "off") return "not forwarded";
+  return f.mode === "each"
+    ? "forwarded to the owner as each email arrives"
+    : `forwarded to the owner as a daily digest at ${String(f.digest_hour).padStart(2, "0")}:00 (${f.timezone})`;
+}
+
+/** Step 3: the inbox's mail reaches a person after the agent stops reading it. */
+function forwardCheck(inboxes: InboxItem[] | null, M: string): SetupCheck | null {
+  const withSetting = (inboxes ?? []).filter((i) => i.forward);
+  if (!withSetting.length) return null;
+  const base = { id: "mail.forwarding", step: 3, service: "mail" as const, title: "The inbox's email reaches the owner" };
+  const off = withSetting.filter((i) => i.forward!.mode === "off");
+  if (off.length)
+    return {
+      ...base,
+      status: "warning",
+      detail: `Not forwarded: ${list(off.map((i) => i.address))}. Once your agent stops, nobody reads ${off.length === 1 ? "it" : "them"} (verification codes, password resets, service notices). Fine if the owner chose that.`,
+      fix: `Ask the owner: each email as it arrives, or a daily digest? Then PATCH ${M}/v1/inboxes/${off[0]!.id} {"forward":{"mode":"each"}} or {"forward":{"mode":"digest","digest_hour":8,"timezone":"Europe/Berlin"}}`,
+    };
+  const on = withSetting.map(
+    (i) => `${i.address}: ${forwardText(i.forward!)}${i.forward!.waiting_for_owner ? " (starts when the owner claims the project)" : ""}`,
+  );
+  return { ...base, status: "ok", detail: `${on.join("; ")}.` };
 }
 
 function inboxCheck(inboxes: InboxItem[] | null, M: string): SetupCheck {

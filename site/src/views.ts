@@ -1,5 +1,5 @@
 import { type SafeHtml, html } from "./html";
-import type { Resources } from "./services";
+import type { InboxItem, Resources } from "./services";
 import { STATUS_MARK, STATUS_WORD, type SetupReport } from "./setup-check";
 
 /** Pieces of HTML shared by the claim page and the dashboard. */
@@ -112,5 +112,47 @@ export function setupView(r: SetupReport, finishPrompt: string): SafeHtml {
     )}</tbody>
   </table></div>
   ${r.ready ? "" : askLine(finishPrompt, null)}
+</section>`;
+}
+
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+
+/**
+ * Where each inbox's email goes once the agent stops reading it: each email as it arrives, one
+ * daily digest, or nowhere. The owner changes it here (same as PATCH /v1/inboxes/:id {forward}).
+ */
+export function forwardView(projectId: string, inboxes: InboxItem[] | null, opts: { owner: boolean; csrf: SafeHtml }): SafeHtml {
+  const withSetting = (inboxes ?? []).filter((i) => i.forward);
+  if (!withSetting.length) return html``;
+  return html`<section class="tile forward-tile" aria-labelledby="forward-title">
+  <div class="tile-head"><h2 id="forward-title">Email from your inbox</h2></div>
+  <p class="muted small">Your agent uses ${withSetting.length === 1 ? "this inbox" : "these inboxes"} for sign-ups and codes. Its email comes to everyone on this project, as each one arrives or as one daily digest.</p>
+  ${withSetting.map((i) => {
+    const f = i.forward!;
+    const state =
+      f.mode === "off"
+        ? "Not forwarded: nobody gets this mail once your agent stops."
+        : f.mode === "each"
+          ? "Each email is forwarded as it arrives."
+          : `One digest a day at ${String(f.digest_hour).padStart(2, "0")}:00 (${f.timezone}).`;
+    return opts.owner
+      ? html`<form class="forward-form" method="post" action="/dashboard/projects/${projectId}/inboxes/${i.id}/forward">
+    ${opts.csrf}
+    <p><b>${i.address}</b> <span class="muted small">${state}</span></p>
+    <div class="inline-fields">
+      <label class="field"><span>Send me</span><select name="mode">
+        <option value="each"${f.mode === "each" ? html` selected` : ""}>Each email as it arrives</option>
+        <option value="digest"${f.mode === "digest" ? html` selected` : ""}>A daily digest</option>
+        <option value="off"${f.mode === "off" ? html` selected` : ""}>Nothing</option>
+      </select></label>
+      <label class="field"><span>Digest at</span><select name="digest_hour">${HOURS.map(
+        (h) => html`<option value="${String(h)}"${h === f.digest_hour ? html` selected` : ""}>${String(h).padStart(2, "0")}:00</option>`,
+      )}</select></label>
+      <label class="field"><span>Time zone</span><input type="text" name="timezone" value="${f.timezone}" maxlength="64" placeholder="Europe/Berlin" autocomplete="off"></label>
+      <button class="btn btn-quiet" type="submit">Save</button>
+    </div>
+  </form>`
+      : html`<p><b>${i.address}</b> <span class="muted small">${state} Only the project's owner can change it.</span></p>`;
+  })}
 </section>`;
 }

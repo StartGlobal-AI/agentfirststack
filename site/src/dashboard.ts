@@ -6,10 +6,10 @@ import { siteBase } from "./google";
 import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page } from "./html";
 import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
 import { type BuildKind, buildPrompt } from "./dashboard-prompt";
-import { projectResources } from "./services";
+import { callService, projectResources } from "./services";
 import { setupReport } from "./setup-check";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
-import { askLine, askText, plural, resourceCounts, resourcesView, setupView } from "./views";
+import { askLine, askText, forwardView, plural, resourceCounts, resourcesView, setupView } from "./views";
 
 /**
  * /dashboard: server-rendered pages for signed-in people. Every project route goes through
@@ -67,7 +67,7 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project, completely, and verify it yourself. Read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values), and show me the tables of what's set up and what passed, and send me a claim link for the project.";
+  "Set up AgentFirstStack for this project, completely, and verify it yourself. First ask me one question: should the project's inbox email be forwarded to me as each one arrives, or as one daily digest (at what time)? Then read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Apart from that question, don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values), and show me the tables of what's set up and what passed, and send me a claim link for the project.";
 
 /** For a project whose setup check isn't ready: the agent re-runs the check and fixes what it reports. */
 const finishPrompt = (base: string) =>
@@ -185,6 +185,7 @@ dashboard.get("/projects/:id", async (c) => {
     body: html`${tabs(p, "overview")}
 ${resourcesView(resources, { asks: true })}
 ${setup ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)))}</div>` : ""}
+${(resources.inboxes ?? []).some((i) => i.forward) ? html`<div class="bento">${forwardView(p.id, resources.inboxes, { owner: p.role === "owner", csrf: csrfField(s) })}</div>` : ""}
 <div class="bento">
 <section class="tile build-own" aria-labelledby="build-title">
   <div class="build-copy">
@@ -221,6 +222,40 @@ ${setup ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)))}
   </form>
 </div>`,
   });
+});
+
+// Where an inbox's email goes (the mail service's PATCH /v1/inboxes/:id {forward}, as this project).
+dashboard.post("/projects/:id/inboxes/:inbox/forward", async (c) => {
+  const form = await readForm(c);
+  const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
+  requireOwner(p, "change where the inbox's email goes");
+  const inbox = c.req.param("inbox");
+  if (!/^inb_[0-9a-z]{4,40}$/.test(inbox)) throw new ApiError(404, "not_found", "No such inbox in this project.");
+  const mode = form.mode === "each" || form.mode === "digest" || form.mode === "off" ? form.mode : null;
+  const hour = Number(form.digest_hour);
+  if (!mode || !Number.isInteger(hour) || hour < 0 || hour > 23)
+    throw new ApiError(
+      400,
+      "bad_request",
+      "Choose what to send and a digest hour.",
+      "Each email, a daily digest, or nothing; the hour is 00-23.",
+    );
+  const timezone =
+    String(form.timezone ?? "")
+      .trim()
+      .slice(0, 64) || "UTC";
+  const res = await callService<{ error?: { message?: string; hint?: string } }>(c.env, "mail", p.id, `/v1/inboxes/${inbox}`, {
+    method: "PATCH",
+    body: { forward: { mode, digest_hour: hour, timezone } },
+  });
+  if (!res.ok)
+    throw new ApiError(
+      res.status === 404 ? 404 : res.status < 500 ? 400 : 502,
+      "forward_not_saved",
+      res.json?.error?.message ?? "The mail service didn't save it.",
+      res.json?.error?.hint ?? "Try again in a minute.",
+    );
+  return redirect(`/dashboard/projects/${p.id}`);
 });
 
 dashboard.post("/projects/:id/rename", async (c) => {
