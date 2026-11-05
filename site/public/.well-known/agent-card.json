@@ -66,7 +66,7 @@
     {
       "id": "analytics",
       "name": "Web analytics",
-      "description": "Run analytics_* tools: create a site and get its snippet, verify the install, stats by country, page, source and device, goals, funnels, realtime, server events, read-only SQL.",
+      "description": "Run analytics_* tools: create a site and get its snippet, verify the install, stats by country, page, source and device, goals, funnels, realtime, server events, AI crawler visits, history imported from GA4, Plausible or other tools, read-only SQL.",
       "tags": ["analytics", "countries", "goals", "funnels"],
       "examples": [
         "{\"tool\":\"analytics_get_stats\",\"arguments\":{\"site_id\":\"site_...\",\"period\":\"7d\",\"breakdown\":\"country\"}}"
@@ -77,7 +77,7 @@
     {
       "id": "tags",
       "name": "Tags and conversion tracking",
-      "description": "Run tags_* tools: containers, site scan, conversion setup for GA4, Google Ads, Meta and TikTok, test events, publish, event log.",
+      "description": "Run tags_* tools: containers, site scan, GTM container import, conversion setup for GA4, Google Ads, Meta and TikTok, test events, publish, event log.",
       "tags": ["tag manager", "conversions", "meta capi", "google ads"],
       "examples": ["{\"tool\":\"tags_scan_site\",\"arguments\":{\"container_id\":\"ctr_...\"}}"],
       "inputModes": ["application/json"],
@@ -86,7 +86,7 @@
     {
       "id": "mail",
       "name": "Email inboxes",
-      "description": "Run mail_* tools: create an inbox, wait for a verification email with the code and link extracted, read, reply, send, custom domains, webhooks.",
+      "description": "Run mail_* tools: create an inbox, wait for a verification email with the code and link extracted, read, reply, send, forward to the project's people, custom domains, webhooks.",
       "tags": ["email", "inbox", "verification code"],
       "examples": ["{\"tool\":\"mail_create_inbox\",\"arguments\":{\"username\":\"acme-signups\"}}"],
       "inputModes": ["application/json"],
@@ -102,8 +102,8 @@
     {
       "id": "account",
       "name": "Account and handover",
-      "description": "Run afs_* tools: afs_check_setup says what the setup still lacks and how to fix it; afs_create_claim_link gives the owner a link to claim the project with Google sign-in.",
-      "tags": ["account", "claim"],
+      "description": "Run afs_* tools: afs_check_setup says what the setup still lacks and how to fix it; afs_test_setup and afs_check_test_visit send test traffic through every service and check a browser test visit; afs_update_project renames the project; afs_create_claim_link gives the owner a link to claim the project with Google sign-in; afs_delete_project deletes an unclaimed project (restorable for 7 days).",
+      "tags": ["account", "setup check", "claim"],
       "examples": ["{\"tool\":\"afs_check_setup\",\"arguments\":{}}", "{\"tool\":\"afs_create_claim_link\",\"arguments\":{}}"],
       "inputModes": ["application/json"],
       "outputModes": ["application/json"]

@@ -55,7 +55,7 @@
       "url": "https://agentfirststack.com/gmail-mcp",
       "image": "https://agentfirststack.com/og/gmail-mcp.png",
       "datePublished": "2026-11-04",
-      "dateModified": "2026-11-04",
+      "dateModified": "2026-11-05",
       "inLanguage": "en",
       "author": { "@id": "https://agentfirststack.com/#org" },
       "publisher": { "@id": "https://agentfirststack.com/#org" },
@@ -140,7 +140,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Gmail MCP</span></nav>
       <h1>Gmail MCP: what it does, and when an agent needs its own inbox</h1>
       <p class="lede">A Gmail MCP server connects an AI agent to a person's existing Gmail through OAuth, so it can search, read, label and draft that person's mail. When the agent needs an address of its own, to sign up for services and read verification codes, give it a separate inbox. AgentFirstStack Mail creates one with an API key and no OAuth.</p>
-      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+      <p class="meta">Updated <time datetime="2026-11-05">5 November 2026</time></p>
 
 
       <h2 id="google">What Google's Gmail MCP server does</h2>
@@ -215,7 +215,7 @@ claude mcp add --transport http afs-mail https://mail.agentfirststack.com/mcp \
 <tr><th scope="row">Send</th><td>No send tool. <code>create_draft</code> writes a draft the person sends from Gmail</td><td><code>send_email</code> and <code>reply_to_message</code>; shared-domain inboxes reply only to people who wrote first</td></tr>
 <tr><th scope="row">Wait for new mail</th><td>No wait tool in the list</td><td><code>wait_for_email</code> and <code>get_latest_code</code> block up to 120 s</td></tr>
 <tr><th scope="row">Codes and links</th><td>Not in the tool list</td><td>Extracted from every message; <code>get_latest_code</code> requires an authenticated sender by default</td></tr>
-<tr><th scope="row">Labels and drafts</th><td>Yes</td><td>No</td></tr>
+<tr><th scope="row">Labels and drafts</th><td>Yes</td><td>Labels on messages and threads; no drafts</td></tr>
 <tr><th scope="row">Untrusted content</th><td>Google says to screen prompts and responses for prompt injection</td><td>Bodies come back inside UNTRUSTED fences, and the tool descriptions say so</td></tr>
 </tbody>
 </table>

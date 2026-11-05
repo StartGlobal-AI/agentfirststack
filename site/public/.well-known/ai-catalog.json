@@ -23,7 +23,7 @@
     {
       "identifier": "urn:air:agentfirststack.com:mcp:analytics",
       "displayName": "AgentFirstStack Analytics MCP server",
-      "description": "Cookieless web analytics: sites, install verification, stats by country, page, source and device, goals, revenue, funnels, realtime and read-only SQL.",
+      "description": "Cookieless web analytics: sites, install verification, stats by country, page, source and device, goals, revenue, funnels, realtime, AI crawler visits, imports from GA4, Plausible and other tools, and read-only SQL.",
       "type": "application/mcp-server-card+json",
       "url": "https://agentfirststack.com/.well-known/mcp/analytics.json",
       "representativeQueries": [
@@ -35,7 +35,7 @@
     {
       "identifier": "urn:air:agentfirststack.com:mcp:tags",
       "displayName": "AgentFirstStack Tags MCP server",
-      "description": "Tag manager and server-side conversion router: containers, site scan, conversion setup, GA4, Google Ads, Meta and TikTok destinations with test events, publish and rollback.",
+      "description": "Tag manager and server-side conversion router: containers, site scan, GTM container import, conversion setup, GA4, Google Ads, Meta and TikTok destinations with test events, publish and rollback.",
       "type": "application/mcp-server-card+json",
       "url": "https://agentfirststack.com/.well-known/mcp/tags.json",
       "representativeQueries": [
@@ -71,7 +71,7 @@
     {
       "identifier": "urn:air:agentfirststack.com:docs:manual",
       "displayName": "AgentFirstStack manual for agents",
-      "description": "The overview every agent reads first: signup, services, common tasks, ad account connection, MCP.",
+      "description": "The overview every agent reads first: signup, services, the full setup with its check and test, moving from other tools, ad account connection, MCP.",
       "type": "text/markdown",
       "url": "https://agentfirststack.com/llms.txt",
       "representativeQueries": ["how do I sign up for AgentFirstStack", "AgentFirstStack API documentation"]
@@ -87,7 +87,7 @@
     {
       "identifier": "urn:air:agentfirststack.com:skill:agentfirststack-setup",
       "displayName": "Agent skill: set up AgentFirstStack",
-      "description": "Step-by-step skill for setting up analytics, conversion tracking and an inbox for a project.",
+      "description": "Step-by-step skill for setting up analytics, conversion tracking, an inbox and session replay for a project, and testing each part.",
       "type": "text/markdown",
       "url": "https://agentfirststack.com/.well-known/agent-skills/agentfirststack-setup/SKILL.md",
       "representativeQueries": ["skill to set up website analytics", "how should an agent install conversion tracking"]

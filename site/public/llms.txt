@@ -355,11 +355,12 @@ each with the prompt to paste into you (they can turn those off).
 
 ### The setup check
 
-One call checks the project against the full setup (section 3): its name, the inbox, analytics
-(receiving events, domain verified, a goal per action and whether each has counted, the owner's
-email, weekly report and alerts), tags (snippet seen, published, an event per action, events
-reaching analytics with a goal there, tags firing, ad platform deliveries), replay (linked,
-verified, recording) and the claim.
+One call checks the project against the full setup (section 3): its name, the inbox and where its
+email goes, analytics (receiving events, domain verified, a goal per action and whether each has
+counted, AI crawler reporting, the owner's email, weekly report and alerts), the tools the site
+used before (brought over, and our numbers compared with theirs), tags (snippet seen, published,
+an event per action, events reaching analytics with a goal there, tags firing, ad platform
+deliveries), replay (linked, verified, recording, consent) and the claim.
 
 ```sh
 curl -s https://agentfirststack.com/v1/setup -H "$H"     # ?domain=example.com  ?services=analytics,tags
@@ -548,6 +549,8 @@ moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/conta
 - Addresses like admin@, postmaster@ and other role names can't be claimed.
 - Replay: 5 sites per account, 200 recorded sessions per site a day, sessions up to 30 minutes
   and 2 MB, recordings kept up to 14 days, 5 active share links per site.
+- Inbox forwarding to the project's people: up to 100 a day per account; past that, the rest goes
+  into one digest.
 
 Need more? Self-host: every service is a Cloudflare Worker (see the repository README).
 

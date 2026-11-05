@@ -74,7 +74,7 @@ const CLAIM_TOOL: Tool = {
   name: "afs_create_claim_link",
   title: "Create a claim link for the project's owner",
   description:
-    "Returns a single-use URL (valid 7 days) for the person who owns this project. They open it, sign in with Google and see everything this key set up (sites, tag containers, inboxes) in a dashboard, where they can manage keys, invite teammates and connect chat apps. Call it when you finish setting up and give the owner the URL. Agent keys keep working after the project is claimed.",
+    "Returns a single-use URL (valid 7 days) for the person who owns this project. They open it, sign in with Google and see everything this key set up (sites, tag containers, inboxes, replay sites) in a dashboard, where they can manage keys, invite teammates and connect chat apps. Call it when you finish setting up and give the owner the URL. Agent keys keep working after the project is claimed.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 };
@@ -111,7 +111,7 @@ const CHECK_TOOL: Tool = {
   name: "afs_check_setup",
   title: "Check this project's setup",
   description:
-    "Checks the project against the full setup (llms.txt section 3): name, inbox, analytics (receiving, verified, goals and whether each counted, owner email, weekly report, alerts), tags (snippet seen, published, events, events to analytics with goals, tags firing, ad platform deliveries), replay (linked, verified, recording) and the claim. Each check is ok, missing, failing, warning, waiting_on_owner or unavailable, with the call that fixes it; next_steps lists them in order. Reads only and fetches nothing from the website. Run it when you finish a setup and after every fix until ready is true. Same as GET /v1/setup.",
+    "Checks the project against the full setup (llms.txt section 3): name, inbox (and where its email goes), analytics (receiving, verified, goals and whether each counted, AI crawler reporting, owner email, weekly report, alerts), other tools (what the site used before: brought over, and our numbers compared), tags (snippet seen, published, events, events to analytics with goals, tags firing, ad platform deliveries), replay (linked, verified, recording, consent) and the claim. Each check is ok, missing, failing, warning, waiting_on_owner or unavailable, with the call that fixes it; next_steps lists them in order. Reads only and fetches nothing from the website. Run it when you finish a setup and after every fix until ready is true. Same as GET /v1/setup.",
   inputSchema: {
     type: "object",
     properties: {

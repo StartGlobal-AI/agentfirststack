@@ -55,7 +55,7 @@
       "url": "https://agentfirststack.com/google-analytics-mcp",
       "image": "https://agentfirststack.com/og/google-analytics-mcp.png",
       "datePublished": "2026-11-04",
-      "dateModified": "2026-11-04",
+      "dateModified": "2026-11-05",
       "inLanguage": "en",
       "author": { "@id": "https://agentfirststack.com/#org" },
       "publisher": { "@id": "https://agentfirststack.com/#org" },
@@ -95,7 +95,7 @@
           "name": "Can AgentFirstStack import my GA4 history?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. It counts from the moment its snippet is live. If you need the history, keep GA4 running; both scripts can be on the same page."
+            "text": "Yes, as daily totals and breakdowns by page, source, country and device. Export a GA4 report as CSV, or run it with the Data API (runReport, also through Google's MCP server), and send it to POST /v1/sites/:id/imports. Reports can then include those days, and imports/compare checks our daily visitors against GA4's while both run, so you know when GA4 can go."
           }
         },
         {
@@ -140,7 +140,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Google Analytics MCP</span></nav>
       <h1>Google Analytics MCP compared with AgentFirstStack</h1>
       <p class="lede">The Google Analytics MCP server, published by Google, lets an AI agent read reports from GA4 properties you already have. It runs locally and needs a Google Cloud project, two enabled APIs and read-only credentials. AgentFirstStack's MCP lets the agent create the analytics itself: one request for a key, then a site, the snippet, a verify check and the numbers.</p>
-      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+      <p class="meta">Updated <time datetime="2026-11-05">5 November 2026</time></p>
 
 
       <h2 id="prompt">Set it up with one prompt</h2>
@@ -155,7 +155,7 @@
    curl -X POST https://agentfirststack.com/v1/signup
    Save api_key in .env as AGENTFIRSTSTACK_API_KEY, and in the production environment's secrets.
 
-3. Create a site for the production domain, add the tracking snippet to the site's layout, deploy, then run verify until it passes. If the site already has Google Analytics, leave it in place.
+3. Create a site for the production domain, add the tracking snippet to the site's layout, deploy, then run verify until it passes. If the site already has Google Analytics, leave it in place and bring its history over (the manual's "Move from another tool").
 
 4. Create goals for sign-ups and purchases. Send the ones only the server knows about (paid orders) as server events.
 
@@ -208,7 +208,7 @@ curl -s "$A/v1/sites/$SITE/stats?period=7d&amp;breakdown=channel" -H "$H"</code>
 <tr><th scope="row">Auth</th><td>Google credentials, <code>analytics.readonly</code></td><td>An API key; OAuth 2.1 for chat apps</td></tr>
 <tr><th scope="row">Writes</th><td>None, per Google's page</td><td>Sites, goals, funnels, annotations, server events, payments</td></tr>
 <tr><th scope="row">Install check</th><td>The Realtime report, or <code>run_realtime_report</code></td><td><code>analytics_verify_install</code>, with fixes</td></tr>
-<tr><th scope="row">Data</th><td>GA4's reports, history and Google Ads links</td><td>Cookieless counts, channels including AI assistants, UTM tags, goals, funnels, revenue from Stripe or any provider</td></tr>
+<tr><th scope="row">Data</th><td>GA4's reports, history and Google Ads links</td><td>Cookieless counts, channels including AI assistants, UTM tags, goals, funnels, revenue from Stripe or any provider, and GA4 history imported as daily totals</td></tr>
 <tr><th scope="row">License</th><td>Apache-2.0 (the MCP server)</td><td>AGPL-3.0 (the whole service; the browser scripts are MIT)</td></tr>
 </tbody>
 </table>
@@ -240,7 +240,7 @@ curl -s "$A/v1/sites/$SITE/stats?period=7d&amp;breakdown=channel" -H "$H"</code>
 <h3>Can the Google Analytics MCP server create a GA4 property?</h3>
 <p>No. Google's page says it can't create, modify or delete your Analytics configuration. Create the property and data stream in Google Analytics first, or call the Admin API directly with the <code>analytics.edit</code> scope.</p>
 <h3>Can AgentFirstStack import my GA4 history?</h3>
-<p>No. It counts from the moment its snippet is live. If you need the history, keep GA4 running; both scripts can be on the same page.</p>
+<p>Yes, as daily totals and breakdowns by page, source, country and device. Export a GA4 report as CSV, or run it with the Data API (<code>runReport</code>, also through Google's MCP server), and send it to <code>POST /v1/sites/:id/imports</code>. Reports can then include those days, and <code>imports/compare</code> checks our daily visitors against GA4's while both run, so you know when GA4 can go.</p>
 <h3>What does AgentFirstStack cost?</h3>
 <p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can also run it yourself on Cloudflare Workers.</p>
 

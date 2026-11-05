@@ -9,8 +9,8 @@ agentfirststack.com, so this path is exercised on every release.
 - A Cloudflare account on the **Workers Paid** plan. Queues and Email Sending to arbitrary
   recipients need it; everything else runs on Free.
 - A domain whose DNS is on Cloudflare (a zone in that account). The landing page and signup go on
-  the apex, the services on `analytics.`, `tags.` and `mail.` subdomains, and inboxes on the apex
-  (`anything@yourdomain`) unless you set a separate `mail_domain`.
+  the apex, the services on `analytics.`, `tags.`, `mail.` and `replay.` subdomains, and inboxes
+  on the apex (`anything@yourdomain`) unless you set a separate `mail_domain`.
 - Node 22 or newer, pnpm 10 (`corepack enable`), and `wrangler login` done once.
 
 ## Deploy in four commands
@@ -19,7 +19,7 @@ agentfirststack.com, so this path is exercised on every release.
 git clone https://github.com/StartGlobal-AI/agentfirststack && cd agentfirststack
 pnpm install
 
-# 1. Create the D1 databases, R2 bucket and queues; write deploy/mystack.json and its secrets file
+# 1. Create the D1 databases, R2 buckets and queues; write deploy/mystack.json and its secrets file
 pnpm afs init mystack --domain example.com --account <your-account-id>
 
 # 2. Generate configs, apply D1 migrations, deploy the five Workers, set their secrets
@@ -79,6 +79,7 @@ agentfirststack.com sets all of these (its profile is kept private). All are off
 | `EXTRA_RESERVED_USERNAMES` | mail | Your brand and role names, on top of the built-in reserved list |
 | `MAX_MESSAGES_PER_INBOX` | mail | Messages an inbox may hold; more are rejected at SMTP |
 | `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | mail | Inbound messages per account per UTC day |
+| `MAX_FORWARDS_PER_ACCOUNT_PER_DAY` | mail | Emails forwarded from inboxes to the project's people per account per UTC day (default 100, `0` = off); never counts toward `SEND_DAILY_LIMIT` |
 | `MAX_BLOB_BYTES_PER_ACCOUNT` | mail | Stored mail (raw messages, HTML, attachments) per account; full means inbound is rejected at SMTP (default 1 GiB) |
 | `MAX_FEED_EVENTS_PER_DAY` / `MAX_LIST_ENTRIES_PER_ACCOUNT` / `MAX_SCHEDULED_PER_ACCOUNT` / `MAX_INBOX_CLEARS_PER_DAY` / `MAX_ATTACHMENT_TEXT_PER_DAY` | mail | Event-feed rows per account a day (5000), allow/block entries (100), scheduled sends waiting (20), inbox clears a day (off), attachment-to-text conversions a day (20); each has an `UNCLAIMED_` variant |
 | `DELIVERY_EVENTS_QUEUE` | mail | Turns on delivery status: the queue your Email Sending event subscriptions publish to (see the mail README, "Delivery status") |
@@ -131,11 +132,11 @@ newer version over an older one is safe. Read `CHANGELOG.md` before upgrading ac
 repository.
 
 - `ADMIN_TOKEN`: operator access (signup when closed, admin-only mail features).
-- `INTERNAL_TOKEN` (top level, set on all five Workers): lets the site's dashboard read a
-  project's sites, containers and inboxes from the services over service bindings. `init`
-  generates it (and adds it to an older secrets file when you re-run it). Without it the dashboard
-  shows those lists as unavailable, and a tag container's analytics destination needs an API key;
-  nothing else changes.
+- `INTERNAL_TOKEN` (top level, set on all five Workers): lets the site call the services as a
+  project over service bindings: the dashboard, the setup check and test, and erasing deleted
+  projects. `init` generates it (and adds it to an older secrets file when you re-run it). Without
+  it the dashboard and the setup check show the services as unavailable, deleted projects are
+  never erased, and a tag container's analytics destination needs an API key.
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (site, optional): turn on "Sign in with Google" for
   claim links, the dashboard and OAuth connectors. Put them under `"site"` (or at the top level;
   they only go to the site). See [Sign-in for people](#sign-in-for-people-optional).
@@ -186,8 +187,10 @@ ChatGPT over OAuth ([accounts.md](accounts.md)):
 
 `pnpm afs config` sets `AUTH_ISSUER=https://<domain>` on every app, so each service's RFC 9728
 metadata names the site as the OAuth authorization server. The site's daily cron (03:17 UTC)
-deletes expired OAuth tokens, codes, sessions and claim links. The privacy and terms pages in
-`site/public/` describe the hosted service; edit them for your deployment.
+deletes expired OAuth tokens, codes, sessions and claim links, writes setup notices for projects
+whose agent hasn't seen new setup items, and erases deleted projects 7 days after deletion in
+every service. The privacy and terms pages in `site/public/` describe the hosted service; edit
+them for your deployment.
 
 ## Remove a deployment
 
@@ -195,5 +198,5 @@ deletes expired OAuth tokens, codes, sessions and claim links. The privacy and t
 cd analytics && pnpm exec wrangler delete -c wrangler.deploy.json   # repeat per app
 ```
 
-Then delete the D1 databases, R2 bucket and queues named in your profile (`<prefix>-*`) from the
+Then delete the D1 databases, R2 buckets and queues named in your profile (`<prefix>-*`) from the
 dashboard or with `wrangler d1 delete`, `wrangler r2 bucket delete` and `wrangler queues delete`.

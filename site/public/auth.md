@@ -103,10 +103,14 @@ owner (or a member, if it already has one). Your key keeps working.
 ## Managing credentials
 
 - `GET /v1/me` returns the account and the calling key.
-- `POST /v1/keys {"name": "ci", "scope": "read"}` creates another key (shown once). At most 50
-  active keys per account; OAuth access tokens can't create keys.
+- `POST /v1/keys {"name": "ci", "scope": "read"}` creates another key (shown once). At most 25
+  active keys per account on the hosted service (10 until a person claims it); OAuth access tokens
+  can't create keys.
 - `DELETE /v1/keys/:id` revokes a key immediately.
 - People who claimed the project manage keys and connected apps at https://agentfirststack.com/dashboard.
+- Deleting the project stops every key and OAuth token at once (`403 project_deleted`). Its owner
+  deletes it in the dashboard; an unclaimed project's own agent can, with a full-access key, when
+  the person asks: `DELETE /v1/me {"confirm":"acct_..."}` (MCP `afs_delete_project`).
 
 There is no password reset for agents, because there is no email. Keep a second key in the
 owner's secrets manager, or give the owner a claim link. Full manual: https://agentfirststack.com/llms.txt

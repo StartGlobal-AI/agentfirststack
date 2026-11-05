@@ -8,7 +8,7 @@ How to run and maintain a deployment, including the hosted one at agentfirststac
 1. Merge to `main` with CI green (`pnpm typecheck`, `pnpm test`).
 2. Add the release to `CHANGELOG.md` and bump the version in the root `package.json`.
 3. `pnpm afs deploy hosted`. This applies D1 migrations, then deploys in dependency order: site
-   first (it owns the identity database), then analytics, tags and mail.
+   first (it owns the identity database), then analytics, tags, mail and replay.
 4. `pnpm afs check hosted`. The live check signs up, uses the key on every service, lists the MCP
    tools and deletes everything it created. Don't call a release done until this passes.
 5. Tag the commit: `git tag v0.x.y && git push --tags`.
@@ -40,7 +40,7 @@ deploy.
 |---|---|
 | `ADMIN_TOKEN` | Safe any time: edit the file and deploy |
 | `SALT_SECRET` (analytics) | Safe; visitor ids for the current day are split once, nothing else changes |
-| `ENCRYPTION_KEY` (analytics, tags, mail) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it (analytics: Stripe signing secrets and restricted keys, Polar / Paddle / LemonSqueezy signing secrets, alert destination URLs and signing secrets). Keep it backed up |
+| `ENCRYPTION_KEY` (analytics, tags, mail, replay) | **Not rotatable in place.** Stored credentials and webhook secrets are sealed with it (analytics: Stripe signing secrets and restricted keys, Polar / Paddle / LemonSqueezy signing secrets, alert destination URLs and signing secrets). Keep it backed up |
 | `SIGNUP_TOKEN` | Safe; callers need the new value |
 | `INTERNAL_TOKEN` (all apps) | Safe: edit the file and deploy all five apps (`pnpm afs deploy <profile>`). Between the first and last app, the dashboard may show resource lists as unavailable |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (site) | Safe; create a new secret in Google Cloud Console, deploy the site, then delete the old one. Existing sessions keep working |
@@ -50,8 +50,15 @@ deploy.
 - **site**, daily at 03:17 UTC: deletes expired OAuth access tokens (API keys with `expires_at`),
   authorization codes, refresh tokens, sessions and claim links, unusable grants older than a
   month, OAuth clients nobody authorized, and `signup_log` rows older than two days (the shared
-  signup counters; signup itself never prunes). Logged as `cron.purge` with counts.
-- **mail**, hourly: retention purges (see the mail README).
+  signup counters; signup itself never prunes). Logged as `cron.purge` with counts. It also
+  prunes emails older than 30 days (`cron.email_prune`), writes setup notices (`cron.notices`),
+  queues setup reminders (`cron.setup_reminders`) and erases deleted projects past their 7 days
+  (`cron.project_purge`).
+- **site**, hourly at :47: sends queued and retried emails and the reminders the day before a
+  deleted project is erased (`cron.email`).
+- **analytics**, every 5 minutes: alerts, reports, Stripe backfills and exchange rates.
+- **mail**, hourly at :17: retention purges and forwarding digests (see the mail README).
+- **replay**, hourly at :23: retention and R2 cleanup (see the replay README).
 
 ## Watching it
 
@@ -122,27 +129,6 @@ When something gets through, in order of escalation:
 3. **Remove its resources.** Delete its inboxes, sites and containers through the API with a
    temporary key, or with SQL on the app's database.
 
-**Emails to people.** The site's hourly cron logs `cron.email` (`reminders`, `sent`, `failed`,
-`left`), and each failed send `email.failed` with its error. The `email_outbox` table in the
-identity DB shows every email of the last 30 days and its status:
-```sh
-wrangler d1 execute afs-identity --remote -c site/wrangler.deploy.json --command \
-  "SELECT kind, status, attempts, error, created_at FROM email_outbox ORDER BY created_at DESC LIMIT 20"
-```
-
-To check sending end to end (sender, binding, SPF, DKIM, DMARC, and whether it lands in the
-inbox), send yourself the welcome email: `pnpm afs email-test hosted you@example.com` (you must
-have signed in once).
-
-**Deleted projects.** Owners delete projects in the dashboard, and an unclaimed project's agent
-can with `DELETE /v1/me` (see [accounts.md](accounts.md#6-privacy-and-deletion)). A deleted
-project stops at once. The site's daily cron (03:17 UTC) erases it 7 days later in every service
-(`cron.project_purge` in the site's logs lists `purged` and `pending` ids). A project stays
-pending while a service fails, and is retried the next day. To undo a deletion before the purge,
-for example when someone writes to privacy@ because an agent deleted their unclaimed project:
-```sh
-pnpm afs restore hosted acct_...
-```
 4. **Close signup** temporarily: set `vars.all.SIGNUP_MODE` to `token` and deploy. For a burst
    from many networks, `SIGNUP_GLOBAL_HOURLY_LIMIT` already pauses new signups deployment-wide
    (`429 signups_paused`, existing keys unaffected) without a deploy.
@@ -173,6 +159,38 @@ Reports arrive at `abuse@<domain>`. Role addresses (abuse, postmaster, security,
 can't be claimed by users, so route them to a person: in the dashboard under Email > Email
 Routing > Routing rules, add a custom address rule for each one that forwards to your own mailbox.
 
+## Emails to people
+
+The site's hourly cron logs `cron.email` (`reminders`, `sent`, `failed`,
+`left`), and each failed send `email.failed` with its error. The `email_outbox` table in the
+identity DB shows every email of the last 30 days and its status:
+```sh
+wrangler d1 execute afs-identity --remote -c site/wrangler.deploy.json --command \
+  "SELECT kind, status, attempts, error, created_at FROM email_outbox ORDER BY created_at DESC LIMIT 20"
+```
+
+To check sending end to end (sender, binding, SPF, DKIM, DMARC, and whether it lands in the
+inbox), send yourself the welcome email: `pnpm afs email-test hosted you@example.com` (you must
+have signed in once).
+
+Emails come from `notifications@` (`NOTIFY_EMAIL_FROM`; the username is reserved in mail) with
+Reply-To `support@` (`NOTIFY_REPLY_TO`), which an Email Routing rule forwards to the operator, like
+`security@`, `abuse@`, `privacy@` and `conduct@`. The apex has SPF, DKIM (`cf-bounce`) and DMARC
+`p=reject`; DMARC aggregate reports go to Cloudflare DMARC Management (zone, Email, DMARC
+Management), which shows who sends as the domain and their pass rate.
+
+## Deleted projects
+
+Owners delete projects in the dashboard, and an unclaimed project's agent
+can with `DELETE /v1/me` (see [accounts.md](accounts.md#6-privacy-and-deletion)). A deleted
+project stops at once. The site's daily cron (03:17 UTC) erases it 7 days later in every service
+(`cron.project_purge` in the site's logs lists `purged` and `pending` ids). A project stays
+pending while a service fails, and is retried the next day. To undo a deletion before the purge,
+for example when someone writes to privacy@ because an agent deleted their unclaimed project:
+```sh
+pnpm afs restore hosted acct_...
+```
+
 ## Backups and data
 
 | Data | Where | Protection |
@@ -183,6 +201,8 @@ Routing > Routing rules, add a custom address rule for each one that forwards to
 | Analytics exchange rates | D1 `fx_rates` (ECB, one row per day and currency) | Refetchable at any time; the cron fills gaps from the ECB's 90-day file |
 | Tags identities, event log | Durable Object SQLite per container | Event log 7 days, visitors 180 days after last seen, by design |
 | Raw mail, attachments | R2 | Durable storage; deleted with the message or inbox |
+| Replay recordings | R2 chunks, Durable Object per site | Retention per site (14 days hosted), R2 lifecycle backstop |
+| Emails to people | D1 `email_outbox` | 30 days, deleted with the person's account |
 
 ## Dependencies and runtime
 

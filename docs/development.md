@@ -15,7 +15,7 @@ Durable Objects, R2, Queues and the email handler locally.
 ## Run a service
 
 ```sh
-cd mail                    # or analytics, tags, site
+cd mail                    # or analytics, tags, replay, site
 cp .dev.vars.example .dev.vars
 pnpm db:migrate:local      # app DB + the shared identity DB
 pnpm dev                   # site :8786, analytics :8787, tags :8788, mail :8789, replay :8790
@@ -48,7 +48,7 @@ Useful local hooks:
 shared/        @afs/shared: auth, signup, errors, ids, crypto, MCP handler
 site/          landing page (public/), platform llms.txt, platform signup, MCP gateway,
                sign-in, claim links, dashboard, OAuth server (docs/accounts.md)
-analytics/     tags/     mail/
+analytics/     tags/     mail/     replay/
   src/index.ts        Hono app + handlers (fetch, email, queue, scheduled) + Durable Objects
   src/service/        business logic: the only place REST and MCP call into
   src/routes/         REST routes (thin)
@@ -70,8 +70,8 @@ docs/                 these documents
   the app DB and `AUTH_DB` are applied in the setup file. Fair-use vars are turned off in
   `vitest.config.ts`; tests for them turn them on per call. `DB` and `AUTH_DB` have different
   placeholder ids in each `wrangler.jsonc`, so they are two local databases, as in production.
-- **The site** (`site/test`) runs in workerd too. The services behind its `ANALYTICS`, `TAGS` and
-  `MAIL` bindings are stubbed in `site/test/helpers.ts` with the real `requireAuth()` and
+- **The site** (`site/test`) runs in workerd too. The services behind its `ANALYTICS`, `TAGS`,
+  `MAIL` and `REPLAY` bindings are stubbed in `site/test/helpers.ts` with the real `requireAuth()` and
   `handleMcp()`, so internal auth and OAuth access tokens are checked as the services check them.
   A small cookie-jar `Browser` drives sign-in, claim, dashboard and consent pages.
 - **Smoke scripts** (`pnpm smoke`) drive a running dev server over HTTP the way an agent would.

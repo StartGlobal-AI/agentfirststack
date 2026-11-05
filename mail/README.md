@@ -49,7 +49,8 @@ Cloudflare API, signing, header hygiene, sender keys), `src/llms.ts`, `src/ui.ts
 plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombstones.sql`,
 `0009_abuse_controls.sql` (wait slots, sender keys and counters, daily budgets, text usage, cron state),
 `0010_blob_storage.sql` (stored bytes per message and account, attachments served from the raw MIME),
-`0014_forward_to_members.sql` (the inbox `forward_*` columns and `forward_queue`).
+`0014_forward_to_members.sql` (the inbox `forward_*` columns and `forward_queue`),
+`0015_permanent_tombstones.sql` (addresses of deleted projects reserved for good).
 
 - **Receiving**: Email Routing's catch-all routes every address of a mail domain to this Worker.
   The envelope recipient is lowercased and its `+tag` stripped (`acme+meta@` delivers to `acme@`).
@@ -127,7 +128,18 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   loops reserve nothing; `MAX_INBOX_CREATES_PER_DAY` and `MAX_INBOX_DELETES_PER_DAY` (API deletes;
   ttl expiry does not count) cap the churn per account (429 `daily_limit` with a hint; a create
   that returns an address you already own is not counted). `DELETE` answers
-  `address_reserved_until`.
+  `address_reserved_until`. When a deleted project's mail is erased, its addresses that ever
+  received mail are reserved permanently instead (`permanent = 1`, never pruned): they are often
+  the recovery email of accounts elsewhere, and the project can't come back for them.
+- **Project deletion** (`accounts.deleted_at` in the identity DB): reads as suspended, so keys stop,
+  inbound mail is refused at SMTP and forwarding stops at once. 7 days later the site's cron calls
+  `DELETE /v1/account` (internal auth only, no MCP tool; API keys get `403 forbidden`;
+  `src/service/purge.ts`): every inbox (messages, attachments, threads, R2 blobs, scheduled
+  sends), custom domains, webhooks and their logs, and the account's other rows (lists,
+  Idempotency-Key replays, delivery status, the event feed, mail waiting to be forwarded, wait
+  slots). It keeps the bare `accounts` row, the fair-use counters and the address tombstones. It
+  answers `{account_id, done, deleted, addresses_reserved}`; `done: false` means call again, and
+  a live project gets `409 not_deleted`.
 - **Waiting** (`wait_for_email`): return the newest inbound message that matches the filters and
   was received after `after`. `after` defaults to the request time minus 60 s, so mail that landed
   between submitting a form and calling wait still counts; pass it explicitly (unix ms such as the
@@ -362,6 +374,7 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 |---|---|---|
 | POST | `/signup` | account + key (`@afs/shared`); also creates and returns a default inbox |
 | GET | `/me`; GET, POST `/keys`; DELETE `/keys/:id` | `@afs/shared` |
+| DELETE | `/account` | the platform's own: erases a deleted project's mail (see Project deletion); API keys get 403 |
 | POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days?, forward? }` (`forward: { mode: each\|digest\|off, digest_hour, timezone }`, applied to a new inbox; every inbox JSON has `forward` with `recipients`, `waiting_for_owner`, `last_forwarded_at`, `last_digest_at`, `forwarded_today`, `daily_limit`, never the members' addresses); random username if omitted; same address returns existing (200); another account's address, or a recently deleted shared-domain address that received mail and was another account's, is 409; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
 | GET | `/inboxes`, `/inboxes/:id` | list (`?limit=&domain=`); one with message/unread counts |
 | PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days?, forward? }` (null = forever; `forward` merges, a bad `timezone` is 400); delete removes all its mail and answers `address_reserved_until` (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |

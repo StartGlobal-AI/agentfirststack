@@ -34,16 +34,17 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 - **The manual is a text file.** Each service serves `/llms.txt` with every endpoint, tool and field.
 - **Every step can be verified.** The agent checks its own work instead of guessing.
 - **Humans optional.** When it's done, the agent hands its person a claim link. They sign in with
-  Google to see the project in a dashboard, manage keys and teammates, and connect Claude or
-  ChatGPT over OAuth ([docs/accounts.md](docs/accounts.md)).
+  Google to see the project's analytics, tags, replay and mail in a dashboard, manage keys and
+  teammates, connect Claude or ChatGPT over OAuth, and delete the project. We email them about
+  their projects ([docs/accounts.md](docs/accounts.md)).
 
 ## Services
 
 | | What it does | Instead of |
 |---|---|---|
-| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime; revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits; alerts and weekly reports; GA4 and Plausible imports; server-side events; read-only SQL | Google Analytics, Plausible |
-| **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap or X with one event id, so each platform counts it once. Scan, validate, preview, test and publish | Google Tag Manager, server-side GTM |
-| **[Mail](mail/README.md)** | Inboxes in one request. `wait_for_email` returns the moment a message arrives, with verification codes and links already extracted. Read, reply, send, custom domains, webhooks | A Gmail account per project, AgentMail |
+| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime; revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits; alerts and weekly reports; history imported from GA4, Plausible or any other tool, with a check that the numbers match; server-side events; read-only SQL | Google Analytics, Plausible |
+| **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap or X with one event id, so each platform counts it once. Scan (it also finds the tools a site uses now), import a GTM container, validate, preview, test and publish | Google Tag Manager, server-side GTM |
+| **[Mail](mail/README.md)** | Inboxes in one request. `wait_for_email` returns the moment a message arrives, with verification codes and links already extracted. Read, reply, send, custom domains, webhooks, and forwarding to the project's people (each email or a daily digest) | A Gmail account per project, AgentMail |
 | **[Replay](replay/README.md)** | Session recordings masked in the browser by default. Sessions come back as readable transcripts; rage, dead and error clicks, heatmaps and JS errors as data; a share link opens a player for people | Hotjar, Microsoft Clarity |
 
 ## Quick start
@@ -52,14 +53,18 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 
 Copy the prompt from [agentfirststack.com](https://agentfirststack.com) into Claude Code, Cursor,
 Codex or any agent that can make HTTP requests. The agent follows the
-[full setup](https://agentfirststack.com/llms.txt) in one run: it maps your site's pages and main
-actions, creates an inbox, sets up analytics (goals, a weekly report for you), a tag container with
-an event for each main action, and replay; then it deploys, verifies each part as a visitor with
-test traffic (`POST /v1/setup/test`: a test email, test events through analytics, tags and each ad
+[full setup](https://agentfirststack.com/llms.txt) in one run: it maps your site's pages, main
+actions and the tools it uses now, then asks you once where the inbox's email should go and whether
+to bring your old tools' setup and history over. It creates an inbox, sets up analytics (goals, AI
+crawler visits reported from your server, a weekly report for you, and the history of GA4,
+Plausible or whatever you used before), a tag container with an event for each main action
+(starting from your GTM container, if you have one), and replay; then it deploys, verifies each
+part as a visitor with test traffic (`POST /v1/setup/test`: a test email, test events through analytics, tags and each ad
 platform's test mode, then a browser test visit), runs the setup check (`GET /v1/setup`) until
 nothing is missing, writes what it did to `AGENTFIRSTSTACK.md` (and a short block to `AGENTS.md`, so later sessions with
 any agent pick up new features), and shows you a table of what's set up and what passed, with a
-claim link. Pasting the same prompt again later starts from the
+claim link. Your old tools stay until the setup check says the numbers match and you agree to
+remove them. Pasting the same prompt again later starts from the
 setup check and fills the gaps.
 
 Or do it by hand:
@@ -116,11 +121,11 @@ TypeScript on Cloudflare Workers with Hono and zod. Storage:
 - **Email Routing and Email Sending:** mail in and out.
 
 ```
-site/        landing page, platform manual, platform signup      agentfirststack.com
+site/        landing page, manual, signup, MCP gateway, dashboard agentfirststack.com
 analytics/   web analytics                                        analytics.agentfirststack.com
 tags/        tag manager + conversion APIs                        tags.agentfirststack.com
 mail/        inboxes, sending, domains, webhooks                  mail.agentfirststack.com
-replay/      session replay, signals, heatmaps, share player          replay.agentfirststack.com
+replay/      session replay, signals, heatmaps, share player      replay.agentfirststack.com
 shared/      @afs/shared: auth, signup, errors, MCP handler
 scripts/     pnpm afs: the deployment tool
 deploy/      deployment profiles (yours; the agentfirststack.com one is kept private)

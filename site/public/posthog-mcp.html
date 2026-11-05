@@ -55,7 +55,7 @@
       "url": "https://agentfirststack.com/posthog-mcp",
       "image": "https://agentfirststack.com/og/posthog-mcp.png",
       "datePublished": "2026-11-04",
-      "dateModified": "2026-11-04",
+      "dateModified": "2026-11-05",
       "inLanguage": "en",
       "author": { "@id": "https://agentfirststack.com/#org" },
       "publisher": { "@id": "https://agentfirststack.com/#org" },
@@ -140,7 +140,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>PostHog MCP</span></nav>
       <h1>PostHog MCP compared with AgentFirstStack</h1>
       <p class="lede">PostHog's MCP server is a hosted endpoint that lets an agent work inside a PostHog account you log in to: SQL queries, feature flags, experiments, dashboards, surveys and error tracking. AgentFirstStack is narrower. An agent sets up web analytics, ad conversion tracking, inboxes and session replay from nothing, with one POST for a key and no email.</p>
-      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+      <p class="meta">Updated <time datetime="2026-11-05">5 November 2026</time></p>
 
 
       <h2 id="prompt">Set it up with one prompt</h2>
@@ -191,7 +191,7 @@ claude mcp add --transport http afs https://agentfirststack.com/mcp \
 <li><code>replay_search_sessions</code> and <code>replay_get_session_transcript</code> to read recorded sessions as text.</li>
 <li><code>tags_setup_conversion_tracking</code> to send conversions to Meta, Google Ads, TikTok and GA4.</li>
 </ul>
-<p>When it's done, <code>afs_create_claim_link</code> gives you a link to sign in with Google and see everything in a dashboard. AgentFirstStack has no feature flags, experiments or surveys.</p>
+<p>When it's done, <code>afs_create_claim_link</code> gives you a link to sign in with Google and see everything in a dashboard. AgentFirstStack has no feature flags or experiments; replay runs on-page surveys (NPS, CSAT, CES, product-market fit and free text).</p>
 
 <h2 id="comparison">Side by side</h2>
 <div class="table-wrap">
@@ -202,7 +202,7 @@ claude mcp add --transport http afs https://agentfirststack.com/mcp \
 <tr><th scope="row">Agent auth</th><td>OAuth login in a browser; a personal API key as fallback</td><td>An API key from <code>POST /v1/signup</code>; OAuth 2.1 for chat apps</td></tr>
 <tr><th scope="row">New account</th><td>Sign up, or the wizard's <code>--signup</code> with an email; password set from a welcome email</td><td>One POST, no email; you claim it later with Google sign-in</td></tr>
 <tr><th scope="row">Create a project over MCP</th><td>Yes, <code>project-create</code></td><td>Yes: sites, tag containers, inboxes, replay sites</td></tr>
-<tr><th scope="row">Feature flags, experiments, surveys</th><td>Yes</td><td>No</td></tr>
+<tr><th scope="row">Feature flags, experiments, surveys</th><td>Yes</td><td>Surveys only, in replay</td></tr>
 <tr><th scope="row">SQL</th><td><code>execute-sql</code></td><td><code>analytics_query_sql</code>, read-only, per site</td></tr>
 <tr><th scope="row">Session replay</th><td>Yes</td><td>Yes, read as text transcripts</td></tr>
 <tr><th scope="row">Read-only access</th><td>A read-only header</td><td>A key with <code>read</code> scope</td></tr>
@@ -214,7 +214,7 @@ claude mcp add --transport http afs https://agentfirststack.com/mcp \
 <h2 id="choose">When to choose which</h2>
 <h3>Use PostHog if</h3>
 <ul>
-<li>You need feature flags, experiments, surveys or error tracking.</li>
+<li>You need feature flags, experiments or error tracking.</li>
 <li>You ship mobile or back-end apps; the wizard lists Android, Swift, Flutter, Django, Rails and more.</li>
 <li>Your team already works in PostHog.</li>
 </ul>

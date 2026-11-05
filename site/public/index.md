@@ -17,7 +17,7 @@ verification email, no dashboard to click through. Free to use, and open source 
 3. **You approve what only you can.** Your ad accounts stay yours; the agent asks for the exact
    IDs and tokens it needs from Google Ads, Meta or TikTok, and tells you where to find them.
 4. **Claim it when you like.** The agent gives you a claim link. Sign in with Google to see the
-   project's sites, containers and inboxes in a dashboard, manage keys, invite teammates and
+   project's analytics, tags, replay and mail in a dashboard, manage keys, invite teammates and
    connect Claude or ChatGPT (https://agentfirststack.com/mcp as a custom connector, over OAuth).
 
 ## Services
@@ -47,14 +47,14 @@ All of it over REST and MCP, with the same key.
 - **Ecommerce:** Items in each purchase, with revenue and quantity per product.
 - **AI crawlers:** Which AI bots read which pages, never counted as visitors.
 - **Querying:** Read-only SQL with cost limits, and a schema call that lists every event and property.
-- **Import and export:** GA4 and Plausible CSV imports, raw events as NDJSON, CSV or JSON.
+- **Import and export:** History from GA4, Plausible, DataFast or any other tool (their CSV exports or API reports), a check that the numbers match, raw events as NDJSON, CSV or JSON.
 - **Sharing:** Public dashboards with a password, an expiry and a saved segment.
 - **Alerts:** Spikes, drops, no data, goals and payments, plus weekly or monthly reports, by webhook, Slack or email.
 - **Privacy:** Delete a visitor, purge with a dry run, email and phone redaction, path rules, exclusions, a referral-spam filter, Do Not Track and GPC.
 
 ### Tags (instead of Google Tag Manager)
 
-- **Workflow:** A draft you edit item by item, diffs between versions, GTM import, a preview log, environments, versions and rollback.
+- **Workflow:** A site scan that finds the tags and tools already there, GTM import (an export or the GTM API), a draft you edit item by item, diffs between versions, a preview log, environments, versions and rollback.
 - **Triggers:** Pageview, DOM ready, window loaded, consent initialization, clicks, forms, history changes, element visibility, scroll depth, timers, JavaScript errors, video, custom events, trigger groups.
 - **Variables:** Data layer, URL parts, cookies, element attributes, lookup and regex tables, formatting, about 30 built-ins.
 - **Tag options:** Priority, scheduling, sequencing, firing limits, consent per tag.
@@ -72,6 +72,7 @@ All of it over REST and MCP, with the same key.
 - **Sending:** Send, reply and forward, safe to retry, scheduled sending, delivery status per recipient.
 - **Safety:** Inboxes on the shared domain reply only to people who wrote first; allow and block lists.
 - **Domains:** Custom domains with DNS checks, send-only domains, a zone file to import.
+- **Forwarding:** Each email, or a daily digest, to the people who claimed the project.
 - **Events:** Signed webhooks, and an event feed an agent can poll without a public URL.
 - **Checks:** A deliverability report for any message: SPF, DKIM and DMARC.
 
@@ -123,7 +124,7 @@ First, look at what this site uses today (Google Analytics, Google Tag Manager, 
 
 7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
 
-When you're done, show me the setup check's table of what's set up and the test results table, then what's waiting on me, and give me the claim link.
+When you're done, show me the setup check's table of what's set up and the test results table, then what's waiting on me, and give me the claim link. If the site used other tools, say what you brought over from each, and leave them installed until I agree to remove them.
 ```
 
 ## Free and open source

@@ -301,7 +301,7 @@
             <div><dt>Ecommerce</dt><dd>Items in each purchase, with revenue and quantity per product</dd></div>
             <div><dt>AI crawlers</dt><dd>Which AI bots read which pages, never counted as visitors</dd></div>
             <div><dt>Querying</dt><dd>Read-only SQL with cost limits, and a schema call that lists every event and property</dd></div>
-            <div><dt>Import and export</dt><dd>GA4 and Plausible CSV imports, raw events as NDJSON, CSV or JSON</dd></div>
+            <div><dt>Import and export</dt><dd>History from GA4, Plausible, DataFast or any other tool (their CSV exports or API reports), a check that the numbers match, raw events as NDJSON, CSV or JSON</dd></div>
             <div><dt>Sharing</dt><dd>Public dashboards with a password, an expiry and a saved segment</dd></div>
             <div><dt>Alerts</dt><dd>Spikes, drops, no data, goals and payments, plus weekly or monthly reports, by webhook, Slack or email</dd></div>
             <div><dt>Privacy</dt><dd>Delete a visitor, purge with a dry run, email and phone redaction, path rules, exclusions, a referral-spam filter, Do Not Track and GPC</dd></div>
@@ -310,7 +310,7 @@
         <div class="feature-list" style="--c: var(--yellow)">
           <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Tags <span>instead of Google Tag Manager</span></h4>
           <dl>
-            <div><dt>Workflow</dt><dd>A draft you edit item by item, diffs between versions, GTM import, a preview log, environments, versions and rollback</dd></div>
+            <div><dt>Workflow</dt><dd>A site scan that finds the tags and tools already there, GTM import (an export or the GTM API), a draft you edit item by item, diffs between versions, a preview log, environments, versions and rollback</dd></div>
             <div><dt>Triggers</dt><dd>Pageview, DOM ready, window loaded, consent initialization, clicks, forms, history changes, element visibility, scroll depth, timers, JavaScript errors, video, custom events, trigger groups</dd></div>
             <div><dt>Variables</dt><dd>Data layer, URL parts, cookies, element attributes, lookup and regex tables, formatting, about 30 built-ins</dd></div>
             <div><dt>Tag options</dt><dd>Priority, scheduling, sequencing, firing limits, consent per tag</dd></div>
@@ -330,6 +330,7 @@
             <div><dt>Sending</dt><dd>Send, reply and forward, safe to retry, scheduled sending, delivery status per recipient</dd></div>
             <div><dt>Safety</dt><dd>Inboxes on the shared domain reply only to people who wrote first; allow and block lists</dd></div>
             <div><dt>Domains</dt><dd>Custom domains with DNS checks, send-only domains, a zone file to import</dd></div>
+            <div><dt>Forwarding</dt><dd>Each email, or a daily digest, to the people who claimed the project</dd></div>
             <div><dt>Events</dt><dd>Signed webhooks, and an event feed an agent can poll without a public URL</dd></div>
             <div><dt>Checks</dt><dd>A deliverability report for any message: SPF, DKIM and DMARC</dd></div>
           </dl>
@@ -475,7 +476,7 @@ First, look at what this site uses today (Google Analytics, Google Tag Manager, 
 
 7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
 
-When you're done, show me the setup check's table of what's set up and the test results table, then what's waiting on me, and give me the claim link.</template>
+When you're done, show me the setup check's table of what's set up and the test results table, then what's waiting on me, and give me the claim link. If the site used other tools, say what you brought over from each, and leave them installed until I agree to remove them.</template>
 
 <script src="/app.js" defer></script>
 </body>

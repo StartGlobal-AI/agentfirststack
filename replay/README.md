@@ -277,6 +277,7 @@ rating answer only.
 |---|---|---|
 | POST | `/signup` | account + key (`@afs/shared`) |
 | GET | `/me`; GET, POST `/keys`; DELETE `/keys/:id` | `@afs/shared` |
+| DELETE | `/account` | the platform's own (internal auth only, no MCP tool; API keys get 403 `forbidden`): 7 days after a project is deleted, the site's cron erases its replay data here (`src/service/purge.ts`): every site (its Durable Object, D1 rows, and its R2 chunks, queued for the hourly cron), then its webhooks and their deliveries. Keeps the bare `accounts` row and the fair-use counters. `done: false` = call again; a live project gets 409 `not_deleted`. Deleting a project reads as suspended at once, so recording and its share links stop |
 | POST | `/sites` | `{ domain, ...settings }`; same domain returns existing (200); 403 `quota_exceeded` past `MAX_SITES_PER_ACCOUNT`, 403 `verification_required` past `MAX_UNVERIFIED_SITES_PER_ACCOUNT`; IPs, TLDs and public suffixes refused (400) |
 | GET | `/sites`, `/sites/:id` | list; one with a data summary (sessions, last chunk, bytes, today's counters, hostnames, chunks refused by reason), its `limits`, and `untrusted.drop_samples` |
 | PATCH, DELETE | `/sites/:id` | settings (lists replaced whole, caps clamped and reported in `notes`); delete removes everything (R2 by cron) |

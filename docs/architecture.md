@@ -82,7 +82,7 @@ Code: `shared/src/auth.ts`, `shared/src/notices.ts`, `shared/src/resource.ts` (R
 ## People and OAuth (optional)
 
 Agents never need any of this; see [accounts.md](accounts.md) for the full design. It all lives in
-the site Worker and the identity database (`site/migrations/0003_*`, `0004_*`).
+the site Worker and the identity database (`site/migrations/0003_*` to `0008_*`).
 
 - **Users** sign in with Google (OIDC, PKCE, state, nonce; the ID token comes from the direct token
   response). A session is a random cookie (`afs_session`, HttpOnly, Secure, SameSite=Lax, apex
@@ -98,13 +98,30 @@ the site Worker and the identity database (`site/migrations/0003_*`, `0004_*`).
   Mail, Settings) and the projects page's cards are drawn in the browser by
   `public/dashboard-app.js` from the services' own answers, read through a read-only proxy on the
   site (`/dashboard/projects/:id/data/<service>/...`, GET and listed report paths only); the one
-  write is a one-hour replay player link (Watch, with the page's CSRF token).
+  write there is a one-hour replay player link (Watch, with the page's CSRF token). Forms do the
+  rest: the owner chooses where each inbox's email goes (the mail service's `PATCH
+  /v1/inboxes/:id`, as the project), manages keys and members, and deletes or restores the project.
+- **Deleting a project** (`site/src/project-deletion.ts`): its owner in Settings, General, or an
+  unclaimed project's own agent (`DELETE /v1/me {confirm}`, MCP `afs_delete_project`). It stops at
+  once: keys and OAuth tokens answer `403 project_deleted`, and `accountStanding()` reads it as
+  suspended, so tracking, recording, inbound mail and forwarding stop. For 7 days the owner can
+  restore it; then the site's daily cron calls each service's `DELETE /v1/account` (internal auth
+  only) until each answers `done: true`, then erases its identity rows, keeping only the id and
+  the dates. Mail keeps the project's shared-domain addresses that received mail reserved for good.
+- **Emails to people** (`site/src/email.ts`, `email-messages.ts`; optional: the `EMAIL` binding
+  and `NOTIFY_EMAIL_FROM`): the site emails signed-in people at their Google address about their
+  projects (claims, members, connected apps, deletion, suspension, new setup items). Each email
+  is an `email_outbox` row first, keyed per event and person, so nothing is sent twice; the hourly
+  cron sends the queued ones and retries.
 - **OAuth 2.1 server** for MCP connectors: RFC 8414 metadata, dynamic registration of public
   clients, consent with a project picker, PKCE S256, exact redirect URIs, single-use 10-minute
   codes, `iss` on the redirect, rotating refresh tokens (reuse revokes the grant). Access tokens
   are API keys with `expires_at`, so no service knows OAuth exists. Every service's RFC 9728
   metadata names the site (`AUTH_ISSUER`) and every `/mcp` 401 points at that metadata.
-- A daily cron on the site deletes expired keys, codes, refresh tokens, sessions and claim links.
+- A daily cron on the site (03:17 UTC) deletes expired keys, codes, refresh tokens, sessions,
+  claim links and emails older than 30 days, writes setup notices and erases deleted projects
+  whose 7 days have passed. An hourly one (:47) sends emails, including the reminder the day
+  before a project is erased.
 
 ## One service layer, two interfaces
 
@@ -120,9 +137,10 @@ recover.
 The site also runs an **MCP gateway** at `/mcp` (`site/src/mcp-gateway.ts`): a stateless JSON-RPC
 router that merges every service's tools with an `analytics_` / `tags_` / `mail_` / `replay_`
 prefix and forwards each call over a service binding with the caller's own key, so one connector
-covers the whole platform with the same scoping and errors as the services themselves. It adds two
+covers the whole platform with the same scoping and errors as the services themselves. It adds six
 tools of its own: `afs_check_setup` (`GET /v1/setup`), `afs_test_setup` and `afs_check_test_visit`
-(`/v1/setup/test`), `afs_create_claim_link` and `afs_update_project` (`PATCH /v1/me`).
+(`/v1/setup/test`), `afs_create_claim_link`, `afs_update_project` (`PATCH /v1/me`) and
+`afs_delete_project` (`DELETE /v1/me`).
 
 The **setup check** (`site/src/setup-check.ts`, `GET /v1/setup`) is the full setup in `llms.txt` as a
 list of checks. It reads each service as the project with internal auth over the bindings (the
@@ -225,8 +243,12 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   one, and one with rarely used features (video and error triggers, wait-for-tags, cross-domain
   linking, TCF) that only containers using them get. Conversions fire client pixels with an
   `event_id`. The draft is edited whole or one item at a time (each write guarded by the
-  revision it read), diffed against any version, and can be imported from a GTM container
-  export.
+  revision it read), diffed against any version, and can be imported from Google Tag Manager
+  (an export file, or the lists from the GTM API or its MCP server).
+- **Scan.** `POST /v1/containers/:id/scan` fetches a few of the site's pages and reports the
+  tags, pixels and other analytics and replay tools they load (only from scripts, never page
+  text). The container keeps the last scan and the last import (`last_scan`, `last_import`),
+  which the setup check's "Other tools" row reads.
 - **Server side.** The runtime posts to `/collect`. The per-container Durable Object stores the
   visitor's click ids and identity, dedupes events, keeps a seven-day event log, and enqueues
   delivery. The queue consumer calls each platform's conversion API with the same `event_id`, so
@@ -257,6 +279,13 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   per-account Durable Object) for agents without a public URL.
 - **Allow / block lists** are checked as soon as the headers are parsed, so refused mail is
   rejected during the SMTP session, before its body is read.
+- **Forwarding to the project's people.** An inbox's `forward` setting (each email, a daily
+  digest at a local hour, or off) sends its mail on to the Google-verified emails of the people who
+  claimed the project, read from the identity database. Only mail from an authenticated sender is
+  forwarded (no bounces, auto-replies or test mail). Each email goes right after the SMTP answer;
+  the hourly cron sends digests and anything a daily budget held back. It has its own budget
+  (`MAX_FORWARDS_PER_ACCOUNT_PER_DAY`), never the send limit, and the agent's key never sees the
+  people's addresses.
 
 ## Why this storage
 

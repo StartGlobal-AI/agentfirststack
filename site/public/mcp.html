@@ -55,7 +55,7 @@
       "url": "https://agentfirststack.com/mcp",
       "image": "https://agentfirststack.com/og/mcp.png",
       "datePublished": "2026-11-04",
-      "dateModified": "2026-11-04",
+      "dateModified": "2026-11-05",
       "inLanguage": "en",
       "author": { "@id": "https://agentfirststack.com/#org" },
       "publisher": { "@id": "https://agentfirststack.com/#org" },
@@ -140,7 +140,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>MCP</span></nav>
       <h1>AgentFirstStack MCP servers and tools</h1>
       <p class="lede">AgentFirstStack runs one MCP server for all its services at https://agentfirststack.com/mcp, plus one per service. Each is stateless Streamable HTTP. Agents authenticate with an API key from one POST, and chat apps such as claude.ai connect over OAuth. Every tool calls the same code as the matching REST route.</p>
-      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+      <p class="meta">Updated <time datetime="2026-11-05">5 November 2026</time></p>
 
 
       <h2 id="connect">Connect</h2>
@@ -236,9 +236,10 @@ https://replay.agentfirststack.com/mcp      replay</code></pre>
 <p><b>Write:</b> <code>create_replay_site</code>, <code>update_replay_site</code>, <code>delete_replay_site</code>, <code>verify_install</code>, <code>delete_session</code>, <code>delete_visitor_data</code>, <code>label_session</code>, <code>add_session_note</code>, <code>delete_session_note</code>, <code>define_event</code>, <code>delete_event_definition</code>, <code>create_segment</code>, <code>update_segment</code>, <code>delete_segment</code>, <code>create_survey</code>, <code>update_survey</code>, <code>delete_survey</code>, <code>test_survey</code>, <code>delete_survey_response</code>, <code>create_webhook</code>, <code>delete_webhook</code>, <code>test_webhook</code>, <code>create_replay_link</code>, <code>revoke_replay_link</code>.</p>
 <h3 id="gateway-tools">Gateway (6 tools)</h3>
 <p><code>afs_create_claim_link</code> returns a single-use URL, valid for 7 days, for the person who owns the project. They sign in with Google and see everything the key set up in a dashboard. Only full-access API keys see it, not OAuth access tokens.</p>
-<p><code>afs_check_setup</code> checks the project against the full setup and returns each part (name, inbox, analytics, tags, replay, claim) as ok, missing, failing, a warning or waiting on the owner, with the call that fixes it. It reads only, fetches nothing from the site, and every key sees it. Same as <code>GET /v1/setup</code>.</p>
+<p><code>afs_check_setup</code> checks the project against the full setup and returns each part (name, inbox and where its email goes, analytics, AI crawlers, the tools the site used before, tags, replay, claim) as ok, missing, failing, a warning or waiting on the owner, with the call that fixes it. It reads only, fetches nothing from the site, and every key sees it. Same as <code>GET /v1/setup</code>.</p>
 <p><code>afs_test_setup</code> sends test traffic through the project and checks it arrives: a test email from the inbox to itself, analytics and replay verify, a test event into analytics and through the tag manager, and each conversion to each ad platform in its test mode. It returns a browser plan; <code>afs_check_test_visit</code> then checks that visit (test pageviews, each event, the test recording). Test traffic stays out of reports and never reaches an ad platform as a real conversion. Same as <code>POST</code> and <code>GET /v1/setup/test</code>.</p>
 <p><code>afs_update_project</code> renames the project (the name the owner sees in the dashboard), like <code>PATCH /v1/me {"name":"example.com"}</code>. Keys with write access see it.</p>
+<p><code>afs_delete_project</code> deletes an unclaimed project when the person asks for it (a claimed one is deleted by its owner in the dashboard). Its keys, tracking, recording and inbound mail stop at once, and its data in every service is erased 7 days later. Pass the project id as <code>confirm</code>; the answer lists what to take out of the codebase. Same as <code>DELETE /v1/me {"confirm":"acct_..."}</code>. Only full-access API keys see it, not OAuth access tokens.</p>
 
 <h2 id="scopes">Full and read-only keys</h2>
 <p>Keys have scope <code>*</code> (full) or <code>read</code>. A read key sees only read tools over MCP and only GET routes over REST, which suits a reporting agent or a CI job:</p>

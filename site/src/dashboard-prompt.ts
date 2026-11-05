@@ -2,10 +2,10 @@ import { cleanName } from "@afs/shared";
 import type { Resources } from "./services";
 
 /**
- * Prompts a person pastes into their agent to get a screen built for them, one per service. This
- * dashboard deliberately shows no data and edits nothing: charts, tag editing and reading mail
- * belong in pages the agent builds from the API, inside the project's own app, where the owner can
- * shape them. Each prompt names the project's resources so the agent can start immediately.
+ * Prompts a person pastes into their agent to get a screen built for them, one per service. The
+ * dashboard shows each service read-only; editing tags, replying to mail and custom views belong in
+ * pages the agent builds from the API, inside the project's own app, where the owner can shape
+ * them. Each prompt names the project's resources so the agent can start immediately.
  *
  * Everything interpolated here was chosen by someone else (a project name from signup or a rename,
  * a domain, an inbox address), and the prompt goes straight into an agent. So each value is one

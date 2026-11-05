@@ -10,7 +10,7 @@ this first on every later run and update it instead of starting over. Never writ
   every service. It is not in the site's production secrets: nothing in the site needs it (the site
   Worker talks to the services over service bindings with `INTERNAL_TOKEN`).
 - Dashboard: https://agentfirststack.com/dashboard (the owner signs in with Google).
-- MCP: one server for every service, `https://agentfirststack.com/mcp` (241 tools on 2026-11-05).
+- MCP: one server for every service, `https://agentfirststack.com/mcp` (242 tools on 2026-11-05).
   The setup agent uses REST and has not added it to any MCP client config; to add it to Claude
   Code: `claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"`.
 
@@ -31,6 +31,8 @@ this first on every later run and update it instead of starting over. Never writ
 - Links out: the nav and footer GitHub links (repo, license) are this project's; the comparison
   pages and one guide also link to other GitHub repos and to vendor docs, which analytics counts as
   `outbound_click` only. In-page contents links on guides (`#faq`, `#related`, ...) aren't events.
+- Tools used before: none. The pages load no other analytics, tag manager, pixel or replay tool,
+  so there is nothing to import.
 - Forms: none on public pages. No thank-you pages. No checkout: the business takes no payments and
   runs no ads (no Stripe, no ad platforms).
 - Conversions: the main one in the browser is copying the setup prompt. The sign-up is an agent

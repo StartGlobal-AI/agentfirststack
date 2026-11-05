@@ -216,7 +216,7 @@
       {
         name: "get_setup_prompt",
         description:
-          "Returns the prompt that tells a coding agent how to set up AgentFirstStack (analytics, tag management with server-side conversion tracking, and an email inbox) for a project.",
+          "Returns the prompt that tells a coding agent how to set up AgentFirstStack (analytics, tag management with server-side conversion tracking, an email inbox and session replay) for a project.",
         inputSchema: { type: "object", properties: {} },
         execute: async function () {
           return text(promptText);
@@ -235,7 +235,7 @@
       {
         name: "create_api_key",
         description:
-          "Creates a free AgentFirstStack account and returns its API key, which works for analytics, tags and mail. No email or verification. The key is shown once: store it in the project's secrets.",
+          "Creates a free AgentFirstStack account and returns its API key, which works for analytics, tags, mail and replay. No email or verification. The key is shown once: store it in the project's secrets.",
         inputSchema: {
           type: "object",
           properties: { name: { type: "string", description: "Optional label, usually the project or site name" } },

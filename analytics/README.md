@@ -4,8 +4,9 @@ Cookieless, privacy-friendly web analytics that an agent can set up in two reque
 server-side enrichment (every country, region and city from Cloudflare's edge, not from the
 browser), server-side event ingestion for backends, goals, revenue attribution (Stripe webhook or
 any provider), visitors and journeys, derived insights, comparisons, annotations with automatic
-traffic-spike notes, saved funnels, ingest exclusions, scroll depth and Core Web Vitals, and an
-agent-queryable stats API.
+traffic-spike notes, saved funnels, ingest exclusions, scroll depth and Core Web Vitals, AI
+crawler visits reported by the site's server, history imported from GA4, Plausible or any other
+tool, and an agent-queryable stats API.
 
 Sections marked (v2) are deliberately not built yet. `GET /llms.txt` is the complete manual.
 
@@ -727,7 +728,5 @@ pnpm typecheck                    # Worker + tests, and the tracker with the DOM
 
 ## Not yet (v2)
 
-Long-term rollups beyond raw retention, IP->geo for server events without explicit geo,
-multi-site roll-up views, currency conversion for revenue, AI crawler ingestion, a realtime
-map, ad spend import, richer share links, imports, Search Console, ecommerce items, user
-properties. Feature parity status: `docs/parity/ga4.md` and `docs/parity/web-analytics.md`.
+Long-term rollups beyond raw retention, IP->geo for server events without explicit geo, Search
+Console. Feature parity status: `docs/parity/ga4.md` and `docs/parity/web-analytics.md`.

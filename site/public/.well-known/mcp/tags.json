@@ -1,7 +1,7 @@
 {
   "name": "com.agentfirststack/tags",
   "title": "AgentFirstStack Tags",
-  "description": "Tag manager and server-side conversion router: containers, site scan, conversion setup, GA4, Google Ads, Meta and TikTok destinations with test events, publish and rollback.",
+  "description": "Tag manager and server-side conversion router: containers, site scan, GTM container import, conversion setup, GA4, Google Ads, Meta and TikTok destinations with test events, publish and rollback.",
   "version": "0.1.0",
   "websiteUrl": "https://agentfirststack.com",
   "repository": {

@@ -106,6 +106,15 @@ describe("emails: rendering and sending", () => {
     expect(await queueEmail(capped, BASE, one(2))).toBe("skipped");
     expect((await outbox(to.email)).at(-1)).toMatchObject({ status: "skipped", error: expect.stringContaining("daily email limit") });
 
+    // With a Reply-To, replies reach a person, and the footer says so.
+    const withReply = testEnv({ NOTIFY_REPLY_TO: "AgentFirstStack support <support@afs.test>" });
+    const replyTo = { ...e, to: { userId: null, email: uniqueEmail("replyto") }, dedupeKey: `reply:${Date.now()}` };
+    expect(await queueEmail(withReply, BASE, replyTo)).toBe("sent");
+    const [withReplyMail] = emailsTo(replyTo.to.email);
+    expect(withReplyMail?.replyTo).toEqual({ email: "support@afs.test", name: "AgentFirstStack support" });
+    expect(withReplyMail?.text).toContain("Questions? Reply to this email.");
+    expect(emailsTo(to.email)[0]?.text).not.toContain("Reply to this email");
+
     // Without a sender (or the binding), nothing is queued.
     expect(await queueEmail(testEnv({ NOTIFY_EMAIL_FROM: "" }), BASE, one(3))).toBe("off");
     expect(await queueEmail(testEnv({ EMAIL: undefined }), BASE, one(4))).toBe("off");

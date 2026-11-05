@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://agentfirststack.com/</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://agentfirststack.com/agentmail-alternative</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://agentfirststack.com/auth.md</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://agentfirststack.com/gmail-mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://agentfirststack.com/google-analytics-mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://agentfirststack.com/google-tag-manager-mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://agentfirststack.com/agentmail-alternative</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/auth.md</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/gmail-mcp</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/google-analytics-mcp</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/google-tag-manager-mcp</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/guides</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
   <url><loc>https://agentfirststack.com/guides/add-analytics-with-claude-code</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/guides/email-inbox-for-ai-agents</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/guides/server-side-conversion-tracking</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/guides/session-replay-for-ai-agents</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://agentfirststack.com/llms.txt</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://agentfirststack.com/mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/llms.txt</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://agentfirststack.com/mcp</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/microsoft-clarity-mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/mixpanel-mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
-  <url><loc>https://agentfirststack.com/posthog-mcp</loc><lastmod>2026-11-04</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://agentfirststack.com/posthog-mcp</loc><lastmod>2026-11-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://agentfirststack.com/privacy</loc><lastmod>2026-11-04</lastmod><changefreq>yearly</changefreq><priority>0.3</priority></url>
   <url><loc>https://agentfirststack.com/terms</loc><lastmod>2026-11-04</lastmod><changefreq>yearly</changefreq><priority>0.3</priority></url>
 </urlset>

@@ -1,7 +1,7 @@
 {
   "name": "com.agentfirststack/analytics",
   "title": "AgentFirstStack Analytics",
-  "description": "Cookieless web analytics: sites, install verification, stats by country, page, source and device, goals, revenue, funnels, realtime and read-only SQL.",
+  "description": "Cookieless web analytics: sites, install verification, stats by country, page, source and device, goals, revenue, funnels, realtime, AI crawler visits, imports from GA4, Plausible and other tools, and read-only SQL.",
   "version": "0.1.0",
   "websiteUrl": "https://agentfirststack.com",
   "repository": {

@@ -144,9 +144,12 @@ ${(content.after ?? []).map(p).join("\n")}
 }
 
 async function footerFor(env: Bindings, base: string, e: OutgoingEmail): Promise<{ lines: string[]; unsubscribe: string | null }> {
+  // With a Reply-To (NOTIFY_REPLY_TO), a reply reaches a person.
+  const reply = env.NOTIFY_REPLY_TO && senderOf(env.NOTIFY_REPLY_TO) ? ["Questions? Reply to this email."] : [];
   if (e.category === "account")
     return {
       lines: [
+        ...reply,
         `Sent to ${e.to.email} about your AgentFirstStack account. Account and security emails like this one are always sent.`,
         `Email settings: ${base}/dashboard/account`,
       ],
@@ -155,6 +158,7 @@ async function footerFor(env: Bindings, base: string, e: OutgoingEmail): Promise
   const unsubscribe = e.to.userId ? await unsubscribeUrl(env, base, e.to.userId) : null;
   return {
     lines: [
+      ...reply,
       `Sent to ${e.to.email} because you're a member of a project on AgentFirstStack.`,
       unsubscribe ? `Turn off these updates: ${unsubscribe}` : `Turn off these updates in ${base}/dashboard/account`,
     ],

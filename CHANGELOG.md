@@ -47,6 +47,9 @@ All notable changes to this project. The format follows
 
 ### Added
 
+- **Docs and landing pages** now describe the dashboard, imports from other tools, GTM import, crawler reporting, project deletion, emails to people and inbox forwarding everywhere. The comparison pages are corrected: GA4 history and GTM import, surveys, mail labels. The setup prompts (landing page, skill, dashboard) match the manual's Full setup.
+- **Hosted email:** replies to platform emails go to support@ (`NOTIFY_REPLY_TO`). DMARC aggregate reports go to Cloudflare DMARC Management.
+
 - **Emails to people.** The site emails signed-in people at their Google address about their projects, from `NOTIFY_EMAIL_FROM` through a `send_email` binding (`src/email.ts`, `src/email-messages.ts`, migration `0008`).
   - Account emails always go out:
     - claiming a project, someone joining, being removed, connecting a chat app;

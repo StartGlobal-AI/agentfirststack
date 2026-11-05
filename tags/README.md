@@ -457,7 +457,8 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | GET | `/containers/:id/events` | event log with per-destination results; filters `name`, `status`, `source`, `since` (ms, ISO or `15m`/`2h`/`7d`), `before` (cursor), `limit`, `include_visits`, `verbose` (adds the event data and the request sent, without the raw IP, user agent, city or postal code). Third-party strings (page data, params, items, browser order ids, destination answers, requests) are only under `untrusted` keys |
 | GET | `/containers/:id/visitors/:vid` | stored identity/click record (debugging) |
 
-Also from `@afs/shared`: `GET /v1/me`, `GET|POST /v1/keys`, `DELETE /v1/keys/:id`.
+Also from `@afs/shared`: `GET /v1/me`, `GET|POST /v1/keys`, `DELETE /v1/keys/:id`. `DELETE
+/v1/account` is the platform's own (see Project deletion under Abuse and cost controls).
 
 Public (no key): `GET /c/:id.js` (header `x-afs-version: <live version>`; 403 for a suspended
 account), `POST /collect` (text/plain JSON, no preflight; the page host must be the container's
@@ -539,6 +540,13 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   Destinations can't be added or re-pointed with an OAuth access token.
 - **Suspended accounts** (`accounts.suspended_at`, see `@afs/shared` `accountStanding`): their
   keys stop working, `/collect` and `/c/:id.js` answer 403 and queued deliveries are dropped.
+- **Project deletion** (`accounts.deleted_at` in the identity DB): reads as suspended, so keys and
+  ingest stop at once. 7 days later the site's cron calls `DELETE /v1/account` (internal auth only,
+  no MCP tool; API keys get `403 forbidden`; `src/service/purge.ts`), which runs
+  `deleteContainer()` for every container (its D1 rows and its Durable Object's storage), then the
+  account's other rows. It keeps the bare `accounts` row and the fair-use counters. It answers
+  `{account_id, done, deleted: {containers, destinations, versions, ...}}`; `done: false` means call
+  again (about 20 s of work per call), and a live project gets `409 not_deleted`.
 
 ## Config
 

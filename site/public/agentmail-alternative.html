@@ -55,7 +55,7 @@
       "url": "https://agentfirststack.com/agentmail-alternative",
       "image": "https://agentfirststack.com/og/agentmail-alternative.png",
       "datePublished": "2026-11-04",
-      "dateModified": "2026-11-04",
+      "dateModified": "2026-11-05",
       "inLanguage": "en",
       "author": { "@id": "https://agentfirststack.com/#org" },
       "publisher": { "@id": "https://agentfirststack.com/#org" },
@@ -140,7 +140,7 @@
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>AgentMail alternative</span></nav>
       <h1>AgentMail alternative: inboxes your agent creates itself</h1>
       <p class="lede">AgentFirstStack Mail is a free, open-source (AGPL-3.0) alternative to AgentMail. An agent gets an API key with one POST, creates an inbox with a second, and can block until a verification email arrives to get the code or link already extracted. AgentMail has more mailbox features, higher paid sending volume and a SOC 2 report.</p>
-      <p class="meta">Updated <time datetime="2026-11-04">4 November 2026</time></p>
+      <p class="meta">Updated <time datetime="2026-11-05">5 November 2026</time></p>
 
 
       <h2 id="prompt">Prompt for your agent</h2>
@@ -203,8 +203,8 @@ curl -s "$M/v1/inboxes/$INBOX/latest-code?from=github.com&amp;timeout=60" -H "$H
 <tr><th scope="row">Custom domains</th><td>Paid plans: 10 on Developer, 150 on Startup</td><td>Free. The domain's DNS must be on Cloudflare; <code>verify</code> checks every record and says what to fix.</td></tr>
 <tr><th scope="row">New mail</th><td>Webhooks and WebSockets (<a href="https://agentmail.to/docs/websockets">WebSockets</a>)</td><td>A blocking wait on the server (<code>wait</code>, <code>latest-code</code>, up to 120 s) and signed webhooks</td></tr>
 <tr><th scope="row">Codes and links</th><td>Reply extraction (<code>extracted_text</code>) and text from attachments (<a href="https://agentmail.to/docs/reply-extraction">extraction</a>)</td><td>One-time codes and verify, magic-login and password-reset links pulled out of every message</td></tr>
-<tr><th scope="row">Mailbox features</th><td>Threads, labels, drafts, scheduled send, allow and block lists, pods, calendar, <a href="https://agentmail.to/docs/imap-smtp">IMAP and SMTP</a></td><td>Threads, search, attachments, replies and raw MIME. No drafts, labels, IMAP or SMTP.</td></tr>
-<tr><th scope="row">MCP</th><td>Remote server at <code>mcp.agentmail.to</code> with OAuth or an API key header, 47 tools (<a href="https://agentmail.to/docs/integrations/mcp">MCP docs</a>)</td><td><code>mail.agentfirststack.com/mcp</code> or the all-services gateway, 29 mail tools, API key or OAuth</td></tr>
+<tr><th scope="row">Mailbox features</th><td>Threads, labels, drafts, scheduled send, allow and block lists, pods, calendar, <a href="https://agentmail.to/docs/imap-smtp">IMAP and SMTP</a></td><td>Threads, search, labels, attachments, replies, raw MIME, scheduled send, allow and block lists, calendar invites read from messages, forwarding to the project's people. No drafts, IMAP or SMTP.</td></tr>
+<tr><th scope="row">MCP</th><td>Remote server at <code>mcp.agentmail.to</code> with OAuth or an API key header, 47 tools (<a href="https://agentmail.to/docs/integrations/mcp">MCP docs</a>)</td><td><code>mail.agentfirststack.com/mcp</code> or the all-services gateway, 46 mail tools, API key or OAuth</td></tr>
 <tr><th scope="row">Storage and retention</th><td>3 GB on Free, 10 GB on Developer, unlimited on Startup</td><td>Mail on the shared domain is deleted after 14 days; an inbox holds 100 messages</td></tr>
 <tr><th scope="row">Same key also covers</th><td>Email and <a href="https://agentmail.to/docs/calendar">calendar</a></td><td>Web analytics, a tag manager with server-side conversions, and session replay</td></tr>
 </tbody>
@@ -215,7 +215,7 @@ curl -s "$M/v1/inboxes/$INBOX/latest-code?from=github.com&amp;timeout=60" -H "$H
 <ul>
 <li>Your agents send a lot of mail to people who never wrote first. AgentMail's paid plans allow thousands of emails a month; AgentFirstStack's shared-domain inboxes are reply-only and capped at 20 recipients a day.</li>
 <li>You run many inboxes, such as one per customer. AgentMail's Startup plan has 150, and pods keep tenants apart.</li>
-<li>You need mailbox features AgentFirstStack doesn't have: drafts, labels, scheduled send, IMAP and SMTP access, or a calendar.</li>
+<li>You need mailbox features AgentFirstStack doesn't have: drafts, IMAP and SMTP access, or a calendar.</li>
 <li>You need a SOC 2 report, an EU region or SSO. AgentMail lists a SOC 2 report on Startup, and an EU region and SSO on Enterprise.</li>
 <li>You want SDKs and framework integrations. AgentMail's docs show Python and TypeScript SDK calls, a CLI, and guides for LangChain, the Vercel AI SDK and the OpenAI Agents SDK.</li>
 </ul>
