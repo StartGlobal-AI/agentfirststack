@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { type SiteEnv, isDev } from "./env";
 import { MARK, googleButton, html, htmlErrorHandler, messagePage, page } from "./html";
+import { waitUntilOf } from "./email";
+import { emailWelcome } from "./email-messages";
 import { upsertUser } from "./identity";
 import {
   clearSessionCookie,
@@ -197,6 +199,7 @@ authRoutes.get("/auth/google/callback", async (c) => {
   }
   const user = await upsertUser(c.env.DB, identity);
   const session = await startSession(c, user.id);
+  if (user.isNew) await emailWelcome(c.env, siteBase(c), waitUntilOf(c), { userId: user.id, email: user.email });
   return redirect(safeNext(saved.next), { status: 302, cookies: [clear, session] });
 });
 
@@ -212,6 +215,7 @@ authRoutes.get("/auth/dev-login", async (c) => {
   }
   const user = await upsertUser(c.env.DB, { sub: `dev:${email}`, email, name: email.split("@")[0] ?? null });
   const session = await startSession(c, user.id);
+  if (user.isNew) await emailWelcome(c.env, siteBase(c), waitUntilOf(c), { userId: user.id, email: user.email });
   return redirect(safeNext(c.req.query("next")), { status: 302, cookies: [session] });
 });
 

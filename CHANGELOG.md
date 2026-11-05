@@ -53,7 +53,9 @@ All notable changes to this project. The format follows
     - a project deleted (with the restore date and the cleanup prompt), restored, erased tomorrow, erased;
     - suspended or resumed (the operator's reason is never sent);
     - account deleted.
-  - Owners also get "updates": new setup items their agent hasn't applied, with the prompt to paste. These have a one-click unsubscribe (RFC 8058, signed link) and a switch in Account, Emails, which also lists the last 10 emails.
+  - A welcome email on a person's first sign-in: how projects come from their agent, and the prompt that starts one.
+  - Owners also get "updates": new setup items their agent hasn't applied, and one reminder 3 days after claiming when the setup check isn't ready (site migration `0009` records readiness), each with the prompt to paste. These have a one-click unsubscribe (RFC 8058, signed link) and a switch in Account, Emails, which also lists the last 10 emails.
+  - `pnpm afs email-test <profile> <address>` sends the welcome email now, to check sending end to end.
   - Every email is queued once per event and person, so retries never double-send, and retried twice. Each address gets at most 20 a day (`MAX_EMAILS_PER_PERSON_PER_DAY`), and emails are kept 30 days. The site gains an hourly cron for sending.
 
 - **Deleting a project.** The owner deletes it in Settings, General (typing its name). An unclaimed project's own agent can delete it with `DELETE https://agentfirststack.com/v1/me {"confirm":"<id>"}` or the `afs_delete_project` MCP tool. A claimed project's agent gets `403 owner_required`. Deleting does four things at once:

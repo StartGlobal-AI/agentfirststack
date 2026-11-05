@@ -156,3 +156,7 @@ ${WHERE}
 
 ${after("inbox client")}`;
 }
+
+/** For a project whose setup check isn't ready: the agent re-runs the check and fixes what it reports. */
+export const finishPrompt = (base: string) =>
+  `Finish our AgentFirstStack setup. Use AGENTFIRSTSTACK_API_KEY from this project's .env and read AGENTFIRSTSTACK.md. Run the setup check (GET ${base}/v1/setup, or the afs_check_setup MCP tool), fix everything it reports by following the Full setup section of ${base}/llms.txt, then run the setup test (POST ${base}/v1/setup/test) and its browser plan, and the check again until it says ready. Then update AGENTFIRSTSTACK.md and show me the tables of what's set up and what passed.`;

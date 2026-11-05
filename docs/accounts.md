@@ -295,6 +295,7 @@ emails signed-in people at their Google address, never an address an agent suppl
 
 | Email | When | To |
 |---|---|---|
+| `welcome` | their first sign-in: how projects work, the prompt that starts one | them |
 | `project_claimed` | a claim link made them the owner | them |
 | `member_joined` | someone joined through an invite link | the owner |
 | `member_removed` | the owner removed them (not when they leave) | them |
@@ -306,6 +307,7 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `project_suspended`, `project_unsuspended` | the operator suspended or resumed it (never the reason) | the owner |
 | `account_deleted` | they deleted their account | them |
 | `setup_notice` (updates) | the daily notices found new setup items for a project whose agent ran the check before | the owner |
+| `setup_reminder` (updates) | 3 to 14 days after the claim, the last setup check wasn't ready (`setup_state.ready`, migration `0009`) or never ran | the owner, once |
 
 - Every email is an `email_outbox` row first, keyed by `dedupe_key` (one per event and person),
   so a retried request or a repeated cron run never sends twice.
@@ -334,6 +336,7 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `DELETE /v1/me {confirm}` | full-access API key (not OAuth), unclaimed project | delete the project (MCP gateway tool `afs_delete_project`; `src/project-deletion.ts`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `POST /v1/admin/accounts/:id/restore` | `ADMIN_TOKEN` | undo a project deletion before its purge |
+| `POST /v1/admin/emails/test {email}` | `ADMIN_TOKEN` | send the welcome email to someone who signed in, now (`pnpm afs email-test`) |
 | `GET`, `POST /email/unsubscribe?u=&s=` | the signed link | turn off "updates" emails (GET asks, POST does it; mail apps' one-click POST too) |
 | `POST /dashboard/account/emails {updates}` | session + CSRF | turn updates emails on or off |
 | `POST /v1/admin/notices/refresh` | `ADMIN_TOKEN` | write the project notices now (the daily cron does it otherwise) |

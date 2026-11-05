@@ -9,6 +9,7 @@
 //   pnpm afs suspend <profile> <acct_id> --reason "..."   stop an abusive account: every key, every service
 //   pnpm afs unsuspend <profile> <acct_id>                undo a suspension
 //   pnpm afs restore <profile> <acct_id>                  undo a project deletion (before its purge, 7 days)
+//   pnpm afs email-test <profile> <address>               send the welcome email to someone who signed in
 //
 // Each app's wrangler.jsonc is the generic template (local dev, tests, self-host defaults). This
 // script never edits it; it derives a deploy config per app from the template plus the profile.
@@ -575,6 +576,27 @@ async function cmdRestore(name, accountId) {
   for (const step of json.next_steps ?? []) log(`  - ${step}`);
 }
 
+/** POST /v1/admin/emails/test: one real email, to check sending end to end. */
+async function cmdEmailTest(name, address) {
+  if (!address?.includes("@")) die("Give the email address of someone who has signed in.");
+  const profile = loadProfile(name);
+  const token = loadSecrets(name)?.ADMIN_TOKEN;
+  if (!token) die(`deploy/${name}.secrets.json has no ADMIN_TOKEN.`);
+  const res = await fetch(`https://${profile.domain}/v1/admin/emails/test`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ email: address }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const e = json?.error;
+    die(e ? `${res.status} ${e.code}: ${e.message}${e.hint ? ` ${e.hint}` : ""}` : `HTTP ${res.status}`);
+  }
+  log(
+    `${json.result}: ${json.email?.status ?? "?"}${json.email?.error ? ` (${json.email.error})` : ""}${json.email?.message_id ? ` ${json.email.message_id}` : ""}`,
+  );
+}
+
 // ---------- main ----------
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -585,7 +607,7 @@ if (isMain) {
     log(
       readFileSync(fileURLToPath(import.meta.url), "utf8")
         .split("\n")
-        .slice(1, 15)
+        .slice(1, 16)
         .join("\n")
         .replace(/^\/\/ ?/gm, ""),
     );
@@ -611,6 +633,9 @@ if (isMain) {
       break;
     case "restore":
       await cmdRestore(name, rest[0]);
+      break;
+    case "email-test":
+      await cmdEmailTest(name, rest[0]);
       break;
     default:
       help();

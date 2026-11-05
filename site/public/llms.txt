@@ -348,7 +348,8 @@ The platform emails the people of a claimed project itself (you never send these
 they claim it, when someone joins, when they connect a chat app, when a project is deleted (with
 the restore date), the day before it's erased, and when it's suspended; members when they're
 removed or the project is deleted or restored. Owners also get an email when there are new setup
-items their agent hasn't applied, with the prompt to paste into you (they can turn that one off).
+items their agent hasn't applied, and 3 days after claiming if the setup check still isn't ready,
+each with the prompt to paste into you (they can turn those off).
 
 ## 8. Check and test the setup, then let the owner claim it
 

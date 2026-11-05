@@ -25,10 +25,11 @@ export const MAX_PROJECTS_PER_USER = 100;
  */
 export const MAX_GRANTS_PER_USER = 50;
 
+/** Create or update the person signing in; `isNew` on their first sign-in. */
 export async function upsertUser(
   db: D1Database,
   p: { sub: string; email: string; name?: string | null; picture?: string | null },
-): Promise<User> {
+): Promise<User & { isNew: boolean }> {
   const now = Date.now();
   const row = await db
     .prepare(
@@ -40,7 +41,8 @@ export async function upsertUser(
     .bind(newId("usr"), p.sub, p.email, p.name ?? null, p.picture ?? null, now, now)
     .first<User>();
   if (!row) throw new Error("user upsert returned nothing");
-  return row;
+  // A new row keeps the created_at this call wrote; an existing person's is older.
+  return { ...row, isNew: row.created_at === now };
 }
 
 export async function listProjects(db: D1Database, userId: string): Promise<Project[]> {

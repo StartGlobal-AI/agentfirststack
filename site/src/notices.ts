@@ -41,16 +41,29 @@ export async function readSetupState(db: D1Database, accountId: string): Promise
 }
 
 /** The project's agent ran the setup check: remember what it saw, and drop its notice. */
-export async function recordSetupCheck(db: D1Database, accountId: string, checkIds: string[], now = Date.now()) {
+export async function recordSetupCheck(
+  db: D1Database,
+  accountId: string,
+  checkIds: string[],
+  now = Date.now(),
+  result: { ready: boolean; todo: number } | null = null,
+) {
   try {
     await db.batch([
       db
         .prepare(
-          `INSERT INTO setup_state (account_id, checked_at, catalog_version, seen) VALUES (?, ?, ?, ?)
+          `INSERT INTO setup_state (account_id, checked_at, catalog_version, seen, ready, todo) VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(account_id) DO UPDATE SET checked_at = excluded.checked_at, catalog_version = excluded.catalog_version,
-             seen = excluded.seen`,
+             seen = excluded.seen, ready = excluded.ready, todo = excluded.todo`,
         )
-        .bind(accountId, now, CATALOG_VERSION, JSON.stringify([...new Set(checkIds)].slice(0, 200))),
+        .bind(
+          accountId,
+          now,
+          CATALOG_VERSION,
+          JSON.stringify([...new Set(checkIds)].slice(0, 200)),
+          result ? (result.ready ? 1 : 0) : null,
+          result ? result.todo : null,
+        ),
       db.prepare("DELETE FROM project_notices WHERE account_id = ?").bind(accountId),
     ]);
     // This isolate's cache: the site's own answers stop carrying the notice now, not in 10 minutes.

@@ -3,8 +3,8 @@ import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { SiteEnv } from "./env";
 import { noticeBase, refreshNotices } from "./notices";
-import { waitUntilOf } from "./email";
-import { emailSuspension } from "./email-messages";
+import { emailEnabled, waitUntilOf } from "./email";
+import { emailSuspension, emailWelcome } from "./email-messages";
 import { siteBase } from "./google";
 import { restoreProject } from "./project-deletion";
 
@@ -15,6 +15,7 @@ import { restoreProject } from "./project-deletion";
  *   POST /v1/admin/accounts/:id/suspend      { "reason": "..." }  every key stops on every service
  *   POST /v1/admin/accounts/:id/unsuspend    keys work again
  *   POST /v1/admin/accounts/:id/restore      undo a project deletion before its purge (src/project-deletion.ts)
+ *   POST /v1/admin/emails/test               { "email": "..." }  the welcome email to a signed-in person, now
  *
  * `Authorization: Bearer <ADMIN_TOKEN>` only (constant-time compare); without ADMIN_TOKEN the
  * routes refuse everyone. authenticate() reads suspended_at on every request, so keys stop at
@@ -106,6 +107,33 @@ adminApi.post("/v1/admin/accounts/:id/suspend", async (c) => {
       `Undo with POST /v1/admin/accounts/${id}/unsuspend.`,
     ],
   });
+});
+
+// Send the welcome email to someone who has signed in, now: checks sending end to end (the
+// sender, the binding, the domain's SPF, DKIM and DMARC, and where it lands).
+adminApi.post("/v1/admin/emails/test", async (c) => {
+  const { email } = await readJson(c, z.object({ email: z.string().min(3).max(320) }));
+  if (!emailEnabled(c.env))
+    throw new ApiError(
+      503,
+      "not_configured",
+      "Email isn't configured on this deployment.",
+      "Set the NOTIFY_EMAIL_FROM var and the EMAIL binding on the site.",
+    );
+  const user = await c.env.DB.prepare("SELECT id, email FROM users WHERE lower(email) = lower(?)")
+    .bind(email.trim())
+    .first<{ id: string; email: string }>();
+  if (!user)
+    throw new ApiError(
+      404,
+      "not_found",
+      "Nobody with that email has signed in.",
+      "Test emails go only to people who signed in with Google.",
+    );
+  const key = `welcome-test:${user.id}:${Date.now()}`;
+  const result = await emailWelcome(c.env, siteBase(c), undefined, { userId: user.id, email: user.email, dedupeKey: key });
+  const row = await c.env.DB.prepare("SELECT id, status, error, message_id FROM email_outbox WHERE dedupe_key = ?").bind(key).first();
+  return c.json({ result, email: row });
 });
 
 // A deleted project's restore window: the operator can undo a deletion its agent made (an

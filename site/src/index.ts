@@ -2,7 +2,7 @@ import { accountRoutes, extractKey, onError, onNotFound, protectedResourceRoutes
 import { Hono, type MiddlewareHandler } from "hono";
 import { adminApi } from "./admin";
 import { deliverDue, pruneOutbox } from "./email";
-import { emailPurgeReminders } from "./email-messages";
+import { emailPurgeReminders, emailSetupReminders } from "./email-messages";
 import { emailRoutes } from "./email-routes";
 import { deletionApi, purgeDeletedProjects } from "./project-deletion";
 import { claimLinkApi, claimRoutes } from "./claims";
@@ -209,6 +209,12 @@ export default {
     }
     ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
     ctx.waitUntil(pruneOutbox(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.email_prune", deleted: n }))));
+    // Owners of projects claimed 3 to 14 days ago whose setup isn't finished: one reminder each.
+    ctx.waitUntil(
+      emailSetupReminders(env, noticeBase(env))
+        .then((n) => console.log(JSON.stringify({ event: "cron.setup_reminders", queued: n })))
+        .catch((e) => console.error("cron.setup_reminders failed", e)),
+    );
     // Deleted projects whose 7 days to restore have passed: erased in every service.
     ctx.waitUntil(
       purgeDeletedProjects(env)

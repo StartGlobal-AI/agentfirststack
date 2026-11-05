@@ -557,6 +557,8 @@ export async function setupReport(
       env.DB,
       accountId,
       checks.map((c) => c.id),
+      Date.now(),
+      { ready, todo: blocking.length },
     );
   }
 

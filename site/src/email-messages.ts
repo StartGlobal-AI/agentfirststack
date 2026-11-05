@@ -1,11 +1,13 @@
 import { type OutgoingEmail, type QueueResult, queueEmail } from "./email";
 import type { Bindings } from "./env";
+import { finishPrompt } from "./dashboard-prompt";
 import { cleanupPrompt } from "./project-deletion";
 import { itemsAfter } from "./setup-catalog";
 
 /**
  * What the platform emails people, and when (sent through email.ts). Account emails always go out:
  *
+ *   welcome             your first sign-in: how projects work, how to start one   to you
  *   project_claimed     you claimed a project: you own it now               to you
  *   member_joined       someone joined through an invite link               to the owner
  *   member_removed      the owner removed you                               to you
@@ -20,6 +22,7 @@ import { itemsAfter } from "./setup-catalog";
  * Updates (off with one click, or in Account):
  *
  *   setup_notice        new setup items for a project its agent hasn't applied   to the owner
+ *   setup_reminder      3 days after the claim, the setup isn't finished         to the owner
  */
 
 type WaitUntil = ((p: Promise<unknown>) => void) | undefined;
@@ -57,6 +60,41 @@ async function send(env: Bindings, base: string, wu: WaitUntil, e: OutgoingEmail
     console.error(JSON.stringify({ event: "email.queue_failed", kind: e.kind, error: String((err as Error)?.message ?? err) }));
     return "failed";
   }
+}
+
+// ---------- signing up ----------
+
+/** The short prompt that starts a project: the manual's Full setup does the rest. */
+export const startPrompt = (base: string) =>
+  `Set up AgentFirstStack for this project, completely, and verify it yourself: read ${base}/llms.txt and follow its Full setup section from start to finish, then show me what's set up and send me a claim link.`;
+
+/** A person's first sign-in. `dedupeKey` only for the operator's test send. */
+export async function emailWelcome(
+  env: Bindings,
+  base: string,
+  wu: WaitUntil,
+  p: { userId: string; email: string; dedupeKey?: string },
+): Promise<QueueResult> {
+  return send(env, base, wu, {
+    kind: "welcome",
+    category: "account",
+    dedupeKey: p.dedupeKey ?? `welcome:${p.userId}`,
+    to: { userId: p.userId, email: p.email },
+    content: {
+      subject: "Welcome to AgentFirstStack",
+      body: [
+        `You're signed in as ${p.email}. AgentFirstStack is analytics, tags, session replay and inboxes that your coding agent sets up and runs for you, with no signup forms or dashboards to click through first.`,
+        "Projects come from your agent. When it sets AgentFirstStack up for a site, it sends you a claim link: open it and the project shows up in your dashboard. To start one, open your agent in the site's folder and paste this:",
+      ],
+      askFirst: true,
+      ask: startPrompt(base),
+      action: { label: "Open your dashboard", url: `${base}/dashboard` },
+      after: [
+        "In the dashboard you see each project's analytics, tags, replays and mail, invite teammates, manage API keys, and connect Claude or ChatGPT to a project.",
+        "We'll email you when something happens to your projects (someone joins, an app is connected, a project is deleted). It's free and open source: https://github.com/StartGlobal-AI/agentfirststack",
+      ],
+    },
+  });
 }
 
 // ---------- claims and members ----------
@@ -376,6 +414,7 @@ export async function emailSetupNotices(env: Bindings, base: string, rows: { acc
               `Since your agent last checked ${name}'s setup, AgentFirstStack added: ${fresh.join("; ")}.`,
               "Your agent sets them up when it runs the setup check. Paste this into it:",
             ],
+            askFirst: true,
             ask: `Run the AgentFirstStack setup check for our project ${name} (GET ${base}/v1/setup, or the afs_check_setup MCP tool) and apply what it lists, then show me what changed.`,
             action: { label: "Open the project", url: projectUrl(base, r.account_id) },
           },
@@ -384,6 +423,64 @@ export async function emailSetupNotices(env: Bindings, base: string, rows: { acc
       );
       if (res === "queued") queued++;
     }
+  }
+  return queued;
+}
+
+/**
+ * Daily cron: owners of projects claimed 3 to 14 days ago whose setup isn't finished (the last
+ * setup check wasn't ready, or the agent never ran it) get one reminder, with the prompt that
+ * finishes it.
+ */
+export async function emailSetupReminders(env: Bindings, base: string, now = Date.now()) {
+  const { results } = await env.DB.prepare(
+    `SELECT a.id, a.name, u.id AS userId, u.email, s.ready, s.todo, s.checked_at
+       FROM memberships m JOIN accounts a ON a.id = m.account_id JOIN users u ON u.id = m.user_id
+       LEFT JOIN setup_state s ON s.account_id = a.id
+      WHERE m.role = 'owner' AND m.created_at <= ? AND m.created_at > ?
+        AND a.deleted_at IS NULL AND a.suspended_at IS NULL
+        AND (s.account_id IS NULL OR s.ready = 0)
+      LIMIT 500`,
+  )
+    .bind(now - 3 * 86_400_000, now - 14 * 86_400_000)
+    .all<{
+      id: string;
+      name: string | null;
+      userId: string;
+      email: string;
+      ready: number | null;
+      todo: number | null;
+      checked_at: number | null;
+    }>();
+  let queued = 0;
+  for (const r of results) {
+    const name = nameOf(r.name);
+    const res = await send(
+      env,
+      base,
+      undefined,
+      {
+        kind: "setup_reminder",
+        category: "updates",
+        dedupeKey: `setup_reminder:${r.id}:${r.userId}`,
+        to: { userId: r.userId, email: r.email },
+        accountId: r.id,
+        content: {
+          subject: `Finish setting up ${name}`,
+          body: [
+            r.checked_at
+              ? `The last setup check of ${name}, on ${day(r.checked_at)}, found ${r.todo === 1 ? "1 thing" : r.todo ? `${r.todo} things` : "some things"} still to do.`
+              : `Your agent hasn't run the setup check on ${name} yet, so some of it may not be set up.`,
+            "Your agent can finish it on its own. Open it in the site's folder and paste this:",
+          ],
+          askFirst: true,
+          ask: finishPrompt(base),
+          action: { label: "See what's set up", url: projectUrl(base, r.id) },
+        },
+      },
+      true,
+    );
+    if (res === "queued") queued++;
   }
   return queued;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createClaimLink } from "../src/claims";
 import { deliverDue, queueEmail, renderEmail, senderOf, unsubscribeUrl } from "../src/email";
-import { emailPurgeReminders } from "../src/email-messages";
+import { emailPurgeReminders, emailSetupReminders } from "../src/email-messages";
 import { refreshNotices } from "../src/notices";
 import { purgeDeletedProjects } from "../src/project-deletion";
 import { CATALOG_VERSION } from "../src/setup-catalog";
@@ -115,22 +115,22 @@ describe("emails: rendering and sending", () => {
 describe("emails: account events", () => {
   it("tells the new owner they own it, and the owner when someone joins or is removed", async () => {
     const { agent, owner, email, name, base } = await owned("claimer");
-    const [claimed] = emailsTo(email);
+    const claimed = emailsTo(email).find((m) => m.subject.startsWith("You now own"));
     expect(claimed?.subject).toBe(`You now own ${name} on AgentFirstStack`);
     expect(claimed?.text).toContain(`${BASE}${base}`);
     expect(claimed?.text).toContain("Account and security emails like this one are always sent.");
     expect(claimed?.headers["List-Unsubscribe"]).toBeUndefined();
-    expect((await outbox(email))[0]).toMatchObject({ kind: "project_claimed", category: "account", status: "sent" });
+    expect((await outbox(email)).find((r) => r.kind === "project_claimed")).toMatchObject({ category: "account", status: "sent" });
 
     const member = await join(agent.accountId, "joiner");
     const joined = emailsTo(email).find((m) => m.subject === `${member.email} joined ${name}`);
     expect(joined?.text).toContain(`${BASE}${base}/members`);
-    expect(emailsTo(member.email)).toHaveLength(0); // the person who joined gets nothing
+    expect(emailsTo(member.email).map((m) => m.subject)).toEqual(["Welcome to AgentFirstStack"]); // nothing about joining
 
     const page = await owner.get(`${base}/members`);
     const uid = await userId(member.email);
     expect((await owner.post(`${base}/members/${uid}/remove`, { csrf: csrfOf(page.text) })).status).toBe(303);
-    expect(emailsTo(member.email).map((m) => m.subject)).toEqual([`You no longer have access to ${name}`]);
+    expect(emailsTo(member.email).map((m) => m.subject)).toEqual(["Welcome to AgentFirstStack", `You no longer have access to ${name}`]);
   });
 
   it("deletion: the owner gets the restore date and the cleanup, members are told, and hear when it's back", async () => {
@@ -220,7 +220,7 @@ describe("emails: account events", () => {
       decision: "allow",
     });
     expect(r.status).toBe(303);
-    const [m] = emailsTo(email);
+    const m = emailsTo(email).find((x) => x.subject !== "Welcome to AgentFirstStack");
     expect(m?.subject).toBe("Claude can now use Chat project");
     expect(m?.text).toContain("with read-only access");
     expect(m?.text).toContain("claude.ai");
@@ -288,6 +288,61 @@ describe("emails: updates", () => {
     expect((await b.get("/dashboard/account?emails=saved")).text).not.toContain('value="on" checked');
     await b.post("/dashboard/account/emails", { csrf: csrfOf(page.text), updates: "on" });
     expect(await E.DB.prepare("SELECT email_updates FROM users WHERE id = ?").bind(uid).first("email_updates")).toBe(1);
+  });
+});
+
+describe("emails: welcome, setup reminders and the operator's test send", () => {
+  it("welcomes a person on their first sign-in only, with the prompt that starts a project", async () => {
+    const email = uniqueEmail("welcome");
+    await new Browser().signIn(email);
+    await new Browser().signIn(email);
+    const welcome = emailsTo(email).filter((m) => m.subject === "Welcome to AgentFirstStack");
+    expect(welcome).toHaveLength(1);
+    expect(welcome[0]?.text).toContain(`${BASE}/llms.txt`);
+    expect(welcome[0]?.text).toContain(`Open your dashboard: ${BASE}/dashboard`);
+  });
+
+  it("reminds owners whose setup isn't finished 3 days after the claim, once", async () => {
+    const env = testEnv();
+    const now = Date.now();
+    const unfinished = await owned("remind");
+    const finished = await owned("remind-ready");
+    const never = await owned("remind-never");
+    for (const p of [unfinished, finished, never])
+      await E.DB.prepare("UPDATE memberships SET created_at = ? WHERE account_id = ?")
+        .bind(now - 4 * DAY, p.agent.accountId)
+        .run();
+    await E.DB.batch([
+      E.DB.prepare(
+        "INSERT INTO setup_state (account_id, checked_at, catalog_version, seen, ready, todo) VALUES (?, ?, ?, '[]', 0, 3)",
+      ).bind(unfinished.agent.accountId, now - DAY, CATALOG_VERSION),
+      E.DB.prepare(
+        "INSERT INTO setup_state (account_id, checked_at, catalog_version, seen, ready, todo) VALUES (?, ?, ?, '[]', 1, 0)",
+      ).bind(finished.agent.accountId, now - DAY, CATALOG_VERSION),
+    ]);
+    expect(await emailSetupReminders(env, BASE, now)).toBeGreaterThanOrEqual(2);
+    expect(await emailSetupReminders(env, BASE, now)).toBe(0); // once
+    await deliverDue(env, BASE, Date.now());
+    const reminder = (p: { email: string; name: string }) => emailsTo(p.email).find((m) => m.subject === `Finish setting up ${p.name}`);
+    expect(reminder(unfinished)?.text).toContain("found 3 things still to do");
+    expect(reminder(unfinished)?.text).toContain("/v1/setup/test");
+    expect(reminder(unfinished)?.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+    expect(reminder(never)?.text).toContain("hasn't run the setup check");
+    expect(reminder(finished)).toBeUndefined();
+  });
+
+  it("sends the operator's test email to someone who signed in, now", async () => {
+    const ADMIN = "test-admin-token-0123456789";
+    const env = testEnv({ ADMIN_TOKEN: ADMIN });
+    const email = uniqueEmail("optest");
+    await new Browser().signIn(email);
+    const send = (json: unknown, key = ADMIN) => call("POST", "/v1/admin/emails/test", { env, key, json });
+    expect((await send({ email }, "afs_nope")).status).toBe(401);
+    expect((await send({ email: "nobody@example.com" })).status).toBe(404);
+    const r = await send({ email: email.toUpperCase() });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ result: "sent", email: { status: "sent" } });
+    expect(emailsTo(email).filter((m) => m.subject === "Welcome to AgentFirstStack")).toHaveLength(2); // first sign-in, then the test
   });
 });
 

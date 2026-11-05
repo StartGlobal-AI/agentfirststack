@@ -22,7 +22,7 @@ import { recentEmails, waitUntilOf } from "./email";
 import { emailAccountDeleted, emailMemberRemoved, emailProjectDeleted, emailProjectRestored } from "./email-messages";
 import { analyticsDashboard } from "./analytics-dashboard";
 import { serviceViews } from "./service-views";
-import { type BuildKind, buildPrompt } from "./dashboard-prompt";
+import { type BuildKind, buildPrompt, finishPrompt } from "./dashboard-prompt";
 import { callService, projectResources } from "./services";
 import { readSetupState } from "./notices";
 import { itemsAfter } from "./setup-catalog";
@@ -64,10 +64,6 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  */
 const SETUP_PROMPT =
   "Set up AgentFirstStack for this project, completely, and verify it yourself. First look at what the site uses today (Google Analytics, Tag Manager, Plausible, DataFast, pixels), then ask me once: should the project's inbox email be forwarded to me as each one arrives, or as one daily digest (at what time)? And if you found other tools, shall you bring their setup and history over, using my browser where I'm signed in if you need to export it? Then read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, AI crawler reporting if the site has a server, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, then test it end to end: the setup test (POST https://agentfirststack.com/v1/setup/test), its browser plan in a real browser, and the setup check (GET https://agentfirststack.com/v1/setup) until it says ready. Apart from that message, don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values) and add the manual's AgentFirstStack block to AGENTS.md, and show me the tables of what's set up and what passed, and send me a claim link for the project.";
-
-/** For a project whose setup check isn't ready: the agent re-runs the check and fixes what it reports. */
-const finishPrompt = (base: string) =>
-  `Finish our AgentFirstStack setup. Use AGENTFIRSTSTACK_API_KEY from this project's .env and read AGENTFIRSTSTACK.md. Run the setup check (GET ${base}/v1/setup, or the afs_check_setup MCP tool), fix everything it reports by following the Full setup section of ${base}/llms.txt, then run the setup test (POST ${base}/v1/setup/test) and its browser plan, and the check again until it says ready. Then update AGENTFIRSTSTACK.md and show me the tables of what's set up and what passed.`;
 
 /** The screens an agent can build for a project, one prompt each (see dashboard-prompt.ts). */
 const BUILDS: { kind: BuildKind; title: string; what: string }[] = [

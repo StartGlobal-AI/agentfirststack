@@ -130,6 +130,10 @@ wrangler d1 execute afs-identity --remote -c site/wrangler.deploy.json --command
   "SELECT kind, status, attempts, error, created_at FROM email_outbox ORDER BY created_at DESC LIMIT 20"
 ```
 
+To check sending end to end (sender, binding, SPF, DKIM, DMARC, and whether it lands in the
+inbox), send yourself the welcome email: `pnpm afs email-test hosted you@example.com` (you must
+have signed in once).
+
 **Deleted projects.** Owners delete projects in the dashboard, and an unclaimed project's agent
 can with `DELETE /v1/me` (see [accounts.md](accounts.md#6-privacy-and-deletion)). A deleted
 project stops at once. The site's daily cron (03:17 UTC) erases it 7 days later in every service
