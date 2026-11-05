@@ -127,7 +127,8 @@ a feature needs each project's agent to do something (a new setting, a snippet, 
    check ids.
 3. Add the step to the full setup in `site/public/llms.txt` (and the prompt if it changes what the
    agent asks).
-4. Deploy the site. Within a day the cron writes a notice for every active project that hasn't seen
+4. Deploy the site (and `curl -X POST https://<site>/v1/admin/notices/refresh -H "Authorization: Bearer $ADMIN_TOKEN"`
+   to write the notices now). Otherwise, within a day the cron writes a notice for every active project that hasn't seen
    the new version; their agents get it in the next API or MCP answer, owners in the weekly report
    and the dashboard. Projects whose repo has the AgentFirstStack block in AGENTS.md also run the
    check whenever an agent works on analytics, tags, mail or replay.

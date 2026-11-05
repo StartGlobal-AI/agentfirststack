@@ -1,3 +1,4 @@
+import { forgetNotice } from "@afs/shared";
 import type { Bindings } from "./env";
 import { CATALOG_VERSION, itemsAfter } from "./setup-catalog";
 
@@ -51,6 +52,8 @@ export async function recordSetupCheck(db: D1Database, accountId: string, checkI
         .bind(accountId, now, CATALOG_VERSION, JSON.stringify([...new Set(checkIds)].slice(0, 200))),
       db.prepare("DELETE FROM project_notices WHERE account_id = ?").bind(accountId),
     ]);
+    // This isolate's cache: the site's own answers stop carrying the notice now, not in 10 minutes.
+    forgetNotice(accountId);
   } catch (e) {
     console.error("setup_state write failed", e);
   }

@@ -2,6 +2,7 @@ import { ApiError, cleanName, forgetStanding, readJson, timingSafeEqual } from "
 import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { SiteEnv } from "./env";
+import { noticeBase, refreshNotices } from "./notices";
 
 /**
  * Operator tools for abuse of the free platform, on the site (it owns the identity database):
@@ -67,6 +68,9 @@ const accountId = (c: Context<SiteEnv>) => {
 };
 
 adminApi.get("/v1/admin/accounts/:id", async (c) => c.json({ account: await accountState(c.env.DB, accountId(c)) }));
+
+// After shipping a new setup catalog version: write the notices now instead of at the daily cron.
+adminApi.post("/v1/admin/notices/refresh", async (c) => c.json(await refreshNotices(c.env, noticeBase(c.env))));
 
 const suspendBody = z.object({ reason: z.string().min(1).max(500) });
 

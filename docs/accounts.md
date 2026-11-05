@@ -258,6 +258,7 @@ unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 | `GET /v1/setup` (records `setup_state`, clears the project's notice) | any API key | the setup check: the project against the full setup, each part with its status and fix (MCP gateway tool `afs_check_setup`; `src/setup-check.ts`) |
 | `GET /v1/me`, `PATCH /v1/me {name}` | API key (not read-only to rename) | the project and key; renames the project (every app; MCP gateway tool `afs_update_project`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
+| `POST /v1/admin/notices/refresh` | `ADMIN_TOKEN` | write the project notices now (the daily cron does it otherwise) |
 | `GET /signin` | none | sign-in page |
 | `GET /auth/google`, `GET /auth/google/callback` | none | Google sign-in |
 | `GET /auth/dev-login` | `DEV_MODE=true` only | fake sign-in for dev and tests |
