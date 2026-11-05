@@ -46,6 +46,10 @@ export default defineConfig({
                 MAX_INBOX_CLEARS_PER_DAY: "",
                 MAX_SCHEDULED_PER_ACCOUNT: "",
                 MAX_ATTACHMENT_TEXT_PER_DAY: "",
+                // Unset: the default (100) applies; forward tests set their own.
+                MAX_FORWARDS_PER_ACCOUNT_PER_DAY: "",
+                // The platform's site (dashboard links in forwards): unset, as for a lone mail app.
+                AUTH_ISSUER: "",
                 // Delivery tracking off, as in the generic template; its tests turn it on.
                 DELIVERY_EVENTS_QUEUE: "",
                 ...Object.fromEntries(
@@ -68,6 +72,7 @@ export default defineConfig({
                     "MAX_INBOX_CLEARS_PER_DAY",
                     "MAX_SCHEDULED_PER_ACCOUNT",
                     "MAX_ATTACHMENT_TEXT_PER_DAY",
+                    "MAX_FORWARDS_PER_ACCOUNT_PER_DAY",
                   ].map((n) => [`UNCLAIMED_${n}`, ""]),
                 ),
               },

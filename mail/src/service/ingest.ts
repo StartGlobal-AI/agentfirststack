@@ -5,6 +5,7 @@ import { type ExtractedLink, extractAll } from "../extract";
 import { type AuthResults, extractAuth } from "../extract/auth";
 import { MAX_ICS_CHARS, parseIcs } from "../extract/calendar";
 import { cleanTag, normalizeRecipient } from "../lib/address";
+import { forwardEligibility } from "../lib/forwarding";
 import { headerSafe, isMimeType } from "../lib/headers";
 import { UNAUTHENTICATED_SENDER, isAutomated, senderKeyFor } from "../lib/sender";
 import { bracketMessageId, hasReplyPrefix, normalizeSubject, threadLookupIds } from "../lib/threading";
@@ -225,7 +226,15 @@ export async function evictOverflow(env: AppEnv, inboxId: string, keepId: string
 }
 
 export type IngestResult =
-  | { status: "stored"; message_id: string; inbox_id: string; thread_id: string; via: "address" | "catch_all" }
+  | {
+      status: "stored";
+      message_id: string;
+      inbox_id: string;
+      thread_id: string;
+      via: "address" | "catch_all";
+      /** true: the inbox forwards each email and this one may be forwarded (the caller sends it after acceptance). */
+      forward?: true;
+    }
   | { status: "duplicate"; message_id: string; inbox_id: string }
   | { status: "rejected"; reason: string };
 
@@ -559,6 +568,23 @@ export async function ingestRaw(
       calendar_json: calendarOf(parsed.attachments),
     };
 
+    // Forwarding to the project's members (src/service/forward.ts): mail that may be forwarded gets
+    // a forward_queue row in the same transaction, so a failed live forward is never lost.
+    const fwdMode = inbox.forward_mode === "each" || inbox.forward_mode === "digest" ? inbox.forward_mode : null;
+    let fwdKind: "forward" | "list" | null = null;
+    if (fwdMode) {
+      const e = forwardEligibility({
+        headers: parsed.headers,
+        envelopeFrom: input.envelopeFrom,
+        fromAddress: from.address,
+        authVerdict: ex.auth.verdict,
+        tag: row.tag,
+        internal: !!input.internalFrom,
+      });
+      // "list" (machine notices) only goes into digests; an inbox that forwards each email sends none.
+      if ("kind" in e && (e.kind === "forward" || fwdMode === "digest")) fwdKind = e.kind;
+    }
+
     const day = utcDay(now);
     const guard = admissionGuard(env, inbox, standing, blobBytes, day);
     const keys = [rawKey, ...(htmlKey ? [htmlKey] : [])];
@@ -599,6 +625,13 @@ export async function ingestRaw(
           ).bind(a.id, id, a.filename, a.content_type, a.size, a.content_id, a.disposition, a.part_index, id),
         ),
         ifStored(env, id, "UPDATE inboxes SET last_message_at = ? WHERE id = ?", now, inbox.id),
+        ...(fwdKind
+          ? [
+              env.DB.prepare(
+                "INSERT INTO forward_queue (message_id, inbox_id, account_id, kind, received_at) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ?)",
+              ).bind(id, inbox.id, inbox.account_id, fwdKind, now, id),
+            ]
+          : []),
       ]);
       stored = !!batch[0]?.meta.changes;
     } finally {
@@ -636,7 +669,14 @@ export async function ingestRaw(
     } catch (e) {
       console.error("webhook enqueue failed", e);
     }
-    return { status: "stored", message_id: id, inbox_id: inbox.id, thread_id: thread.threadId, via };
+    return {
+      status: "stored",
+      message_id: id,
+      inbox_id: inbox.id,
+      thread_id: thread.threadId,
+      via,
+      ...(fwdKind === "forward" && fwdMode === "each" ? { forward: true as const } : {}),
+    };
   } finally {
     if (!stored) await refundSender(env, inbox.id, senderKey, sender.day).catch(() => {});
   }
@@ -697,31 +737,34 @@ export function internalAuth(): AuthResults {
 /** The SMTP reason a suspended account's mail gets: polite, and says nothing about why. */
 export const suspendedReason = (address: string) => `Mailbox unavailable: ${address} is not accepting mail`;
 
-/** The Worker's email() handler. */
-export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv): Promise<void> {
+/**
+ * The Worker's email() handler. Returns the ingest result (null when refused before parsing), so
+ * the caller can forward a stored message after the SMTP answer (src/index.ts).
+ */
+export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv): Promise<IngestResult | null> {
   const rcpt = normalizeRecipient(message.to);
   // Resolve and admit before reading the body so unknown addresses and over-quota mail are rejected cheaply.
   const target = rcpt ? await findInboxForRecipient(env, rcpt.address) : null;
   if (!target) {
     message.setReject("Address does not exist");
-    return;
+    return null;
   }
   if (message.rawSize > MAX_MESSAGE_BYTES) {
     message.setReject("Message too large (25 MB limit)");
-    return;
+    return null;
   }
   const standing = await standingOf(env, target.inbox.account_id);
   if (standing.suspended) {
     console.log(JSON.stringify({ event: "mail.rejected", reason: "account_suspended", inbox_id: target.inbox.id }));
     message.setReject(suspendedReason(target.inbox.address));
-    return;
+    return null;
   }
   // Read-only: the quota is only counted when the message is stored (see ingestRaw).
   const refusal = await inboundRefusal(env, target.inbox, standing, message.rawSize);
   if (refusal) {
     console.log(JSON.stringify({ event: "mail.rejected", reason: refusal, inbox_id: target.inbox.id }));
     message.setReject(refusal);
-    return;
+    return null;
   }
   const raw = await new Response(message.raw).arrayBuffer(); // the stream is single-use
   const res = await ingestRaw(env, { envelopeFrom: message.from, envelopeTo: message.to, raw, inbox: target, standing });
@@ -729,4 +772,5 @@ export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv)
     console.log(JSON.stringify({ event: "mail.rejected", reason: res.reason, inbox_id: target.inbox.id }));
     message.setReject(res.reason);
   } else console.log(JSON.stringify({ event: "mail.received", ...res, to: rcpt!.address }));
+  return res;
 }

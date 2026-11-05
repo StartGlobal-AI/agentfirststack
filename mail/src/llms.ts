@@ -1,6 +1,7 @@
 import { type AppEnv, type CapName, cap } from "./env";
 import { DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES } from "./service/budgets";
 import { DEFAULT_MAX_FEED_EVENTS_PER_DAY, DEFAULT_UNCLAIMED_MAX_FEED_EVENTS_PER_DAY } from "./service/feed";
+import { DEFAULT_MAX_FORWARDS_PER_DAY } from "./service/forward-settings";
 import { DEFAULT_MAX_LIST_ENTRIES } from "./service/lists";
 import { DEFAULT_MAX_SCHEDULED, DEFAULT_SEND_DAILY_LIMIT, DEFAULT_UNCLAIMED_MAX_SCHEDULED } from "./service/send";
 import { DEFAULT_MAX_CONCURRENT_WAITS, DEFAULT_MAX_CONCURRENT_WAITS_PER_INBOX } from "./service/wait";
@@ -20,6 +21,13 @@ export function limitsTable(env: AppEnv | undefined): string {
   const unclaimed = { suspended: false, claimed: false };
   const rows: [string, CapName, number, number, "n" | "b"][] = [
     ["Recipients sent per UTC day", "SEND_DAILY_LIMIT", DEFAULT_SEND_DAILY_LIMIT, DEFAULT_SEND_DAILY_LIMIT, "n"],
+    [
+      "Emails forwarded to the project's members per UTC day",
+      "MAX_FORWARDS_PER_ACCOUNT_PER_DAY",
+      DEFAULT_MAX_FORWARDS_PER_DAY,
+      DEFAULT_MAX_FORWARDS_PER_DAY,
+      "n",
+    ],
     ["Inboxes", "MAX_INBOXES_PER_ACCOUNT", Infinity, Infinity, "n"],
     ["Inboxes created / deleted per day", "MAX_INBOX_CREATES_PER_DAY", Infinity, Infinity, "n"],
     ["Inbound messages per day (account)", "MAX_INBOUND_PER_ACCOUNT_PER_DAY", Infinity, Infinity, "n"],
@@ -203,6 +211,56 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
 - Senders get the rejection; a \`wait\` that times out says in its hint when the daily limit is the reason.
 - Suspended accounts: mail is refused ("Mailbox unavailable: ..."), and sending, waits and webhooks stop.
 
+## Forward to the owner (each email, or a daily digest)
+
+When your session ends nobody reads the inbox, so the owner would miss the verification codes, password resets, service
+notices and receipts of the accounts you created. Set \`forward\` on the inbox and its mail goes on to the project's
+members (the people who claimed the project with Google sign-in). Ask the owner which they want: each email as it
+arrives, or one digest a day (and at what hour, in which time zone). Default: off.
+
+- The setting: \`"forward": { "mode": "each" | "digest" | "off", "digest_hour": 0-23 (default 8), "timezone": IANA name
+  (default "UTC") }\`, on \`POST /v1/inboxes\` (a new inbox; an address you already own keeps its setting and says so in
+  next_steps) and \`PATCH /v1/inboxes/:id\`. Updates merge: \`{"forward":{"mode":"digest"}}\` keeps digest_hour and
+  timezone. MCP: create_inbox and update_inbox take the same \`forward\`. A time zone that is not an IANA name ("Europe/Berlin",
+  "America/New_York", "UTC") is 400 with a hint. \`{"forward":{"mode":"off"}}\` stops it and drops what was waiting.
+  \`\`\`sh
+  curl -X PATCH $BASE/v1/inboxes/$INBOX -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \\
+    -d '{"forward":{"mode":"digest","digest_hour":8,"timezone":"Europe/Berlin"}}'
+  #  -> { "inbox": { ..., "forward": { "mode": "digest", "digest_hour": 8, "timezone": "Europe/Berlin", "recipients": 1,
+  #       "waiting_for_owner": false, "last_forwarded_at": null, "last_digest_at": null, "forwarded_today": 0, "daily_limit": 100 } },
+  #       "next_steps": [...] }
+  \`\`\`
+- \`each\`: every email that may be forwarded goes to each member as it arrives (one email per member, so none sees the
+  others), from the inbox's own address (shown as "<inbox> via AgentFirstStack"), subject \`[<inbox address>] <original
+  subject>\`: the original's From / Date / Subject / To, its text, its HTML (scripts, frames, forms and event handlers
+  removed) and its attachments (at most 32 and 25 MiB; beyond that a note says what was left out), then a footer naming
+  the inbox and project and how to switch to a digest or stop. No Reply-To: a reply goes to the inbox, and since it comes
+  from a member it is not forwarded back. Sent right after the message is stored; SMTP acceptance never waits for it.
+- \`digest\`: one email per member at \`digest_hour\` in \`timezone\` (the hourly cron), only on days with new mail, at most
+  once a day: "<N> new emails at <inbox address>", newest first (50 listed, then "and N more"), each with sender, subject,
+  time in the inbox's time zone, the extracted code or verify link, and a preview of about 300 characters.
+- Never forwarded: mail whose sender is not authenticated (\`auth_verdict\` other than "pass"; digests give only their
+  count), bounces and delivery reports, auto-replies (\`Auto-Submitted\` other than "no", X-Autoreply, X-Autorespond,
+  Precedence: auto_reply), mail from this account's own inboxes or from a member (no loops), anything carrying our
+  \`X-AFS-Forwarded\` header (our own forwards and digests carry it), the setup test's mail (\`+afs-test\`), and mail
+  refused at SMTP time (block lists, limits). Machine notices (\`Auto-Submitted: auto-generated\`) are not forwarded one by
+  one, but digests list them. You can still read all of it here.
+- Before anyone claims the project there is nobody to send to: \`forward.waiting_for_owner\` is true and nothing is sent.
+  Give your person a claim link (\`POST /v1/claim-link\` on the platform site). After they claim it, the next hourly run
+  sends ONE catch-up digest of what arrived while forwarding was on (mail waits at most 30 days), then the chosen mode
+  continues.
+- Budget: \`MAX_FORWARDS_PER_ACCOUNT_PER_DAY\` emails per UTC day across the account's inboxes (one per member per forward
+  or digest; this deployment's value is in "Limits on this deployment"). Forwarding never uses SEND_DAILY_LIMIT. Past
+  the budget, \`each\` pauses until 00:00 UTC and the rest goes into one digest the next day (a digest inbox: into its next
+  digest), which says that forwarding paused. \`GET /v1/usage\` shows it as \`limits.forwards_per_day\`. Suspended accounts
+  forward nothing. An inbox on your own domain forwards once the domain is verified for sending.
+- Every inbox in JSON (list, get, create, update, signup) has \`forward: { mode, digest_hour, timezone, recipients (members
+  with a verified email), waiting_for_owner (mode is not off and recipients is 0), last_forwarded_at, last_digest_at (unix
+  ms or null), forwarded_today (emails forwarded today, UTC, across the account), daily_limit (null = no cap) }\`. The
+  members' addresses are never returned, only how many there are.
+- Each forward and digest emits \`message.forwarded\` (webhooks and the event feed): \`{ inbox, kind: "each" | "digest" |
+  "catch_up" | "leftover", messages, message_ids, recipients, url }\`, counts only. Forwards are not stored as sent mail.
+
 ## REST API (all under /v1; all but signup need a key)
 
 ### Account (shared)
@@ -211,7 +269,9 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
 - \`GET /v1/keys\`, \`POST /v1/keys\` \`{ name?, scope?: "*"|"read" }\`, \`DELETE /v1/keys/:id\`.
 
 ### Inboxes
-- \`POST /v1/inboxes\` \`{ username?, domain?, display_name?, ttl_days? }\` -> 201 \`{ inbox, existing:false, next_steps }\` (200 + existing:true if you already own the address).
+- \`POST /v1/inboxes\` \`{ username?, domain?, display_name?, ttl_days?, forward? }\` -> 201 \`{ inbox, existing:false, next_steps }\` (200 + existing:true if you already own the address).
+  Every inbox object has \`forward\` (see "Forward to the owner": mode, digest_hour, timezone, recipients, waiting_for_owner,
+  last_forwarded_at, last_digest_at, forwarded_today, daily_limit).
   username: a-z 0-9 . _ - (no "+": mail to name+tag@ is delivered to name@). Random if omitted. Role names
   (admin, postmaster, abuse, ...) are reserved on the shared domain. \`domain\` defaults to ${sharedDomain}.
   409 \`conflict\` if another account holds the address. An address on ${sharedDomain} that received mail stays
@@ -224,7 +284,7 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
   \`curl -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -d '{"username":"acme-ads","ttl_days":7}'\`
 - \`GET /v1/inboxes?limit=&domain=\` -> \`{ inboxes, shared_domain, storage: { used_bytes, limit_bytes } }\` (limit_bytes null = no cap)
 - \`GET /v1/inboxes/:id\` -> \`{ inbox }\` incl. message_count, unread_count
-- \`PATCH /v1/inboxes/:id\` \`{ display_name?, ttl_days? (null = forever) }\`
+- \`PATCH /v1/inboxes/:id\` \`{ display_name?, ttl_days? (null = forever), forward? (merged) }\` -> \`{ inbox, next_steps? }\` (next_steps when forward was given)
 - \`DELETE /v1/inboxes/:id\` -> deletes the inbox, its messages, attachments and raw MIME; \`address_reserved_until\` says
   until when the address stays yours (null = not reserved). Deletes per UTC day may be capped (429 \`daily_limit\`;
   \`PATCH {"ttl_days": 1}\` lets an inbox expire instead).
@@ -358,7 +418,7 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
 ### Webhooks
 - \`POST /v1/webhooks\` \`{ url, events?, inbox_id? | inbox_ids?, headers? }\` -> 201 \`{ webhook, secret }\`. The secret is shown ONCE.
   events (default ["message.received"]): message.received, message.sent, message.delivered, message.bounced,
-  message.complained, message.failed, domain.verified. inbox_ids: only these inboxes (omit for all; account-level events
+  message.complained, message.failed, message.forwarded, domain.verified. inbox_ids: only these inboxes (omit for all; account-level events
   such as domain.verified go to webhooks for all inboxes only). headers: up to 5 custom headers sent with every delivery
   (e.g. \`Authorization\`), sealed at rest, never shown again (responses list only their names); our signature headers,
   content-type, user-agent, host and hop-by-hop headers are reserved.
@@ -379,7 +439,8 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
   + reply_text + text_excerpt, each <= 8 KB), links, auth, url }\`; message.sent: \`{ inbox, message, recipients, internal?, url }\`;
   message.delivered / bounced / complained / failed: \`{ message_id, inbox_id, recipient, status, smtp_code, smtp_response,
   detail, bounce_type?, at, url }\` (failed also covers rejected, and scheduled sends that failed: \`scheduled: true\`);
-  domain.verified: \`{ domain, status, receiving, sending, url }\`.
+  message.forwarded (mail forwarded to the project's members): \`{ inbox, kind: each|digest|catch_up|leftover, messages,
+  message_ids, recipients, url }\`; domain.verified: \`{ domain, status, receiving, sending, url }\`.
   headers: \`x-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>\`, x-webhook-id, x-event-id,
   x-event-type, x-delivery-attempt, and Standard Webhooks headers (\`webhook-id\`, \`webhook-timestamp\`, \`webhook-signature:
   v1,<base64 HMAC>\`; standardwebhooks.com), so stock verifiers (Svix, standardwebhooks libraries) accept the same secret.
@@ -432,10 +493,10 @@ Read-only keys see only the read tools. Operator-only arguments (\`auto_configur
 
 | Tool | Does | REST equivalent |
 |---|---|---|
-| create_inbox { username?, domain?, display_name?, ttl_days? } | new address | POST /v1/inboxes |
+| create_inbox { username?, domain?, display_name?, ttl_days?, forward? } | new address; forward to the owner | POST /v1/inboxes |
 | list_inboxes { limit? } | incl. storage used / limit | GET /v1/inboxes |
 | get_inbox { inbox_id } | | GET /v1/inboxes/:id |
-| update_inbox { inbox_id, display_name?, ttl_days? } | | PATCH /v1/inboxes/:id |
+| update_inbox { inbox_id, display_name?, ttl_days?, forward? } | forward merges | PATCH /v1/inboxes/:id |
 | delete_inbox { inbox_id } | destructive | DELETE /v1/inboxes/:id |
 | list_messages { inbox_id, unread?, q?, from?, to?, subject?, direction?, tag?, has?, auth?, labels?, status?, order?, after?, before?, limit? } | | GET /v1/inboxes/:id/messages |
 | search_messages { q, inbox_id?, ...the same filters } | | GET /v1/search |
@@ -491,6 +552,8 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 |---|---|---|
 | MAIL_DOMAIN | var | shared domain for instant inboxes (Email Routing catch-all -> this Worker; onboarded to Email Sending) |
 | SEND_DAILY_LIMIT | var | per-account recipients per UTC day, default 200 |
+| MAX_FORWARDS_PER_ACCOUNT_PER_DAY | var | emails forwarded to the project's members (an inbox's forward setting, one per member) per account per UTC day, default 100; "0" = forwarding off; separate from SEND_DAILY_LIMIT |
+| AUTH_ISSUER | var | the platform's site (set by \`pnpm afs\`): named in OAuth metadata, and forwards link to its dashboard (\`<AUTH_ISSUER>/dashboard/projects/<account id>\`); unset = no link |
 | UNCLAIMED_<name> | var | optional; for every per-account cap below (and SEND_DAILY_LIMIT): the value for accounts no person has claimed yet |
 | WORKER_NAME | var | this Worker's name; auto_configure points catch-all rules at it |
 | PUBLIC_BASE_URL | var | URL used in responses (default: request origin); its domain and subdomains (and AUTH_ISSUER's) are off limits to webhooks |

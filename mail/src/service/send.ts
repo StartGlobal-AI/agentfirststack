@@ -317,7 +317,7 @@ export function mapSendError(e: unknown): ApiError {
   }
 }
 
-interface PreparedAttachment {
+export interface PreparedAttachment {
   filename: string;
   type: string;
   disposition: "attachment" | "inline";
@@ -325,7 +325,7 @@ interface PreparedAttachment {
   bytes: Uint8Array;
 }
 
-interface Prepared {
+export interface Prepared {
   to: string[];
   cc: string[];
   bcc: string[];
@@ -377,7 +377,8 @@ function prepareAttachments(src: AttachmentSource): PreparedAttachment[] {
   });
 }
 
-function prepare(input: Omit<SendInput, "attachments"> & { attachments?: AttachmentSource }): Prepared {
+/** Validate and normalise a send (recipients, subject, body, headers, attachments, size). Also used by forward.ts. */
+export function prepare(input: Omit<SendInput, "attachments"> & { attachments?: AttachmentSource }): Prepared {
   const to = recipients("to", input.to);
   const cc = recipients("cc", input.cc);
   const bcc = recipients("bcc", input.bcc);
@@ -469,7 +470,7 @@ const threadHeaders = (p: Prepared, thread: { inReplyTo: string | null; referenc
 };
 
 /** Email Service send to the recipients outside the account; null when there are none. Throws mapped errors. */
-async function sendExternal(env: AppEnv, inbox: InboxRow, p: Prepared, ext: Routed["ext"], headers: Record<string, string>) {
+export async function sendExternal(env: AppEnv, inbox: InboxRow, p: Prepared, ext: Routed["ext"], headers: Record<string, string>) {
   if (!(ext.to.length + ext.cc.length + ext.bcc.length)) return null;
   const fromName = headerSafe(inbox.display_name);
   try {
@@ -1176,7 +1177,7 @@ const mailboxText = (address: string, name: string | null | undefined) => {
 };
 
 /** The original's full text, HTML and attachments: from the raw MIME when we have it, else the stored copy. */
-async function originalContent(env: AppEnv, row: MessageRow, withAttachments: boolean) {
+export async function originalContent(env: AppEnv, row: MessageRow, withAttachments: boolean) {
   if (row.raw_key) {
     const raw = await env.BLOBS.get(row.raw_key);
     if (raw) {

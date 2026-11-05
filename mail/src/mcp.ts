@@ -92,7 +92,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Create inbox",
       description:
-        "Create an email address instantly (no DNS, no verification on the shared domain). Use it to sign up for third-party services, then call get_latest_code or wait_for_email. Creating an address that you already own returns it (existing: true).",
+        "Create an email address instantly (no DNS, no verification on the shared domain). Use it to sign up for third-party services, then call get_latest_code or wait_for_email. Creating an address that you already own returns it (existing: true). forward { mode: each | digest | off, digest_hour, timezone } sends its mail on to the project's members (the people who claimed it), each email as it arrives or one daily digest: ask the owner which. The inbox's forward field says how many members it reaches (waiting_for_owner until someone claims the project), never their addresses.",
       input: createInboxShape,
     },
     (i) => createInbox(env, a, i),
@@ -119,7 +119,8 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     "update_inbox",
     {
       title: "Update inbox",
-      description: "Change an inbox's display name or lifetime (ttl_days from now; null = forever).",
+      description:
+        'Change an inbox\'s display name, lifetime (ttl_days from now; null = forever) or forward setting (merged: {"mode":"digest"} keeps digest_hour and timezone; {"mode":"off"} stops forwarding to the project\'s members).',
       input: { inbox_id: z.string(), ...updateInboxShape },
     },
     ({ inbox_id, ...rest }) => updateInbox(env, a, inbox_id, rest),
@@ -490,7 +491,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Wait for events",
       description:
-        "The account's event feed (the events webhooks get: message.received, message.sent, message.delivered, message.bounced, message.complained, message.failed, domain.verified), oldest first after a cursor, kept 7 days. Start with after=\"latest\", then pass next_after each time. timeout (s, max 120) blocks until something new arrives; 0 returns at once. Filter by types (comma-separated) and inbox_id. Shares the account's concurrent-wait slots." +
+        "The account's event feed (the events webhooks get: message.received, message.sent, message.delivered, message.bounced, message.complained, message.failed, message.forwarded, domain.verified), oldest first after a cursor, kept 7 days. Start with after=\"latest\", then pass next_after each time. timeout (s, max 120) blocks until something new arrives; 0 returns at once. Filter by types (comma-separated) and inbox_id. Shares the account's concurrent-wait slots." +
         UNTRUSTED,
       input: eventsShape,
     },
@@ -647,7 +648,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Create webhook",
       description:
-        "POST a signed JSON event to your URL for the events you pick (message.received by default; also message.sent, message.delivered, message.bounced, message.complained, message.failed, domain.verified), optionally for some inboxes (inbox_id / inbox_ids), with up to 5 custom headers. Returns `secret` once; each delivery has x-signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>. Retried with backoff for ~2 h on non-2xx; redirects are not followed (3xx = failure). https only, and not this platform's own hosts. Same URL+inbox again returns the existing webhook. Accounts have a webhook limit (403 quota_exceeded). Needs the project's own API key: a connected app's OAuth access token gets 403 temporary_credential (a webhook would outlive it).",
+        "POST a signed JSON event to your URL for the events you pick (message.received by default; also message.sent, message.delivered, message.bounced, message.complained, message.failed, message.forwarded, domain.verified), optionally for some inboxes (inbox_id / inbox_ids), with up to 5 custom headers. Returns `secret` once; each delivery has x-signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>. Retried with backoff for ~2 h on non-2xx; redirects are not followed (3xx = failure). https only, and not this platform's own hosts. Same URL+inbox again returns the existing webhook. Accounts have a webhook limit (403 quota_exceeded). Needs the project's own API key: a connected app's OAuth access token gets 403 temporary_credential (a webhook would outlive it).",
       input: createWebhookShape,
       openWorld: true,
     },

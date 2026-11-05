@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FORWARD_MODES } from "./lib/forwarding";
 import { MAX_TTL_DAYS } from "./service/inboxes";
 import { MAX_TIMEOUT_S } from "./service/wait";
 
@@ -8,6 +9,21 @@ import { MAX_TIMEOUT_S } from "./service/wait";
  */
 
 const addressList = z.union([z.string().min(3).max(320), z.array(z.string().min(3).max(320)).max(50)]);
+
+/** An inbox's forward setting (src/lib/forwarding.ts); every field optional, so updates merge. */
+export const forwardSettingShape = z.object({
+  mode: z
+    .enum(FORWARD_MODES)
+    .optional()
+    .describe('"each": every email as it arrives; "digest": one email a day at digest_hour; "off": none (default).'),
+  digest_hour: z.number().int().min(0).max(23).optional().describe("Hour of the daily digest, 0-23, in timezone (default 8)."),
+  timezone: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe('IANA time zone of digest_hour and the times in digests, e.g. "Europe/Berlin" (default "UTC").'),
+});
 
 export const createInboxShape = {
   username: z
@@ -23,11 +39,19 @@ export const createInboxShape = {
     .optional()
     .describe("Name shown on mail sent from this inbox (control characters such as line breaks are removed)."),
   ttl_days: z.number().positive().max(MAX_TTL_DAYS).optional().describe("Delete the inbox and its mail after this many days."),
+  forward: forwardSettingShape
+    .optional()
+    .describe(
+      "Forward this inbox's mail to the project's members (the people who claimed it): each email as it arrives, or one daily digest. Ask the owner which. Default off. Applied when the inbox is created (an existing inbox keeps its setting: use update_inbox).",
+    ),
 };
 
 export const updateInboxShape = {
   display_name: z.string().max(200).nullable().optional(),
   ttl_days: z.number().positive().max(MAX_TTL_DAYS).nullable().optional().describe("New lifetime from now; null keeps the inbox forever."),
+  forward: forwardSettingShape
+    .optional()
+    .describe('Partial update, merged: {"mode":"digest"} keeps digest_hour and timezone. {"mode":"off"} stops forwarding.'),
 };
 
 export const waitShape = {
@@ -216,6 +240,7 @@ const webhookEvents = z.enum([
   "message.bounced",
   "message.complained",
   "message.failed",
+  "message.forwarded",
   "domain.verified",
 ]);
 

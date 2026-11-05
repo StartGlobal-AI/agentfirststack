@@ -19,3 +19,5 @@ DEV_MODE=true
 
 # Optional: same value as the site's; lets the site's dashboard read this app as a project (x-afs-internal).
 # INTERNAL_TOKEN=
+# Optional: the platform's site, for OAuth metadata and the dashboard link in forwards to a project's members.
+# AUTH_ISSUER=http://localhost:8786

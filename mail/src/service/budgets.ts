@@ -3,7 +3,7 @@ import { type AppEnv, type Standing, cap } from "../env";
 import { utcDay } from "./format";
 
 /** Kinds of per-account daily budget kept in `account_daily`. */
-export type DailyKind = "inbox_create" | "inbox_delete" | "inbox_clear" | "webhook_test" | "event" | "attachment_text";
+export type DailyKind = "inbox_create" | "inbox_delete" | "inbox_clear" | "webhook_test" | "event" | "attachment_text" | "forward";
 
 /** Seconds from `now` to the next 00:00 UTC, when every daily budget resets (at least 1). */
 export function secondsToUtcMidnight(now = Date.now()): number {
