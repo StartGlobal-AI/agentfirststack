@@ -6,9 +6,9 @@ and hosted for free at https://agentfirststack.com.
 
 | App | What it replaces | Hosted at | Local port |
 |---|---|---|---|
-| [`site/`](site) | Landing page, master `llms.txt`, platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard, OAuth 2.1 server for MCP connectors (see `docs/accounts.md`) | agentfirststack.com | 8786 |
-| [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue) | analytics.agentfirststack.com | 8787 |
-| [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok) with dedup | tags.agentfirststack.com | 8788 |
+| [`site/`](site) | Landing page, master `llms.txt` (with the full-setup procedure the prompt points to), platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard, OAuth 2.1 server for MCP connectors (see `docs/accounts.md`) | agentfirststack.com | 8786 |
+| [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue, subscriptions/MRR, ad spend, ecommerce items, AI crawlers, alerts and reports) | analytics.agentfirststack.com | 8787 |
+| [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap, X) with dedup | tags.agentfirststack.com | 8788 |
 | [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
 | [`replay/`](replay/README.md) | Hotjar / Microsoft Clarity: headless session replay masked in the browser by default, sessions as readable transcripts, rage/dead/error clicks, heatmaps and JS errors as data, share-link player | replay.agentfirststack.com | 8790 |
 | [`shared/`](shared/src) | `@afs/shared`: accounts, API keys, instant signup, shared identity, JSON errors, ids, crypto, stateless MCP handler | n/a | n/a |

@@ -41,8 +41,8 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 
 | | What it does | Instead of |
 |---|---|---|
-| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, revenue, funnels, realtime; server-side events; read-only SQL | Google Analytics, Plausible |
-| **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta and TikTok with one event id, so each platform counts it once. Scan, validate, preview, test and publish | Google Tag Manager, server-side GTM |
+| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime; revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits; alerts and weekly reports; GA4 and Plausible imports; server-side events; read-only SQL | Google Analytics, Plausible |
+| **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap or X with one event id, so each platform counts it once. Scan, validate, preview, test and publish | Google Tag Manager, server-side GTM |
 | **[Mail](mail/README.md)** | Inboxes in one request. `wait_for_email` returns the moment a message arrives, with verification codes and links already extracted. Read, reply, send, custom domains, webhooks | A Gmail account per project, AgentMail |
 | **[Replay](replay/README.md)** | Session recordings masked in the browser by default. Sessions come back as readable transcripts; rage, dead and error clicks, heatmaps and JS errors as data; a share link opens a player for people | Hotjar, Microsoft Clarity |
 
@@ -51,7 +51,14 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 ### Hosted (free)
 
 Copy the prompt from [agentfirststack.com](https://agentfirststack.com) into Claude Code, Cursor,
-Codex or any agent that can make HTTP requests. Or do it by hand:
+Codex or any agent that can make HTTP requests. The agent follows the
+[full setup](https://agentfirststack.com/llms.txt) in one run: it maps your site's pages and main
+actions, creates an inbox, sets up analytics (goals, a weekly report for you), a tag container with
+an event for each main action, and replay; then it deploys, verifies each part as a visitor with
+test traffic, writes what it did to `AGENTFIRSTSTACK.md` and gives you a claim link. Pasting the same
+prompt again later checks what's there and fills the gaps.
+
+Or do it by hand:
 
 ```sh
 curl -X POST https://agentfirststack.com/v1/signup

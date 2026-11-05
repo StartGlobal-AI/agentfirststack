@@ -243,6 +243,7 @@ unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 | Route | Auth | What |
 |---|---|---|
 | `POST /v1/claim-link` | full-access API key (not OAuth) | a claim link (also MCP `afs_create_claim_link`) |
+| `GET /v1/me`, `PATCH /v1/me {name}` | API key (not read-only to rename) | the project and key; renames the project (every app; MCP gateway tool `afs_update_project`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `GET /signin` | none | sign-in page |
 | `GET /auth/google`, `GET /auth/google/callback` | none | Google sign-in |

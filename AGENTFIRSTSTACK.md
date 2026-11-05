@@ -98,7 +98,8 @@ The two server events are sent by `site/src/own-analytics.ts` over the ANALYTICS
   hit: nothing to attribute without ad platforms).
 - Variables: `cta` (`data-cta` attribute), `link_href` (the clicked link's `href` as written, so a
   page's own query string never lands in a prop).
-- Its event log keeps each click with the visitor's IP, user agent and location for 7 days.
+- Its event log keeps each click for 7 days with a shortened network (/24 or /48), country, region
+  and device type, never the raw IP, user agent or city.
 
 ## Replay settings
 

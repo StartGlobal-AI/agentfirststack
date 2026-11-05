@@ -105,9 +105,10 @@ Errors are always `{"error":{"code","message","hint","details"}}`. The hint tell
 recover.
 
 The site also runs an **MCP gateway** at `/mcp` (`site/src/mcp-gateway.ts`): a stateless JSON-RPC
-router that merges every service's tools with an `analytics_` / `tags_` / `mail_` prefix and
-forwards each call over a service binding with the caller's own key, so one connector covers the
-whole platform with the same scoping and errors as the services themselves.
+router that merges every service's tools with an `analytics_` / `tags_` / `mail_` / `replay_`
+prefix and forwards each call over a service binding with the caller's own key, so one connector
+covers the whole platform with the same scoping and errors as the services themselves. It adds two
+tools of its own: `afs_create_claim_link` and `afs_update_project` (`PATCH /v1/me`).
 
 ## Discovery
 
