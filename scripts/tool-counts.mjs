@@ -62,15 +62,16 @@ edit("site/public/mcp.html", (s) => {
   return s;
 });
 edit("site/public/llms.txt", (s) => {
-  const re = /One MCP server for every service \(\d+ tools,/;
+  const re = /One MCP server for every service \(\d+ tools: \d+ prefixed/;
   must(s, re, "gateway total in llms.txt");
-  return s.replace(re, `One MCP server for every service (${total} tools,`);
+  return s.replace(re, `One MCP server for every service (${total + gateway.length} tools: ${total} prefixed`);
 });
 for (const app of [...APPS, "server-card"]) {
   edit(`site/public/.well-known/mcp/${app}.json`, (s) => {
     const re = /"toolCount": \d+/;
     must(s, re, `toolCount in ${app}.json`);
-    return s.replace(re, `"toolCount": ${app === "server-card" ? total : tools[app].count}`);
+    // The server card is the gateway: every service's tools plus its own (what tools/list returns).
+    return s.replace(re, `"toolCount": ${app === "server-card" ? total + gateway.length : tools[app].count}`);
   });
 }
 edit("site/public/gmail-mcp.html", (s) => {

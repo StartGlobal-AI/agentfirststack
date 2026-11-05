@@ -69,6 +69,8 @@ export function limitsTable(env: AppEnv | undefined): string {
 
 /** GET /llms.txt: the manual. Every route and MCP tool is listed here. */
 export function llmsTxt(base: string, sharedDomain: string, env?: AppEnv): string {
+  // Keys carry the deployment's prefix (afs_ on the hosted platform, mail_ for a lone mail app).
+  const kp = ((env as { KEY_PREFIX?: string } | undefined)?.KEY_PREFIX || "mail").replace(/[^a-z0-9]/gi, "");
   return `# AgentFirstStack Mail
 
 > Email for AI agents: create an inbox in one request, use it to sign up for any service, block until
@@ -97,8 +99,8 @@ downloads carry the header \`x-untrusted-content\`, webhook events \`data.untrus
 BASE=${base}
 # 1. Account + API key + a ready inbox, one request, no verification
 curl -s -X POST $BASE/v1/signup
-#  -> { "api_key": "mail_...", "inbox": { "id": "inb_...", "address": "k3x9mq2v7d@${sharedDomain}" }, ... }
-KEY=mail_...
+#  -> { "api_key": "${kp}_...", "inbox": { "id": "inb_...", "address": "k3x9mq2v7d@${sharedDomain}" }, ... }
+KEY=${kp}_...
 # 2. More addresses (same address again returns the existing inbox, 200 + existing:true)
 curl -s -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \\
   -d '{"username":"acme-signups"}'

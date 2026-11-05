@@ -244,10 +244,13 @@ describe("scan reads only real tags and the page's real calls to action", () => 
     expect(by('a[href="/docs/register-a-site"]')?.kind).toBe("other");
     expect(by('a[href="/careers"]')?.kind).toBe("other");
     expect(ctas.filter((c) => c.kind === "signup").map((c) => c.href)).toEqual(["/signup", "/pricing"]);
-    // Plain in-content links, hidden buttons and example code aren't calls to action.
+    // Plain in-content links and example code aren't calls to action.
     expect(by('a[href="/guides/sign-up-tracking"]')).toBeUndefined();
     expect(by('a[href="/posthog-mcp"]')).toBeUndefined();
-    expect(ctas.some((c) => /Replay/.test(c.text))).toBe(false);
+    // A button that ships hidden (the page's script shows it) is listed, flagged starts_hidden.
+    const replay = ctas.find((c) => /Replay/.test(c.text));
+    expect(replay).toMatchObject({ element: "button", starts_hidden: true, data_attributes: ["data-replay"] });
+    expect(ctas.find((c) => /Copy prompt/.test(c.text))?.starts_hidden).toBeUndefined();
     expect(ctas.some((c) => c.href === "/thank-you-example")).toBe(false);
     // A footer link the nav already has is listed once; each selector + kind once.
     expect(ctas.filter((c) => c.href === "https://github.com/StartGlobal-AI/agentfirststack")).toHaveLength(1);

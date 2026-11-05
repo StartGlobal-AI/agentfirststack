@@ -137,6 +137,22 @@ export const ownHost = (host: string, domain: string) => {
  * A page's Origin we accept browser uploads from: https, or plain http only for localhost /
  * 127.0.0.1 in local development (DEV_MODE). Returns its hostname, or null.
  */
+/** A local development host: localhost, *.localhost, 127.0.0.1 or ::1 (never a real visitor). */
+export function isLocalHost(host: string | null | undefined): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  return h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1" || h === "::1";
+}
+
+/** The hostname of an Origin header value, or null. */
+export function originHostname(origin: string | null): string | null {
+  try {
+    return origin ? new URL(origin).hostname : null;
+  } catch {
+    return null;
+  }
+}
+
 export function secureOriginHost(origin: string | null, dev: boolean): string | null {
   if (!origin || origin === "null") return null;
   let u: URL;

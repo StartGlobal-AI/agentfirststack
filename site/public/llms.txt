@@ -92,6 +92,9 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
 8. **Verify like a visitor.** Use a real browser if you have one (a browser tool, Playwright,
    Puppeteer); otherwise fetch the pages. Open each main page, click each main action, and submit a
    form only where it's harmless (a test-mode checkout, a newsletter form you can unsubscribe).
+   Don't click `mailto:` or `tel:` links (they open your user's mail or phone app): check their
+   triggers in the tags preview log instead. After you publish tags, use a fresh window or a hard
+   reload: a browser that loaded the container in the last 5 minutes still runs the old version.
    Mark your visits as test traffic so the owner's reports stay clean: open the first page with
    `?afsa_debug=1&afsr=1` (test traffic for the rest of the tab, and a forced replay recording that
    is marked as a test too). Then check each service:
@@ -100,7 +103,10 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    - tags: the event log (`GET /v1/containers/:id/events?since=1h`) shows each event with every
      destination's answer, `tag-stats` shows each tag firing, `test` passes for each destination;
    - replay: `verify` passes, and the transcript of your recorded session shows your clicks;
-   - inbox: `GET /v1/inboxes/:id` returns it; the first real email to it shows up in its messages.
+   - inbox: `GET /v1/inboxes/:id` returns it; the first real email to it shows up in its messages;
+   - backend conversions: trigger each one once if the app has a safe way (a test account, a
+     test-mode payment); otherwise send the event yourself with `"debug": true` and find it in
+     `realtime?debug=only`.
    Fix what fails and check it again.
 9. **Write it down.** Update `AGENTFIRSTSTACK.md`: the ids, which env vars hold keys (never the
    values), every goal and event with what triggers it, and what's waiting on the owner. Commit it.
@@ -277,7 +283,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (235 tools, prefixed `analytics_`, `tags_`, `mail_` and
+One MCP server for every service (237 tools: 235 prefixed `analytics_`, `tags_`, `mail_` and
 `replay_`, plus the gateway's own `afs_create_claim_link` and `afs_update_project`):
 
 ```sh

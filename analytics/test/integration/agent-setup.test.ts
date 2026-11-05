@@ -85,6 +85,33 @@ describe("?afsa_debug=1 in the page URL (finding 2)", () => {
   });
 });
 
+describe("an agent's headless test browser (second setup run)", () => {
+  it("is let through as test traffic when the visit is marked; otherwise dropped like any bot", async () => {
+    const { key, site, proxyKey } = await newSite("headless.test");
+    const headless = (payload: Record<string, unknown>, ip: string, ua: string) =>
+      call("/_a/e", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: { "user-agent": ua, "content-type": "text/plain", "x-forwarded-for": ip, "x-afs-proxy-key": proxyKey },
+      });
+    const HEADLESS = UA.replace("Chrome/", "HeadlessChrome/");
+    // unmarked: dropped as before (webdriver, and a HeadlessChrome user agent)
+    expect((await headless({ s: site, u: "https://headless.test/", b: 1 }, "10.31.0.1", UA)).body).toMatchObject({ dropped: "bot" });
+    expect((await headless({ s: site, u: "https://headless.test/" }, "10.31.0.2", HEADLESS)).body).toMatchObject({ dropped: "bot" });
+    // marked with ?afsa_debug=1 or dbg: stored as test traffic
+    expect((await headless({ s: site, u: "https://headless.test/?afsa_debug=1", b: 1 }, "10.31.0.3", UA)).body.ok).toBe(true);
+    expect((await headless({ s: site, u: "https://headless.test/pricing", dbg: 1 }, "10.31.0.4", HEADLESS)).body.ok).toBe(true);
+    // a crawler stays out even when it claims to be a test
+    const crawler = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+    expect((await headless({ s: site, u: "https://headless.test/?afsa_debug=1" }, "10.31.0.5", crawler)).body).toMatchObject({
+      dropped: "bot",
+    });
+    expect((await call(`/v1/sites/${site}/stats?period=today&metrics=visitors`, { key })).body.metrics.visitors).toBe(0);
+    const dbg = await call(`/v1/sites/${site}/realtime?debug=only`, { key });
+    expect(dbg.body.recent_events.map((e: { pathname: string }) => e.pathname).sort()).toEqual(["/", "/pricing"]);
+  });
+});
+
 describe("URL props keep no query string, from every source (finding 5)", () => {
   it("browser and server props are cut at ? or #; PII redaction still runs", async () => {
     const { key, site, proxyKey } = await newSite("props.test");

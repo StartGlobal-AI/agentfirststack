@@ -416,6 +416,22 @@ describe("H4: public site ids can't be used to sabotage a site", () => {
     expect(d.untrusted.drop_samples.origin_not_allowed).toBe("evil.test");
   });
 
+  it("local development pages are refused as origin_local, and verify says that's expected", async () => {
+    const { key, site } = await newSite("local.test");
+    // as on the hosted platform (tests run in dev mode, where localhost is allowed on purpose)
+    const prod = hosted({ DEV_MODE: "" });
+    expect((await first(site, "local.test", { origin: "https://127.0.0.1:8443", env: prod })).status).toBe(403);
+    expect((await first(site, "local.test", { origin: "http://localhost:5173", env: prod })).status).toBe(403);
+    const d = (await call("GET", `/v1/sites/${site}`, { key })).json;
+    expect(d.data.dropped_last_7d.origin_local.count).toBeGreaterThanOrEqual(1);
+    expect(d.data.dropped_last_7d.origin_not_allowed).toBeUndefined();
+    const v = (await call("POST", `/v1/sites/${site}/verify`, { key, body: {} })).json;
+    const local = v.checks.find((c: { id: string }) => c.id === "origin_local");
+    expect(local).toMatchObject({ ok: true });
+    expect(local.fix).toBeUndefined();
+    expect(v.checks.some((c: { id: string }) => c.id === "origin_not_allowed")).toBe(false);
+  });
+
   it("analytics forwarding: verified sites only, at most MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY", async () => {
     const received: { name: string }[] = [];
     const ANALYTICS = {

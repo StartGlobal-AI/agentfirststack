@@ -8,7 +8,7 @@ import { SESSION_ID_RE, SITE_ID_RE } from "../lib/protocol";
 import { Sampler } from "../lib/sampler";
 import { botReason, parseUserAgent } from "../lib/ua";
 import { type Cidr, ipInRanges, parseCidr } from "../lib/ip";
-import { secureOriginHost, siteHostAllowed } from "../lib/url";
+import { isLocalHost, originHostname, secureOriginHost, siteHostAllowed } from "../lib/url";
 
 const rangeCache = new Map<string, Cidr[]>();
 function rangesOf(json: string): Cidr[] {
@@ -201,12 +201,15 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   }
   // https pages only (a plain-http page can be rewritten by anyone on the path); http://localhost in dev.
   const host = secureOriginHost(origin, dev);
+  // Local development pages (localhost, 127.0.0.1) are refused under their own reason, so verify
+  // can say it's expected instead of suggesting allowed_hostnames (which takes no IPs or localhost).
+  const local = isLocalHost(host ?? originHostname(origin));
   if (host === null && /^http:\/\//i.test(origin)) {
-    drop("origin_not_https", origin.slice(0, 100));
+    drop(local ? "origin_local" : "origin_not_https", origin.slice(0, 100));
     return fail(403, "origin_not_https", "Chunks are accepted from https pages only (http://localhost in local development).", true);
   }
   if (!host || !siteHostAllowed(host, site.domain, allowedHosts, dev)) {
-    drop("origin_not_allowed", host || origin.slice(0, 100));
+    drop(local ? "origin_local" : "origin_not_allowed", host || origin.slice(0, 100));
     return fail(
       403,
       "origin_not_allowed",

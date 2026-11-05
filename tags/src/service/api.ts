@@ -692,6 +692,7 @@ export const ops = {
       warnings: r.validation.warnings,
       note: "Live now. Edge caches refresh within 60s and browsers within 5 min.",
       next_steps: [
+        `To test version ${r.version} now, load the page in a fresh browser profile or private window, or hard-reload it: a browser that loaded ${o.base}/c/${id}.js in the last 5 minutes keeps running the old version until its cache expires (the console shows "container ${id} v<n> loaded"; the script's x-afs-version header says what is live).`,
         `GET /v1/containers/${id}/events to watch conversions arrive.`,
         `POST /v1/containers/${id}/rollback { "version": ${Math.max(r.version - 1, 1)} } to undo.`,
       ],

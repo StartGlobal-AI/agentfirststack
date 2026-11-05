@@ -467,6 +467,14 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
   };
   for (const [reason, d] of Object.entries(drops)) {
     if (reason.startsWith("bot:")) continue;
+    if (reason === "origin_local") {
+      checks.push({
+        id: "origin_local",
+        ok: true,
+        detail: `${d.count} chunks from local development pages (localhost, 127.0.0.1) were refused in the last 7 days, as expected: recordings are kept only from ${site.domain} and allowed_hostnames. Nothing to fix.`,
+      });
+      continue;
+    }
     if (why[reason])
       checks.push({
         id: reason,

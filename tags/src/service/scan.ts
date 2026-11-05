@@ -58,6 +58,8 @@ export interface CtaInfo {
   outbound: boolean;
   /** Its data-* attribute names (hooks for click triggers), when it has any. */
   data_attributes?: string[];
+  /** Ships with the hidden attribute: the page's script shows it (a click trigger still works once shown). */
+  starts_hidden?: true;
   selector: string;
   page: string;
 }
@@ -452,7 +454,8 @@ function ctaSelector(tag: "a" | "button", a: Record<string, string>, href: strin
  * The page's main calls to action: <button>s outside forms, links and buttons with data-*
  * attributes or button styling, nav and header links, outbound links, and anything whose label
  * or target reads as purchase, signup, login, booking, contact, download, call or email. Example
- * code (<pre>, <code>, <template>, comments) and hidden elements are skipped. `host` (the page's
+ * code (<pre>, <code>, <template>, comments) and aria-hidden elements are skipped; elements with the
+ * hidden attribute are reported with starts_hidden. `host` (the page's
  * host) tells outbound links apart.
  */
 export function detectCtas(html: string | PageParts, page: string, host?: string): CtaInfo[] {
@@ -466,7 +469,10 @@ export function detectCtas(html: string | PageParts, page: string, host?: string
   while ((m = re.exec(markup)) && out.length < MAX_CTAS_PER_PAGE) {
     const tag = m[1]!.toLowerCase() as "a" | "button";
     const a = attrsOf(m[2] ?? "");
-    if ("hidden" in a || a["aria-hidden"] === "true") continue;
+    // aria-hidden marks decoration; the hidden attribute often marks a button the page's script
+    // shows (progressive enhancement), so those are reported, flagged starts_hidden.
+    if (a["aria-hidden"] === "true") continue;
+    const startsHidden = "hidden" in a;
     const inForm = inside(forms, m.index);
     if (tag === "button" && inForm && (a.type ?? "submit").toLowerCase() !== "button") continue; // the form's own submit
     const href = tag === "a" && a.href !== undefined ? a.href.trim() || null : null;
@@ -514,6 +520,7 @@ export function detectCtas(html: string | PageParts, page: string, host?: string
       area: where,
       outbound,
       ...(dataAttrs.length ? { data_attributes: dataAttrs.slice(0, 5) } : {}),
+      ...(startsHidden ? { starts_hidden: true as const } : {}),
       selector,
       page,
     });

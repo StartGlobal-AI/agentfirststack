@@ -282,7 +282,12 @@ export async function ingestBrowser(
     verifiedBotCategory: (cf?.verifiedBotCategory as string) || null,
     webdriver: p.b === 1 || p.b === true,
   });
-  if (bot) {
+  // An agent checking its own setup with Playwright / Puppeteer marks its visit as test traffic
+  // (?afsa_debug=1 or afsa('debug')): a webdriver or headless browser is let through then, stored
+  // as debug and left out of every report. Crawlers and other bots are dropped as always.
+  const testHit = p.dbg === 1 || p.dbg === true || (typeof p.u === "string" && /[?&]afsa_debug=1(?:[&#]|$)/.test(p.u));
+  const automatedTest = testHit && (bot === "webdriver" || (bot === "user_agent" && /\bHeadless/i.test(ua ?? "")));
+  if (bot && !automatedTest) {
     const drop = stub.recordDrop(`bot:${bot}`, ua?.slice(0, 200) ?? null).catch(() => null);
     waitUntil(drop);
     // Waited for only when replay loading is on: the answer names the site's replay link.
