@@ -10,7 +10,7 @@ this first on every later run and update it instead of starting over. Never writ
   every service. It is not in the site's production secrets: nothing in the site needs it (the site
   Worker talks to the services over service bindings with `INTERNAL_TOKEN`).
 - Dashboard: https://agentfirststack.com/dashboard (the owner signs in with Google).
-- MCP: one server for every service, `https://agentfirststack.com/mcp` (237 tools on 2026-11-05).
+- MCP: one server for every service, `https://agentfirststack.com/mcp` (238 tools on 2026-11-05).
   The setup agent uses REST and has not added it to any MCP client config; to add it to Claude
   Code: `claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"`.
 
@@ -125,6 +125,8 @@ aren't recorded. Retention 14 days. To turn replay off:
 
 ## Checking it
 
+- Everything at once: `GET https://agentfirststack.com/v1/setup` (MCP `afs_check_setup`) lists each
+  part of the full setup with its status and the fix; run it first on every later run.
 - Analytics: `POST /v1/sites/site_6hmh1a6dbbn8mdfp/verify`; goals with
   `GET /v1/sites/site_6hmh1a6dbbn8mdfp/stats?period=7d&breakdown=goal`.
 - Tags: `GET /v1/containers/ctr_6znmv02cawfa9pb9/events?since=1h`, `/tag-stats?since=7d`.
@@ -154,3 +156,5 @@ aren't recorded. Retention 14 days. To turn replay off:
   check is old local-dev chunks from `127.0.0.1` (nothing to change).
 - Mail: a message from the inbox to `agentfirststack-signups+setupcheck@` arrived in 115 ms and
   `latest-code` extracted its code.
+- Setup check (`GET /v1/setup`): ready, 22 of 22, after one test (`debug`) `signup` and
+  `project_claimed` server event each: the two server goals had never counted.

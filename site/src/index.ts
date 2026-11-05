@@ -11,6 +11,7 @@ import { mcpGateway } from "./mcp-gateway";
 import { oauthApi, oauthPages } from "./oauth";
 import { ownAnalytics, trackOwn } from "./own-analytics";
 import { redirect } from "./session";
+import { setupApi } from "./setup-check";
 
 // The platform apex (agentfirststack.com). Static assets in public/ (landing page, llms.txt,
 // privacy and terms, /.well-known/*) are served by the assets binding. This Worker runs first for:
@@ -111,6 +112,7 @@ app.route("/", oauthPages);
 app.route("/", authRoutes);
 app.route("/", claimRoutes);
 app.route("/", claimLinkApi);
+app.route("/", setupApi);
 app.route("/", adminApi);
 app.route("/dashboard", dashboard);
 
@@ -155,7 +157,8 @@ app.route(
       `Analytics: POST ${serviceUrl(base, "analytics")}/v1/sites {"domain":"example.com"}`,
       `Tags: POST ${serviceUrl(base, "tags")}/v1/containers {"domain":"example.com"}`,
       `Replay (part of the full setup; otherwise ask the owner first): POST ${serviceUrl(base, "replay")}/v1/sites {"domain":"example.com","analytics_site_id":"site_..."}`,
-      `When you're done: POST ${base}/v1/claim-link and give the project's owner the returned url, so they can see everything in a dashboard.`,
+      `When you think you're done: GET ${base}/v1/setup (the setup check) and fix what it reports until it says ready.`,
+      `Then: POST ${base}/v1/claim-link and give the project's owner the returned url, so they can see everything in a dashboard.`,
     ],
   }),
 );

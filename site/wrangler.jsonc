@@ -57,10 +57,12 @@
 
   // Burst limits (the binding only supports 10s/60s windows): signup (and OAuth client registration)
   // per network, shared by every app (namespace from the deploy profile); API key creation per
-  // account (POST /v1/keys here and the dashboard; the KEYS_HOURLY_LIMIT var covers every app).
+  // account (POST /v1/keys here and the dashboard; the KEYS_HOURLY_LIMIT var covers every app);
+  // the setup check per account (each one reads the services about 15 times).
   "ratelimits": [
     { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
-    { "name": "KEY_LIMITER", "namespace_id": "42041", "simple": { "limit": 10, "period": 60 } }
+    { "name": "KEY_LIMITER", "namespace_id": "42041", "simple": { "limit": 10, "period": 60 } },
+    { "name": "SETUP_LIMITER", "namespace_id": "42042", "simple": { "limit": 30, "period": 60 } }
   ],
 
   "vars": {

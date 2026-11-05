@@ -1,5 +1,6 @@
 import { type SafeHtml, html } from "./html";
 import type { Resources } from "./services";
+import type { CheckStatus, SetupCheck, SetupReport } from "./setup-check";
 
 /** Pieces of HTML shared by the claim page and the dashboard. */
 
@@ -84,4 +85,40 @@ export function resourceCounts(r: Resources): SafeHtml {
     ${cell("mail", r.inboxes)}
     ${cell("replay", r.replaySites)}
   </ul>`;
+}
+
+const CHECK_LABEL: Record<CheckStatus, string> = {
+  ok: "Done",
+  missing: "Missing",
+  failing: "Not working",
+  warning: "Worth a look",
+  waiting_on_owner: "Waiting on you",
+  unavailable: "Couldn't check",
+};
+
+const checkItem = (c: SetupCheck) =>
+  html`<li class="check is-${c.status}"><span class="check-status">${CHECK_LABEL[c.status]}</span><span class="check-body"><span class="check-title">${c.title}${
+    c.domain ? html` <span class="check-domain">${c.domain}</span>` : ""
+  }</span><span class="check-detail">${c.detail}</span></span></li>`;
+
+/**
+ * The setup check (src/setup-check.ts) for the owner: what still needs doing first, what's done
+ * folded away, and the prompt that has their agent finish it. Fixes are API calls, so they're left
+ * to the agent; the owner sees what and why.
+ */
+export function setupView(r: SetupReport, finishPrompt: string): SafeHtml {
+  const open = r.checks.filter((c) => c.status !== "ok");
+  const done = r.checks.filter((c) => c.status === "ok");
+  const todo = r.checks.filter((c) => c.status === "missing" || c.status === "failing" || c.status === "unavailable").length;
+  return html`<section class="tile setup-check" aria-labelledby="setup-title">
+  <div class="tile-head"><h2 id="setup-title">Setup check</h2><span class="tile-count"><b>${done.length}</b> of ${r.checks.length} done</span></div>
+  <p class="setup-summary">${
+    r.ready
+      ? "Everything in the full setup is in place."
+      : `${plural(todo, "thing", "things")} to finish for the full setup (analytics, tags, email and replay). Your agent can do ${todo === 1 ? "it" : "them"}: open it in the project's folder and paste the prompt below.`
+  }</p>
+  ${open.length ? html`<ul class="checks">${open.map(checkItem)}</ul>` : ""}
+  ${done.length ? html`<details class="checks-done"><summary>${plural(done.length, "check", "checks")} done</summary><ul class="checks">${done.map(checkItem)}</ul></details>` : ""}
+  ${r.ready ? "" : askLine(finishPrompt, null)}
+</section>`;
 }

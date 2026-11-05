@@ -102,9 +102,9 @@
     {
       "id": "account",
       "name": "Account and handover",
-      "description": "Run afs_* tools, such as afs_create_claim_link, which gives the owner a link to claim the project with Google sign-in.",
+      "description": "Run afs_* tools: afs_check_setup says what the setup still lacks and how to fix it; afs_create_claim_link gives the owner a link to claim the project with Google sign-in.",
       "tags": ["account", "claim"],
-      "examples": ["{\"tool\":\"afs_create_claim_link\",\"arguments\":{}}"],
+      "examples": ["{\"tool\":\"afs_check_setup\",\"arguments\":{}}", "{\"tool\":\"afs_create_claim_link\",\"arguments\":{}}"],
       "inputModes": ["application/json"],
       "outputModes": ["application/json"]
     },

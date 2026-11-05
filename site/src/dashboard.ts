@@ -7,8 +7,9 @@ import { type SafeHtml, csrfField, fmtDate, fmtDay, html, htmlErrorHandler, page
 import { type Project, deleteUser, listMembers, listProjects, removeMember, requireProject, revokeGrant } from "./identity";
 import { type BuildKind, buildPrompt } from "./dashboard-prompt";
 import { projectResources } from "./services";
+import { setupReport } from "./setup-check";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
-import { askLine, askText, plural, resourceCounts, resourcesView } from "./views";
+import { askLine, askText, plural, resourceCounts, resourcesView, setupView } from "./views";
 
 /**
  * /dashboard: server-rendered pages for signed-in people. Every project route goes through
@@ -66,7 +67,11 @@ const notice = (msg: string | undefined, kind: "error" | "ok" = "error") =>
  * manual (llms.txt) has every step, and the landing page's longer prompt says the same.
  */
 const SETUP_PROMPT =
-  "Set up AgentFirstStack for this project, completely, and verify it yourself. Read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, and verify each one like a visitor would. Don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values), and send me a claim link for the project.";
+  "Set up AgentFirstStack for this project, completely, and verify it yourself. Read https://agentfirststack.com/llms.txt and follow its Full setup section from start to finish: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it (and read AGENTFIRSTSTACK.md); otherwise get this project its own key. Map the site's main pages, buttons, links, forms and conversions, then set up an inbox, analytics (goals, server events, weekly report), tags (an event for every main action, the conversions) and replay (linked, masked), deploy, and verify each one like a visitor would, then run the setup check (GET https://agentfirststack.com/v1/setup) and fix what it reports until it says ready. Don't stop to ask me; list what only I can give (ad platform IDs and tokens) at the end. Note what you set up in AGENTFIRSTSTACK.md at the repo root (ids and env var names, never key values), and send me a claim link for the project.";
+
+/** For a project whose setup check isn't ready: the agent re-runs the check and fixes what it reports. */
+const finishPrompt = (base: string) =>
+  `Finish our AgentFirstStack setup. Use AGENTFIRSTSTACK_API_KEY from this project's .env and read AGENTFIRSTSTACK.md. Run the setup check (GET ${base}/v1/setup, or the afs_check_setup MCP tool), fix everything it reports by following the Full setup section of ${base}/llms.txt, verify like a visitor, and run the check again until it says ready. Then update AGENTFIRSTSTACK.md and tell me what you fixed.`;
 
 /** The screens an agent can build for a project, one prompt each (see dashboard-prompt.ts). */
 const BUILDS: { kind: BuildKind; title: string; what: string }[] = [
@@ -163,8 +168,10 @@ dashboard.get("/", (c) => projectsPage(c));
 dashboard.get("/projects/:id", async (c) => {
   const s = c.var.session;
   const p = await requireProject(c.env.DB, s.user.id, projectId(c));
-  const [resources, keys, members] = await Promise.all([
-    projectResources(c.env, p.id),
+  const resources = await projectResources(c.env, p.id);
+  const [setup, keys, members] = await Promise.all([
+    // Rate-limited or failed: the page still renders, without the tile.
+    setupReport(c.env, p.id, { base: siteBase(c), resources }).catch(() => null),
     c.env.DB.prepare("SELECT count(*) AS n FROM api_keys WHERE account_id = ? AND revoked_at IS NULL AND oauth_grant_id IS NULL")
       .bind(p.id)
       .first<number>("n"),
@@ -177,6 +184,7 @@ dashboard.get("/projects/:id", async (c) => {
     nav: "projects",
     body: html`${tabs(p, "overview")}
 ${resourcesView(resources, { asks: true })}
+${setup ? html`<div class="bento">${setupView(setup, finishPrompt(siteBase(c)))}</div>` : ""}
 <div class="bento">
 <section class="tile build-own" aria-labelledby="build-title">
   <div class="build-copy">

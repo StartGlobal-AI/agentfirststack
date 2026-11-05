@@ -143,7 +143,8 @@ breaker). Set them under `vars.all` so every app's `/v1/signup` and `/v1/keys` a
 | `KEYS_HOURLY_LIMIT` | off | New API keys per account per rolling hour, revoked ones included |
 
 Bindings on the site: `SIGNUP_LIMITER` (5 per minute per network, signup and OAuth registration)
-and `KEY_LIMITER` (namespace 42041, 10 key creations per minute per account).
+`KEY_LIMITER` (namespace 42041, 10 key creations per minute per account) and `SETUP_LIMITER`
+(namespace 42042, 30 setup checks per minute per project; each reads the services about 15 times).
 
 Reports arrive at `abuse@<domain>`. Role addresses (abuse, postmaster, security, admin and others)
 can't be claimed by users, so route them to a person: in the dashboard under Email > Email

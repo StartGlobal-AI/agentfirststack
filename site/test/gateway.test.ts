@@ -15,8 +15,9 @@ describe("MCP gateway", () => {
     const agent = await signup("gw");
     const list = await mcp(agent.key, "tools/list");
     const tools = list.json.result.tools as { name: string; annotations?: { readOnlyHint?: boolean } }[];
-    expect(tools[0]?.name).toBe("afs_create_claim_link");
-    expect(tools[0]?.annotations?.readOnlyHint).toBe(false);
+    expect(tools[0]?.name).toBe("afs_check_setup");
+    expect(tools[0]?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.find((t) => t.name === "afs_create_claim_link")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["analytics_whoami", "tags_whoami", "mail_whoami", "replay_whoami"]));
 
     const res = await mcp(agent.key, "tools/call", { name: "afs_create_claim_link", arguments: {} });

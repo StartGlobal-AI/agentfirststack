@@ -108,7 +108,14 @@ The site also runs an **MCP gateway** at `/mcp` (`site/src/mcp-gateway.ts`): a s
 router that merges every service's tools with an `analytics_` / `tags_` / `mail_` / `replay_`
 prefix and forwards each call over a service binding with the caller's own key, so one connector
 covers the whole platform with the same scoping and errors as the services themselves. It adds two
-tools of its own: `afs_create_claim_link` and `afs_update_project` (`PATCH /v1/me`).
+tools of its own: `afs_check_setup` (`GET /v1/setup`), `afs_create_claim_link` and `afs_update_project`
+(`PATCH /v1/me`).
+
+The **setup check** (`site/src/setup-check.ts`, `GET /v1/setup`) is the full setup in `llms.txt` as a
+list of checks. It reads each service as the project with internal auth over the bindings (the
+same path the dashboard uses), never forwards the caller's key and fetches nothing from the
+website: install status comes from what the services received and from the last `verify`. The
+dashboard's project page renders the same report.
 
 ## Discovery
 

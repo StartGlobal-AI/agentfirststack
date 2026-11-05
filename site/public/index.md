@@ -104,7 +104,7 @@ Set up AgentFirstStack for this project, completely, and verify it yourself. It'
 
 1. Read https://agentfirststack.com/llms.txt, then follow its "Full setup" section from start to finish. Read each service's manual before you use that service.
 
-2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, and read AGENTFIRSTSTACK.md for what earlier runs set up. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
+2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, read AGENTFIRSTSTACK.md, and run the setup check (step 4) to see what earlier runs set up and what's missing. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
 
 3. The full setup, in this order:
    - Map the site first: its main pages, every main button, link and form, and what counts as a sign-up, lead or purchase here.
@@ -113,7 +113,7 @@ Set up AgentFirstStack for this project, completely, and verify it yourself. It'
    - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
    - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
 
-4. Deploy, then verify like a visitor: open the main pages in a real browser if you can, click the main actions, and check that each one shows up in analytics and in the tags event log, that each service's verify passes, and that a replay transcript shows your visit. Fix what fails and check again.
+4. Deploy, then verify like a visitor: open the main pages in a real browser if you can, click the main actions, and check that each one shows up in analytics and in the tags event log, that each service's verify passes, and that a replay transcript shows your visit. Fix what fails and check again. Then run the setup check (GET https://agentfirststack.com/v1/setup, or the afs_check_setup MCP tool) and fix everything it reports until it says ready.
 
 5. Don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
 

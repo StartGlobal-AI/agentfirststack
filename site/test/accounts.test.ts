@@ -104,7 +104,8 @@ describe("signup -> claim link -> sign in -> claim -> dashboard", () => {
     expect(project.text).not.toContain("visitors, 7 days");
     expect(project.text).not.toContain("version 2 live");
     expect(project.text).not.toContain("Open analytics dashboard");
-    expect(serviceCalls.some((s) => s.path.includes("/stats"))).toBe(false);
+    // The setup check is the one status on the page: what's done and what the agent still has to do.
+    expect(project.text).toContain("Setup check");
     // Instead, prompts that have the agent build each screen from the API, naming this project's resources.
     expect(project.text).toContain("Want a dashboard? Have your agent build it.");
     expect(project.text).toContain("Build me an analytics dashboard for my AgentFirstStack project");

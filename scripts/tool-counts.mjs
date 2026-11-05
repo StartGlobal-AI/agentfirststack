@@ -6,8 +6,9 @@
  *   node scripts/tool-counts.mjs --check  exit 1 if any of them is out of date
  *
  * Reads every t.read("name", ...) / t.write("name", ...) registration, then updates:
- *   site/public/mcp.html                     "<Service> (N tools)" headings, the Read / Write lists, the gateway count
- *   site/public/llms.txt                     the gateway total in the MCP section
+ *   site/public/mcp.html                     "<Service> (N tools)" headings, the Read / Write lists, the gateway count,
+ *                                            the servers table (per service, and the gateway's total and own tools)
+ *   site/public/llms.txt                     the gateway total and its own tools in the MCP section
  *   site/public/.well-known/mcp/*.json       toolCount (server-card.json is the gateway total)
  *   site/public/gmail-mcp.html               "all N tools" in the mail manual sentence
  */
@@ -40,6 +41,8 @@ function edit(rel, fn) {
   if (after !== before) edits.push({ rel, path, after });
 }
 const code = (names) => names.map((n) => `<code>${n}</code>`).join(", ");
+/** ["a", "b", "c"] -> "a, b and c" */
+const andList = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 const must = (s, re, what) => {
   if (!re.test(s)) throw new Error(`not found: ${what}`);
   return s;
@@ -56,6 +59,16 @@ edit("site/public/mcp.html", (s) => {
     must(s, block, `${app} Read/Write lists in mcp.html`);
     s = s.replace(block, `$1${code(t.read)}$2${code(t.write)}$3`);
   }
+  const labels = { analytics: "Analytics", tags: "Tags", mail: "Mail", replay: "Replay" };
+  for (const app of APPS) {
+    const row = new RegExp(`(<tr><th scope="row">${labels[app]}</th><td>)\\d+(</td>)`);
+    must(s, row, `${app} row in the mcp.html servers table`);
+    s = s.replace(row, `$1${tools[app].count}$2`);
+  }
+  const all =
+    /(<tr><th scope="row">All services<\/th><td>)\d+(, prefixed <code>analytics_<\/code>, <code>tags_<\/code>, <code>mail_<\/code> or <code>replay_<\/code>, plus )[^<]*(?:<code>afs_[a-z_]+<\/code>(?:, | and )?)+(<\/td>)/;
+  must(s, all, "All services row in the mcp.html servers table");
+  s = s.replace(all, `$1${total}$2${andList(gateway.map((n) => `<code>${n}</code>`))}$3`);
   const gw = /(<h3 id="gateway-tools">Gateway \()\d+ tools?(\)<\/h3>)/;
   must(s, gw, "gateway heading in mcp.html");
   s = s.replace(gw, `$1${gateway.length} tool${gateway.length === 1 ? "" : "s"}$2`);
@@ -64,7 +77,10 @@ edit("site/public/mcp.html", (s) => {
 edit("site/public/llms.txt", (s) => {
   const re = /One MCP server for every service \(\d+ tools: \d+ prefixed/;
   must(s, re, "gateway total in llms.txt");
-  return s.replace(re, `One MCP server for every service (${total + gateway.length} tools: ${total} prefixed`);
+  s = s.replace(re, `One MCP server for every service (${total + gateway.length} tools: ${total} prefixed`);
+  const own = /(plus the gateway's own )(?:`afs_[a-z_]+`(?:, | and )?)+(\):)/;
+  must(s, own, "gateway's own tools in llms.txt");
+  return s.replace(own, `$1${andList(gateway.map((n) => `\`${n}\``))}$2`);
 });
 for (const app of [...APPS, "server-card"]) {
   edit(`site/public/.well-known/mcp/${app}.json`, (s) => {

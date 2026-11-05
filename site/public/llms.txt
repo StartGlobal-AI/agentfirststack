@@ -49,6 +49,8 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    the key, sites, container and inbox it lists. Get a key (section 1) only if there is none. Name
    the project after the site, so the owner recognises it in the dashboard:
    `PATCH https://agentfirststack.com/v1/me {"name":"example.com"}` (MCP `afs_update_project`).
+   On a later run, start with the setup check (section 8): it shows what earlier runs did and
+   what's still missing.
 2. **Map the site before you change it.** From the code and the live site, write down:
    - the main pages (home, pricing, product, sign-up, checkout, contact, docs, blog);
    - the main actions on them: primary buttons and links (sign up, start a trial, buy, book a
@@ -107,7 +109,9 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    - backend conversions: trigger each one once if the app has a safe way (a test account, a
      test-mode payment); otherwise send the event yourself with `"debug": true` and find it in
      `realtime?debug=only`.
-   Fix what fails and check it again.
+   Fix what fails and check it again. Then run the setup check (`GET https://agentfirststack.com/v1/setup`,
+   MCP `afs_check_setup`, section 8) and fix everything it reports as `missing` or `failing`, in
+   the order of its `next_steps`, until it says `"ready": true`.
 9. **Write it down.** Update `AGENTFIRSTSTACK.md`: the ids, which env vars hold keys (never the
    values), every goal and event with what triggers it, and what's waiting on the owner. Commit it.
 10. **Hand over.** Create a claim link (section 8). In your last message, tell the owner what you set
@@ -115,8 +119,8 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
     ID or token, and where they find it), and give them the claim link.
 
 You're done when every main action from step 2 shows up in analytics and the tags event log, the
-three `verify` checks pass, a replay transcript shows your test visit, and the owner has the claim
-link.
+three `verify` checks pass, a replay transcript shows your test visit, the setup check says
+`"ready": true`, and the owner has the claim link.
 
 ## 4. Common tasks
 
@@ -260,7 +264,38 @@ test event in the platform's test mode and returns the platform's own answer.
 
 Everything else (signup, sites, containers, conversions, inboxes, verification) you can do alone.
 
-## 8. Let the owner claim the project
+## 8. Check the setup, then let the owner claim it
+
+### The setup check
+
+One call checks the project against the full setup (section 3): its name, the inbox, analytics
+(receiving events, domain verified, a goal per action and whether each has counted, the owner's
+email, weekly report and alerts), tags (snippet seen, published, an event per action, events
+reaching analytics with a goal there, tags firing, ad platform deliveries), replay (linked,
+verified, recording) and the claim.
+
+```sh
+curl -s https://agentfirststack.com/v1/setup -H "$H"     # ?domain=example.com  ?services=analytics,tags
+# -> { "ready": false, "summary": "Not ready: 2 missing, 1 failing of 21 checks. ...",
+#      "checks": [ { "id": "analytics.goals_counted", "step": 4, "service": "analytics",
+#                    "domain": "example.com", "status": "failing",
+#                    "title": "Every goal has counted at least once (test traffic included, last 30 days)",
+#                    "detail": "Never counted: Signed up.", "fix": "Trigger each on the live site ..." }, ... ],
+#      "next_steps": [ "..." ], "not_checked": [ "..." ] }
+```
+
+- Statuses: `ok`; `missing` (not set up); `failing` (set up, not working); `warning` (worth a
+  look, doesn't block); `waiting_on_owner` (a claim link nobody has opened yet); `unavailable` (a
+  service didn't answer: run it again). `ready` is true when nothing is missing, failing or
+  unavailable.
+- Fix in the order of `next_steps` (each names the call), then run it again. It reads what the
+  services have received and fetches nothing from the site, so deploy and make your test visit
+  first. `not_checked` lists what only you can check.
+- `services=analytics` (or any list of analytics, tags, mail, replay) checks a setup that doesn't
+  use all four; the default is the full setup. `domain=` checks one website.
+- Any key works, read-only ones too. MCP: `afs_check_setup` (`{"domain": "...", "services": [...]}`, both optional).
+
+### The claim link
 
 Finish every setup by giving the person you work for a claim link. It's a single-use URL, valid
 for 7 days. They open it, sign in with Google, and see everything this key set up (sites, tag
@@ -283,8 +318,8 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (237 tools: 235 prefixed `analytics_`, `tags_`, `mail_` and
-`replay_`, plus the gateway's own `afs_create_claim_link` and `afs_update_project`):
+One MCP server for every service (238 tools: 235 prefixed `analytics_`, `tags_`, `mail_` and
+`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project` and `afs_check_setup`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -348,6 +383,7 @@ Agents with a key never need any of this.
   `expires_at` are OAuth access tokens for connected chat apps; they stop working when it passes.
   An account holds at most 25 active keys (10 until a person claims it) (`409 too_many_keys`: revoke ones you don't use); reuse
   keys rather than minting one per run.
+- `GET https://agentfirststack.com/v1/setup`: the setup check (section 8).
 - `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 8).
 - A key of a suspended account answers `403 account_suspended` everywhere (abuse of the free
   service). Operators use `/v1/admin/accounts/:id` (`ADMIN_TOKEN` only); agents never need it.

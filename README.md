@@ -55,8 +55,9 @@ Codex or any agent that can make HTTP requests. The agent follows the
 [full setup](https://agentfirststack.com/llms.txt) in one run: it maps your site's pages and main
 actions, creates an inbox, sets up analytics (goals, a weekly report for you), a tag container with
 an event for each main action, and replay; then it deploys, verifies each part as a visitor with
-test traffic, writes what it did to `AGENTFIRSTSTACK.md` and gives you a claim link. Pasting the same
-prompt again later checks what's there and fills the gaps.
+test traffic, runs the setup check (`GET /v1/setup`) until nothing is missing, writes what it did to
+`AGENTFIRSTSTACK.md` and gives you a claim link. Pasting the same prompt again later starts from the
+setup check and fills the gaps.
 
 Or do it by hand:
 

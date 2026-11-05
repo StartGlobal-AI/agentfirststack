@@ -1933,3 +1933,68 @@ body.app .nav {
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
+
+/* ---------- setup check (project page) ---------- */
+
+.setup-check .setup-summary {
+  margin-top: 6px;
+  color: var(--ink-2);
+}
+.checks {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.check {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.check-status {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.check.is-ok .check-status {
+  color: var(--green);
+}
+.check.is-missing .check-status,
+.check.is-failing .check-status {
+  color: var(--red);
+}
+.check-body {
+  display: grid;
+  gap: 2px;
+}
+.check-title {
+  font-weight: 550;
+}
+.check-domain {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.check-detail {
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.checks-done {
+  margin-top: 12px;
+}
+.checks-done > summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.setup-check .ask-line {
+  margin-top: 14px;
+}
+@media (max-width: 560px) {
+  .check {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
