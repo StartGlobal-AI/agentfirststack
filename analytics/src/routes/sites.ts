@@ -12,7 +12,7 @@ import { getItems } from "../service/items";
 import { getRealtimeMap, listSessions } from "../service/reads";
 import { getCrawlers, recordCrawls } from "../service/crawlers";
 import { exportBody, exportEvents } from "../service/export";
-import { MAX_IMPORT_BYTES, deleteImport, importCsv, listImports } from "../service/imports";
+import { MAX_IMPORT_BYTES, compareImport, deleteImport, importData, listImports } from "../service/imports";
 import { MAX_COST_CSV_BYTES, deleteCosts, listCosts, recordCosts } from "../service/costs";
 import { readTextCapped } from "../lib/body";
 import { connectBilling, disconnectBilling, getBillingIntegration } from "../service/billing-webhooks";
@@ -139,14 +139,17 @@ r.post("/:id/imports", async (c) => {
     ? {
         csv: (await readTextCapped(c.req.raw.body, MAX_IMPORT_BYTES + 1)).text,
         source: c.req.query("source"),
+        tool: c.req.query("tool"),
         kind: c.req.query("kind"),
         file_name: c.req.query("file_name"),
       }
-    : await body(c);
-  const res = await importCsv(ctxOf(c), c.req.param("id"), input);
+    : // JSON rows and API reports run larger than other bodies: up to the import cap.
+      await body(c, { maxBytes: MAX_IMPORT_BYTES, hint: "Split the import by date range and send each part." });
+  const res = await importData(ctxOf(c), c.req.param("id"), input);
   return c.json(res, "existing" in res && res.existing ? 200 : 201);
 });
 r.get("/:id/imports", async (c) => c.json(await listImports(ctxOf(c), c.req.param("id"))));
+r.get("/:id/imports/compare", async (c) => c.json(await compareImport(ctxOf(c), c.req.param("id"), c.req.query())));
 r.delete("/:id/imports/:import_id", async (c) => c.json(await deleteImport(ctxOf(c), c.req.param("id"), c.req.param("import_id"))));
 r.post("/:id/crawls", async (c) => c.json(await recordCrawls(ctxOf(c), c.req.param("id"), await body(c)), 202));
 r.get("/:id/crawlers", async (c) => c.json(await getCrawlers(ctxOf(c), c.req.param("id"), c.req.query())));

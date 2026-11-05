@@ -64,7 +64,9 @@ cron (every 5 min): due alerts -> SiteDO numbers -> decide -> deliver (signed we
   `events.non_interactive`; 7 adds the `identities` table (first touch per visitor id and user,
   backfilled from the stored sessions in the migration); 8 adds subscriptions, costs, items, user
   properties, crawler hits, imports and exports; 9 adds `events.no_visit` (server events sent with
-  `visit: false` that found no live visit: no sessions row, never counted as visitors or visits).
+  `visit: false` that found no live visit: no sessions row, never counted as visitors or visits);
+  10 rebuilds `imports` with a `tool` column (source other's tool slug) in its natural key, keeping
+  its ids and rows.
 - **Visitor identity.** Default `cookieless`: `visitor_id = sha256(daily_salt | site_id | ip | ua)`
   truncated to 16 hex chars, where `daily_salt = HMAC(SALT_SECRET, YYYY-MM-DD)` (UTC date of the
   event). No cookies, no storage, no cross-day linking. Optional per-site `persistent` mode: the
@@ -219,7 +221,8 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | GET | `/sites/:id/sessions` | session list: period, filters (incl. `did==event` / `did!=event`), segment, sort, paging; `replay` link when the session's events carry `replay_session_id` |
 | GET | `/sites/:id/realtime/map` | visitors of the last 1-60 minutes by city with latitude / longitude |
 | GET | `/sites/:id/export` | raw events of a range as NDJSON (default), CSV or JSON, cursor-paged (`x-afs-next-cursor`, up to 10,000 rows a page), within a daily export budget |
-| POST/GET/DELETE | `/sites/:id/imports[/:import_id]` | GA4 report CSVs and Plausible export CSVs as daily aggregates (pages, sources, countries, devices, totals), idempotent per (source, kind, date range); `imported=true` adds them to stats, breakdowns and timeseries |
+| POST/GET/DELETE | `/sites/:id/imports[/:import_id]` | history from GA4 (report CSV or Data API runReport JSON), Plausible (export CSV or Stats API v2 JSON) or any other tool (`source: other` + `tool`, generic CSV or JSON rows) as daily aggregates (pages, sources, countries, devices, totals), idempotent per (source, tool, kind, date range); `imported=true` adds them to stats, breakdowns and timeseries |
+| GET | `/sites/:id/imports/compare?source=&tool=` | live daily visitors vs the old tool's imported ones on the complete days both cover: `days`, `ratio`, `verdict` (close / lower / higher / not_enough_overlap), `note`, `next_steps` |
 | POST | `/sites/:id/crawls` | bot requests the site's server saw `{hits: [{user_agent, path, status?, timestamp?}]}`: classified by user agent, counted per bot / page / day, never as visitors or events |
 | GET | `/sites/:id/crawlers` | crawler hits by bot, operator, category, page or status; daily series per category |
 | GET | `/crawlers` | the maintained crawler list and a prefilter regex (no key) |
@@ -455,10 +458,15 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   1,000,000, UNCLAIMED_ variant).
 - **Imports** (`src/lib/imports.ts` parses, `src/do/imports.ts` stores and merges; DO tables
   `imports`, `imported_rows`): rows (day, value, visitors, visits, pageviews, bounces,
-  visit_duration) keyed by file; the same (source, kind, from, to) replaces its rows. With
-  `imported=true` and no filters, reports add imported numbers for days before the first live event
-  (totals, page / source / country / device breakdowns, day / week / month buckets). Caps:
-  `MAX_IMPORTED_ROWS_PER_SITE` (500,000) and `MAX_IMPORTS_PER_SITE` (100), UNCLAIMED_ variants.
+  visit_duration) keyed by file; the same (source, tool, kind, from, to) replaces its rows. CSV,
+  generic JSON rows and API reports go through one row mapper per format (a GA4 runReport is mapped
+  onto the GA4 CSV's columns, a Plausible v2 response onto the generic ones), so the same data gives
+  the same rows. With `imported=true` and no filters, reports add imported numbers for days before
+  the first live event (totals, page / source / country / device breakdowns, day / week / month
+  buckets). Caps: `MAX_IMPORTED_ROWS_PER_SITE` (500,000) and `MAX_IMPORTS_PER_SITE` (100),
+  UNCLAIMED_ variants. Compare (`src/do/import-compare.ts`): imported daily visitors against the
+  live daily visitors of `timeseries` (debug traffic left out) on complete days after the first day
+  of live visitors and before today; ratio live / imported, close within 0.75 to 1.25, at least 3 days.
 - **AI crawlers** (`src/lib/crawlers.ts` is the maintained list; `src/do/crawlers.ts`, DO tables
   `crawler_hits`, `crawl_usage`): hits classified by user agent (first match wins; generic bot
   words make "Other bot"; unknown user agents are ignored), counted per (day, bot, path, status
@@ -597,7 +605,7 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
 `get_realtime`, `get_funnel`, `get_paths`, `get_attribution`, `track_events`, `create_goal`, `list_goals`, `delete_goal`,
 `query_sql`, `create_share_link`, `revoke_share_links`, `list_share_links`, `list_visitors`, `get_visitor`,
 `get_session`, `get_journeys`, `get_retention`, `get_stripe_integration`, `connect_stripe`, `connect_stripe_key`, `backfill_stripe`, `disconnect_stripe`,
-`get_fx_rates`, `get_billing_integration`, `connect_billing_provider`, `disconnect_billing_provider`, `record_payments`, `list_payments`, `delete_payment`, `record_subscriptions`, `list_subscriptions`, `get_mrr`, `record_costs`, `list_costs`, `delete_costs`, `get_items`, `list_user_props`, `list_sessions`, `get_realtime_map`, `get_account_rollup`, `record_crawls`, `get_crawlers`, `import_csv`, `list_imports`, `delete_import`, `export_events`, `list_annotations`, `create_annotation`,
+`get_fx_rates`, `get_billing_integration`, `connect_billing_provider`, `disconnect_billing_provider`, `record_payments`, `list_payments`, `delete_payment`, `record_subscriptions`, `list_subscriptions`, `get_mrr`, `record_costs`, `list_costs`, `delete_costs`, `get_items`, `list_user_props`, `list_sessions`, `get_realtime_map`, `get_account_rollup`, `record_crawls`, `get_crawlers`, `import_csv`, `list_imports`, `compare_import`, `delete_import`, `export_events`, `list_annotations`, `create_annotation`,
 `update_annotation`, `delete_annotation`, `get_exclusions`, `list_funnels`, `create_funnel`,
 `update_funnel`, `delete_funnel`, `create_destination`, `list_destinations`, `test_destination`,
 `delete_destination`, `create_alert`, `list_alerts`, `get_alert`, `update_alert`, `delete_alert`,
@@ -685,7 +693,7 @@ pages/sources/countries/devices tables, light and dark. It reads `GET /share/:to
 | `ENCRYPTION_KEY` | optional secret; 32 bytes base64 (`openssl rand -base64 32`). Seals the Stripe webhook signing secret. Unset: connecting Stripe returns 503 `not_configured` with a hint (the payments API still works). Changing it makes stored secrets unreadable: connect Stripe again |
 | `MAX_ANNOTATIONS_PER_SITE` | optional var; manual annotations per site (403 `quota_exceeded` beyond). Unset = no cap |
 | `MAX_EXPORT_ROWS_PER_SITE_PER_DAY` | optional var; raw events exported per site per UTC day (default 1000000) |
-| `MAX_IMPORTED_ROWS_PER_SITE` / `MAX_IMPORTS_PER_SITE` | optional vars; imported GA4 / Plausible rows (default 500000) and files (default 100) per site |
+| `MAX_IMPORTED_ROWS_PER_SITE` / `MAX_IMPORTS_PER_SITE` | optional vars; imported rows (default 500000) and imports (default 100) per site |
 | `MAX_CRAWL_HITS_PER_SITE_PER_DAY` | optional var; crawler hits counted per site per UTC day (default 100000) |
 | `MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY` / `MAX_CRAWL_HITS_PER_DAY` | optional vars; crawler hits per account (all its sites) and for the whole deployment per UTC day, from a D1 aggregate (`crawl_usage_daily`, `crawl_usage_global`). Unset = none |
 | `MAX_BROWSER_USER_PROP_KEYS_PER_SITE` | optional var; user property keys only browsers created (`browser_user_props`), apart from server keys (default 20) |

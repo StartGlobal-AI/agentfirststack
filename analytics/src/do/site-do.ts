@@ -13,7 +13,8 @@ import * as sessionsList from "./sessions-list";
 import * as crawlers from "./crawlers";
 import * as imports from "./imports";
 import * as exporter from "./export";
-import type { ImportKind, ImportRow, ImportSource } from "../lib/imports";
+import type { ImportRow } from "../lib/imports";
+import { type CompareRequest, compareImports } from "./import-compare";
 import type { SubscriptionOutcome } from "./subscriptions";
 import * as people from "./people";
 import { insights, type InsightsRequest } from "./insights";
@@ -351,7 +352,7 @@ export class SiteDO extends DurableObject<Bindings> {
 
   async saveImport(
     id: string,
-    meta: { source: ImportSource; kind: ImportKind; file_name: string | null },
+    meta: imports.ImportMeta,
     rows: ImportRow[],
     caps: { maxRows: number; maxImports: number },
     vars?: LimitVars,
@@ -363,6 +364,10 @@ export class SiteDO extends DurableObject<Bindings> {
 
   listImports() {
     return this.withSettings(() => imports.listImports(this.db));
+  }
+
+  compareImports(q: CompareRequest) {
+    return this.withSettings((s) => compareImports(this.db, s, q));
   }
 
   deleteImport(id: string) {

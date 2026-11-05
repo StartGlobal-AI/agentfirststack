@@ -47,6 +47,8 @@ All notable changes to this project. The format follows
 
 ### Added
 
+- **Analytics: imports from any tool, and a check that the numbers line up.** `POST /v1/sites/:id/imports` now takes `source: "other"` with a `tool` slug (DataFast, Fathom, Umami, Matomo, ...) as a generic CSV or JSON `rows`, a GA4 Data API runReport response (what the GA4 MCP server returns) and a Plausible Stats API v2 response, besides the GA4 and Plausible CSVs; imports are idempotent per source, tool, kind and date range, and the list shows each one's `tool`. `GET /v1/sites/:id/imports/compare` (MCP `compare_import`) sets our live daily visitors against the old tool's imported ones on the complete days both cover and answers with a ratio, a verdict (close, lower, higher or not_enough_overlap), the usual causes of a gap and what to check, so the old tool stays installed until the numbers are close.
+
 - **AI crawler reporting is part of the full setup, and checked.** The setup gaps: agents were never asked to report bot visits, so no project had crawler data even though the landing page lists it.
   - `llms.txt`'s full setup now has the step: sites with a server or edge code report bot requests (`POST /v1/sites/:id/crawls`, prefiltered by user agent, fire and forget); static hosting skips it and says so.
   - The setup check has a new `analytics.crawlers` check and an "AI crawlers" row. It's a warning (never holds up ready) until a hit arrives in the last 7 days, with the fix.
