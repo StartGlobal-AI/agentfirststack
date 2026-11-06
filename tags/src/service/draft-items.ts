@@ -11,7 +11,8 @@ import { invalidDraft, writeDraft } from "./versions";
  * Item-level draft edits: PUT/DELETE /draft/{tags,triggers,variables,conversions}/:key and
  * revert one item to the live version. Each edit re-reads the draft, changes one item and writes
  * it back guarded by the revision it read, so a concurrent edit is never overwritten: without an
- * explicit ?revision= the change is re-applied on the newer draft (up to 3 tries); with one, a
+ * explicit ?revision= the change is re-applied on the newer draft (up to 8 tries, with a short
+ * random wait, so a handful of agents editing at once all land); with one, a
  * different revision is a 409 revision_conflict. An edit that changes nothing writes nothing.
  */
 
@@ -65,7 +66,11 @@ export async function editDraft<T>(
       return { row: next, config: parsed.config, written: true, result };
     } catch (e) {
       // Someone else saved between our read and write: re-apply on their draft (no revision given).
-      if (expectedRevision === undefined && e instanceof ApiError && e.code === "revision_conflict" && attempt < 2) continue;
+      // With N editors at once the last may lose N-1 races, so retry a few times with jitter.
+      if (expectedRevision === undefined && e instanceof ApiError && e.code === "revision_conflict" && attempt < 7) {
+        await new Promise((r) => setTimeout(r, 5 + Math.random() * 15 * (attempt + 1)));
+        continue;
+      }
       throw e;
     }
   }

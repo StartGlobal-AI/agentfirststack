@@ -99,9 +99,10 @@ describe("item-level draft edits", () => {
     expect(conflict.status).toBe(409);
     expect(conflict.body.error.code).toBe("revision_conflict");
 
-    await Promise.all(
+    const puts = await Promise.all(
       ["a", "b", "c", "d"].map((k) => api("PUT", `/v1/containers/${C}/draft/triggers/${k}`, { type: "timer", interval_ms: 1000 })),
     );
+    for (const r of puts) expect(r.status).toBeLessThan(300);
     const ids = (await api("GET", `/v1/containers/${C}/draft`)).body.config.triggers.map((t: { id: string }) => t.id);
     expect(ids).toEqual(expect.arrayContaining(["all_pages", "t1", "a", "b", "c", "d"]));
   });
