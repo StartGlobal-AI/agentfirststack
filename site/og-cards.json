@@ -12,6 +12,12 @@
     "service": "all"
   },
   {
+    "slug": "features",
+    "title": "What each service includes",
+    "kicker": "Analytics, tags, email inboxes and session replay: every feature over REST and MCP with one key. Free and open source.",
+    "service": "all"
+  },
+  {
     "slug": "google-analytics-mcp",
     "title": "Google Analytics MCP compared",
     "kicker": "Read a GA4 property, or let your agent create the analytics itself.",

@@ -191,6 +191,9 @@ report (docs/operations.md, "Abuse handling"). Optional secrets under `site` in 
 `SAFE_BROWSING_API_KEY` and `SPAMHAUS_DQS_KEY` for the summary's reputation checks. Without the
 var nothing is sent. Reserve the sender's username (`EXTRA_RESERVED_USERNAMES` on mail) so nobody can create an
 inbox with it. The site's hourly cron (`47 * * * *`) checks usage, sends queued emails and retries.
+`DEMO_DASHBOARD_URL` (optional, `vars.site`): a public share link of your own site's analytics
+(`POST /v1/sites/:id/share`); the home page then draws it live from `/live/analytics.json`
+(aggregates, minus any page or referrer a visitor could write) and `/live` links to it.
 
 ## Sign-in for people (optional)
 

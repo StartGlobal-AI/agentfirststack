@@ -261,6 +261,298 @@
     });
   })();
 
+  // ---------- live: our own analytics, from its public share link (src/live-demo.ts) ----------
+  // Every value is set as text, never HTML: the numbers come from visitors.
+  (function () {
+    var board = document.querySelector("[data-live]");
+    if (!board || !window.fetch) return;
+    var SVG = "http://www.w3.org/2000/svg";
+    var statusEl = board.querySelector("[data-live-status]");
+    var chartEl = board.querySelector("[data-live-chart]");
+    var whole = new Intl.NumberFormat("en");
+    var compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+    var regions = null;
+    try {
+      regions = new Intl.DisplayNames(["en"], { type: "region" });
+    } catch (e) {
+      regions = null;
+    }
+    var last = null;
+
+    function make(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+    function svg(tag, attrs) {
+      var n = document.createElementNS(SVG, tag);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      return n;
+    }
+    function count(n) {
+      return n >= 10000 ? compact.format(n) : whole.format(n);
+    }
+    function duration(s) {
+      s = Math.round(s);
+      var m = Math.floor(s / 60);
+      return m ? m + "m " + (s % 60) + "s" : s + "s";
+    }
+    function day(d) {
+      return new Date(d.slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+    }
+    /** A chart point: "4 Nov" by day; "09:00" (short) or "5 Nov, 09:00 UTC" by hour. */
+    function when(d, short, tz) {
+      if (d.length <= 10) return day(d);
+      return short ? d.slice(11, 16) : day(d) + ", " + d.slice(11, 16) + " " + (tz || "UTC");
+    }
+    function country(code) {
+      try {
+        return (regions && regions.of(code)) || code;
+      } catch (e) {
+        return code;
+      }
+    }
+    function list(name, rows, label, value) {
+      var ol = board.querySelector('[data-list="' + name + '"]');
+      if (!ol) return;
+      ol.textContent = "";
+      if (!rows.length) {
+        ol.appendChild(make("li", "empty", "Nothing yet"));
+        return;
+      }
+      var max = Math.max.apply(null, rows.map(value)) || 1;
+      rows.forEach(function (r) {
+        var li = make("li");
+        var bar = make("i");
+        bar.style.setProperty("--v", String(Math.round((value(r) / max) * 100)));
+        li.appendChild(bar);
+        li.appendChild(make("span", null, label(r)));
+        li.appendChild(make("b", null, count(value(r))));
+        ol.appendChild(li);
+      });
+    }
+
+    function drawChart(series, tz) {
+      chartEl.textContent = "";
+      chartEl.classList.remove("is-hovering");
+      if (!series.length) return;
+      var w = chartEl.clientWidth || 600;
+      var h = chartEl.clientHeight || 190;
+      var top = 16;
+      var base = h - 20;
+      var max = Math.max.apply(
+        null,
+        series.map(function (p) {
+          return p.visitors;
+        }),
+      );
+      var peak = max || 1;
+      var gap = series.length > 60 ? 1 : 2;
+      var slot = w / series.length;
+      var bw = Math.max(1, slot - gap);
+      var root = svg("svg", { viewBox: "0 0 " + w + " " + h, preserveAspectRatio: "none", "aria-hidden": "true" });
+      root.appendChild(svg("line", { class: "grid", x1: 0, x2: w, y1: base + 0.5, y2: base + 0.5 }));
+      root.appendChild(svg("line", { class: "grid", x1: 0, x2: w, y1: top + 0.5, y2: top + 0.5 }));
+      var peakLabel = svg("text", { class: "label", x: 0, y: top - 5 });
+      peakLabel.textContent = whole.format(max) + " visitors";
+      root.appendChild(peakLabel);
+      var bars = series.map(function (p, i) {
+        var bh = p.visitors ? Math.max(2, ((base - top) * p.visitors) / peak) : 0;
+        var x = i * slot + gap / 2;
+        var y = base - bh;
+        var r = Math.min(4, bw / 2, bh);
+        var d = bh
+          ? "M" +
+            x +
+            "," +
+            base +
+            "V" +
+            (y + r) +
+            "Q" +
+            x +
+            "," +
+            y +
+            " " +
+            (x + r) +
+            "," +
+            y +
+            "H" +
+            (x + bw - r) +
+            "Q" +
+            (x + bw) +
+            "," +
+            y +
+            " " +
+            (x + bw) +
+            "," +
+            (y + r) +
+            "V" +
+            base +
+            "Z"
+          : "";
+        var bar = svg("path", { class: "bar", d: d });
+        root.appendChild(bar);
+        return bar;
+      });
+      [0, series.length - 1].forEach(function (i, n) {
+        var t = svg("text", { class: "label", x: n ? w : 0, y: h - 4, "text-anchor": n ? "end" : "start" });
+        t.textContent = when(series[i].date, true, tz);
+        root.appendChild(t);
+      });
+      chartEl.appendChild(root);
+      var tip = make("div", "board-tip");
+      tip.hidden = true;
+      chartEl.appendChild(tip);
+      var on = -1;
+      function show(e) {
+        var rect = chartEl.getBoundingClientRect();
+        var i = Math.min(series.length - 1, Math.max(0, Math.floor(((e.clientX - rect.left) / rect.width) * series.length)));
+        if (i === on) return;
+        if (on >= 0) bars[on].classList.remove("is-on");
+        on = i;
+        bars[i].classList.add("is-on");
+        chartEl.classList.add("is-hovering");
+        var p = series[i];
+        tip.textContent = "";
+        tip.appendChild(make("b", null, when(p.date, false, tz)));
+        tip.appendChild(
+          document.createTextNode(": " + whole.format(p.visitors) + " visitors, " + whole.format(p.pageviews) + " pageviews"),
+        );
+        tip.hidden = false;
+        var cx = ((i + 0.5) / series.length) * rect.width;
+        tip.style.left = Math.min(rect.width - 90, Math.max(90, cx)) + "px";
+        tip.style.top = Math.max(18, base - (p.visitors ? ((base - top) * p.visitors) / peak : 0)) + "px";
+      }
+      function hide() {
+        if (on >= 0) bars[on].classList.remove("is-on");
+        on = -1;
+        tip.hidden = true;
+        chartEl.classList.remove("is-hovering");
+      }
+      chartEl.onpointermove = show;
+      chartEl.onpointerdown = show;
+      chartEl.onpointerleave = hide;
+    }
+
+    function render(d) {
+      last = d;
+      board.removeAttribute("aria-busy");
+      var m = d.metrics || {};
+      var set = function (k, text) {
+        var dd = board.querySelector('[data-k="' + k + '"]');
+        if (dd) dd.textContent = text;
+      };
+      set("visitors", count(m.visitors || 0));
+      set("pageviews", count(m.pageviews || 0));
+      set("visit_duration", duration(m.visit_duration || 0));
+      set("conversions", count(m.conversions || 0));
+      var series = d.series || [];
+      var since = d.since ? day(d.since) : null;
+      statusEl.textContent = since ? "Totals since " + since + ", updated every minute" : "Updated every minute";
+      statusEl.classList.add("is-live");
+      var hourly = d.interval === "hour";
+      var caption = board.querySelector("[data-live-caption]");
+      var total = series.reduce(function (n, p) {
+        return n + p.visitors;
+      }, 0);
+      if (caption) caption.textContent = hourly ? "Visitors per hour, last 24 hours" : "Visitors per day";
+      chartEl.setAttribute("role", "img");
+      chartEl.setAttribute(
+        "aria-label",
+        (hourly ? "Visitors per hour over the last 24 hours: " : "Visitors per day: ") + whole.format(total) + " in all",
+      );
+      drawChart(series, d.timezone);
+      list(
+        "pages",
+        d.pages || [],
+        function (r) {
+          return r.path;
+        },
+        function (r) {
+          return r.visitors;
+        },
+      );
+      list(
+        "sources",
+        d.sources || [],
+        function (r) {
+          return r.name;
+        },
+        function (r) {
+          return r.visitors;
+        },
+      );
+      list(
+        "countries",
+        d.countries || [],
+        function (r) {
+          return country(r.code);
+        },
+        function (r) {
+          return r.visitors;
+        },
+      );
+      list(
+        "goals",
+        d.goals || [],
+        function (r) {
+          return r.name;
+        },
+        function (r) {
+          return r.conversions;
+        },
+      );
+    }
+
+    function load() {
+      fetch("/live/analytics.json", { headers: { accept: "application/json" } })
+        .then(function (r) {
+          return r.ok ? r.json() : Promise.reject(r.status);
+        })
+        .then(render)
+        .catch(function () {
+          if (last) return;
+          board.removeAttribute("aria-busy");
+          statusEl.textContent = "The live numbers didn't load. Open the full dashboard instead.";
+        });
+    }
+    var started = false;
+    function start() {
+      if (started) return;
+      started = true;
+      load();
+      setInterval(function () {
+        if (document.visibilityState === "visible") load();
+      }, 60000);
+    }
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(
+        function (entries) {
+          if (
+            entries.some(function (e) {
+              return e.isIntersecting;
+            })
+          ) {
+            io.disconnect();
+            start();
+          }
+        },
+        { rootMargin: "400px 0px" },
+      );
+      io.observe(board);
+    } else {
+      start();
+    }
+    var resizeTimer;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        if (last) drawChart(last.series || [], last.timezone);
+      }, 150);
+    });
+  })();
+
   // ---------- nav ----------
   var nav = document.querySelector(".nav");
   if (nav) {

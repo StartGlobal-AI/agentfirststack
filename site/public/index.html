@@ -93,7 +93,7 @@
       <span>AgentFirstStack</span>
     </a>
     <nav class="nav-links" aria-label="Main">
-      <a href="#how">How it works</a>
+      <a href="#live">Live demo</a>
       <a href="#services">Services</a>
       <a href="#pricing">Pricing</a>
       <a href="/guides">Guides</a>
@@ -118,7 +118,7 @@
       <p class="lede">Like Google Analytics, Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding agent creates the account, adds everything to your site and checks it works. No signup form, no dashboard.</p>
       <div class="actions">
         <button class="btn btn-primary" type="button" data-copy data-cta="hero">Copy prompt for your agent</button>
-        <a class="btn btn-quiet" href="/llms.txt">Read the manual</a>
+        <a class="btn btn-quiet" href="#live">See our live analytics</a>
       </div>
       <p class="copy-status" role="status" aria-live="polite"></p>
       <p class="works-with">Paste it into Claude Code, Cursor, Codex or any agent that can make HTTP requests. <a href="#pricing">Free to set up and use.</a></p>
@@ -183,6 +183,39 @@
   </div>
 </section>
 
+<section class="section live" id="live" aria-labelledby="live-title">
+  <div class="wrap">
+    <div class="live-head">
+      <div>
+        <h2 id="live-title">Our own analytics, live</h2>
+        <p class="section-lede">This is agentfirststack.com since we launched, counted by the same cookieless analytics your agent sets up. Nothing is hidden or rounded, and the numbers update every minute.</p>
+      </div>
+      <a class="btn btn-quiet" href="/live">Open the full dashboard</a>
+    </div>
+    <div class="board" data-live aria-busy="true">
+      <div class="board-top">
+        <span class="board-site"><span class="dot" aria-hidden="true"></span>agentfirststack.com</span>
+        <span class="board-status" data-live-status>Loading the live numbers</span>
+      </div>
+      <dl class="board-kpis">
+        <div><dt>Visitors</dt><dd data-k="visitors">&nbsp;</dd></div>
+        <div><dt>Pageviews</dt><dd data-k="pageviews">&nbsp;</dd></div>
+        <div><dt>Average visit</dt><dd data-k="visit_duration">&nbsp;</dd></div>
+        <div><dt>Conversions</dt><dd data-k="conversions">&nbsp;</dd></div>
+      </dl>
+      <p class="board-caption" data-live-caption>&nbsp;</p>
+      <div class="board-chart" data-live-chart></div>
+      <div class="board-lists">
+        <section><h3>Top pages</h3><ol data-list="pages"></ol></section>
+        <section><h3>Sources</h3><ol data-list="sources"></ol></section>
+        <section><h3>Countries</h3><ol data-list="countries"></ol></section>
+        <section><h3>Goals</h3><ol data-list="goals"></ol></section>
+      </div>
+    </div>
+    <p class="live-note">No cookies, and no visitor ID lasts past the day. Paths and referrers are text visitors send, so this page lists only pages in our sitemap and sources analytics recognises. The full dashboard is a public share link, the same kind your agent can make for your site.</p>
+  </div>
+</section>
+
 <section class="section" id="how" aria-labelledby="how-title">
   <div class="wrap">
     <h2 id="how-title">How it works</h2>
@@ -200,6 +233,37 @@
         <p>Your ad accounts stay yours. The agent asks for the exact IDs and tokens it needs from Google Ads, Meta or TikTok, and tells you where to find them. It also gives you a link to claim the project, so you can see everything in a dashboard.</p>
       </li>
     </ol>
+  </div>
+</section>
+
+<section class="section" id="pricing" aria-labelledby="pricing-title">
+  <div class="wrap">
+    <div class="free">
+      <div class="free-copy">
+        <h2 id="pricing-title">Free to set up and free to use</h2>
+        <p>There's no paid plan, no trial and no card to add. Every project on AgentFirstStack runs free. The only limits are a fair-use policy, so no one account can use up what everyone shares.</p>
+        <div class="actions">
+          <button class="btn btn-invert" type="button" data-copy data-cta="pricing">Copy prompt for your agent</button>
+          <a class="btn btn-outline-invert" href="#limits">See the fair-use limits</a>
+        </div>
+      </div>
+      <dl class="free-facts">
+        <div><dt>to set up</dt><dd>$0</dd></div>
+        <div><dt>a month, at any size within fair use</dt><dd>$0</dd></div>
+        <div><dt>of projects run free</dt><dd>100%</dd></div>
+      </dl>
+    </div>
+    <div class="limits-row">
+      <h3 id="limits">Fair-use limits on the hosted service</h3>
+      <ul class="limits">
+        <li>3 new accounts per hour from one network</li>
+        <li>10 sites, 10 tag containers and 10 inboxes per account; 5 replay sites</li>
+        <li>Shared inboxes reply to people who wrote to them, up to 20 recipients a day. Add your own domain to send to anyone.</li>
+        <li>Mail on shared addresses is kept for 14 days, up to 100 messages per inbox</li>
+        <li>Replay keeps recordings for up to 14 days, 200 sessions per site a day</li>
+      </ul>
+      <p>The rest is in the <a href="/acceptable-use">acceptable use policy</a> and the <a href="/llms.txt">manual</a>. Need more? Run your own copy, with your own limits.</p>
+    </div>
   </div>
 </section>
 
@@ -288,75 +352,7 @@
       </article>
 
     </div>
-    <div class="features" id="features">
-      <h3 class="features-title">What each service includes</h3>
-      <p class="features-lede">All of it over REST and MCP, with the same key. <a href="/guides">Comparisons with the tools you may use now</a>.</p>
-      <div class="features-grid">
-        <div class="feature-list wide" style="--c: var(--orange)">
-          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Analytics <span>instead of GA4, Plausible or DataFast</span></h4>
-          <dl>
-            <div><dt>Tracking</dt><dd>Cookieless by default, single-page and hash routing, custom events and properties (also from HTML attributes), outbound clicks, downloads, forms, 404s, scroll depth, engaged time, Core Web Vitals, site search, UTMs and ad click IDs, consent gating, cross-domain linking</dd></div>
-            <div><dt>Server events</dt><dd>An events API with a dry run, joined to browser visitors, with user properties</dd></div>
-            <div><dt>Reports</dt><dd>Stats, timeseries and comparisons, breakdowns by up to three dimensions, custom metrics, channel groups, realtime with a map, engagement rate, average order value, top movers, insights, CSV, one rollup across all your sites</dd></div>
-            <div><dt>Filters</dt><dd>Wildcards, nested and/or groups, saved segments, new or returning, did or didn't do an event, user properties, timezones</dd></div>
-            <div><dt>Goals and funnels</dt><dd>Goals that apply to past data, funnels in order or any order, with time windows and revenue per step</dd></div>
-            <div><dt>People</dt><dd>Visitors, a session list linked to replay, journeys, first touch, retention cohorts, path exploration, six attribution models</dd></div>
-            <div><dt>Revenue</dt><dd>Stripe in one call with 90 days of history, Polar, Paddle and LemonSqueezy, a payments API, one reporting currency, new and renewal revenue by source, page and campaign</dd></div>
-            <div><dt>Subscriptions</dt><dd>MRR, ARR and ARPU; new, expansion, contraction and churned MRR; churn and trial conversion, by channel, campaign, country or plan</dd></div>
-            <div><dt>Ad spend</dt><dd>Import costs per campaign for ROAS, CPA and CAC</dd></div>
-            <div><dt>Ecommerce</dt><dd>Items in each purchase, with revenue and quantity per product</dd></div>
-            <div><dt>AI crawlers</dt><dd>Which AI bots read which pages, never counted as visitors</dd></div>
-            <div><dt>Querying</dt><dd>Read-only SQL with cost limits, and a schema call that lists every event and property</dd></div>
-            <div><dt>Import and export</dt><dd>History from GA4, Plausible, DataFast or any other tool (their CSV exports or API reports), a check that the numbers match, raw events as NDJSON, CSV or JSON</dd></div>
-            <div><dt>Sharing</dt><dd>Public dashboards with a password, an expiry and a saved segment</dd></div>
-            <div><dt>Alerts</dt><dd>Spikes, drops, no data, goals and payments, plus weekly or monthly reports, by webhook, Slack or email</dd></div>
-            <div><dt>Privacy</dt><dd>Delete a visitor, purge with a dry run, email and phone redaction, path rules, exclusions, a referral-spam filter, Do Not Track and GPC</dd></div>
-          </dl>
-        </div>
-        <div class="feature-list" style="--c: var(--yellow)">
-          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Tags <span>instead of Google Tag Manager</span></h4>
-          <dl>
-            <div><dt>Workflow</dt><dd>A site scan that finds the tags and tools already there, GTM import (an export or the GTM API), a draft you edit item by item, diffs between versions, a preview log, environments, versions and rollback</dd></div>
-            <div><dt>Triggers</dt><dd>Pageview, DOM ready, window loaded, consent initialization, clicks, forms, history changes, element visibility, scroll depth, timers, JavaScript errors, video, custom events, trigger groups</dd></div>
-            <div><dt>Variables</dt><dd>Data layer, URL parts, cookies, element attributes, lookup and regex tables, formatting, about 30 built-ins</dd></div>
-            <div><dt>Tag options</dt><dd>Priority, scheduling, sequencing, firing limits, consent per tag</dd></div>
-            <div><dt>Browser tags</dt><dd>GA4, Google Ads, Meta, TikTok, Snap, image pixels, custom HTML on verified domains</dd></div>
-            <div><dt>Conversion APIs</dt><dd>GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap, X and webhooks, each counted once with the browser pixel</dd></div>
-            <div><dt>Routing</dt><dd>Per-platform conditions and parameter rules, test sends</dd></div>
-            <div><dt>Consent and identity</dt><dd>Consent Mode v2, TCF v2, hashed user data, cross-domain linking, a lookup store for values like margin by SKU</dd></div>
-            <div><dt>Monitoring</dt><dd>An event and delivery log, tag-fire stats, page coverage, retries and a circuit breaker</dd></div>
-          </dl>
-        </div>
-        <div class="feature-list" style="--c: var(--blue)">
-          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Mail <span>instead of AgentMail or a Gmail account</span></h4>
-          <dl>
-            <div><dt>Inboxes</dt><dd>Instant inboxes on our domain or yours, plus-address tags, labels, usage limits you can read</dd></div>
-            <div><dt>Waiting</dt><dd>Wait for an email and get the verification code or link back, from authenticated senders only</dd></div>
-            <div><dt>Reading</dt><dd>Threads, search, raw email, attachments and their text, calendar invites, replies without the quoted history</dd></div>
-            <div><dt>Sending</dt><dd>Send, reply and forward, safe to retry, scheduled sending, delivery status per recipient</dd></div>
-            <div><dt>Safety</dt><dd>Inboxes on the shared domain reply only to people who wrote first; allow and block lists</dd></div>
-            <div><dt>Domains</dt><dd>Custom domains with DNS checks, send-only domains, a zone file to import</dd></div>
-            <div><dt>Forwarding</dt><dd>Each email, or a daily digest, to the people who claimed the project</dd></div>
-            <div><dt>Events</dt><dd>Signed webhooks, and an event feed an agent can poll without a public URL</dd></div>
-            <div><dt>Checks</dt><dd>A deliverability report for any message: SPF, DKIM and DMARC</dd></div>
-          </dl>
-        </div>
-        <div class="feature-list wide" style="--c: var(--green)">
-          <h4 class="product-name"><span class="dot" aria-hidden="true"></span>Replay <span>instead of Hotjar or Clarity</span></h4>
-          <dl>
-            <div><dt>Recording</dt><dd>Text and inputs masked in the browser by default, selectors to unmask, mask or block, sampling</dd></div>
-            <div><dt>Consent</dt><dd>Consent only where the law asks (EEA, UK, Switzerland), Google Consent Mode, TCF v2, Do Not Track and GPC, IP exclusion</dd></div>
-            <div><dt>Sessions</dt><dd>Search, readable transcripts, summaries across many sessions, raw events, exports, a share-link player and clips</dd></div>
-            <div><dt>Signals</dt><dd>Rage, dead and error clicks, quick backs, excessive scrolling, JavaScript and console errors, failed requests, a frustration score</dd></div>
-            <div><dt>Analysis</dt><dd>Tags and identify, saved segments, trends, funnel drop-offs, events defined after the fact</dd></div>
-            <div><dt>Heatmaps</dt><dd>Click, scroll and attention maps by element or zone, comparisons, conversion share, PNG images</dd></div>
-            <div><dt>Surveys</dt><dd>Popovers, embedded surveys and a feedback tab: NPS, CSAT, CES, product-market fit and text, triggered on exit intent or after a rage click, each answer linked to its session</dd></div>
-            <div><dt>Workflow</dt><dd>Notes, labels, stars, signed webhooks, signals sent on to analytics and your tag container</dd></div>
-            <div><dt>Privacy</dt><dd>Delete or look up one visitor&#x27;s data, recordings kept 14 days</dd></div>
-          </dl>
-        </div>
-      </div>
-    </div>
+    <p class="features-link"><a href="/features">Everything each service does</a>, all of it over REST and MCP with the same key.</p>
   </div>
 </section>
 
@@ -385,57 +381,37 @@
   </div>
 </section>
 
-<section class="section section-tint" aria-labelledby="rules-title">
+<section class="section section-tint" id="open-source" aria-labelledby="principles-title">
   <div class="wrap">
-    <h2 id="rules-title">Built for agents, not dashboards</h2>
-    <div class="rules">
-      <div><h3>One request to an account</h3><p>No email, captcha or approval. The key is the account.</p></div>
-      <div><h3>API and MCP for everything</h3><p>Nothing hides behind a settings page.</p></div>
-      <div><h3>A manual in plain text</h3><p><a href="/llms.txt">/llms.txt</a> lists every endpoint, tool and field.</p></div>
-      <div><h3>Every step can be checked</h3><p>The agent verifies its own work instead of guessing.</p></div>
-      <div><h3>Safe to retry</h3><p>Creating the same thing twice returns the first one.</p></div>
-      <div><h3>Errors that explain the fix</h3><p>Each one carries a hint the agent can act on.</p></div>
-    </div>
-  </div>
-</section>
-
-<section class="section" id="open-source" aria-labelledby="oss-title">
-  <div class="wrap">
-    <h2 id="oss-title">Free to use. Open source.</h2>
-    <div class="free" id="pricing">
-      <div class="free-copy">
-        <h3>Free to set up and free to use</h3>
-        <p>There's no paid plan, no trial and no card to add. Every project on AgentFirstStack runs free. The only limits are a fair-use policy, so no one account can use up what everyone shares.</p>
-        <div class="actions">
-          <button class="btn btn-invert" type="button" data-copy data-cta="pricing">Copy prompt for your agent</button>
-          <a class="btn btn-outline-invert" href="#limits">See the fair-use limits</a>
-        </div>
-      </div>
-      <dl class="free-facts">
-        <div><dt>to set up</dt><dd>$0</dd></div>
-        <div><dt>a month, at any size within fair use</dt><dd>$0</dd></div>
-        <div><dt>of projects run free</dt><dd>100%</dd></div>
-      </dl>
-    </div>
-    <div class="oss">
+    <h2 id="principles-title">Open source, agent first, privacy first</h2>
+    <div class="principles">
       <div>
-        <h3 id="limits">Fair-use limits on the hosted service</h3>
-        <ul class="limits">
-          <li>3 new accounts per hour from one network</li>
-          <li>10 sites, 10 tag containers and 10 inboxes per account; 5 replay sites</li>
-          <li>Shared inboxes reply to people who wrote to them, up to 20 recipients a day. Add your own domain to send to anyone.</li>
-          <li>Mail on shared addresses is kept for 14 days, up to 100 messages per inbox</li>
-          <li>Replay keeps recordings for up to 14 days, 200 sessions per site a day</li>
-        </ul>
-        <p>The rest is in the <a href="/acceptable-use">acceptable use policy</a> and the <a href="/llms.txt">manual</a>. Need more? Run your own copy, with your own limits.</p>
-      </div>
-      <div>
-        <h3>Self-host</h3>
-        <p>Open source under AGPL-3.0 (the scripts your pages load are MIT). Four commands deploy it to your own Cloudflare account.</p>
+        <h3><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.4-2 3-7 4"/></svg>Open source</h3>
+        <p>AGPL-3.0, and the scripts your pages load are MIT. Read every line on <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>, or run your own copy: four commands deploy it to your Cloudflare account.</p>
 <pre class="code">git clone https://github.com/StartGlobal-AI/agentfirststack
 cd agentfirststack &amp;&amp; pnpm install
 pnpm afs init mystack --domain example.com --account &lt;id&gt;
 pnpm afs deploy mystack</pre>
+      </div>
+      <div>
+        <h3><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.8 3.8 1.4-3.8 1.4L8 12.2 6.6 8.4 2.8 7l3.8-1.4z"/></svg>Agent first</h3>
+        <ul class="ticks">
+          <li><b>One request to an account.</b> No email, captcha or approval. The key is the account.</li>
+          <li><b>API and MCP for everything.</b> Nothing hides behind a settings page.</li>
+          <li><b>A manual in plain text.</b> <a href="/llms.txt">/llms.txt</a> lists every endpoint, tool and field.</li>
+          <li><b>Every step can be checked,</b> so the agent verifies its own work.</li>
+          <li><b>Safe to retry,</b> with errors that explain the fix.</li>
+        </ul>
+      </div>
+      <div>
+        <h3><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l5 1.9v3.9c0 3.2-2.1 5.6-5 6.6-2.9-1-5-3.4-5-6.6V3.7z"/><path d="M5.8 8l1.6 1.6 2.9-3"/></svg>Privacy first</h3>
+        <ul class="ticks">
+          <li><b>Analytics without cookies.</b> No visitor ID lasts past the day.</li>
+          <li><b>Replay masks what people type</b> in the browser, before anything is sent.</li>
+          <li><b>Consent where the law asks for it:</b> Consent Mode v2, TCF v2, Do Not Track and GPC.</li>
+          <li><b>Delete one visitor's data</b> when they ask, with a dry run first.</li>
+          <li><b>Mail on shared inboxes</b> is deleted after 14 days. See <a href="/privacy">how our own pages use it</a>.</li>
+        </ul>
       </div>
     </div>
   </div>

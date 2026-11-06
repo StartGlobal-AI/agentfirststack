@@ -125,6 +125,16 @@ aren't recorded. Retention 14 days. To turn replay off:
 - Alerts: Traffic drop `alr_sdzwk2t5gr7tbeer`, Tracking stopped (no data for 12 h)
   `alr_p8xnvvgmgnj9kwv3`, Traffic spike `alr_4yaaeamdd3vqd3sf`.
 
+## The home page's live dashboard
+
+- Share link "Landing page live demo" (`POST /v1/sites/site_6hmh1a6dbbn8mdfp/share` with that
+  label returns it again): https://afsusercontent.com/a/shr_ngj31aejsnk27v018ecyfke23r56tdc3
+- The profile sets it as `vars.site.DEMO_DASHBOARD_URL`. The home page's "Our own analytics, live"
+  reads `/live/analytics.json` (totals since the site was added, the last 24 hours by hour, cached
+  a minute; only sitemap pages, known sources, countries, devices and goals) and `/live` sends to
+  the full dashboard (`site/src/live-demo.ts`). Revoking the link (`DELETE /v1/sites/:id/share?token=`)
+  turns the section into "didn't load"; make a new one and update the var.
+
 ## Waiting on the owner
 
 - Nothing is required. Optional: a backup key in the owner's password manager (the setup agent was

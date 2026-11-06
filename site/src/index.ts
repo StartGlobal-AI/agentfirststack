@@ -19,6 +19,7 @@ import { ownAnalytics, trackCrawl, trackOwn } from "./own-analytics";
 import { servePage, withAssetHeaders } from "./static-pages";
 import { firstParty, firstPartyEdge } from "./first-party";
 import { userContentSite } from "./user-content";
+import { liveDemo } from "./live-demo";
 import { firstPartyDomainsApi } from "./first-party-domains";
 import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
@@ -154,6 +155,8 @@ app.route("/", firstPartyDomainsApi);
 app.route("/", emailRoutes);
 app.route("/", pausesApi);
 app.route("/", abuseReportsApi);
+// The landing page's live dashboard: our own analytics, from its public share link (src/live-demo.ts).
+app.route("/live", liveDemo);
 app.route("/dashboard", dashboard);
 
 // A project created here is a conversion only the backend sees (agents sign up with curl): with
