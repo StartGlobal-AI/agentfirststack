@@ -554,7 +554,10 @@ async function cmdCheck(name) {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     const count = t.json?.result?.tools?.length ?? 0;
-    step(`${app}: MCP tools/list`, count > 0, `${count} tools`);
+    const why = count
+      ? ""
+      : ` (HTTP ${t.status}${t.json?.error ? `: ${JSON.stringify(t.json.error).slice(0, 200)}` : t.json ? "" : `: ${t.text.slice(0, 200)}`})`;
+    step(`${app}: MCP tools/list`, count > 0, `${count} tools${why}`);
   }
   // Clean up everything this check created (replay first: deleting it unlinks the analytics site).
   if (rsite.json?.site?.id) await call(`${base("replay")}/v1/sites/${rsite.json.site.id}`, { method: "DELETE", headers: H });
