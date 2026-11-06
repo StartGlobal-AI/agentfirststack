@@ -114,13 +114,15 @@ Both are zones in the same account as `agentfirststack.com`. In order:
    `afs-mail-webhooks` (mail README, "Delivery status").
 4. **User-content domain.** On `afsusercontent.com`: `AAAA @ 100::` proxied, Always Use HTTPS on.
    Add `"user_content_domain": "afsusercontent.com"` to the profile and
-   `pnpm afs deploy hosted analytics replay`: the Worker routes `afsusercontent.com/a/*` (analytics)
-   and `afsusercontent.com/r/*` (replay) and their `USER_CONTENT_BASE_URL` come from it. Keep the
+   `pnpm afs deploy hosted analytics replay site`: the Worker routes `afsusercontent.com/a/*`
+   (analytics), `afsusercontent.com/r/*` (replay) and `afsusercontent.com/*` (the site: the root
+   page saying what the domain is, robots.txt, 404 for the rest) and their `USER_CONTENT_BASE_URL`
+   come from it. Keep the
    routes in the profile, not the dashboard (`wrangler deploy` replaces a Worker's routes).
 5. **Reputation.** `vars.site.REPUTATION_DOMAINS = "agentfirstinbox.com,afsusercontent.com"` and
    deploy the site, so the daily summary checks them too.
 6. `pnpm afs check hosted`: new inboxes on the new domain, both user-content paths reach their
-   Worker, no API there.
+   Worker, the root page answers, no API there.
 
 Once inboxes exist on agentfirstinbox.com, keep `shared_inbox_domain` set: the mail Worker treats
 only `MAIL_DOMAIN` and `SHARED_INBOX_DOMAIN` as shared, so inboxes on a domain taken out of both stop

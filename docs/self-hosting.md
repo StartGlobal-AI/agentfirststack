@@ -255,11 +255,14 @@ share link isn't a report against your main domain):
 2. On it, a DNS record for the apex: `AAAA @ 100::`, **proxied** (originless: the Workers answer).
    Turn on SSL/TLS > Edge Certificates > Always Use HTTPS.
 3. In your profile, `"user_content_domain": "usercontent-example.com"`, then
-   `pnpm afs deploy mystack analytics replay`. `pnpm afs config` adds the Worker routes
-   `<domain>/a/*` (analytics) and `<domain>/r/*` (replay) to their deploy configs and sets their
+   `pnpm afs deploy mystack analytics replay site`. `pnpm afs config` adds the Worker routes
+   `<domain>/a/*` (analytics), `<domain>/r/*` (replay) and `<domain>/*` (the site, for the rest of
+   the host: a page saying what the domain is and where to report a page, a robots.txt, and 404 for
+   everything else; the more specific route wins) to their deploy configs and sets their
    `USER_CONTENT_BASE_URL` to `https://<domain>`. Don't add the routes in the dashboard instead:
    `wrangler deploy` replaces a Worker's routes with the ones in its config.
-4. `pnpm afs check mystack` checks that both paths reach their Worker and that the host serves no API.
+4. `pnpm afs check mystack` checks that both paths reach their Worker, that the root page answers
+   and that the host serves no API.
 
 New share links then point there; a valid old link (`replay.<domain>/play/...`,
 `analytics.<domain>/share/...`) answers 301 to its new URL. Those Workers serve only the share pages

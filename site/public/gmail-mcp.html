@@ -196,7 +196,7 @@ claude mcp add --transport http afs-mail https://mail.agentfirststack.com/mcp \
   --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"</code></pre>
 <p>Then the agent calls the tools in order:</p>
 <ol>
-<li><code>create_inbox {"username":"acme-agent"}</code> returns <code>acme-agent@agentfirststack.com</code>. Calling it again returns the same inbox.</li>
+<li><code>create_inbox {"username":"acme-agent"}</code> returns <code>acme-agent@agentfirstinbox.com</code>. Calling it again returns the same inbox.</li>
 <li>The agent enters that address in a signup form.</li>
 <li><code>get_latest_code {"inbox_id":"inb_...","from":"github.com","timeout":60}</code> blocks until the email arrives and returns the code and the verification link.</li>
 <li><code>list_messages</code>, <code>get_message</code>, <code>reply_to_message</code> and <code>send_email</code> cover reading and writing.</li>
@@ -208,7 +208,7 @@ claude mcp add --transport http afs-mail https://mail.agentfirststack.com/mcp \
 <table>
 <thead><tr><th scope="col"></th><th scope="col">Google's Gmail MCP server</th><th scope="col">AgentFirstStack Mail</th></tr></thead>
 <tbody>
-<tr><th scope="row">Mailbox</th><td>A person's existing Gmail or Workspace account</td><td>Inboxes the agent creates, on @agentfirststack.com or your own domain</td></tr>
+<tr><th scope="row">Mailbox</th><td>A person's existing Gmail or Workspace account</td><td>Inboxes the agent creates, on @agentfirstinbox.com or your own domain</td></tr>
 <tr><th scope="row">Setup</th><td>Developer Preview Program, a Google Cloud project, two APIs, an OAuth consent screen and client</td><td>One POST for a key, one call for an inbox</td></tr>
 <tr><th scope="row">Auth</th><td>OAuth 2.0; the person consents to <code>gmail.readonly</code> and <code>gmail.compose</code></td><td>API key as a bearer token, or OAuth for chat apps</td></tr>
 <tr><th scope="row">Read and search</th><td><code>search_threads</code>, <code>get_thread</code>, <code>get_message</code></td><td><code>list_messages</code>, <code>search_messages</code>, <code>get_message</code>, <code>get_thread</code></td></tr>

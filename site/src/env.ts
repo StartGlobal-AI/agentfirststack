@@ -23,6 +23,8 @@ export type Bindings = Env & {
   INTERNAL_TOKEN?: string;
   /** The OAuth issuer (defaults to PUBLIC_BASE_URL, else the request origin). */
   AUTH_ISSUER?: string;
+  /** The user-content domain's origin (profile user_content_domain): src/user-content.ts answers it. */
+  USER_CONTENT_BASE_URL?: string;
   /** "true" only for local dev and tests: enables GET /auth/dev-login. */
   DEV_MODE?: string;
   /** New OAuth client registrations per network per hour (default 30). */

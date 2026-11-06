@@ -127,8 +127,12 @@ function names(profile) {
 
 const hostOf = (profile, app) => (app === "site" ? profile.domain : `${app}.${profile.domain}`);
 
-/** Paths each app serves on the user-content domain (its share pages), as Worker route patterns. */
-export const USER_CONTENT_PATHS = { analytics: "/a/*", replay: "/r/*" };
+/**
+ * Paths each app serves on the user-content domain, as Worker route patterns: the share pages of
+ * analytics and replay, and the rest of the host for the site (a page saying what the domain is,
+ * robots.txt, 404). The more specific route wins, so /a/* and /r/* stay with their apps.
+ */
+export const USER_CONTENT_PATHS = { analytics: "/a/*", replay: "/r/*", site: "/*" };
 
 /** profile.user_content_domain, a bare hostname (a zone apex in the account), or null. */
 function userContentDomain(profile) {
@@ -530,6 +534,10 @@ async function cmdCheck(name) {
     step(`replay: ${uc}/r/* reaches the share player`, r.status === 404 && r.text.includes("expired or was revoked"), `HTTP ${r.status}`);
     const api = await call(`https://${uc}/a/v1/sites`, { headers: H });
     step(`${uc} serves no API`, api.status === 404 && !api.json?.sites, `HTTP ${api.status}`);
+    const root = await call(`https://${uc}/`);
+    step(`site: ${uc}/ says what the domain is`, root.status === 200 && root.text.includes("/report-abuse"), `HTTP ${root.status}`);
+    const other = await call(`https://${uc}/v1/usage`, { headers: H });
+    step(`site: ${uc} serves nothing of the platform`, other.status === 404 && !other.json, `HTTP ${other.status}`);
   }
   const as = await call(`${base("site")}/.well-known/oauth-authorization-server`);
   step("OAuth authorization server metadata", as.json?.issuer === base("site"), as.json?.issuer ?? `HTTP ${as.status}`);

@@ -132,7 +132,7 @@ The public side: `/acceptable-use`, `POST /v1/abuse-reports` and `/report-abuse`
   `cf-bounce`, DMARC reject). Two more zones in the account: `agentfirstinbox.com` (profile
   `shared_inbox_domain`: new shared inboxes; its own catch-all to `afs-mail` and Email Sending) and
   `afsusercontent.com` (profile `user_content_domain`: share pages, Worker routes `/a/*` analytics,
-  `/r/*` replay). Runbook: docs/operations.md, "Own domains for shared inboxes and share pages".
+  `/r/*` replay, and `/*` the site for the rest of the host: `src/user-content.ts`). Runbook: docs/operations.md, "Own domains for shared inboxes and share pages".
   Release = `pnpm afs deploy hosted && pnpm afs check hosted`.
 - Docs for humans: `docs/self-hosting.md`, `docs/operations.md`, `docs/architecture.md`,
   `docs/development.md`. Keep them true when behaviour changes.

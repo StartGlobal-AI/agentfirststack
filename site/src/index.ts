@@ -18,6 +18,7 @@ import { noticeBase, refreshNotices } from "./notices";
 import { ownAnalytics, trackCrawl, trackOwn } from "./own-analytics";
 import { servePage, withAssetHeaders } from "./static-pages";
 import { firstParty, firstPartyEdge } from "./first-party";
+import { userContentSite } from "./user-content";
 import { firstPartyDomainsApi } from "./first-party-domains";
 import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
@@ -39,6 +40,10 @@ import { notifyPendingPauses, pausesApi } from "./pauses";
 const app = new Hono<SiteEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+
+// The user-content domain (afsusercontent.com) outside the share pages: a page saying what it is, and
+// nothing of the platform (src/user-content.ts).
+app.use("*", userContentSite);
 
 // Customers' first-party domains (edge.example.com, a CNAME on Cloudflare for SaaS) reach this
 // Worker too: their /_a/*, /_t/* and /_r/* go to the services, before anything else here runs.

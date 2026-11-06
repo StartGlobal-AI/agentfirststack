@@ -739,7 +739,7 @@ export async function lookupHost(env: Bindings, hostname: string, now = Date.now
 
 /** The platform's own hosts (the apex and its subdomains): never a first-party domain, never looked up. */
 export function isPlatformHost(env: Bindings, hostname: string): boolean {
-  for (const u of [env.PUBLIC_BASE_URL, env.AUTH_ISSUER]) {
+  for (const u of [env.PUBLIC_BASE_URL, env.AUTH_ISSUER, env.USER_CONTENT_BASE_URL]) {
     const h = hostOf(u);
     if (!h) continue;
     const apex = bareDomain(h);
