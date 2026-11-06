@@ -95,6 +95,7 @@
     <nav class="nav-links" aria-label="Main">
       <a href="#how">How it works</a>
       <a href="#services">Services</a>
+      <a href="#pricing">Pricing</a>
       <a href="/guides">Guides</a>
       <a href="/llms.txt">Manual</a>
       <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
@@ -108,14 +109,19 @@
 <section class="hero" id="setup">
   <div class="wrap hero-grid">
     <div class="hero-copy">
+      <ul class="pillars" aria-label="What it stands for">
+        <li><a href="https://github.com/StartGlobal-AI/agentfirststack" title="AGPL-3.0 on GitHub. Run it yourself with four commands."><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.4-2 3-7 4"/></svg><b>Open source</b></a></li>
+        <li><a href="/llms.txt" title="One request makes the account. Every feature is an API call and an MCP tool."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.8 3.8 1.4-3.8 1.4L8 12.2 6.6 8.4 2.8 7l3.8-1.4z"/></svg><b>Agent first</b></a></li>
+        <li><a href="/privacy" title="Cookieless analytics with no cross-day tracking. Replay masks what people type."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l5 1.9v3.9c0 3.2-2.1 5.6-5 6.6-2.9-1-5-3.4-5-6.6V3.7z"/><path d="M5.8 8l1.6 1.6 2.9-3"/></svg><b>Privacy first</b></a></li>
+      </ul>
       <h1>Analytics, tag manager, email and session replay, set&nbsp;up by your AI agent</h1>
-      <p class="lede">Like Google Analytics, Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding agent creates the account, adds everything to your site and checks it works. No signup form, no dashboard. Free and open source.</p>
+      <p class="lede">Like Google Analytics, Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding agent creates the account, adds everything to your site and checks it works. No signup form, no dashboard.</p>
       <div class="actions">
         <button class="btn btn-primary" type="button" data-copy data-cta="hero">Copy prompt for your agent</button>
         <a class="btn btn-quiet" href="/llms.txt">Read the manual</a>
       </div>
       <p class="copy-status" role="status" aria-live="polite"></p>
-      <p class="works-with">Paste it into Claude Code, Cursor, Codex or any agent that can make HTTP requests.</p>
+      <p class="works-with">Paste it into Claude Code, Cursor, Codex or any agent that can make HTTP requests. <a href="#pricing">Free to set up and use.</a></p>
     </div>
 
     <figure class="chat" id="chat" aria-label="Example: a coding agent setting up AgentFirstStack">
@@ -156,7 +162,7 @@
         <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>publish</code><span class="tool-res is-good">version 1 live</span></div>
 
         <div class="msg msg-agent" data-step="say"><p>Last, an inbox so I can sign up for Stripe.</p></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_inbox yourshop-signups</code><span class="tool-res">yourshop-signups@agentfirststack.com</span></div>
+        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_inbox yourshop-signups</code><span class="tool-res">yourshop-signups@agentfirstinbox.com</span></div>
         <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>wait_for_email from: stripe.com</code><span class="tool-res is-good">code 482913</span></div>
         <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_claim_link</code><span class="tool-res">link for you</span></div>
 
@@ -259,7 +265,7 @@
             <span class="extracted-label">Extracted for your agent</span>
             <div class="extracted-row"><code class="otp">482913</code><span class="link-chip">verify link</span></div>
           </div>
-          <p class="preview-note">yourshop-signups@agentfirststack.com</p>
+          <p class="preview-note">yourshop-signups@agentfirstinbox.com</p>
         </div>
         <ul class="chips"><li>Codes extracted</li><li>Sending</li><li>Own domain</li></ul>
         <a class="product-guide" href="/guides/email-inbox-for-ai-agents">An inbox your agent creates itself</a>
@@ -396,9 +402,24 @@
 <section class="section" id="open-source" aria-labelledby="oss-title">
   <div class="wrap">
     <h2 id="oss-title">Free to use. Open source.</h2>
+    <div class="free" id="pricing">
+      <div class="free-copy">
+        <h3>Free to set up and free to use</h3>
+        <p>There's no paid plan, no trial and no card to add. Every project on AgentFirstStack runs free. The only limits are a fair-use policy, so no one account can use up what everyone shares.</p>
+        <div class="actions">
+          <button class="btn btn-invert" type="button" data-copy data-cta="pricing">Copy prompt for your agent</button>
+          <a class="btn btn-outline-invert" href="#limits">See the fair-use limits</a>
+        </div>
+      </div>
+      <dl class="free-facts">
+        <div><dt>to set up</dt><dd>$0</dd></div>
+        <div><dt>a month, at any size within fair use</dt><dd>$0</dd></div>
+        <div><dt>of projects run free</dt><dd>100%</dd></div>
+      </dl>
+    </div>
     <div class="oss">
       <div>
-        <h3>Hosted</h3>
+        <h3 id="limits">Fair-use limits on the hosted service</h3>
         <ul class="limits">
           <li>3 new accounts per hour from one network</li>
           <li>10 sites, 10 tag containers and 10 inboxes per account; 5 replay sites</li>
@@ -406,6 +427,7 @@
           <li>Mail on shared addresses is kept for 14 days, up to 100 messages per inbox</li>
           <li>Replay keeps recordings for up to 14 days, 200 sessions per site a day</li>
         </ul>
+        <p>The rest is in the <a href="/acceptable-use">acceptable use policy</a> and the <a href="/llms.txt">manual</a>. Need more? Run your own copy, with your own limits.</p>
       </div>
       <div>
         <h3>Self-host</h3>

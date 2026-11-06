@@ -213,8 +213,11 @@ app.on(["GET", "HEAD"], "*", (c) => {
 
 export { app };
 
-/** The site's hourly cron (wrangler.jsonc); the other one is daily. */
-export const HOURLY_CRON = "47 * * * *";
+/**
+ * The site's hourly cron (wrangler.jsonc); the other one is daily. Not exported: wrangler dev
+ * treats every named export of the entry module as an entrypoint and refuses a string.
+ */
+const HOURLY_CRON = "47 * * * *";
 
 export default {
   fetch: app.fetch,

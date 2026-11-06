@@ -186,6 +186,48 @@ pre {
   color: var(--ink-2);
   max-width: 46ch;
 }
+/* What it stands for, above the headline: open source, agent first, privacy first. Each links to its proof. */
+.pillars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+.pillars a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 1.2;
+  transition: border-color 140ms;
+}
+.pillars svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pillars b {
+  font-weight: 600;
+}
+.pillars a:hover {
+  border-color: var(--ink);
+}
+.works-with a {
+  color: var(--ink);
+  font-weight: 550;
+}
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -1044,6 +1086,90 @@ pre {
   max-width: 34ch;
 }
 
+/* Free: the one dark card on the page, so the price is the thing you can't miss */
+.free {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 32px 56px;
+  align-items: center;
+  margin-top: 32px;
+  padding: clamp(28px, 4vw, 44px);
+  border-radius: 18px;
+  background: var(--ink);
+  color: #fff;
+  scroll-margin-top: 88px;
+}
+.free h3 {
+  font-size: clamp(26px, 3vw, 34px);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.free-copy p {
+  margin-top: 12px;
+  max-width: 48ch;
+  font-size: 16px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.78);
+}
+.free .actions {
+  margin-top: 22px;
+}
+.btn-invert {
+  background: #fff;
+  color: var(--ink);
+}
+.btn-invert:hover {
+  background: #e9ebef;
+}
+.btn-invert.is-copied {
+  background: var(--green);
+  color: #fff;
+}
+.btn-outline-invert {
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+.btn-outline-invert:hover {
+  box-shadow: inset 0 0 0 1px #fff;
+}
+.free .btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.free-facts {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+.free-facts div {
+  display: flex;
+  flex-direction: column-reverse;
+  padding: 14px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+.free-facts div:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.free-facts dd {
+  margin: 0;
+  font-size: clamp(34px, 4vw, 44px);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+.free-facts dt {
+  margin-top: 6px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.72);
+}
+.oss h3[id] {
+  scroll-margin-top: 88px;
+}
+
 /* Open source */
 .oss {
   display: grid;
@@ -1164,6 +1290,9 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .oss {
+    grid-template-columns: 1fr;
+  }
+  .free {
     grid-template-columns: 1fr;
   }
 }

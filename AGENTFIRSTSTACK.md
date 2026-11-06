@@ -56,7 +56,7 @@ promises (analytics and replay drop those browsers too). New pages built from
 tracker loads it (linked sites).
 
 `app.js` and `content.js` no longer call `afsa("event","copy_prompt")`: the tag container sends
-it, so a copy counts once. The two home copy buttons carry `data-cta="hero"` / `data-cta="closing"`.
+it, so a copy counts once. The three home copy buttons carry `data-cta="hero"` / `"pricing"` (the free card) / `"closing"`.
 
 ## Events and goals
 
