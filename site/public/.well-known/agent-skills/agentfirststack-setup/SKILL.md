@@ -105,7 +105,10 @@ curl -s https://agentfirststack.com/v1/setup -H "Authorization: Bearer $AGENTFIR
 of `next_steps` and run it again until `"ready": true`, then do what `not_checked` lists.
 
 Fair-use limits: `GET https://agentfirststack.com/v1/usage` (MCP `afs_get_usage`) shows every cap
-with what the project uses. When the owner forwards a limit warning, start there.
+with what the project uses, and `attacks`: sites or containers whose attack protection set traffic
+aside. When the owner forwards a limit warning or a suspicious-traffic email, start there: review with
+`GET .../quarantine` on analytics or tags, then release (real visitors) or purge (an attack). If the
+site sends events through a first-party proxy, make sure it sends the proxy key first.
 
 ## 9. Hand it over
 

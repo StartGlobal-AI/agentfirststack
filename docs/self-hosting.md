@@ -89,6 +89,7 @@ app's `GET /v1/usage` (MCP `get_usage`) shows the ones it enforces, with what an
 | `OWN_ANALYTICS_ACCOUNT_ID` / `OWN_ANALYTICS_SITE_ID` | site | Your own project (`acct_...`) and analytics site (`site_...`): each signup and project claim on the apex is sent there as a server event (`signup`, `project_claimed`); off unless both are set |
 | `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY` / `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY` / `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | replay | Heatmap images rendered with Browser Rendering per UTC day (on by default: 10 / 30 / 300; cached images are free) |
 | `MAX_TAGS_EVENTS_PER_SITE_PER_DAY` | replay | Signals and survey scores sent to a linked tags container per site per day (default 500) |
+| `MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY` / `MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY` | analytics / tags | Attack protection: browser events one network may send a site or container a day; past it they're quarantined (out of reports and the budget, kept 7 days for review, release or purge), not dropped. With `MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY` / `..._PER_CONTAINER_PER_DAY` capping what's kept, and `UNCLAIMED_` variants. A spike also puts a site under attack for an hour (data-centre networks quarantined, tags holds browser conversions); sites and containers choose `protection: auto, strict or off` |
 
 Some caps are on by default with safe values and only need setting to change them:
 `MAX_WEBHOOKS_PER_ACCOUNT` (10), `MAX_DESTINATIONS_PER_CONTAINER` (10),
@@ -97,6 +98,15 @@ and for tags `MAX_ENVIRONMENTS_PER_CONTAINER` (5), `MAX_LOOKUPS_PER_CONTAINER` (
 `MAX_LOOKUP_ROWS` (10,000) and `MAX_LOOKUP_BYTES` (1 MB).
 
 Each app's README lists its full set of vars under "Config".
+
+Rate-limit bindings (in each app's `wrangler.jsonc`, namespaces 42001-42049, counted per Cloudflare
+location) cap bursts: ingest per network and per site, signups, key creation, and `READ_LIMITER` on
+every app (API-key reads and MCP requests per account; the site's `DASHBOARD_LIMITER` does the same
+for signed-in people). Remove a binding to turn its limit off; change `simple.limit` to tune it.
+
+Live analytics needs nothing extra: `GET /v1/sites/:id/realtime/stream` is a WebSocket held by the
+site's Durable Object (hibernating, so idle streams cost nothing), and the dashboard opens it through
+the site Worker.
 
 Replay's R2 bucket: if you add a lifecycle rule to expire recording chunks, scope it to the prefix
 `rsite_` (live chunks are `rsite_<id>/<session>/<seq>`), so starred sessions' playback copies under
@@ -168,8 +178,8 @@ Set `NOTIFY_EMAIL_FROM` under `vars.site` (for example `"Your Stack <notificatio
 an address on a domain onboarded for Cloudflare Email Sending) and the site emails signed-in
 people about their projects: claims, members, connected apps, project deletion and suspension,
 and new setup items (see [accounts.md](accounts.md#9-emails-to-people)). They also get alerts: an
-analytics site with steady traffic stopped sending page views, or a project is close to a fair-use
-limit that drops data (only the limits you set count; see `GET /v1/usage` on any app). Optional:
+analytics site with steady traffic stopped sending page views, a site or container's attack
+protection set traffic aside, or a project is close to a fair-use limit that drops data (only the limits you set count; see `GET /v1/usage` on any app). Optional:
 `NOTIFY_REPLY_TO`, and `MAX_EMAILS_PER_PERSON_PER_DAY` (default 20). Without the var nothing is
 sent. Reserve the sender's username (`EXTRA_RESERVED_USERNAMES` on mail) so nobody can create an
 inbox with it. The site's hourly cron (`47 * * * *`) checks usage, sends queued emails and retries.

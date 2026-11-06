@@ -10,7 +10,7 @@ this first on every later run and update it instead of starting over. Never writ
   every service. It is not in the site's production secrets: nothing in the site needs it (the site
   Worker talks to the services over service bindings with `INTERNAL_TOKEN`).
 - Dashboard: https://agentfirststack.com/dashboard (the owner signs in with Google).
-- MCP: one server for every service, `https://agentfirststack.com/mcp` (246 tools on 2026-11-05).
+- MCP: one server for every service, `https://agentfirststack.com/mcp` (250 tools on 2026-11-06).
   The setup agent uses REST and has not added it to any MCP client config; to add it to Claude
   Code: `claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"`.
 

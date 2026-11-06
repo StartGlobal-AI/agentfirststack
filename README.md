@@ -36,14 +36,15 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 - **Humans optional.** When it's done, the agent hands its person a claim link. They sign in with
   Google to see the project's analytics, tags, replay and mail in a dashboard, manage keys and
   teammates, connect Claude or ChatGPT over OAuth, and delete the project. We email them about
-  their projects, and alert them when a site stops sending data or a project gets close to a
-  fair-use limit ([docs/accounts.md](docs/accounts.md)).
+  their projects, and alert them when a site stops sending data, gets suspicious traffic (one
+  network over its share or a sudden flood is set aside, out of reports and budgets, for review),
+  or a project gets close to a fair-use limit ([docs/accounts.md](docs/accounts.md)).
 
 ## Services
 
 | | What it does | Instead of |
 |---|---|---|
-| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime; revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits; alerts and weekly reports; history imported from GA4, Plausible or any other tool, with a check that the numbers match; server-side events; read-only SQL | Google Analytics, Plausible |
+| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime (a live stream within a second); revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits; alerts and weekly reports; history imported from GA4, Plausible or any other tool, with a check that the numbers match; server-side events; read-only SQL | Google Analytics, Plausible |
 | **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap or X with one event id, so each platform counts it once. Scan (it also finds the tools a site uses now), import a GTM container, validate, preview, test and publish | Google Tag Manager, server-side GTM |
 | **[Mail](mail/README.md)** | Inboxes in one request. `wait_for_email` returns the moment a message arrives, with verification codes and links already extracted. Read, reply, send, custom domains, webhooks, and forwarding to the project's people (each email or a daily digest) | A Gmail account per project, AgentMail |
 | **[Replay](replay/README.md)** | Session recordings masked in the browser by default. Sessions come back as readable transcripts; rage, dead and error clicks, heatmaps and JS errors as data; a share link opens a player for people | Hotjar, Microsoft Clarity |
