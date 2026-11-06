@@ -1636,7 +1636,8 @@
     const ONLINE = { value: null };
     async function loadOnline() {
       try {
-        const r = await api(project, `${base}/realtime`, {});
+        // The tile needs only the count: one recent event instead of 50.
+        const r = await api(project, `${base}/realtime`, { limit: 1 });
         ONLINE.value = r.visitors_last_5m;
       } catch {
         ONLINE.value = null;
@@ -2948,8 +2949,9 @@
     [bar, main, ...grid.children].forEach((n, i) => enter(n, i));
     reload();
     loadOnline();
-    ctx.every(loadOnline, 30000);
-    // Back on this tab: the live count straight away, everything else if it's been a while.
+    ctx.every(loadOnline, 10000);
+    // Back on this view or this browser tab: the live count straight away, everything else if it's
+    // been a while.
     ctx.onShow((away) => {
       if (away > 60000) reload();
       loadOnline();
@@ -4293,6 +4295,17 @@
     };
     ctx.onShow = (fn) => ctx.shows.push(fn);
     ctx.onHide = (fn) => ctx.hides.push(fn);
+    // Coming back to the browser tab counts as coming back to the view: timers skip a hidden tab, so
+    // without this the numbers stay as they were until the next tick (or a reload).
+    let tabHiddenAt = 0;
+    ctx.listen(document, "visibilitychange", () => {
+      if (document.hidden) tabHiddenAt = Date.now();
+      else if (tabHiddenAt) {
+        const away = Date.now() - tabHiddenAt;
+        tabHiddenAt = 0;
+        for (const f of ctx.shows) f(away);
+      }
+    });
     ctx.hide = () => {
       if (!ctx.active) return;
       ctx.active = false;
