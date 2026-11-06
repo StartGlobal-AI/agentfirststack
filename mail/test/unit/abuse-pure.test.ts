@@ -136,6 +136,70 @@ describe("auth: only the first Authentication-Results header, exactly mx.cloudfl
     );
     expect(heloOnly).toMatchObject({ spf: "pass", verdict: "unknown" });
   });
+  // Sender text inside Cloudflare's trusted header: the HELO name and the MAIL FROM address (a quoted
+  // local part may hold ";", "=" and "@"). None of it may read as a result for a domain the sender
+  // doesn't control. victim.example has no DMARC record, so only a DKIM or SPF alignment could pass.
+  describe("sender text in Cloudflare's header never authenticates another domain", () => {
+    const header = (helo: string, mailfrom: string) =>
+      [
+        "mx.cloudflare.net;",
+        "\tdkim=pass header.d=attacker.example header.s=s1 header.b=abc;",
+        "\tdmarc=none header.from=victim.example;",
+        `\tspf=none (mx.cloudflare.net: no SPF records found for postmaster@${helo}) smtp.helo=${helo};`,
+        `\tspf=pass (mx.cloudflare.net: domain of x designates 203.0.113.9 as permitted sender) smtp.mailfrom=${mailfrom};`,
+        '\tarc=none smtp.remote-ip="203.0.113.9"',
+      ].join("\r\n");
+    const check = (helo: string, mailfrom: string, envelope: string) =>
+      extractAuth([ar(header(helo, mailfrom)), { key: "from", value: "ceo@victim.example" }], "ceo@victim.example", envelope);
+    const cases: [string, string, string, string][] = [
+      [
+        "a quoted local part naming the victim",
+        "mx.attacker.example",
+        '"ceo@victim.example"@attacker.example',
+        '"ceo@victim.example"@attacker.example',
+      ],
+      [
+        "a quoted local part holding a dkim result",
+        "mx.attacker.example",
+        '"x;dkim=pass header.d=victim.example x"@attacker.example',
+        '"x;dkim=pass header.d=victim.example x"@attacker.example',
+      ],
+      [
+        "the same, quoted and escaped as RFC 8601 writes it",
+        "mx.attacker.example",
+        '"\\"x;dkim=pass header.d=victim.example;\\"@attacker.example"',
+        '"x;dkim=pass header.d=victim.example;"@attacker.example',
+      ],
+      [
+        "the same, written raw",
+        "mx.attacker.example",
+        "x;dkim=pass header.d=victim.example x@attacker.example",
+        "x;dkim=pass header.d=victim.example x@attacker.example",
+      ],
+      ["a HELO name holding a dkim result", "x;dkim=pass header.d=victim.example", "x@attacker.example", "x@attacker.example"],
+      [
+        "a HELO name holding an spf result for the victim",
+        "x;spf=pass smtp.mailfrom=ceo@victim.example",
+        "x@attacker.example",
+        "x@attacker.example",
+      ],
+    ];
+    for (const [name, helo, mailfrom, envelope] of cases) {
+      it(name, () => {
+        const a = check(helo, mailfrom, envelope);
+        expect(a.trusted).toBe(true);
+        expect(a.verdict).not.toBe("pass");
+        expect(a.dkim_domains).not.toContain("victim.example");
+      });
+    }
+    it("SPF aligns only for the envelope sender the Worker was given", () => {
+      const spfOnly =
+        "mx.cloudflare.net; dkim=none; dmarc=none; spf=none smtp.helo=mx.partner.example; spf=pass smtp.mailfrom=jane@partner.example";
+      expect(extractAuth([ar(spfOnly)], "jane@partner.example", "jane@partner.example").verdict).toBe("pass");
+      expect(extractAuth([ar(spfOnly)], "jane@partner.example", "bounce@attacker.example").verdict).toBe("unknown");
+      expect(extractAuth([ar(spfOnly)], "jane@partner.example", "").verdict).toBe("unknown");
+    });
+  });
   it("a second SPF result for the same identity is still injected text, and does not pass", () => {
     for (const extra of [
       "spf=pass smtp.mailfrom=ceo@victim.example",

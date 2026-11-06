@@ -83,11 +83,35 @@ interface ParsedAR {
   methods: { method: string; result: string; props: Record<string, string> }[];
 }
 
+/**
+ * Split on the ";" between results, never one inside a quoted string (RFC 8601 values may be
+ * quoted, and a quoted local part of a MAIL FROM address may contain ";": that is sender text).
+ */
+function splitResults(s: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === "\\" && i + 1 < s.length) {
+      cur += ch + s[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === '"') quoted = !quoted;
+    if (ch === ";" && !quoted) {
+      parts.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
 export function parseAuthenticationResults(value: string): ParsedAR {
-  const parts = stripComments(value)
-    .split(";")
-    .map((p) => p.trim())
-    .filter(Boolean);
+  const parts = splitResults(stripComments(value));
   const authservId = (parts.shift() ?? "").split(/\s+/)[0]!.toLowerCase();
   const methods: ParsedAR["methods"] = [];
   for (const p of parts) {
@@ -96,8 +120,10 @@ export function parseAuthenticationResults(value: string): ParsedAR {
     const props: Record<string, string> = {};
     // The lookbehind starts a property name only at the start of its run: without it a long run of
     // letters is rescanned from each of its characters (quadratic in a sender-written header).
-    for (const kv of m[3]!.matchAll(/(?<![a-z0-9_-])([a-z0-9_-]+\.[a-z0-9_-]+)\s*=\s*("[^"]*"|\S+)/gi)) {
-      props[kv[1]!.toLowerCase()] = kv[2]!.replace(/^"|"$/g, "").toLowerCase();
+    // A value runs to the next space outside quotes, so `"x;y"@example.com` is one value, whole.
+    for (const kv of m[3]!.matchAll(/(?<![a-z0-9_-])([a-z0-9_-]+\.[a-z0-9_-]+)\s*=\s*((?:"(?:[^"\\]|\\.)*"|[^\s"])+)/gi)) {
+      const v = kv[2]!;
+      props[kv[1]!.toLowerCase()] = (/^"(?:[^"\\]|\\.)*"$/.test(v) ? v.slice(1, -1) : v).toLowerCase();
     }
     methods.push({ method: m[1]!.toLowerCase(), result: m[2]!.toLowerCase(), props });
   }
@@ -114,8 +140,11 @@ function aligned(a: string, b: string): boolean {
   return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }
 
-const domainOf = (v: string | undefined) =>
-  v ? (v.includes("@") ? v.slice(v.lastIndexOf("@") + 1) : v).toLowerCase().replace(/\.$/, "") : null;
+const domainOf = (v: string | undefined) => {
+  if (!v) return null;
+  const d = (v.includes("@") ? v.slice(v.lastIndexOf("@") + 1) : v).toLowerCase().replace(/\.$/, "");
+  return /^[a-z0-9.-]+$/.test(d) ? d : null;
+};
 
 /** The authserv-id Email Routing writes. */
 export const CLOUDFLARE_AUTHSERV_ID = "mx.cloudflare.net";
@@ -129,7 +158,11 @@ function mailboxCount(value: string): number {
   }
 }
 
-export function extractAuth(headers: HeaderLike[], fromAddress?: string | null): AuthResults {
+/**
+ * `envelopeFrom` is the SMTP MAIL FROM the Worker was given (message.from), when the caller has
+ * it: SPF alignment then counts only when the header's smtp.mailfrom names the same domain.
+ */
+export function extractAuth(headers: HeaderLike[], fromAddress?: string | null, envelopeFrom?: string | null): AuthResults {
   const empty: AuthResults = {
     spf: null,
     dkim: null,
@@ -151,7 +184,11 @@ export function extractAuth(headers: HeaderLike[], fromAddress?: string | null):
   if (chosen) {
     res.authserv_id = chosen.authservId || null;
     res.trusted = chosen.authservId === CLOUDFLARE_AUTHSERV_ID;
-    const by = (m: string) => chosen.methods.filter((x) => x.method === m);
+    // Cloudflare writes dkim and dmarc before spf; the spf results carry the sender's own HELO
+    // name and MAIL FROM. So a dkim result after the first spf one is sender text and is ignored.
+    const firstSpf = chosen.methods.findIndex((x) => x.method === "spf");
+    const methods = firstSpf < 0 ? chosen.methods : chosen.methods.filter((x, i) => i < firstSpf || x.method !== "dkim");
+    const by = (m: string) => methods.filter((x) => x.method === m);
     // DKIM may legitimately appear once per signature (any pass counts); DMARC and SPF are
     // evaluated once per message, so the first result is the result.
     const pickAny = (m: string): AuthResult => {
@@ -182,10 +219,11 @@ export function extractAuth(headers: HeaderLike[], fromAddress?: string | null):
     dmarcFrom = first("dmarc")
       .filter((x) => x.result === "pass")
       .map((x) => domainOf(x.props["header.from"]) ?? "");
+    const envelopeDomain = envelopeFrom === undefined ? undefined : domainOf(envelopeFrom ?? undefined);
     spfDomains = (spf ? [spf] : [])
       .filter((x) => x.result === "pass")
       .map((x) => domainOf(x.props["smtp.mailfrom"]))
-      .filter((d): d is string => !!d);
+      .filter((d): d is string => !!d && (envelopeDomain === undefined || d === envelopeDomain));
   }
   if (!res.spf) {
     const rs = headers.find((h) => h.key.toLowerCase() === "received-spf");

@@ -255,7 +255,10 @@ bytes per sender per day, stored bytes per sender).
     headers or two mailboxes in From, or when the trusted header reports `dmarc` twice, or `spf`
     twice for the same identity (injected text). Cloudflare writes one SPF result for the HELO name
     (`smtp.helo`) and one for the envelope sender (`smtp.mailfrom`); `spf` is the envelope
-    sender's. `fail` = DMARC failed.
+    sender's. Those two values are the sender's own text, so the header is split only on `;`
+    outside quoted strings, a `dkim` result after the first `spf` one is ignored, and an SPF
+    alignment counts only for the domain of the real envelope sender (the Worker's MAIL FROM).
+    `fail` = DMARC failed.
   - `automated`: list, bulk or machine-generated mail (List-Id / List-Unsubscribe / List-Post,
     Precedence bulk|list|junk, Auto-Submitted other than `no`, X-Autoreply, delivery reports,
     bounces with an empty envelope sender).

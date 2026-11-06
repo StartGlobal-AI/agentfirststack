@@ -581,7 +581,7 @@ export async function ingestRaw(
 
   const from = firstMailbox(head.from) ?? { address: input.envelopeFrom.toLowerCase(), name: null };
   const envelopeFrom = input.envelopeFrom.toLowerCase();
-  const auth = input.internalFrom ? internalAuth() : extractAuth(head.headers, from.address);
+  const auth = input.internalFrom ? internalAuth() : extractAuth(head.headers, from.address, envelopeFrom);
   // Allow / block lists: refused before the body is read or any per-sender allowance is spent.
   const listed = await receiveRefusal(env, inbox, { fromAddress: from.address, envelopeFrom, auth });
   if (listed) return { status: "rejected", reason: listed };

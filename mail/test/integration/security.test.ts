@@ -397,7 +397,18 @@ describe("4. SHARED_SEND_POLICY=reply_only counts only authenticated, From-align
     await deliver("jane@partner.example", s.inbox.address, quotedReply.replaceAll("acme-signups@mail.example.com", s.inbox.address));
     await expect(assertReplyOnly(env, row, ["jane@partner.example"])).resolves.toBeUndefined();
     // ... and a sender with only an aligned SPF pass (no DKIM, no DMARC record).
-    await send("x@small.example", "mx.cloudflare.net; dkim=none; spf=pass smtp.mailfrom=bounce@mail.small.example; dmarc=none");
+    // Its envelope sender (MAIL FROM) is the bounce address the header's smtp.mailfrom names.
+    await deliver(
+      "bounce@mail.small.example",
+      s.inbox.address,
+      eml({
+        from: "x@small.example",
+        to: s.inbox.address,
+        subject: "hi",
+        body: "hi",
+        auth: "mx.cloudflare.net; dkim=none; spf=pass smtp.mailfrom=bounce@mail.small.example; dmarc=none",
+      }),
+    );
     await expect(assertReplyOnly(env, row, ["x@small.example"])).resolves.toBeUndefined();
   });
 });

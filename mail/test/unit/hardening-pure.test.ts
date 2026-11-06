@@ -172,8 +172,12 @@ describe("1. admission", () => {
         "mx.cloudflare.net; spf=pass smtp.mailfrom=a@sub.legit.example; dmarc=pass header.from=sub.legit.example",
       ),
     ).toBe("legit.example");
-    expect(forged("b@x.example", "mx.cloudflare.net; spf=fail smtp.mailfrom=b@x.example; dkim=pass header.d=signer.example")).toBe(
+    // Cloudflare's order: dkim before spf (a dkim result after the first spf one is sender text).
+    expect(forged("b@x.example", "mx.cloudflare.net; dkim=pass header.d=signer.example; spf=fail smtp.mailfrom=b@x.example")).toBe(
       "signer.example",
+    );
+    expect(forged("b@x.example", "mx.cloudflare.net; spf=fail smtp.mailfrom=b@x.example; dkim=pass header.d=signer.example")).toBe(
+      UNAUTHENTICATED_SENDER,
     );
   });
 });
