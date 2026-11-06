@@ -20,20 +20,25 @@
     // The Worker runs first for every page, not just its own routes, so it can report AI crawler
     // and search bot visits to the deployment's own analytics (src/own-analytics.ts trackCrawl).
     // It then serves the page from public/ with the rules of public/_headers (src/static-pages.ts).
-    // Images, fonts, CSS and JS skip it.
+    // Images, fonts, CSS and JS skip it, named one by one: a pattern like "!/*.js" also matches
+    // nested paths, and then the first-party paths (/_a/s.js, /_t/c/<id>.js, /_r/rec/<hash>.js,
+    // here and on customers' first-party domains) never reach the Worker and answer 404.
+    // A new top-level asset goes in this list (test/static-pages.test.ts checks it).
     "run_worker_first": [
       "/*",
       "!/fonts/*",
       "!/brand/*",
       "!/og/*",
-      "!/*.css",
-      "!/*.js",
-      "!/*.svg",
-      "!/*.png",
-      "!/*.jpg",
-      "!/*.webp",
-      "!/*.ico",
-      "!/*.woff2"
+      "!/app.js",
+      "!/content.js",
+      "!/dashboard.js",
+      "!/dashboard-app.js",
+      "!/styles.css",
+      "!/content.css",
+      "!/dashboard.css",
+      "!/dashboard-app.css",
+      "!/favicon.svg",
+      "!/google-g.svg"
     ]
   },
 

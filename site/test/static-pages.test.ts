@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import headersFile from "../public/_headers?raw";
+import wranglerConfig from "../wrangler.jsonc?raw";
 import { ASSET_HEADER_RULES } from "../src/static-pages";
 import { call, serviceCalls, testEnv } from "./helpers";
 
@@ -66,5 +67,30 @@ describe("static pages through the Worker", () => {
     // Off without the deployment's own analytics.
     await call("GET", "/guides", { headers: { "user-agent": GPTBOT } });
     expect(crawlsSent().length).toBe(n);
+  });
+});
+
+describe("which paths skip the Worker", () => {
+  const rules = (() => {
+    const json = wranglerConfig.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1");
+    return (JSON.parse(json).assets.run_worker_first as string[]).filter((r) => r.startsWith("!")).map((r) => r.slice(1));
+  })();
+  const matches = (rule: string, path: string) => (rule.endsWith("/*") ? path.startsWith(rule.slice(0, -1)) : rule === path);
+
+  it("names every top-level asset, so a pattern can't swallow the first-party paths", () => {
+    const top = Object.keys(import.meta.glob("../public/*.{js,css,svg,png,jpg,webp,ico,woff2}")).map((k) => k.replace("../public", ""));
+    expect(top.length).toBeGreaterThan(5);
+    for (const f of top)
+      expect(
+        rules.some((r) => matches(r, f)),
+        `${f} should skip the Worker`,
+      ).toBe(true);
+    // Only exact files and directory globs: "/*.js" would also match /_a/s.js and break first-party serving.
+    for (const r of rules) expect(/^\/[^*]+$|^\/[a-z0-9_-]+\/\*$/i.test(r), r).toBe(true);
+    for (const p of ["/_a/s.js", "/_t/c/ctr_x.js", "/_r/rec/abc.js", "/_r/r/rsite_x.js"])
+      expect(
+        rules.some((r) => matches(r, p)),
+        p,
+      ).toBe(false);
   });
 });
