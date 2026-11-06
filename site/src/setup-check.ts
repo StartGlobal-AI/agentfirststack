@@ -104,7 +104,7 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
   { part: "Inbox", ids: ["mail.inbox", "mail.forwarding"], show: ["mail.forwarding"] },
   {
     part: "Analytics",
-    ids: ["analytics.site", "analytics.receiving", "analytics.domain_verified", "analytics.server_events"],
+    ids: ["analytics.site", "analytics.receiving", "analytics.domain_verified", "analytics.proxy_key", "analytics.server_events"],
     show: ["analytics.site", "analytics.receiving"],
     perDomain: true,
   },
@@ -257,7 +257,14 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 interface AnalyticsSite {
   site: { id: string; domain: string; replay_site_id: string | null; verification?: { verified?: boolean } | null };
-  data: { total_events: number; browser_events: number; server_events: number; last_event_at: number | null } | null;
+  data: {
+    total_events: number;
+    browser_events: number;
+    server_events: number;
+    last_event_at: number | null;
+    /** setup problems on events that were kept, by reason (proxy_key_missing, proxy_key_invalid) */
+    warnings_last_7d?: Record<string, { count: number }>;
+  } | null;
 }
 interface Goal {
   id: string;
@@ -962,6 +969,24 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
         title: verifiedTitle,
         detail: "Not verified yet: verify hasn't found the snippet on the live homepage.",
         fix: `Deploy the snippet, then POST ${A}${p}/verify (MCP analytics_verify_install)`,
+      }),
+    );
+
+  // A first-party proxy that doesn't send its key: every visitor looks like the proxy (one network,
+  // its country), visitors merge, and attack protection's per-network share fills up with real
+  // visitors. Shown only when it happens.
+  const warn = data?.warnings_last_7d ?? {};
+  const keyless = (warn.proxy_key_missing?.count ?? 0) + (warn.proxy_key_invalid?.count ?? 0);
+  if (keyless)
+    checks.push(
+      at({
+        id: "analytics.proxy_key",
+        status: "failing",
+        title: "Events through a first-party proxy carry its proxy key",
+        detail: `${plural(keyless, "event")} in the last 7 days came through a first-party proxy ${
+          warn.proxy_key_invalid?.count ? "with a wrong" : "without an"
+        } x-afs-proxy-key header, so they carry the proxy's address and country instead of the visitor's: visitors merge into one, countries are wrong, and attack protection can set real visitors aside as one network over its daily share.`,
+        fix: `Re-apply the proxy snippet from GET ${A}${p}/install (first_party_proxy): it sends x-afs-proxy-key with the site's proxy_key and the visitor's IP and geo. Then release anything set aside: GET ${A}${p}/quarantine.`,
       }),
     );
 

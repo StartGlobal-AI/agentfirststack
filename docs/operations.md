@@ -188,6 +188,24 @@ Reply-To `support@` (`NOTIFY_REPLY_TO`), which an Email Routing rule forwards to
 `p=reject`; DMARC aggregate reports go to Cloudflare DMARC Management (zone, Email, DMARC
 Management), which shows who sends as the domain and their pass rate.
 
+**Operator summary** (`site/src/operator-digest.ts`): every day the site's daily cron emails
+`OPERATOR_EMAIL` (site var, comma-separated; off when unset) the last 24 hours: new, claimed,
+deleted, erased and suspended projects, new people, signup attempts and networks, the limit
+warnings and suspicious-traffic episodes emailed to projects, emails sent and failed (with the top
+failures), and whether each service answers. The subject starts "Needs a look:" when a service is
+down, there was an attack, an email failed or an account was suspended. `pnpm afs digest <profile>`
+sends one now and prints it (admin route `POST /v1/admin/digest`). Worker errors aren't in it: see
+each Worker's Observability tab.
+
+**Zone security rules** run before the Workers and live in the Cloudflare dashboard (Security,
+Security rules): a per-IP rate limit on POST requests, a block on replay `/i` without a browser
+Origin, and a block on verified crawlers on `/e`, `/collect` and `/i`. Their exact definitions
+are recorded in the profile (`zone_rules` in `deploy/<profile>.json`, private like the budgets).
+`pnpm afs zone-rules <profile>` compares the live rules with them and exits 1 on any difference;
+`--save` records the live ones after a deliberate change. `pnpm afs check` runs the same
+comparison when `CLOUDFLARE_WAF_TOKEN` is set: an API token with Zone > WAF > Read on the zone
+(read-only; neither command changes the zone).
+
 Alerts (`site/src/project-health.ts`) go to claimed projects' owners and members, who can turn them
 off. `limit_warning`: a cap that drops data (incoming events, mail or sessions) is at 80% of its
 limit or reached, at most once a week per cap and level. `site_quiet`: an analytics site that had

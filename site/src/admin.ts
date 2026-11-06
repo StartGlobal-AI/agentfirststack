@@ -1,3 +1,4 @@
+import { buildDigest, emailOperatorDigest } from "./operator-digest";
 import { ApiError, cleanName, forgetStanding, readJson, timingSafeEqual } from "@afs/shared";
 import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
@@ -16,6 +17,7 @@ import { restoreProject } from "./project-deletion";
  *   POST /v1/admin/accounts/:id/unsuspend    keys work again
  *   POST /v1/admin/accounts/:id/restore      undo a project deletion before its purge (src/project-deletion.ts)
  *   POST /v1/admin/emails/test               { "email": "..." }  the welcome email to a signed-in person, now
+ *   POST /v1/admin/digest                    the operator's daily summary, now (also returns it as JSON)
  *
  * `Authorization: Bearer <ADMIN_TOKEN>` only (constant-time compare); without ADMIN_TOKEN the
  * routes refuse everyone. authenticate() reads suspended_at on every request, so keys stop at
@@ -134,6 +136,14 @@ adminApi.post("/v1/admin/emails/test", async (c) => {
   const result = await emailWelcome(c.env, siteBase(c), undefined, { userId: user.id, email: user.email, dedupeKey: key });
   const row = await c.env.DB.prepare("SELECT id, status, error, message_id FROM email_outbox WHERE dedupe_key = ?").bind(key).first();
   return c.json({ result, email: row });
+});
+
+// The operator's summary (src/operator-digest.ts), now: to OPERATOR_EMAIL if set, and in the answer.
+adminApi.post("/v1/admin/digest", async (c) => {
+  const now = Date.now();
+  const digest = await buildDigest(c.env, now);
+  const email = await emailOperatorDigest(c.env, siteBase(c), now, { manual: true });
+  return c.json({ digest, email });
 });
 
 // A deleted project's restore window: the operator can undo a deletion its agent made (an

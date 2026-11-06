@@ -97,7 +97,9 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 - A deployment is `deploy/<profile>.json`; `pnpm afs config <profile>` writes
   `<app>/wrangler.deploy.json` (git-ignored) from template + profile. `pnpm afs deploy <profile>
   [app]` also applies D1 migrations and sets secrets from `deploy/<profile>.secrets.json`
-  (git-ignored). `pnpm afs check <profile>` is the live end-to-end check (cleans up after itself).
+  (git-ignored). `pnpm afs check <profile>` is the live end-to-end check (cleans up after itself; it also compares the
+  zone's security rules with the profile's `zone_rules` when `CLOUDFLARE_WAF_TOKEN` is set, see
+  `pnpm afs zone-rules`). `pnpm afs digest <profile>` sends the operator's daily summary now (`OPERATOR_EMAIL`).
 - The hosted platform is profile `hosted` (`deploy/hosted.json` is git-ignored: its exact budgets and
   resource ids stay private; the operator keeps a private backup): StartGlobal AI Projects account, zone
   `agentfirststack.com`, Workers `afs-site|analytics|tags|mail|replay`, D1 `afs-identity|analytics|tags|mail|replay`,

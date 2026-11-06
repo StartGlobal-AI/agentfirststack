@@ -43,6 +43,7 @@ export default defineConfig({
           INTERNAL_TOKEN: "test-internal-token-0123456789",
           NOTIFY_EMAIL_FROM: "AgentFirstStack <notifications@afs.test>",
           NOTIFY_REPLY_TO: "",
+          OPERATOR_EMAIL: "",
           MAX_EMAILS_PER_PERSON_PER_DAY: "",
           GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",
           GOOGLE_CLIENT_SECRET: "test-google-secret",

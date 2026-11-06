@@ -10,6 +10,9 @@
 //   pnpm afs unsuspend <profile> <acct_id>                undo a suspension
 //   pnpm afs restore <profile> <acct_id>                  undo a project deletion (before its purge, 7 days)
 //   pnpm afs email-test <profile> <address>               send the welcome email to someone who signed in
+//   pnpm afs digest <profile>                             send the operator's daily summary now (OPERATOR_EMAIL) and print it
+//   pnpm afs zone-rules <profile> [--save]                compare the zone's security rules with the profile's zone_rules
+//                                                         (CLOUDFLARE_WAF_TOKEN: Zone WAF Read); --save records the live ones
 //
 // Each app's wrangler.jsonc is the generic template (local dev, tests, self-host defaults). This
 // script never edits it; it derives a deploy config per app from the template plus the profile.
@@ -492,6 +495,14 @@ async function cmdCheck(name) {
   const me = await call(`${base("site")}/v1/me`, { headers: H });
   if (me.json?.key?.id) await call(`${base("site")}/v1/keys/${me.json.key.id}`, { method: "DELETE", headers: H });
   step("cleaned up and revoked the check key", true);
+  // The zone's security rules run before the Workers; compare them with what the profile expects.
+  if (profile.zone_rules && process.env.CLOUDFLARE_WAF_TOKEN) {
+    const z = await zoneRulesDrift(profile, process.env.CLOUDFLARE_WAF_TOKEN);
+    step("zone security rules match the profile", !z.error && !z.drift.length, z.error ?? z.drift.join("; "));
+  } else
+    log(
+      `  skip zone security rules  ${profile.zone_rules ? "set CLOUDFLARE_WAF_TOKEN (Zone WAF Read)" : "no zone_rules in the profile (pnpm afs zone-rules <profile> --save)"}`,
+    );
   return finish();
 
   function finish() {
@@ -597,6 +608,99 @@ async function cmdEmailTest(name, address) {
   );
 }
 
+async function cmdDigest(name) {
+  const profile = loadProfile(name);
+  const token = loadSecrets(name)?.ADMIN_TOKEN;
+  if (!token) die(`deploy/${name}.secrets.json has no ADMIN_TOKEN.`);
+  const res = await fetch(`https://${profile.domain}/v1/admin/digest`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const e = json?.error;
+    die(e ? `${res.status} ${e.code}: ${e.message}${e.hint ? ` ${e.hint}` : ""}` : `HTTP ${res.status}`);
+  }
+  log(JSON.stringify(json.digest, null, 2));
+  log(`email: ${JSON.stringify(json.email)}`);
+}
+
+// ---------- zone security rules ----------
+
+const ZONE_PHASES = ["http_ratelimit", "http_request_firewall_custom"];
+
+/** The zone's rate-limit and custom rules, reduced to what matters (ids and timestamps dropped). */
+async function liveZoneRules(profile, token) {
+  const zone = await cf(token, "GET", `/zones?name=${encodeURIComponent(profile.domain)}`);
+  const zoneId = zone.result?.[0]?.id;
+  if (!zoneId) return { error: `zone ${profile.domain} not found for this token (${JSON.stringify(zone.errors)})` };
+  const rules = [];
+  for (const phase of ZONE_PHASES) {
+    const r = await cf(token, "GET", `/zones/${zoneId}/rulesets/phases/${phase}/entrypoint`);
+    if (!r.ok) {
+      if (r.errors?.[0]?.code === 10003) continue; // no rules in this phase yet
+      return { error: `${phase}: ${JSON.stringify(r.errors)} (the token needs Zone WAF Read on ${profile.domain})` };
+    }
+    for (const x of r.result?.rules ?? [])
+      rules.push({
+        phase,
+        description: x.description ?? "",
+        action: x.action,
+        enabled: x.enabled !== false,
+        expression: x.expression,
+        ...(x.ratelimit ? { ratelimit: x.ratelimit } : {}),
+      });
+  }
+  return { rules };
+}
+
+/** What differs between the profile's zone_rules and the live ones, by description. */
+async function zoneRulesDrift(profile, token) {
+  const live = await liveZoneRules(profile, token);
+  if (live.error) return { error: live.error, drift: [] };
+  const want = profile.zone_rules ?? [];
+  const key = (r) => `${r.phase}|${r.description}`;
+  const have = new Map(live.rules.map((r) => [key(r), r]));
+  const drift = [];
+  for (const w of want) {
+    const h = have.get(key(w));
+    if (!h) {
+      drift.push(`missing: ${w.phase} "${w.description}"`);
+      continue;
+    }
+    for (const f of ["action", "enabled", "expression", "ratelimit"])
+      if (JSON.stringify(h[f] ?? null) !== JSON.stringify(w[f] ?? null)) drift.push(`changed: "${w.description}" ${f}`);
+    have.delete(key(w));
+  }
+  for (const h of have.values()) drift.push(`unexpected: ${h.phase} "${h.description}"`);
+  return { drift, live: live.rules };
+}
+
+async function cmdZoneRules(name, opts) {
+  const profile = loadProfile(name);
+  const token = process.env.CLOUDFLARE_WAF_TOKEN;
+  if (!token)
+    die(
+      `Set CLOUDFLARE_WAF_TOKEN to an API token with Zone > WAF > Read on ${profile.domain} (dash.cloudflare.com/profile/api-tokens). Read-only: this command never changes the zone.`,
+    );
+  if (opts.save) {
+    const live = await liveZoneRules(profile, token);
+    if (live.error) die(live.error);
+    saveProfile({ ...profile, zone_rules: live.rules });
+    log(`Saved ${live.rules.length} rule(s) to deploy/${name}.json as zone_rules. Back up the profile (it is git-ignored).`);
+    for (const r of live.rules) log(`  ${r.phase}  ${r.action}  ${r.enabled ? "" : "(disabled) "}${r.description}`);
+    return;
+  }
+  if (!profile.zone_rules) die(`deploy/${name}.json has no zone_rules yet. Record the live ones: pnpm afs zone-rules ${name} --save`);
+  const z = await zoneRulesDrift(profile, token);
+  if (z.error) die(z.error);
+  for (const r of z.live) log(`  ${r.phase}  ${r.action}  ${r.enabled ? "" : "(disabled) "}${r.description}`);
+  if (z.drift.length) {
+    log(`\n✘ The zone's rules differ from deploy/${name}.json:`);
+    for (const d of z.drift) log(`  ${d}`);
+    log(`If the change was meant, record it: pnpm afs zone-rules ${name} --save`);
+    process.exit(1);
+  }
+  log("\n✔ The zone's security rules match the profile.");
+}
+
 // ---------- main ----------
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -636,6 +740,12 @@ if (isMain) {
       break;
     case "email-test":
       await cmdEmailTest(name, rest[0]);
+      break;
+    case "digest":
+      await cmdDigest(name);
+      break;
+    case "zone-rules":
+      await cmdZoneRules(name, opts);
       break;
     default:
       help();

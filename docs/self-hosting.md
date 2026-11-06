@@ -180,7 +180,9 @@ people about their projects: claims, members, connected apps, project deletion a
 and new setup items (see [accounts.md](accounts.md#9-emails-to-people)). They also get alerts: an
 analytics site with steady traffic stopped sending page views, a site or container's attack
 protection set traffic aside, or a project is close to a fair-use limit that drops data (only the limits you set count; see `GET /v1/usage` on any app). Optional:
-`NOTIFY_REPLY_TO`, and `MAX_EMAILS_PER_PERSON_PER_DAY` (default 20). Without the var nothing is
+`NOTIFY_REPLY_TO`, `MAX_EMAILS_PER_PERSON_PER_DAY` (default 20), and `OPERATOR_EMAIL` for a daily
+summary of the deployment to you (new and claimed projects, warnings and attacks, failed emails,
+services not answering; `pnpm afs digest <profile>` sends one now). Without the var nothing is
 sent. Reserve the sender's username (`EXTRA_RESERVED_USERNAMES` on mail) so nobody can create an
 inbox with it. The site's hourly cron (`47 * * * *`) checks usage, sends queued emails and retries.
 

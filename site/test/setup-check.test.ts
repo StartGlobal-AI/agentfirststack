@@ -368,6 +368,23 @@ describe("setup check", () => {
     expect(steps.some((s) => s.includes("require_consent"))).toBe(false); // warnings aren't next steps until the rest is done
   });
 
+  it("fails readiness when a first-party proxy sends events without its proxy key, and says how to fix it", async () => {
+    const agent = await signup("proxykey.test");
+    const routes = healthy();
+    const site = routes.analytics["/v1/sites/site_acme"] as { data: Record<string, unknown> };
+    site.data.warnings_last_7d = { proxy_key_missing: { count: 42 } };
+    const { env } = envWith(routes);
+    const r = await call("GET", "/v1/setup", { key: agent.key, env });
+    const c = byId(r.json.checks);
+    expect(r.json.ready).toBe(false);
+    expect(c("analytics.proxy_key")).toMatchObject({ status: "failing", detail: expect.stringContaining("42 events") });
+    expect(c("analytics.proxy_key").detail).toContain("without an x-afs-proxy-key");
+    expect(c("analytics.proxy_key").fix).toContain("https://analytics.afs.test/v1/sites/site_acme/install");
+    // Without the warning there's no such check at all (sites without a proxy see nothing).
+    const clean = await call("GET", "/v1/setup", { key: agent.key, env: envWith(healthy()).env });
+    expect(clean.json.checks.some((x: { id: string }) => x.id === "analytics.proxy_key")).toBe(false);
+  });
+
   it("reports a service that doesn't answer as unavailable, which blocks ready", async () => {
     const agent = await signup("acme.test");
     const routes = healthy();

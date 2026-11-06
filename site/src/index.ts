@@ -17,6 +17,7 @@ import { oauthApi, oauthPages } from "./oauth";
 import { noticeBase, refreshNotices } from "./notices";
 import { ownAnalytics, trackCrawl, trackOwn } from "./own-analytics";
 import { servePage, withAssetHeaders } from "./static-pages";
+import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
 import { setupTestApi } from "./setup-test";
@@ -219,6 +220,12 @@ export default {
       checkQuietSites(env, noticeBase(env))
         .then((n) => console.log(JSON.stringify({ event: "cron.quiet_sites", ...n })))
         .catch((e) => console.error("cron.quiet_sites failed", e)),
+    );
+    // The operator's summary of the last 24 hours (OPERATOR_EMAIL; off when unset).
+    ctx.waitUntil(
+      emailOperatorDigest(env, noticeBase(env))
+        .then((n) => console.log(JSON.stringify({ event: "cron.operator_digest", ...n })))
+        .catch((e) => console.error("cron.operator_digest failed", e)),
     );
     // Owners of projects claimed 3 to 14 days ago whose setup isn't finished: one reminder each.
     ctx.waitUntil(

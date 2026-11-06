@@ -171,6 +171,8 @@ ${(content.after ?? []).map(p).join("\n")}
 async function footerFor(env: Bindings, base: string, e: OutgoingEmail): Promise<{ lines: string[]; unsubscribe: string | null }> {
   // With a Reply-To (NOTIFY_REPLY_TO), a reply reaches a person.
   const reply = env.NOTIFY_REPLY_TO && senderOf(env.NOTIFY_REPLY_TO) ? ["Questions? Reply to this email."] : [];
+  if (e.kind === "operator_digest")
+    return { lines: [`Sent to ${e.to.email}, the operator of this deployment (OPERATOR_EMAIL on the site).`], unsubscribe: null };
   if (e.category === "account")
     return {
       lines: [

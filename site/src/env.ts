@@ -37,6 +37,8 @@ export type Bindings = Env & {
   EMAIL?: SendEmail;
   NOTIFY_EMAIL_FROM?: string;
   NOTIFY_REPLY_TO?: string;
+  /** The operator's daily summary (src/operator-digest.ts): comma-separated addresses; off when unset. */
+  OPERATOR_EMAIL?: string;
   MAX_EMAILS_PER_PERSON_PER_DAY?: string;
 };
 

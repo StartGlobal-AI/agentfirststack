@@ -102,7 +102,8 @@
   //   own analytics: OWN_ANALYTICS_ACCOUNT_ID + OWN_ANALYTICS_SITE_ID (the deployment's own project and
   //   analytics site) get a server event for each signup and project claim here (src/own-analytics.ts);
   //   email: NOTIFY_EMAIL_FROM ("Name <address>", with the EMAIL binding), NOTIFY_REPLY_TO (optional),
-  //   MAX_EMAILS_PER_PERSON_PER_DAY (default 20).
+  //   MAX_EMAILS_PER_PERSON_PER_DAY (default 20), OPERATOR_EMAIL (the operator's daily summary,
+  //   comma-separated; src/operator-digest.ts).
   // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard),
   // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google). See docs/accounts.md.
   "observability": { "enabled": true }
