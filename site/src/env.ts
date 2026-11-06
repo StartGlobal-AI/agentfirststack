@@ -33,6 +33,9 @@ export type Bindings = Env & {
    */
   OWN_ANALYTICS_ACCOUNT_ID?: string;
   OWN_ANALYTICS_SITE_ID?: string;
+  /** Proxy keys of our own analytics site and tags container: our pages use /_a/* and /_t/* (src/first-party.ts). Secrets. */
+  OWN_ANALYTICS_PROXY_KEY?: string;
+  OWN_TAGS_PROXY_KEY?: string;
   /** The emails the platform sends people (src/email.ts): the EMAIL binding and this sender. */
   EMAIL?: SendEmail;
   NOTIFY_EMAIL_FROM?: string;

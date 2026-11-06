@@ -81,6 +81,14 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
    who claims the project (their Google sign-in email) and starts when the owner claims it; they can
    change it in the dashboard.
 4. **Analytics.** Create the site for the production domain (analytics manual).
+   - Serve it from the site's own domain. Ad blockers block `analytics.agentfirststack.com`, so
+     install the first-party proxy from `first_party_proxy` in `GET /v1/sites/:id/install` (a
+     Cloudflare Worker route, Next.js `proxy.ts`, Vercel or Netlify rewrites, nginx) and use its
+     snippet (`/_a/s.js`): the tracker then posts to the site's own origin. The proxy sends the
+     site's `x-afs-proxy-key`; it's a secret, so keep it in the proxy's config or an env var, never
+     in page HTML or a commit. Without it every visitor looks like the proxy's one address. Use
+     the direct snippet only where the platform can't proxy (Webflow, a Shopify theme), and say
+     in `AGENTFIRSTSTACK.md` that ad blockers block analytics on those pages.
    - History from the tool the site used before (GA4, Plausible or any other): import its daily
      totals, then pages, sources, countries and devices (`POST /v1/sites/:id/imports`; how to get
      the data out of each tool: "Move from another tool" in section 4). Import its daily visitors
@@ -101,7 +109,9 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
      have it, list it as waiting on the owner.
    - For the owner: an email destination (it reaches the owner once they claim the project) with a
      weekly report, and alerts for a traffic drop and for no data.
-5. **Tags.** Create a container and put its snippet in the `<head>` of every page (tags manual).
+5. **Tags.** Create a container and put its snippet in the `<head>` of every page (tags manual),
+   served from the site's own domain like analytics: the proxy configs and the container's own
+   proxy key come from `GET /v1/containers/:id/install?proxy=1` (under its own path prefix).
    - From Google Tag Manager: import the container first (`POST /v1/containers/:id/draft/import`
      with `format: "gtm"` and its export, or the lists from the GTM API; dry run first), then add
      what it doesn't cover.

@@ -17,6 +17,7 @@ import { oauthApi, oauthPages } from "./oauth";
 import { noticeBase, refreshNotices } from "./notices";
 import { ownAnalytics, trackCrawl, trackOwn } from "./own-analytics";
 import { servePage, withAssetHeaders } from "./static-pages";
+import { firstParty } from "./first-party";
 import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
@@ -39,6 +40,9 @@ app.use("*", async (c, next) => {
   await next();
   trackCrawl(c, c.res.status);
 });
+
+// Our own pages' analytics and tags, first-party (src/first-party.ts).
+app.route("/", firstParty);
 
 // People-facing pages live on one host (PUBLIC_BASE_URL), so cookies and the Google callback match.
 const canonicalHost: MiddlewareHandler<SiteEnv> = async (c, next) => {
