@@ -93,6 +93,23 @@ async function loopSenders(env: AppEnv, accountId: string, members: Members): Pr
   };
 }
 
+/**
+ * The inbox may not send now (a custom domain's sending records failed, or a shared domain not yet
+ * onboarded to Email Sending): its mail stays queued (FORWARD_QUEUE_MAX_DAYS) and goes out as a
+ * digest once it can. Logged, so the operator sees forwards held back by a domain.
+ */
+function cannotSend(inbox: InboxRow, e: unknown) {
+  console.warn(
+    JSON.stringify({
+      event: "forward.cannot_send",
+      inbox_id: inbox.id,
+      domain: inbox.domain,
+      code: (e as { code?: string })?.code ?? null,
+      error: e instanceof Error ? e.message : String(e),
+    }),
+  );
+}
+
 /** Claim waiting rows for this run (token); returns how many. Stale claims are taken over. */
 async function claim(env: AppEnv, token: string, now: number, where: string, ...binds: unknown[]): Promise<number> {
   const r = await env.DB.prepare(`UPDATE forward_queue SET claim = ?, claimed_at = ? WHERE ${where} AND (claim IS NULL OR claimed_at < ?)`)
@@ -258,7 +275,8 @@ export async function forwardEach(
   try {
     try {
       await assertCanSendFrom(env, inbox);
-    } catch {
+    } catch (e) {
+      cannotSend(inbox, e);
       await release(env, token);
       return { status: "cannot_send" };
     }
@@ -355,7 +373,8 @@ export async function sendDigest(
     }
     try {
       await assertCanSendFrom(env, inbox);
-    } catch {
+    } catch (e) {
+      cannotSend(inbox, e);
       await release(env, token);
       await undoDay();
       return { status: "cannot_send" };

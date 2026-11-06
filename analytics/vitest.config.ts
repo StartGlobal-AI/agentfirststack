@@ -27,6 +27,8 @@ export default defineConfig({
               bindings: {
                 SALT_SECRET: "integration-test-salt",
                 DEV_MODE: "true",
+                // No user-content host (share pages on /share/ here); its tests set their own.
+                USER_CONTENT_BASE_URL: "",
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
                 // The shared identity DB (AUTH_DB), as on the hosted platform.
                 TEST_AUTH_MIGRATIONS: await readD1Migrations("../site/migrations"),

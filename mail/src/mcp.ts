@@ -105,7 +105,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "List inboxes",
       description:
-        "All inboxes of this account, newest first, plus the shared domain name and `storage` (bytes of mail kept / the limit; when full, new mail is rejected until old mail is deleted).",
+        "All inboxes of this account, newest first, plus the shared domain new inboxes go to (shared_domain), every shared domain (shared_domains: inboxes on earlier ones keep working) and `storage` (bytes of mail kept / the limit; when full, new mail is rejected until old mail is deleted).",
       input: { limit: z.number().int().min(1).max(500).optional() },
     },
     (i) => listInboxes(env, a, i),
@@ -582,7 +582,8 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     "list_domains",
     {
       title: "List domains",
-      description: "Your custom domains with receiving/sending status, plus the shared domain everyone can use.",
+      description:
+        "Your custom domains with receiving/sending status, plus the shared domain everyone can use (and earlier shared domains whose inboxes keep working).",
       input: {},
     },
     () => listDomains(env, a),

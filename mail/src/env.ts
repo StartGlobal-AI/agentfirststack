@@ -30,6 +30,13 @@ export type AppEnv = Omit<
   WEBHOOK_TEST_LIMITER?: RateLimit;
   SEARCH_LIMITER?: RateLimit;
   MAIL_DOMAIN: string;
+  /**
+   * Optional second shared domain (src/lib/shared-domains.ts): new inboxes go on it, MAIL_DOMAIN
+   * stays shared for the inboxes already there. Needs its own Email Routing catch-all -> this Worker.
+   */
+  SHARED_INBOX_DOMAIN?: string;
+  /** Comma-separated shared domains onboarded to Email Sending (unset = MAIL_DOMAIN only). */
+  SHARED_SENDING_DOMAINS?: string;
   SEND_DAILY_LIMIT?: string;
   WORKER_NAME?: string;
   SIGNUP_MODE?: string;

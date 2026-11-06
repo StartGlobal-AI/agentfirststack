@@ -26,6 +26,8 @@
     "DEV_MODE": "false"
   },
   // Optional vars a deployment can add (public services want them; see src/env.ts and README Config):
+  // SHARED_INBOX_DOMAIN (a second shared domain new inboxes go to; MAIL_DOMAIN keeps working),
+  // SHARED_SENDING_DOMAINS (shared domains onboarded to Email Sending; unset = MAIL_DOMAIN only),
   // SIGNUP_HOURLY_LIMIT, SHARED_SEND_POLICY, SHARED_RETENTION_DAYS, MAX_INBOXES_PER_ACCOUNT,
   // MAX_INBOX_CREATES_PER_DAY, MAX_INBOX_DELETES_PER_DAY,
   // EXTRA_RESERVED_USERNAMES, MAX_MESSAGES_PER_INBOX, MAX_INBOUND_PER_ACCOUNT_PER_DAY,
@@ -120,7 +122,7 @@
   // onboarded for sending; the app itself enforces which addresses an account may send from.
   "send_email": [{ "name": "EMAIL" }],
 
-  // Receiving: Email Routing must send every address on MAIL_DOMAIN to this Worker. Either set the
+  // Receiving: Email Routing must send every address on MAIL_DOMAIN (and SHARED_INBOX_DOMAIN) to this Worker. Either set the
   // zone's catch-all to "Send to a Worker: afs-mail" in the dashboard, or let `wrangler deploy` manage
   // it by uncommenting this (catch-alls must name the zone apex, e.g. "*@agentmail.example"):
   // "addresses": ["*@your-mail-domain.example"],

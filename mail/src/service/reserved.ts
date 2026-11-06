@@ -1,6 +1,6 @@
 import type { AppEnv } from "../env";
 import { reservedKeys } from "../lib/address";
-import { sharedDomain } from "./inboxes";
+import { sharedDomain, sharedDomains } from "./inboxes";
 
 /**
  * Inboxes whose username became reserved after they were created (src/lib/address.ts: a new
@@ -24,15 +24,15 @@ export interface ReservedInbox {
   last_message_at: number | null;
 }
 
-/** A short fingerprint of the reserved list and the shared domain, to notice when either changes. */
+/** A short fingerprint of the reserved list and the shared domains, to notice when either changes. */
 async function fingerprint(env: AppEnv, keys: string[]): Promise<string> {
-  const data = new TextEncoder().encode(`${sharedDomain(env)}\n${keys.join(",")}`);
+  const data = new TextEncoder().encode(`${sharedDomains(env).join(",")}\n${keys.join(",")}`);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
   return [...hash.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
- * Shared-domain inboxes whose username is reserved now, oldest first. One statement that reads every
+ * Shared-domain inboxes (every shared domain) whose username is reserved now, oldest first. One statement that reads every
  * inbox row, which is why the cron runs it only when the list changed.
  */
 export async function findReservedInboxes(env: AppEnv, opts: { limit?: number } = {}) {
@@ -41,10 +41,10 @@ export async function findReservedInboxes(env: AppEnv, opts: { limit?: number } 
   // The SQL twin of reservedKey(): ".", "_" and "-" do not count (usernames are stored lowercase).
   const { results } = await env.DB.prepare(
     `SELECT id, account_id, address, created_at, last_message_at FROM inboxes
-     WHERE domain = ?1 AND replace(replace(replace(username, '.', ''), '_', ''), '-', '') IN (SELECT value FROM json_each(?2))
+     WHERE domain IN (SELECT value FROM json_each(?1)) AND replace(replace(replace(username, '.', ''), '_', ''), '-', '') IN (SELECT value FROM json_each(?2))
      ORDER BY created_at, id LIMIT ?3`,
   )
-    .bind(sharedDomain(env), JSON.stringify(keys), limit + 1)
+    .bind(JSON.stringify(sharedDomains(env)), JSON.stringify(keys), limit + 1)
     .all<{ id: string; account_id: string; address: string; created_at: number; last_message_at: number | null }>();
   const inboxes: ReservedInbox[] = results.slice(0, limit).map((r) => ({
     inbox_id: r.id,
@@ -53,7 +53,13 @@ export async function findReservedInboxes(env: AppEnv, opts: { limit?: number } 
     created_at: r.created_at,
     last_message_at: r.last_message_at,
   }));
-  return { inboxes, truncated: results.length > limit, reserved_names: keys.length, shared_domain: sharedDomain(env) };
+  return {
+    inboxes,
+    truncated: results.length > limit,
+    reserved_names: keys.length,
+    shared_domain: sharedDomain(env),
+    shared_domains: sharedDomains(env),
+  };
 }
 
 /** Cron: when the reserved list changed since the last run, list the inboxes that now hold a reserved name (log only). */

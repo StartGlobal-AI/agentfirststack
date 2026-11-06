@@ -89,6 +89,9 @@
   // MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY (attack protection; unset = off), SPIKE_MIN_EVENTS (default 1000). Each also has an UNCLAIMED_<NAME> form for accounts no
   // person has claimed (see README "Config"). ALERT_EMAIL_FROM: the sender of alert and report
   // emails (with the EMAIL binding below); unset = no email.
+  // USER_CONTENT_BASE_URL: the origin of a domain of its own for public dashboards (<it>/a/<token>;
+  // `pnpm afs config` derives it and the Worker route from the profile's user_content_domain).
+  // Unset = they stay at /share/<token> on this host.
   // REPLAY_BASE_URL: the replay service's public URL; the tracker of a site with replay_site_id then
   // loads <REPLAY_BASE_URL>/r/<replay_site_id>.js by itself. Unset = off. `pnpm afs config` derives
   // it from the profile's replay host; locally, .dev.vars can point it at http://localhost:8790.

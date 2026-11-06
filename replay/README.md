@@ -366,6 +366,15 @@ platform's `/report-abuse` (`AUTH_ISSUER`; none when replay runs alone). While t
 `capability_pauses`, lifted only by the operator), creating a link answers `403 capability_paused` and
 existing links show a "paused" page (403) and serve no data or chunks.
 
+**User-content host** (`USER_CONTENT_BASE_URL`, e.g. `https://afsusercontent.com`; `pnpm afs config`
+derives it, and the Worker route `<domain>/r/*`, from the profile's `user_content_domain`): new links
+are `<it>/r/rpt_...` (`/r/<token>/data`, `/r/<token>/chunks/<seq>`, `/r/assets/player-<hash>.*`), so
+the recorded pages it shows share no cookie or origin with the service's domain. That host answers
+only those paths (everything else 404: no API, MCP, recorder or ingest). A valid link's old
+`/play/<token>` URL answers 301 to the new one (expired, revoked and paused links answer as before),
+and the old `/play/<token>/data` and `/chunks` keep answering for players already open. Same CSP,
+`noindex`, Report abuse (naming the new URL) and pause checks. Unset: everything stays on `/play/`.
+
 ## Path proxy key
 
 A customer's own path proxy (`/_r/*` forwarded unchanged; ready configs in the install answer's
@@ -382,6 +391,7 @@ to full-access keys. The platform's edge (first-party domains) is trusted as bef
 | Var / secret | |
 |---|---|
 | `PUBLIC_BASE_URL` | var; the URL used in snippets, links and llms.txt (empty = request origin) |
+| `USER_CONTENT_BASE_URL` | optional var; origin of a domain of its own for the share player (`<it>/r/<token>`, see Human player). Unset = `/play/<token>` here |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth (`SIGNUP_MODE` is a var, the tokens are secrets) |
 | `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`), and the secret the site's dashboard uses for internal auth. `INTERNAL_TOKEN` also turns on analytics forwarding (with the `ANALYTICS` binding) and tags forwarding (with the `TAGS` binding) |
 | `KEY_PREFIX` | var; prefix of minted keys (`afs`) |

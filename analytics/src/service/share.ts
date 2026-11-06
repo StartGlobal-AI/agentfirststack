@@ -12,6 +12,7 @@ import {
   parse,
   randomString,
   sha256Hex,
+  userContentOrigin,
 } from "@afs/shared";
 import { z } from "zod";
 import type { Bindings } from "../env";
@@ -38,7 +39,14 @@ export const createShareInput = z.object({
     .describe("Your name for the link; a link with options and the same label is returned again (retries are safe)."),
 });
 
-const shareUrl = (baseUrl: string, token: string) => `${baseUrl}/share/${token}`;
+/**
+ * A share link's URL: <USER_CONTENT_BASE_URL>/a/<token> when the deployment has a user-content host
+ * (routes/share.ts), else <PUBLIC_BASE_URL>/share/<token> as always.
+ */
+export function shareUrl(env: Bindings, baseUrl: string, token: string): string {
+  const uc = userContentOrigin(env);
+  return uc ? `${uc}/a/${token}` : `${baseUrl}/share/${token}`;
+}
 
 export async function createShareLink(ctx: Ctx, siteId: string, raw: unknown) {
   // A share URL never expires: a connected app's 8-hour token must not get one (new or existing).
@@ -65,7 +73,12 @@ export async function createShareLink(ctx: Ctx, siteId: string, raw: unknown) {
       .bind(site.id)
       .first<{ token: string; created_at: number }>();
     if (existing)
-      return { url: shareUrl(ctx.baseUrl, existing.token), token: existing.token, existing: true, created_at: existing.created_at };
+      return {
+        url: shareUrl(ctx.env, ctx.baseUrl, existing.token),
+        token: existing.token,
+        existing: true,
+        created_at: existing.created_at,
+      };
   }
   if (input.label && !input.new) {
     const same = await ctx.env.DB.prepare("SELECT * FROM share_links WHERE site_id = ? AND label = ? AND revoked_at IS NULL")
@@ -128,7 +141,7 @@ interface ShareRow {
 
 function linkOut(ctx: Ctx, r: ShareRow) {
   return {
-    url: shareUrl(ctx.baseUrl, r.token),
+    url: shareUrl(ctx.env, ctx.baseUrl, r.token),
     token: r.token,
     created_at: r.created_at,
     label: r.label,

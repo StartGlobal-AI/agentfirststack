@@ -32,7 +32,11 @@ export const createInboxShape = {
     .max(64)
     .optional()
     .describe("Local part, e.g. \"acme-signups\". Omit for a random one. a-z 0-9 . _ - ; no '+'."),
-  domain: z.string().max(253).optional().describe("Omit for the shared MAIL_DOMAIN, or a custom domain added with add_domain."),
+  domain: z
+    .string()
+    .max(253)
+    .optional()
+    .describe("Omit for the shared domain (list_inboxes: shared_domain), or a custom domain added with add_domain."),
   display_name: z
     .string()
     .max(200)

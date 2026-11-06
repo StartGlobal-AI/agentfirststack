@@ -11,7 +11,7 @@ import { UNAUTHENTICATED_SENDER, isAutomated, senderKeyFor } from "../lib/sender
 import { bracketMessageId, hasReplyPrefix, normalizeSubject, threadLookupIds } from "../lib/threading";
 import { type Addr, type InboxRow, type MessageRow, UNTRUSTED_NOTICE, messageSummary, utcDay } from "./format";
 import { maxBlobBytes } from "./budgets";
-import { findInboxForRecipient, sharedDomain } from "./inboxes";
+import { findInboxForRecipient, sharedDomains } from "./inboxes";
 import { receiveRefusal } from "./lists";
 import { deleteMessageRows } from "./messages";
 
@@ -585,7 +585,7 @@ export async function ingestRaw(
   // Allow / block lists: refused before the body is read or any per-sender allowance is spent.
   const listed = await receiveRefusal(env, inbox, { fromAddress: from.address, envelopeFrom, auth });
   if (listed) return { status: "rejected", reason: listed };
-  const senderKey = senderKeyFor({ fromAddress: from.address, envelopeFrom, auth }, [sharedDomain(env)]);
+  const senderKey = senderKeyFor({ fromAddress: from.address, envelopeFrom, auth }, sharedDomains(env));
   // A nearly full account refuses the large mail of the senders that filled it, before their
   // allowance is spent or the body is read.
   const early = await inboundRefusal(env, inbox, standing, size, now, senderKey);

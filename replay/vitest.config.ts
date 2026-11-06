@@ -31,6 +31,8 @@ export default defineConfig({
                 DEV_MODE: "true",
                 // Hosted vars stay neutral in tests (and override a local .dev.vars); fair-use tests set their own.
                 PUBLIC_BASE_URL: "",
+                // No user-content host (share links on /play/ here); its tests set their own.
+                USER_CONTENT_BASE_URL: "",
                 AUTH_ISSUER: "",
                 SIGNUP_HOURLY_LIMIT: "0",
                 MAX_SITES_PER_ACCOUNT: "",

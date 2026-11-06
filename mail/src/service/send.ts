@@ -22,7 +22,7 @@ import {
   threadUpsert,
   utf8Bytes,
 } from "./ingest";
-import { getInboxRow, ownershipNotVerified, sharedDomain } from "./inboxes";
+import { domainNotOnboarded, getInboxRow, isSharedDomain, ownershipNotVerified, sharedDomainSends, sharedDomains } from "./inboxes";
 import { assertSendAllowed } from "./lists";
 import { getMessageRow } from "./messages";
 import { assertSendNotPaused } from "./pauses";
@@ -35,9 +35,11 @@ export { utcDay };
  *
  * Rules enforced here, before Email Service sees anything:
  *   - From is always the inbox's own address (display name from the inbox).
- *   - Its domain is the operator's MAIL_DOMAIN, or a custom domain this account owns (ownership
- *     challenge passed) whose sending DNS records have passed verify (Email Service also refuses
- *     unverified sender domains).
+ *   - Its domain is one of the operator's shared domains (MAIL_DOMAIN, SHARED_INBOX_DOMAIN), or a
+ *     custom domain this account owns (ownership challenge passed) whose sending DNS records have
+ *     passed verify (Email Service also refuses unverified sender domains). Mail to outside
+ *     addresses from a shared domain also needs it in SHARED_SENDING_DOMAINS (onboarded to Email
+ *     Sending; unset = MAIL_DOMAIN only): else 503 domain_not_onboarded, before anything is sent.
  *   - At most 50 recipients (to+cc+bcc), 32 attachments, 25 MiB total (Email Service limits).
  *   - Per-account daily cap SEND_DAILY_LIMIT (UNCLAIMED_SEND_DAILY_LIMIT for unclaimed accounts),
  *     counted per recipient, UTC day. Suspended accounts cannot send.
@@ -130,9 +132,21 @@ async function refundSends(env: AppEnv, accountId: string, day: string, n: numbe
   await env.DB.prepare("UPDATE send_counters SET count = MAX(0, count - ?) WHERE account_id = ? AND day = ?").bind(n, accountId, day).run();
 }
 
-/** May this inbox send? Shared domain: yes. Custom domain: only once owned and its sending DNS passed verify. */
-export async function assertCanSendFrom(env: AppEnv, inbox: InboxRow) {
-  if (inbox.domain === sharedDomain(env)) return;
+/** Mail from this shared-domain inbox to outside addresses: only once its domain is onboarded to Email Sending. */
+export function assertSharedSending(env: AppEnv, inbox: InboxRow) {
+  if (isSharedDomain(env, inbox.domain) && !sharedDomainSends(env, inbox.domain)) throw domainNotOnboarded(inbox.domain);
+}
+
+/**
+ * May this inbox send? Shared domain: yes, and to outside addresses (`external`, the default) once
+ * the domain is onboarded to Email Sending. Custom domain: only once owned and its sending DNS
+ * passed verify.
+ */
+export async function assertCanSendFrom(env: AppEnv, inbox: InboxRow, opts: { external?: boolean } = {}) {
+  if (isSharedDomain(env, inbox.domain)) {
+    if (opts.external !== false) assertSharedSending(env, inbox);
+    return;
+  }
   const d = await env.DB.prepare("SELECT sending_verified, owner_verified_at FROM domains WHERE domain = ? AND account_id = ?")
     .bind(inbox.domain, inbox.account_id)
     .first<{ sending_verified: number; owner_verified_at: number | null }>();
@@ -188,18 +202,18 @@ export async function ownInboxRecipients(
     if (n) base.set(n.address, [...(base.get(n.address) ?? []), r]);
   }
   if (!base.size) return out;
-  const shared = sharedDomain(env);
+  const shared = sharedDomains(env);
   const { results } = await env.DB.prepare(
     `SELECT i.* FROM inboxes i WHERE i.account_id = ?1 AND i.address IN (SELECT value FROM json_each(?2))
        AND (i.expires_at IS NULL OR i.expires_at > ?3)
-       AND (i.domain = ?4 OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id
+       AND (i.domain IN (SELECT value FROM json_each(?4)) OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id
             AND d.owner_verified_at IS NOT NULL AND d.receiving_enabled = 1))`,
   )
-    .bind(accountId, JSON.stringify([...base.keys()]), now, shared)
+    .bind(accountId, JSON.stringify([...base.keys()]), now, JSON.stringify(shared))
     .all<InboxRow>();
   for (const inbox of results) for (const r of base.get(inbox.address) ?? []) out.set(r, { inbox, via: "address" });
   const rest = [...base.keys()].filter((a) => !results.some((i) => i.address === a));
-  const domains = [...new Set(rest.map((a) => a.split("@")[1]!).filter((d) => d !== shared))];
+  const domains = [...new Set(rest.map((a) => a.split("@")[1]!).filter((d) => !shared.includes(d)))];
   if (domains.length) {
     const { results: ca } = await env.DB.prepare(
       `SELECT d.domain AS catch_domain, i.* FROM domains d JOIN inboxes i ON i.id = d.catch_all_inbox_id
@@ -219,7 +233,7 @@ export async function ownInboxRecipients(
 }
 
 /**
- * SHARED_SEND_POLICY=reply_only: an inbox on the shared domain may only write to addresses that
+ * SHARED_SEND_POLICY=reply_only: an inbox on a shared domain (any of them) may only write to addresses that
  * have emailed it. That keeps the free shared domain useful for agents (replying to a service,
  * answering a human) without making it an open relay for cold email.
  *
@@ -235,7 +249,7 @@ export async function ownInboxRecipients(
  * an agent can write to its person and test inbox to inbox without a custom domain.
  */
 export async function assertReplyOnly(env: AppEnv, inbox: InboxRow, recipients: string[], standing?: Standing) {
-  if (env.SHARED_SEND_POLICY !== "reply_only" || inbox.domain !== sharedDomain(env)) return;
+  if (env.SHARED_SEND_POLICY !== "reply_only" || !isSharedDomain(env, inbox.domain)) return;
   let unknown: string[] = [];
   for (const r of new Set(recipients.map((a) => a.toLowerCase()))) {
     const seen = await env.DB.prepare(
@@ -450,11 +464,14 @@ async function checkAndRoute(
   now: number,
 ): Promise<Routed> {
   assertActive(standing);
-  await assertCanSendFrom(env, inbox);
+  await assertCanSendFrom(env, inbox, { external: false });
   const all = [...p.to, ...p.cc, ...p.bcc];
   const own = await ownInboxRecipients(env, inbox.account_id, all, now);
   const isOwn = (a: string) => own.has(a.toLowerCase());
   const outsiders = all.filter((a) => !isOwn(a));
+  // A shared domain not onboarded to Email Sending yet: refused here with what to do, not by Email
+  // Service after the daily limit was counted. The account's own inboxes still get it internally.
+  if (outsiders.length) assertSharedSending(env, inbox);
   // mail.send paused (src/service/pauses.ts): nothing goes out through Email Service; mail to the
   // account's own inboxes never leaves the Worker and still works.
   if (outsiders.length) await assertSendNotPaused(env, inbox.account_id);

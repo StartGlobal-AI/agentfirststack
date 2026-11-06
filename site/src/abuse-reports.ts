@@ -233,7 +233,7 @@ function formPage(
     <h1>Report abuse</h1>
     <p class="lead">Seen phishing, spam, malware or impersonation that uses AgentFirstStack (a share link, an inbox, a tag container, a page)? Tell us. No account needed.</p>
     ${o.error ? html`<p class="notice notice-error" role="alert">${o.error}</p>` : ""}
-    <label class="field"><span>The URL, email address or id</span><input type="text" name="url_or_resource" required minlength="3" maxlength="2000" value="${o.url ?? ""}" placeholder="https://replay.agentfirststack.com/play/... or name@agentfirststack.com"></label>
+    <label class="field"><span>The URL, email address or id</span><input type="text" name="url_or_resource" required minlength="3" maxlength="2000" value="${o.url ?? ""}" placeholder="https://afsusercontent.com/r/... or name@agentfirstinbox.com"></label>
     <label class="field"><span>What kind of abuse</span>
       <select name="kind" required>
         <option value=""${kind ? "" : html` selected`} disabled>Choose one</option>

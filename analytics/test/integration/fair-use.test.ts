@@ -732,7 +732,9 @@ describe("per-account budgets for shared expensive work (SQL time, exports)", ()
     // GET /v1/usage shows both.
     const u = (await callWith({ ...ev, ...sv }, "/v1/usage", { key })).body.limits;
     expect(u.export_rows_per_account_per_day).toMatchObject({ used: 4, limit: 4, remaining: 0 });
-    expect(u.sql_ms_per_account_per_day).toMatchObject({ used: 5000, limit: 5000 });
+    // The query allowed above (UNCLAIMED cap 60 s) added its own few ms of real SQL time to the 5000 seeded.
+    expect(u.sql_ms_per_account_per_day.limit).toBe(5000);
+    expect(u.sql_ms_per_account_per_day.used).toBeGreaterThanOrEqual(5000);
   });
 });
 

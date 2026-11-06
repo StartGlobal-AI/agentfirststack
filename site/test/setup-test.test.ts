@@ -43,7 +43,14 @@ function fake(service: string, routes: Record<string, Handler | unknown>, sent: 
 const NOW = () => Date.now();
 
 function world(
-  opts: { liveBrowserConversion?: boolean; skipEvent?: string; noReplaySession?: boolean; browserOnlyAnalytics?: boolean } = {},
+  opts: {
+    liveBrowserConversion?: boolean;
+    skipEvent?: string;
+    noReplaySession?: boolean;
+    browserOnlyAnalytics?: boolean;
+    /** GET /v1/inboxes as mail answers it (default: one inbox on the one shared domain). */
+    inboxes?: unknown;
+  } = {},
 ) {
   const sent: Sent[] = [];
   const analyticsEvents: { name: string; pathname?: string; debug: boolean; ts: number }[] = [];
@@ -143,7 +150,10 @@ function world(
       },
     },
     mail: {
-      "/v1/inboxes": { inboxes: [{ id: "inb_1", address: "acme@afs.test", domain: "afs.test" }], shared_domain: "afs.test" },
+      "/v1/inboxes": opts.inboxes ?? {
+        inboxes: [{ id: "inb_1", address: "acme@afs.test", domain: "afs.test" }],
+        shared_domain: "afs.test",
+      },
       "POST /v1/inboxes/inb_1/send": async (req: Request) => {
         const body = (await req.json()) as { to: string; text: string };
         mailCode = /verification code: (\d{6})/.exec(body.text)?.[1] ?? null;
@@ -266,6 +276,25 @@ describe("setup test", () => {
     expect(md).toMatch(/^\*\*AgentFirstStack setup test for acme\.test: passed\*\*/);
     expect(md).toContain("| ✅ | Test email: sent, received and read back |");
     expect(md).toContain("| ➖ | LinkedIn: test conversions |");
+  });
+
+  it("tests an inbox on any shared domain, also one made before the shared domain moved", async () => {
+    const agent = await signup("acme.test");
+    const { env } = world({
+      inboxes: {
+        inboxes: [
+          { id: "inb_custom", address: "hello@acme.test", domain: "acme.test" },
+          { id: "inb_1", address: "acme@afs.test", domain: "afs.test" },
+        ],
+        shared_domain: "inbox.afs.test",
+        shared_domains: ["inbox.afs.test", "afs.test"],
+      },
+    });
+    const r = await call("POST", "/v1/setup/test", { key: agent.key, env, json: {} });
+    expect(byId(r.json.tests)("mail.roundtrip")).toMatchObject({
+      status: "passed",
+      detail: expect.stringContaining("acme+afs-test@afs.test"),
+    });
   });
 
   it("leaves the analytics path to the browser visit when the container reaches analytics from the browser", async () => {

@@ -1,4 +1,13 @@
-import { accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
+import {
+  accountRoutes,
+  onError,
+  onNotFound,
+  onUserContentHost,
+  protectedResourceRoutes,
+  publicBaseUrl,
+  requireAuth,
+  userContentOrigin,
+} from "@afs/shared";
 import { handleMcp } from "@afs/shared/mcp";
 import { Hono } from "hono";
 import { type AppEnv, type Bindings, VERSION } from "./env";
@@ -6,7 +15,7 @@ import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { account } from "./routes/account";
 import { api, waitUntilOf } from "./routes/api";
-import { browserRoutes, playerRoutes } from "./routes/public";
+import { browserRoutes, playerRoutes, userContentRoutes } from "./routes/public";
 import { runPurge } from "./service/purge";
 
 export { ReplaySiteDO } from "./do/site-do";
@@ -14,6 +23,18 @@ export { ReplaySiteDO } from "./do/site-do";
 const app = new Hono<AppEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+// The user-content host (USER_CONTENT_BASE_URL) serves the share player and nothing else: no API,
+// MCP, recorder or ingest on the origin that shows recorded pages.
+app.use("*", async (c, next) => {
+  if (!onUserContentHost(c.env, c.req.raw)) return next();
+  let ctx: Parameters<typeof userContentRoutes.fetch>[2];
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    /* no execution context (tests calling app.request) */
+  }
+  return userContentRoutes.fetch(c.req.raw, c.env, ctx);
+});
 // RFC 9728 metadata naming the platform's OAuth server (AUTH_ISSUER), for MCP connectors.
 app.route("/", protectedResourceRoutes({ name: "AgentFirstStack Replay" }));
 
@@ -31,7 +52,9 @@ app.get("/", (c) => {
     next_steps: [`POST ${base}/v1/signup returns an API key, then POST ${base}/v1/sites {"domain":"example.com"}.`],
   });
 });
-app.get("/llms.txt", (c) => c.body(llmsTxt(publicBaseUrl(c)), 200, { "content-type": "text/markdown; charset=utf-8" }));
+app.get("/llms.txt", (c) =>
+  c.body(llmsTxt(publicBaseUrl(c), userContentOrigin(c.env)), 200, { "content-type": "text/markdown; charset=utf-8" }),
+);
 app.route("/", playerRoutes);
 
 app.all("/mcp", (c) =>

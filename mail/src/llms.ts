@@ -1,4 +1,5 @@
 import { type AppEnv, type CapName, cap } from "./env";
+import { sharedDomainsOf } from "./lib/shared-domains";
 import { DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES } from "./service/budgets";
 import { DEFAULT_MAX_FEED_EVENTS_PER_DAY, DEFAULT_UNCLAIMED_MAX_FEED_EVENTS_PER_DAY } from "./service/feed";
 import { DEFAULT_MAX_FORWARDS_PER_DAY } from "./service/forward-settings";
@@ -104,6 +105,14 @@ function pausesLine(env: AppEnv, claimed: { suspended: boolean; claimed: boolean
 export function llmsTxt(base: string, sharedDomain: string, env?: AppEnv): string {
   // Keys carry the deployment's prefix (afs_ on the hosted platform, mail_ for a lone mail app).
   const kp = ((env as { KEY_PREFIX?: string } | undefined)?.KEY_PREFIX || "mail").replace(/[^a-z0-9]/gi, "");
+  // Shared domains new inboxes no longer go to (MAIL_DOMAIN after SHARED_INBOX_DOMAIN moved them).
+  const sd = env ? sharedDomainsOf(env) : { legacy: [] as string[], sending: [sharedDomain] };
+  const legacy = sd.legacy.length
+    ? `\nEarlier shared domain${sd.legacy.length > 1 ? "s" : ""}: ${sd.legacy.join(", ")}. Inboxes created there keep working exactly as before (receiving, sending, forwarding, wait, latest-code); new inboxes go on ${sharedDomain}.`
+    : "";
+  const notSending = sd.sending.includes(sharedDomain)
+    ? ""
+    : `\nSending from ${sharedDomain} to outside addresses isn't set up yet on this deployment (503 \`domain_not_onboarded\`); receiving works.`;
   return `# AgentFirstStack Mail
 
 > Email for AI agents: create an inbox in one request, use it to sign up for any service, block until
@@ -112,7 +121,7 @@ export function llmsTxt(base: string, sharedDomain: string, env?: AppEnv): strin
 
 Base URL: ${base}
 Source (AGPL-3.0): https://github.com/StartGlobal-AI/agentfirststack
-Shared domain (works instantly for every account): ${sharedDomain}
+Shared domain (works instantly for every account): ${sharedDomain}${legacy}${notSending}
 Auth: \`Authorization: Bearer <api_key>\` (or \`x-api-key\`). Keys are "*" (full) or "read" (GET + read-only tools).
 Errors: \`{ "error": { "code", "message", "hint", "details"? } }\`. The hint says how to recover.
 JSON is snake_case; timestamps are unix milliseconds.
@@ -327,7 +336,10 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   created before its name became reserved keeps working, and creating it again returns it. \`domain\` defaults to ${sharedDomain}.
   409 \`conflict\` if another account holds the address or ever held it: an address on ${sharedDomain} is never given to
   another account, even after it is deleted or expires (it may be the recovery email of accounts elsewhere). The 409 is
-  the same either way. Only the account that had it can create it again.
+  the same either way. Only the account that had it can create it again. On the shared domains a username is one name:
+  held (or once held) by an account on one shared domain, it is that account's on every one (409 for anyone else).
+  A shared domain new inboxes no longer go to (an earlier one, see the top) answers 400 \`legacy_shared_domain\`,
+  except for an address this account holds or held there (it gets that inbox back, or can recreate it).
   Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me)
   refuses its mail at once and erases its inboxes 7 days later; their addresses stay reserved for good.
   Inbox creations per UTC day may be capped (429 \`daily_limit\`; reusing an address you own is not a creation).
@@ -337,7 +349,8 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   \`ttl_days\`: inbox and its mail are deleted after that many days. \`display_name\`: line breaks and other
   control characters are replaced by spaces.
   \`curl -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -d '{"username":"acme-ads","ttl_days":7}'\`
-- \`GET /v1/inboxes?limit=&domain=\` -> \`{ inboxes, shared_domain, storage: { used_bytes, limit_bytes } }\` (limit_bytes null = no cap)
+- \`GET /v1/inboxes?limit=&domain=\` -> \`{ inboxes, shared_domain, shared_domains, storage: { used_bytes, limit_bytes } }\` (shared_domain = where new
+  inboxes go; shared_domains = every shared domain, that one first; limit_bytes null = no cap)
 - \`GET /v1/inboxes/:id\` -> \`{ inbox }\` incl. message_count, unread_count
 - \`PATCH /v1/inboxes/:id\` \`{ display_name?, ttl_days? (null = forever), forward? (merged) }\` -> \`{ inbox, next_steps? }\` (next_steps when forward was given)
 - \`DELETE /v1/inboxes/:id\` -> deletes the inbox, its messages, attachments and raw MIME; \`address_reserved: true\` = a
@@ -391,12 +404,14 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   to/cc/bcc: an address or list (max 50 in total). At least one of text/html (text is derived from html if missing).
   attachments: \`[{ filename, content (base64), content_type?, disposition?: "attachment"|"inline", content_id? }]\` (max 32, 25 MiB total).
   headers: X-* custom headers only. From is always the inbox address (display_name as the name).
-  The from-domain must be ${sharedDomain} or one of your domains with ownership and sending verified (see Domains):
-  403 \`ownership_not_verified\` / \`domain_not_verified\` otherwise.
+  The from-domain must be a shared domain (${sharedDomain}) or one of your domains with ownership and sending verified (see Domains):
+  403 \`ownership_not_verified\` / \`domain_not_verified\` otherwise. A shared domain the operator hasn't onboarded to Email
+  Sending yet answers 503 \`domain_not_onboarded\` for outside recipients, before anything is sent or counted (GET /v1/domains:
+  its \`sending\` is "pending"); mail to your own inboxes is still delivered internally.
   Attachment \`filename\` loses control characters; \`content_type\` must be a plain MIME type and \`content_id\` a bare id
   (no spaces, <>, line breaks), else 400.
   Daily limit per account (SEND_DAILY_LIMIT, per recipient, UTC day): 429 \`daily_limit\` when reached.
-  If the operator set SHARED_SEND_POLICY=reply_only, inboxes on ${sharedDomain} may only send to addresses that
+  If the operator set SHARED_SEND_POLICY=reply_only, inboxes on the shared domains may only send to addresses that
   emailed that inbox personally with \`auth.verdict: "pass"\` (a forged or unauthenticated From does not count, nor does
   list, bulk or auto-generated mail, \`automated: true\`): 403 \`reply_only\` with \`details.recipients_not_allowed\`.
   Always allowed without having written first: this account's own inboxes, and the Google-verified emails of the people
@@ -464,7 +479,7 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   \`verified\` once ownership and sending pass. \`PATCH {"receiving": true|false}\` switches it.
 - \`GET /v1/domains/:domain/zone-file\` -> the records as a BIND zone file (text/dns), for DNS tools that import one.
   Records Cloudflare generates on onboarding (DKIM keys) are commented out until then.
-- \`GET /v1/domains\` -> \`{ domains, shared_domain, auto_configure_available }\` (available = CF_API_TOKEN set; still operator only)
+- \`GET /v1/domains\` -> \`{ domains, shared_domain, shared_domains, auto_configure_available }\` (shared_domain(s): \`{ domain, new_inboxes, receiving, sending: "verified"|"pending", note }\`; available = CF_API_TOKEN set; still operator only)
 - \`GET /v1/domains/:domain\` -> records, ownership (pending|verified), owner_verified_at, status (pending|partial|verified), receiving/sending, last_check, inbox_count
 - \`PATCH /v1/domains/:domain\` \`{ catch_all_inbox_id?: string|null, receiving?, auto_configure?, force? }\` -> mail to unknown addresses goes to the catch-all inbox (else rejected).
 - \`DELETE /v1/domains/:domain?delete_inboxes=true\` (409 while inboxes exist unless delete_inboxes=true). Cloudflare settings are not touched.
@@ -631,6 +646,8 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | Name | Kind | |
 |---|---|---|
 | MAIL_DOMAIN | var | shared domain for instant inboxes (Email Routing catch-all -> this Worker; onboarded to Email Sending) |
+| SHARED_INBOX_DOMAIN | var | optional; a second shared domain new inboxes go to from now on (its own Email Routing catch-all -> this Worker). MAIL_DOMAIN stays shared: its inboxes keep working, and every shared-domain rule covers both; new inboxes there only for an address the account holds or held |
+| SHARED_SENDING_DOMAINS | var | optional, comma-separated; the shared domains onboarded to Email Sending (unset = MAIL_DOMAIN only). Mail to outside addresses from any other shared domain is refused with 503 \`domain_not_onboarded\` |
 | SEND_DAILY_LIMIT | var | per-account recipients per UTC day, default 200 |
 | MAX_FORWARDS_PER_ACCOUNT_PER_DAY | var | emails forwarded to the project's members (an inbox's forward setting, one per member) per account per UTC day, default 100; "0" = forwarding off; separate from SEND_DAILY_LIMIT |
 | AUTH_ISSUER | var | the platform's site (set by \`pnpm afs\`): named in OAuth metadata, and forwards link to its dashboard (\`<AUTH_ISSUER>/dashboard/projects/<account id>\`); unset = no link |
@@ -641,11 +658,11 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | SIGNUP_MODE, SIGNUP_TOKEN, ADMIN_TOKEN | var/secrets | open / token / closed signup; ADMIN_TOKEN is also the x-admin-token for auto_configure/force and the fallback key for ownership challenges |
 | ENCRYPTION_KEY | secret | 32-byte base64; seals webhook secrets at rest and keys domain ownership challenges (without it and ADMIN_TOKEN, no custom domains) |
 | CF_API_TOKEN, CF_ACCOUNT_ID | secrets | optional; enable auto_configure for custom domains (operator only) |
-| SHARED_SEND_POLICY | var | optional; \`reply_only\` = shared-domain inboxes only write to addresses that emailed them with auth.verdict pass (not list/bulk/auto mail) |
+| SHARED_SEND_POLICY | var | optional; \`reply_only\` = shared-domain inboxes (every shared domain) only write to addresses that emailed them with auth.verdict pass (not list/bulk/auto mail) |
 | SHARED_RETENTION_DAYS | var | optional; shared-domain mail older than this is deleted hourly |
 | MAX_INBOXES_PER_ACCOUNT | var | optional; inboxes per account |
 | MAX_INBOX_CREATES_PER_DAY, MAX_INBOX_DELETES_PER_DAY | var | optional; inbox creations / API deletions per account per UTC day |
-| EXTRA_RESERVED_USERNAMES | var | optional; comma-separated usernames reserved on the shared domain on top of the built-in role names (your brand names); inboxes that already have one are listed, never deleted: the cron logs \`mail.reserved_conflicts\` when the list changes, and \`GET /v1/admin/reserved-inboxes?limit=\` (any key plus \`x-admin-token\`) lists them |
+| EXTRA_RESERVED_USERNAMES | var | optional; comma-separated usernames reserved on the shared domains on top of the built-in role names (your brand names); inboxes that already have one are listed, never deleted: the cron logs \`mail.reserved_conflicts\` when the list changes, and \`GET /v1/admin/reserved-inboxes?limit=\` (any key plus \`x-admin-token\`) lists them |
 | MAX_MESSAGES_PER_INBOX | var | optional; inbound messages an inbox holds (beyond it, the dominant sender's oldest mail is evicted) |
 | MAX_INBOUND_PER_ACCOUNT_PER_DAY | var | optional; inbound messages per account per UTC day (more are rejected at SMTP time) |
 | MAX_INBOUND_PER_SENDER_PER_DAY | var | optional; inbound messages per sender per inbox per UTC day (more from that sender are rejected) |

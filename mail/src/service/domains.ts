@@ -3,7 +3,7 @@ import type { AppEnv } from "../env";
 import { normalizeDomain } from "../lib/address";
 import { type AutoConfigReport, type Fetcher, autoConfigure } from "../lib/cloudflare-api";
 import { type DnsRecord, type DomainCheck, buildDomainRecords, checkDomainDns, ownershipRecord, zoneFile } from "../lib/dns";
-import { deleteInbox, getInboxRow, sharedDomain } from "./inboxes";
+import { deleteInbox, getInboxRow, sharedDomain, sharedDomainSends, sharedDomains } from "./inboxes";
 import { emitEvent } from "./webhooks";
 
 /**
@@ -225,9 +225,9 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
       "Pass a bare hostname such as example.com or mail.example.com (no scheme, no path).",
     );
   const shared = sharedDomain(env);
-  if (d === shared || d.endsWith(`.${shared}`)) {
+  if (sharedDomains(env).some((s) => d === s || d.endsWith(`.${s}`))) {
     throw badRequest(
-      `${d} is the shared domain (or under it).`,
+      `${d} is a shared domain of this service (or under one).`,
       `Every account can already use ${shared}: POST /v1/inboxes {"username":"..."}.`,
     );
   }
@@ -316,6 +316,21 @@ export async function addDomain(env: AppEnv, accountId: string, input: AddDomain
   };
 }
 
+/** A shared domain as GET /v1/domains lists it. `sending` "pending": not onboarded to Email Sending yet. */
+function sharedDomainJson(env: AppEnv, domain: string) {
+  const primary = domain === sharedDomain(env);
+  const sends = sharedDomainSends(env, domain);
+  return {
+    domain,
+    new_inboxes: primary,
+    receiving: "verified",
+    sending: sends ? "verified" : "pending",
+    note: primary
+      ? `Operator-managed; every account can create inboxes on it.${sends ? "" : " Sending to outside addresses isn't set up yet (503 domain_not_onboarded); receiving and mail between this account's own inboxes work."}`
+      : `Operator-managed; inboxes already on it keep working, new ones go on ${sharedDomain(env)}.${sends ? "" : " Sending to outside addresses from it is off (503 domain_not_onboarded)."}`,
+  };
+}
+
 export async function listDomains(env: AppEnv, accountId: string) {
   const { results } = await env.DB.prepare("SELECT * FROM domains WHERE account_id = ? ORDER BY created_at DESC")
     .bind(accountId)
@@ -323,12 +338,9 @@ export async function listDomains(env: AppEnv, accountId: string) {
   const domains = await Promise.all(results.map(async (r) => domainJson(r, await challengeOrNull(env, accountId, r.domain))));
   return {
     domains,
-    shared_domain: {
-      domain: sharedDomain(env),
-      receiving: "verified",
-      sending: "verified",
-      note: "Operator-managed; every account can create inboxes on it.",
-    },
+    shared_domain: sharedDomainJson(env, sharedDomain(env)),
+    // Every shared domain, the one new inboxes go to first. Inboxes on the others keep working.
+    shared_domains: sharedDomains(env).map((d) => sharedDomainJson(env, d)),
     auto_configure_available: canAutoConfigure(env),
   };
 }

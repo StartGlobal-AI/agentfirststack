@@ -9,7 +9,12 @@ import { FRAMEWORKS } from "./service/install";
 import { ALERT_DEFAULTS, ALERT_TYPES } from "./lib/alerts";
 
 /** GET /llms.txt: the whole manual, as markdown. Keep in step with every route and MCP tool. */
-export function llmsTxt(base: string): string {
+export function llmsTxt(base: string, userContent: string | null = null): string {
+  // Public dashboards live on the user-content host when the deployment has one (routes/share.ts).
+  const share = userContent ? `${userContent}/a` : "/share";
+  const moved = userContent
+    ? ` (on ${userContent}, a domain of its own that serves only these dashboards; a link's old ${base}/share/:token URL answers 301 to it while the link is valid, and /share/:token/data here keeps answering)`
+    : "";
   return `# AgentFirstStack Analytics
 
 > Cookieless web analytics an agent can set up in two requests. Server-side enrichment (country,
@@ -224,9 +229,9 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | PATCH | /v1/sites/:id/reports/:report_id | update |
 | DELETE | /v1/sites/:id/reports/:report_id | delete |
 | POST | /v1/sites/:id/reports/:report_id/send | send now |
-| GET | /share/:token | public dashboard (HTML, no auth) |
-| GET | /share/:token/data?period= | the dashboard's JSON (aggregates only; x-share-password header for protected links) |
-| POST | /share/:token/unlock | the password form of a protected link (sets a 12-hour cookie) |
+| GET | ${share}/:token | public dashboard (HTML, no auth; the link's \`url\`)${moved} |
+| GET | ${share}/:token/data?period= | the dashboard's JSON (aggregates only; x-share-password header for protected links) |
+| POST | ${share}/:token/unlock | the password form of a protected link (sets a 12-hour cookie on that host, for that link's path only) |
 | GET | /v1/fx/rates?date=&base= | the ECB reference rates conversion uses for a day |
 | GET | /s.js, /<prefix>/s.js | tracker |
 | POST | /e, /<prefix>/e | browser collection |
@@ -905,6 +910,7 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H "content-type: application/
 | Var / secret | |
 |---|---|
 | PUBLIC_BASE_URL | var; URL used in snippets and responses (default: request origin) |
+| USER_CONTENT_BASE_URL | optional var: origin of a domain of its own for public dashboards (\`<it>/a/<token>\`; that host serves nothing else; old /share/ URLs answer 301 there). Unset = /share/ on this host |
 | SIGNUP_MODE | open (default) \\| token (needs SIGNUP_TOKEN) \\| closed (ADMIN_TOKEN only) |
 | SIGNUP_TOKEN, ADMIN_TOKEN | secrets |
 | SALT_SECRET | secret, required: derives the daily visitor salt and each site's proxy key |

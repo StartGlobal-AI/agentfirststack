@@ -6,7 +6,9 @@ import { PERIODS } from "./lib/time";
 import { FRAMEWORKS } from "./service/install";
 
 /** GET /llms.txt: the whole manual, as markdown. Keep in step with every route and MCP tool. */
-export function llmsTxt(base: string): string {
+export function llmsTxt(base: string, userContent: string | null = null): string {
+  // Share links live on the user-content host when the deployment has one (routes/public.ts).
+  const play = userContent ? `${userContent}/r` : `${base}/play`;
   const W = FRUSTRATION_WEIGHTS;
   return `# AgentFirstStack Replay
 
@@ -393,7 +395,7 @@ curl -s -X POST $BASE/v1/webhooks/wh_.../test -H "Authorization: Bearer $KEY"   
 - POST /v1/sites/:id/links \`{ session_id, expires_in?, start_ms?, end_ms?, note? }\` (seconds, 60..${LIMITS.LINK_SECONDS_MAX}, default ${DEFAULTS.LINK_SECONDS}) -> 201 \`{ link: { id, url, expires_at, clip?, ... } }\`. A clip (\`start_ms\` / \`end_ms\`, ms since the session started) opens the player at its start, pauses at its end, lists only its window's timeline and serves only the chunks of that window (from the last full DOM snapshot before it); \`note\` is shown above the player. The URL is shown once (only its SHA-256 is stored); anyone with it can watch that one session until it expires or is revoked. 403 domain_not_verified for unverified sites, 403 quota_exceeded past MAX_LINKS_PER_SITE active links, 403 temporary_credential for a connected app's OAuth access token (a link can outlive it by 30 days: use the project's own API key; revoking works with either), 403 capability_paused while the project's share links are paused after an abuse report or signal (the hint says why; existing links then show a paused page instead of the recording; only the operator lifts it). A link serves at most MAX_LINK_BYTES_PER_DAY (default ${DEFAULTS.LINK_BYTES_PER_DAY}) recorded bytes per UTC day (429 after), only chunks ingest accepted with rrweb events.
 - GET /v1/sites/:id/links \`?session_id=\` -> \`{ links: [{id, session_id, created_at, expires_at, revoked_at, active, views, last_viewed_at}] }\`
 - DELETE /v1/sites/:id/links/:link_id -> \`{ revoked }\`
-- Public: GET /play/<token> (rrweb-player: skip inactivity, speed, event timeline with signals and errors, click to seek; CSP script-src 'self', images and styles only from the site's own hosts, no inline script, frame-ancestors 'none', noindex, a "Report abuse" link to the platform's /report-abuse), /play/<token>/data, /play/<token>/chunks/<seq>. A site that is no longer verified shows an "unverified site" banner, no domain and no replay. Links of suspended accounts stop working.
+- Public: GET ${play}/<token> (the link's \`url\`; rrweb-player: skip inactivity, speed, event timeline with signals and errors, click to seek; CSP script-src 'self', images and styles only from the site's own hosts, no inline script, frame-ancestors 'none', noindex, a "Report abuse" link to the platform's /report-abuse), ${play}/<token>/data, ${play}/<token>/chunks/<seq>.${userContent ? ` The player has a domain of its own (${userContent}: it serves the player and nothing else, and shares no cookie or origin with this service); a link's old ${base}/play/<token> URL answers 301 to it while the link is valid.` : ""} A site that is no longer verified shows an "unverified site" banner, no domain and no replay. Links of suspended accounts stop working.
 
 ## MCP tools (/mcp)
 

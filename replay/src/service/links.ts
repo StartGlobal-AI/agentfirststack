@@ -11,6 +11,7 @@ import {
   randomString,
   sha256Hex,
   type Standing,
+  userContentOrigin,
 } from "@afs/shared";
 import { type Bindings, isDev } from "../env";
 import { cap, DEFAULTS } from "../lib/limits";
@@ -137,7 +138,7 @@ export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
     )
     .run();
   return {
-    link: { ...linkJson(row), url: `${ctx.baseUrl}/play/${token}` },
+    link: { ...linkJson(row), url: playerUrl(ctx.env, ctx.baseUrl, token) },
     existing: false,
     note: `Store the url now; it is not shown again. Anyone with it can watch this one session${row.start_ms != null || row.end_ms != null ? " (only the clip's window is served)" : ""} (masked as recorded) until it expires or is revoked. A new call makes a new link.`,
     next_steps: [`Revoke: DELETE /v1/sites/${site.id}/links/${row.id} (MCP revoke_replay_link).`],
@@ -166,6 +167,15 @@ export async function revokeLink(ctx: Ctx, siteId: string, linkId: string) {
 }
 
 // ---------------------------------------------------------------------------------- public player
+
+/**
+ * A share link's URL: <USER_CONTENT_BASE_URL>/r/<token> when the deployment has a user-content
+ * host (routes/public.ts), else <PUBLIC_BASE_URL>/play/<token> as always.
+ */
+export function playerUrl(env: Bindings, baseUrl: string, token: string): string {
+  const uc = userContentOrigin(env);
+  return uc ? `${uc}/r/${token}` : `${baseUrl}/play/${token}`;
+}
 
 export interface ResolvedLink {
   link: LinkRow;

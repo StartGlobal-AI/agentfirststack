@@ -1,4 +1,13 @@
-import { accountRoutes, onError, onNotFound, protectedResourceRoutes, publicBaseUrl, requireAuth } from "@afs/shared";
+import {
+  accountRoutes,
+  onError,
+  onNotFound,
+  onUserContentHost,
+  protectedResourceRoutes,
+  publicBaseUrl,
+  requireAuth,
+  userContentOrigin,
+} from "@afs/shared";
 import { handleMcp } from "@afs/shared/mcp";
 import { Hono } from "hono";
 import { type AppEnv, type Bindings, VERSION } from "./env";
@@ -6,7 +15,7 @@ import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { accountPurgeRoutes } from "./routes/account";
 import { ingestRoutes } from "./routes/ingest";
-import { shareRoutes } from "./routes/share";
+import { shareRoutes, userContentRoutes } from "./routes/share";
 import { webhookRoutes } from "./routes/webhooks";
 import { siteRoutes } from "./routes/sites";
 import { usageRoutes } from "./routes/usage";
@@ -21,6 +30,18 @@ export { SiteDO } from "./do/site-do";
 const app = new Hono<AppEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+// The user-content host (USER_CONTENT_BASE_URL) serves the public dashboards and nothing else: no
+// API, MCP, tracker or collection on the origin that shows visitor-sent content.
+app.use("*", async (c, next) => {
+  if (!onUserContentHost(c.env, c.req.raw)) return next();
+  let ctx: Parameters<typeof userContentRoutes.fetch>[2];
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    /* no execution context (tests calling app.request) */
+  }
+  return userContentRoutes.fetch(c.req.raw, c.env, ctx);
+});
 // RFC 9728 metadata naming the platform's OAuth server (AUTH_ISSUER), for MCP connectors.
 app.route("/", protectedResourceRoutes({ name: "AgentFirstStack Analytics" }));
 
@@ -38,7 +59,9 @@ app.get("/", (c) => {
     tracker: `${base}/s.js`,
   });
 });
-app.get("/llms.txt", (c) => c.body(llmsTxt(publicBaseUrl(c)), 200, { "content-type": "text/markdown; charset=utf-8" }));
+app.get("/llms.txt", (c) =>
+  c.body(llmsTxt(publicBaseUrl(c), userContentOrigin(c.env)), 200, { "content-type": "text/markdown; charset=utf-8" }),
+);
 app.route("/", shareRoutes);
 // Public, authenticated by the provider's signature (Stripe-Signature), not by an API key.
 app.route("/", webhookRoutes);

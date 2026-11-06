@@ -155,13 +155,19 @@ async function liveConfig(x: Ctx, containerId: string): Promise<LiveConfig | nul
 async function mailTest(x: Ctx): Promise<SetupTest> {
   const M = serviceUrl(x.base, "mail");
   const base = { id: "mail.roundtrip", service: "mail" as const, title: "Test email: sent, received and read back" };
-  const res = await x.call<{ inboxes?: { id: string; address: string; domain?: string }[]; shared_domain?: string }>("mail", "/v1/inboxes");
+  const res = await x.call<{
+    inboxes?: { id: string; address: string; domain?: string }[];
+    shared_domain?: string;
+    shared_domains?: string[];
+  }>("mail", "/v1/inboxes");
   if (!res.ok) return { ...base, status: "failed", detail: `The mail service didn't answer (${res.status}).` };
   const inboxes = res.json?.inboxes ?? [];
   if (!inboxes.length)
     return { ...base, status: "skipped", detail: "The project has no inbox.", fix: `POST ${M}/v1/inboxes {"username":"example-signups"}` };
-  // A shared-domain inbox can always send; a custom domain needs its sending records verified.
-  const inbox = inboxes.find((i) => i.domain && i.domain === res.json?.shared_domain) ?? inboxes[0]!;
+  // A shared-domain inbox can always send to itself; a custom domain needs its sending records
+  // verified. Every shared domain counts (inboxes made before a move to a new shared domain too).
+  const shared = res.json?.shared_domains ?? (res.json?.shared_domain ? [res.json.shared_domain] : []);
+  const inbox = inboxes.find((i) => i.domain && shared.includes(i.domain)) ?? inboxes[0]!;
   const [user, dom] = inbox.address.split("@");
   const to = `${user}+${TEST_TAG}@${dom}`;
   const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0]! % 900000));

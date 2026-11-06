@@ -34,6 +34,11 @@ export interface Bindings extends AuthBindings {
   INGEST_SITE_IP_LIMITER?: RateLimit;
   INGEST_SITE_LIMITER?: RateLimit;
   PUBLIC_BASE_URL?: string;
+  /**
+   * Optional origin of the user-content host (e.g. https://afsusercontent.com): share links point
+   * at <it>/r/<token>, and that host serves only the player (routes/public.ts). Unset = /play/ here.
+   */
+  USER_CONTENT_BASE_URL?: string;
   SIGNUP_MODE?: string;
   SIGNUP_TOKEN?: string;
   ADMIN_TOKEN?: string;

@@ -12,7 +12,7 @@ Sections marked (v2) are deliberately not built yet. `GET /llms.txt` is the full
 ```sh
 curl -X POST $BASE/v1/signup                         # key + a ready default inbox
 curl -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -d '{"username":"acme-signups"}'
-#   -> { "inbox": { "id": "inb_...", "address": "acme-signups@MAIL_DOMAIN" }, ... }
+#   -> { "inbox": { "id": "inb_...", "address": "acme-signups@<shared domain>" }, ... }   (SHARED_INBOX_DOMAIN, else MAIL_DOMAIN)
 # ... agent fills github.com's signup form with that address; always pass from=<that site's domain> ...
 curl "$BASE/v1/inboxes/$INBOX/latest-code?from=github.com&timeout=60" -H "Authorization: Bearer $KEY"
 #   -> { "sender_domain": "github.com", "code": "482913", "link": "https://...", "link_kind": "verify", ... }
@@ -141,7 +141,7 @@ bytes per sender per day, stored bytes per sender).
   `text_truncated: true`; codes and links are still extracted from the whole message.
 - **Addresses**: a shared-domain address is never handed to another account. It may be the
   recovery email of accounts elsewhere (whether or not mail has reached it yet), and whoever gets
-  it could take those accounts over with password resets. When an inbox on `MAIL_DOMAIN` is deleted
+  it could take those accounts over with password resets. When an inbox on a shared domain is deleted
   (by its account, by ttl expiry, or with its project) its address goes into `address_tombstones`
   for good (the address, the account that may create it again, and when; never pruned; older
   rows were made permanent by migration 0016). Only that account may create it again. For anyone
@@ -151,10 +151,14 @@ bytes per sender per day, stored bytes per sender).
   `MAX_INBOX_DELETES_PER_DAY` (API deletes; ttl expiry does not count) cap the churn per account
   (429 `daily_limit` with a hint; a create that returns an address you already own is not
   counted). Addresses on an account's own domain are not tombstoned: its domain owner controls them.
+  On the shared domains a username is one name: held (or once held) by an account on one of them
+  (`MAIL_DOMAIN`, `SHARED_INBOX_DOMAIN`), it is that account's on all of them, so a second shared
+  domain frees no retired address and gives nobody a lookalike of another account's address (the
+  same 409, from the same one query over every shared domain).
   The tombstone keeps the plain address rather than a keyed hash: a hash would depend on
   `ENCRYPTION_KEY` (optional, and rotating it would free every retired address at once) and could
   not be computed for the existing rows in a SQL migration.
-- **Reserved usernames** (`src/lib/address.ts`): on the shared domain, CA-validation and RFC 2142
+- **Reserved usernames** (`src/lib/address.ts`): on the shared domains, CA-validation and RFC 2142
   names (admin, postmaster, hostmaster, webmaster, abuse, security, ...), mail-system names
   (mailer-daemon, bounces, dmarc, noreply variants, ...) and the names a platform uses for itself
   (support, billing, legal, privacy, conduct, notifications, alerts, hello, help, contact, team,
@@ -162,7 +166,7 @@ bytes per sender per day, stored bytes per sender).
   ...) are refused (400), plus `EXTRA_RESERVED_USERNAMES` (the deployment's brand names). "." "_"
   and "-" are ignored when comparing (`no.reply` = `noreply`). Inboxes created before a name became
   reserved keep working and creating them again returns them (rule 7); nobody else can create
-  them. They are found, never deleted: the hourly cron re-scans the shared domain's inboxes when
+  them. They are found, never deleted: the hourly cron re-scans the shared domains' inboxes when
   the reserved list changed (its fingerprint is in `cron_state`) and logs `mail.reserved_conflicts`,
   and `GET /v1/admin/reserved-inboxes?limit=` (any key plus `x-admin-token` = `ADMIN_TOKEN`) lists
   them on demand (`src/service/reserved.ts`).
@@ -261,7 +265,11 @@ bytes per sender per day, stored bytes per sender).
   differs from the id the binding returned). Else a new thread. Fresh mail never joins a thread by
   subject alone.
 - **Sending**: Cloudflare Email Service via the `send_email` binding, always from the inbox's own
-  address (display name from the inbox). Allowed from-domains: the shared `MAIL_DOMAIN`, or a
+  address (display name from the inbox). Allowed from-domains: a shared domain (`MAIL_DOMAIN`,
+  `SHARED_INBOX_DOMAIN`; to outside recipients only one listed in `SHARED_SENDING_DOMAINS`, which
+  defaults to `MAIL_DOMAIN`: any other answers 503 `domain_not_onboarded` before anything is sent
+  or counted, while mail to the account's own inboxes is still delivered internally and forwards
+  to its members wait in the queue, logged as `forward.cannot_send`), or a
   custom domain the account owns (ownership challenge passed; else 403 `ownership_not_verified`)
   whose sending records passed `verify` (else 403 `domain_not_verified`). With
   `SHARED_SEND_POLICY=reply_only`, a shared-domain inbox may only send to addresses that have
@@ -283,7 +291,7 @@ bytes per sender per day, stored bytes per sender).
   error codes (`E_SENDER_NOT_VERIFIED`, `E_RECIPIENT_NOT_ALLOWED`, ...) map to errors with hints.
   Raw MIME is not available for sent mail (Email Service composes it); its stored text is capped at
   64 KB like inbound mail.
-- **Domains**: the operator's shared `MAIL_DOMAIN` works for every account out of the box. An
+- **Domains**: the operator's shared domain works for every account out of the box. An
   account can add its own domain: the response lists the exact DNS records, first the ownership
   challenge, then receiving (MX `route1/2/3.mx.cloudflare.net`, SPF
   `v=spf1 include:_spf.mx.cloudflare.net ~all`, DKIM `cf2024-1._domainkey`) and sending (MX/SPF on
@@ -525,6 +533,8 @@ served with a strict CSP.
 | `PUBLIC_BASE_URL` | var; URL used in responses and llms.txt (default: request origin). Its registrable domain and subdomains, and `AUTH_ISSUER`'s, are off limits to webhooks |
 | `DEV_MODE` | var; `"true"` only for local development (`.dev.vars`): webhooks may use `http://localhost`. Template default `"false"` |
 | `MAIL_DOMAIN` | var; shared domain for instant inboxes (placeholder `mail.example.com`; see operator setup) |
+| `SHARED_INBOX_DOMAIN` | optional var; a second shared domain that new inboxes go to (see "A second shared domain"). `MAIL_DOMAIN` stays shared: its inboxes keep working, and every shared-domain rule covers both. Unset = `MAIL_DOMAIN` only |
+| `SHARED_SENDING_DOMAINS` | optional var, comma-separated; the shared domains onboarded to Email Sending (unset = `MAIL_DOMAIN` only). Mail to outside addresses from any other shared domain: 503 `domain_not_onboarded`; `GET /v1/domains` shows it as `sending: "pending"` |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | `@afs/shared` auth (`SIGNUP_MODE` is a var, the tokens are secrets). `ADMIN_TOKEN` also authorises `auto_configure`/`force` (request header `x-admin-token`) and keys domain ownership challenges when `ENCRYPTION_KEY` is unset |
 | `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed; forwards to the owner also link to `<AUTH_ISSUER>/dashboard/projects/<account id>`, unset = no link), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SEND_DAILY_LIMIT` | var, default 200 recipients per account per UTC day |
@@ -538,7 +548,7 @@ served with a strict CSP.
 | `MAX_INBOXES_PER_ACCOUNT` | optional var; cap on inboxes per account (unset = none) |
 | `MAX_INBOX_CREATES_PER_DAY` | optional var; inbox creations per account per UTC day (unset = no cap) |
 | `MAX_INBOX_DELETES_PER_DAY` | optional var; inbox deletions through the API per account per UTC day (unset = no cap) |
-| `EXTRA_RESERVED_USERNAMES` | optional var; comma-separated usernames nobody may take on the shared domain, on top of the built-in role names (put the deployment's brand names here). Inboxes that already have one are listed (cron log, `GET /v1/admin/reserved-inboxes`), never deleted. (`ADDRESS_TOMBSTONE_DAYS` is gone: deleted addresses are retired for good) |
+| `EXTRA_RESERVED_USERNAMES` | optional var; comma-separated usernames nobody may take on the shared domains, on top of the built-in role names (put the deployment's brand names here). Inboxes that already have one are listed (cron log, `GET /v1/admin/reserved-inboxes`), never deleted. (`ADDRESS_TOMBSTONE_DAYS` is gone: deleted addresses are retired for good) |
 | `MAX_MESSAGES_PER_INBOX` | optional var; inbound messages an inbox holds; beyond it the oldest mail of the sender holding the most is evicted (unset = no cap) |
 | `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | optional var; inbound messages an account may receive per UTC day across its inboxes, more are rejected at SMTP time; one sender gets at most half of it (unset = no cap) |
 | `MAX_INBOUND_PER_SENDER_PER_DAY` | optional var; inbound messages one sender key may send one inbox per UTC day, more from it are rejected (unset = no cap) |
@@ -623,6 +633,32 @@ runtime semantics as dev and production.
    address you own. Run `bash scripts/smoke.sh` only against `wrangler dev` (it uses the local
    email endpoint).
 
+## A second shared domain (`SHARED_INBOX_DOMAIN`)
+
+To give shared inboxes a domain of their own (so their reputation is not the main domain's), the
+operator adds a second shared domain. New inboxes (signup's default one too) go on it; every inbox
+on `MAIL_DOMAIN` keeps receiving, sending (under `reply_only`), forwarding, waiting and expiring as
+before. An explicit `"domain": "<MAIL_DOMAIN>"` still returns (or recreates) an address the account
+holds or held there, and answers 400 `legacy_shared_domain` for any other address. Both domains are
+shared for every rule: reserved names, `reply_only`, `SEND_DAILY_LIMIT`, `SHARED_RETENTION_DAYS`,
+retired addresses (one name across both), no catch-all, not addable as a custom domain.
+
+1. Its zone (an apex in the same account): Email Routing on, catch-all -> this Worker (as for
+   `MAIL_DOMAIN`, step 3 above). `pnpm afs email <profile>` does both domains when the profile has
+   `shared_inbox_domain`.
+2. Email Sending: onboard the domain (Compute > Email Service > Email Sending > Onboard Domain, or
+   `pnpm afs email`); it publishes MX + SPF on `cf-bounce.<domain>`, DKIM `cf-bounce._domainkey`,
+   and wants a DMARC record on `_dmarc.<domain>`. `wrangler email sending dns get <domain>` shows
+   them; wait until they verify.
+3. Set `SHARED_INBOX_DOMAIN` (profile `shared_inbox_domain`) and deploy: new inboxes go there and
+   receive at once; sending from them to outside addresses answers 503 `domain_not_onboarded`
+   until step 4 (receiving, codes and mail to the account's own inboxes work meanwhile).
+4. Once Email Sending is verified: `SHARED_SENDING_DOMAINS=<MAIL_DOMAIN>,<SHARED_INBOX_DOMAIN>` and
+   deploy. With delivery status on, add the domain's event subscription (below).
+
+Once inboxes exist on it, keep `SHARED_INBOX_DOMAIN` set (and `MAIL_DOMAIN` as it was): only those
+two are shared, so the inboxes of a domain taken out of both stop receiving and sending.
+
 ## Delivery status (Email Sending events)
 
 Off until the operator sets it up; without it, sent mail shows `status: "sent"` only and
@@ -633,7 +669,7 @@ Off until the operator sets it up; without it, sent mail shows `status: "sent"` 
    or a dedicated one (`wrangler queues create <prefix>-mail-email-events`, plus a second consumer
    entry in the deploy config; note `pnpm afs config` currently maps every mail consumer onto the
    webhooks queue, so a dedicated queue needs that tool to learn a second name).
-2. An event subscription per sending domain (the shared `MAIL_DOMAIN`, and each custom domain that
+2. An event subscription per sending domain (each shared domain that sends: `MAIL_DOMAIN`, `SHARED_INBOX_DOMAIN`; and each custom domain that
    sends): dashboard Queues > the queue > Subscriptions > Subscribe to events > source Email
    Sending > the sending domain > events `message.delivered`, `message.deferred`,
    `message.bounced`, `message.failed`, `message.rejected`, `message.complained` (or

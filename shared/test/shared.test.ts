@@ -11,10 +11,12 @@ import {
   extractKey,
   hmacSha256Hex,
   newId,
+  onUserContentHost,
   parse,
   randomString,
   sha256Hex,
   timingSafeEqual,
+  userContentOrigin,
 } from "../src/index";
 
 describe("ids", () => {
@@ -131,5 +133,25 @@ describe("cleanName", () => {
     expect(cleanName("abcdef", 3)).toBe("abc");
     // Never cuts a surrogate pair in half.
     expect(cleanName("ab\u{1F600}cd", 3)).toBe("ab\u{1F600}");
+  });
+});
+
+describe("userContentOrigin", () => {
+  it("the origin of USER_CONTENT_BASE_URL; off when unset, not http(s), or the app's own host", () => {
+    expect(userContentOrigin({ USER_CONTENT_BASE_URL: " https://afsusercontent.com/ignored/path " })).toBe("https://afsusercontent.com");
+    for (const v of [undefined, "", "  ", "not a url", "ftp://afsusercontent.com"])
+      expect(userContentOrigin({ USER_CONTENT_BASE_URL: v })).toBeNull();
+    expect(
+      userContentOrigin({ USER_CONTENT_BASE_URL: "https://replay.example.com", PUBLIC_BASE_URL: "https://replay.example.com" }),
+    ).toBeNull();
+    expect(userContentOrigin(undefined)).toBeNull();
+  });
+
+  it("onUserContentHost matches the request's host only", () => {
+    const env = { USER_CONTENT_BASE_URL: "https://afsusercontent.com", PUBLIC_BASE_URL: "https://replay.example.com" };
+    expect(onUserContentHost(env, new Request("https://afsusercontent.com/r/rpt_x"))).toBe(true);
+    expect(onUserContentHost(env, new Request("https://replay.example.com/play/rpt_x"))).toBe(false);
+    expect(onUserContentHost(env, new Request("https://evil.afsusercontent.com/r/rpt_x"))).toBe(false);
+    expect(onUserContentHost({}, new Request("https://afsusercontent.com/r/rpt_x"))).toBe(false);
   });
 });

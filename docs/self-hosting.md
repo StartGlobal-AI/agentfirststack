@@ -10,7 +10,9 @@ agentfirststack.com, so this path is exercised on every release.
   recipients need it; everything else runs on Free.
 - A domain whose DNS is on Cloudflare (a zone in that account). The landing page and signup go on
   the apex, the services on `analytics.`, `tags.`, `mail.` and `replay.` subdomains, and inboxes
-  on the apex (`anything@yourdomain`) unless you set a separate `mail_domain`.
+  on the apex (`anything@yourdomain`) unless you set a separate `mail_domain`. Optional extra
+  zones: a [user-content domain](#a-user-content-domain-optional) for share pages and a
+  [second shared inbox domain](#a-second-shared-inbox-domain-optional).
 - Node 22 or newer, pnpm 10 (`corepack enable`), and `wrangler login` done once.
 
 ## Deploy in four commands
@@ -240,6 +242,45 @@ both when the hostname is removed or its project is erased. The site Worker forw
 `<hostname>/_a/*`, `/_t/*` and `/_r/*` to the services over their bindings with the visitor's IP
 and geo and `INTERNAL_TOKEN` (so it must be set on every Worker); anything else on such a host is
 a 404.
+
+## A user-content domain (optional)
+
+Replay's share player and analytics' public dashboards show content your customers control
+(recorded pages, visitor-sent paths and referrers). Give them a domain of their own, so nothing
+there shares a cookie or an origin with your platform's domain (and a phishing report against a
+share link isn't a report against your main domain):
+
+1. A second zone in the same account, e.g. `usercontent-example.com` (a domain of its own, not a
+   subdomain of yours).
+2. On it, a DNS record for the apex: `AAAA @ 100::`, **proxied** (originless: the Workers answer).
+   Turn on SSL/TLS > Edge Certificates > Always Use HTTPS.
+3. In your profile, `"user_content_domain": "usercontent-example.com"`, then
+   `pnpm afs deploy mystack analytics replay`. `pnpm afs config` adds the Worker routes
+   `<domain>/a/*` (analytics) and `<domain>/r/*` (replay) to their deploy configs and sets their
+   `USER_CONTENT_BASE_URL` to `https://<domain>`. Don't add the routes in the dashboard instead:
+   `wrangler deploy` replaces a Worker's routes with the ones in its config.
+4. `pnpm afs check mystack` checks that both paths reach their Worker and that the host serves no API.
+
+New share links then point there; a valid old link (`replay.<domain>/play/...`,
+`analytics.<domain>/share/...`) answers 301 to its new URL. Those Workers serve only the share pages
+on that host. Without the field everything stays on the service hosts.
+
+## A second shared inbox domain (optional)
+
+Inboxes on your apex share its email reputation. To move new shared inboxes to a domain of their
+own (inboxes already on `mail_domain` keep working exactly as before):
+
+1. A zone for it in the same account (its apex). `"shared_inbox_domain": "inbox-example.com"` in
+   your profile.
+2. `CLOUDFLARE_API_TOKEN=<token> pnpm afs email mystack` (the token also needs those permissions
+   on this zone): Email Routing on and the catch-all to the mail Worker, and Email Sending
+   onboarded, for both shared domains. Or in the dashboard: Email Routing > catch-all "Send to a
+   Worker: <prefix>-mail"; Email Sending > Onboard Domain.
+3. `pnpm afs deploy mystack mail`. New inboxes go on the new domain and receive at once. Sending
+   from them to outside addresses answers `503 domain_not_onboarded` until step 4.
+4. Once `wrangler email sending dns get inbox-example.com` shows the sending records verified, set
+   `vars.mail.SHARED_SENDING_DOMAINS` to both domains (`"example.com,inbox-example.com"`) and deploy
+   mail again. With delivery status on, add the new domain's event subscription (mail README).
 
 ## Remove a deployment
 

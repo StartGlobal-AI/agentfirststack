@@ -1,6 +1,7 @@
 import { ApiError, badRequest, conflict, newId, notFound } from "@afs/shared";
 import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { checkUsername, normalizeDomain, randomUsername } from "../lib/address";
+import { sharedDomainsOf } from "../lib/shared-domains";
 import { DEFAULT_FORWARD, type ForwardInput, mergeForward } from "../lib/forwarding";
 import { headerSafe } from "../lib/headers";
 import { assertActive, dailyLimitError, maxBlobBytes, refundDaily, reserveDaily, storedBlobBytes } from "./budgets";
@@ -22,21 +23,63 @@ function cleanDisplayName(v: string | null | undefined): string | null {
   return headerSafe(v) || null;
 }
 
+/** The shared domain new inboxes go to (SHARED_INBOX_DOMAIN, else MAIL_DOMAIN). */
 export function sharedDomain(env: AppEnv): string {
-  return (env.MAIL_DOMAIN || "mail.example.com").toLowerCase();
+  return sharedDomainsOf(env).primary;
 }
 
-/** The domain an account may create an inbox on: the shared MAIL_DOMAIN or one of its own. */
+/** Every shared domain, the one new inboxes go to first (src/lib/shared-domains.ts). */
+export function sharedDomains(env: AppEnv): string[] {
+  return sharedDomainsOf(env).all;
+}
+
+/** Is this one of the operator's shared domains (the current one or MAIL_DOMAIN after a move)? */
+export function isSharedDomain(env: AppEnv, domain: string): boolean {
+  return sharedDomainsOf(env).all.includes(domain.toLowerCase());
+}
+
+/** May mail from this shared domain go to outside addresses (onboarded to Email Sending)? */
+export function sharedDomainSends(env: AppEnv, domain: string): boolean {
+  return sharedDomainsOf(env).sending.includes(domain.toLowerCase());
+}
+
+/** A shared domain that is not onboarded to Email Sending: refused before Email Service sees the mail. */
+export const domainNotOnboarded = (domain: string) =>
+  new ApiError(
+    503,
+    "domain_not_onboarded",
+    `Sending from ${domain} to outside addresses isn't available yet: the operator hasn't finished setting the domain up for outgoing mail (Cloudflare Email Sending).`,
+    `Nothing was sent and nothing counted. Receiving, waiting for codes and mail to this account's own inboxes work now. Try sending later, or add your own domain (POST /v1/domains) and send from an inbox there.`,
+    { domain },
+  );
+
+/** A new address on a shared domain that new inboxes no longer go to. */
+const legacySharedDomain = (domain: string, primary: string, username?: string | null) =>
+  new ApiError(
+    400,
+    "legacy_shared_domain",
+    `New inboxes are no longer created on ${domain}; they go on ${primary}.`,
+    `Omit domain (or pass "${primary}") to create ${username ? `${username}@${primary}` : `an inbox on ${primary}`}. Inboxes already on ${domain} keep working, and an account can still recreate an address of its own there.`,
+    { domain, shared_domain: primary },
+  );
+
+/**
+ * The domain an account may create an inbox on: a shared domain or one of its own. `legacy`: a
+ * shared domain new inboxes no longer go to (createInbox only lets an account recreate its own
+ * addresses there).
+ */
 export async function resolveInboxDomain(
   env: AppEnv,
   accountId: string,
   domain?: string | null,
-): Promise<{ domain: string; shared: boolean; verified: boolean; sendOnly?: boolean }> {
-  const shared = sharedDomain(env);
+): Promise<{ domain: string; shared: boolean; verified: boolean; sendOnly?: boolean; legacy?: boolean }> {
+  const sd = sharedDomainsOf(env);
+  const shared = sd.primary;
   if (!domain) return { domain: shared, shared: true, verified: true };
   const d = normalizeDomain(domain);
   if (!d) throw badRequest(`"${domain}" is not a valid domain.`, "Pass a hostname like example.com, or omit domain to use " + shared + ".");
   if (d === shared) return { domain: shared, shared: true, verified: true };
+  if (sd.legacy.includes(d)) return { domain: d, shared: true, verified: true, legacy: true };
   const row = await env.DB.prepare(
     "SELECT receiving_verified, owner_verified_at, receiving_enabled FROM domains WHERE domain = ? AND account_id = ?",
   )
@@ -102,20 +145,26 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   /** null = the address is someone else's: taken by another account, or (shared domain) once theirs. */
   const insert = async (username: string): Promise<{ row: InboxRow; existing: boolean } | null> => {
     const address = `${username}@${dom.domain}`;
-    // One query for both, so a live address and a retired one cost the same and answer the same.
-    // Retired shared-domain addresses (address_tombstones) never lapse: see deleteInbox.
-    const found = await env.DB.prepare(
-      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address",
+    // On the shared domains a username is one name: held (or once held, address_tombstones) by an
+    // account on one of them, it is that account's on all of them. So a second shared domain frees
+    // no retired address, and nobody gets a lookalike of another account's address.
+    const candidates = dom.shared ? sharedDomains(env).map((d) => `${username}@${d}`) : [address];
+    // One query for all of them, so a live address and a retired one cost the same and answer the
+    // same. Retired shared-domain addresses never lapse: see deleteInbox.
+    const { results: found } = await env.DB.prepare(
+      "SELECT a.value AS cand, i.*, t.account_id AS tomb_account FROM json_each(?) a LEFT JOIN inboxes i ON i.address = a.value LEFT JOIN address_tombstones t ON t.address = a.value",
     )
-      .bind(address)
-      .first<InboxRow & { id: string | null; tomb_account: string | null }>();
-    if (found?.id && found.account_id === accountId) {
-      const { tomb_account: _t, ...row } = found;
+      .bind(JSON.stringify(candidates))
+      .all<InboxRow & { cand: string; id: string | null; tomb_account: string | null }>();
+    const exact = found.find((f) => f.cand === address);
+    if (exact?.id && exact.account_id === accountId) {
+      const { cand: _c, tomb_account: _t, ...row } = exact;
       return { row: row as InboxRow, existing: true };
     }
+    // A shared domain new inboxes no longer go to: only this account's own retired address there.
+    if (dom.legacy && exact?.tomb_account !== accountId) throw legacySharedDomain(dom.domain, sharedDomain(env), username);
     await noteAttempt();
-    if (found?.id) return null;
-    if (found?.tomb_account && found.tomb_account !== accountId) return null;
+    if (found.some((f) => (f.id && f.account_id !== accountId) || (f.tomb_account && f.tomb_account !== accountId))) return null;
     await assertInboxQuota(env, standing, accountId);
     // MAX_INBOX_CREATES_PER_DAY: only real creations count (not "existing": true).
     const limit = cap(env, standing, "MAX_INBOX_CREATES_PER_DAY");
@@ -195,11 +244,12 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
       // The same answer whether another account holds the address now or held it once: polling
       // this tells nobody when (or whether) an address was deleted.
       throw conflict(
-        `${input.username.trim().toLowerCase()}@${dom.domain} is taken: it belongs to another account, now or before. Addresses are never passed from one account to another.`,
+        `${input.username.trim().toLowerCase()}@${dom.domain} is taken: ${dom.shared ? "the name belongs to another account on this service's shared domains" : "it belongs to another account"}, now or before. Addresses are never passed from one account to another.`,
         "Pick another username, or omit username for a random one.",
       );
     }
   } else {
+    if (dom.legacy) throw legacySharedDomain(dom.domain, sharedDomain(env));
     for (let i = 0; i < 5 && !result; i++) result = await insert(randomUsername());
     if (!result) throw new ApiError(503, "unavailable", "Could not allocate a random address.", "Retry the request.");
   }
@@ -214,6 +264,11 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
       : dom.shared || dom.verified
         ? []
         : [`Domain ${dom.domain} has not passed the receiving DNS check yet: POST /v1/domains/${dom.domain}/verify.`]),
+    ...(dom.shared && !sharedDomainSends(env, dom.domain)
+      ? [
+          `Receiving works now. Sending from ${dom.domain} to outside addresses isn't available yet (the operator is still setting it up; a send answers 503 domain_not_onboarded): mail to this account's own inboxes works, and forwards to the project's members wait and go out once it is.`,
+        ]
+      : []),
     ...(result.existing && input.forward && JSON.stringify(kept) !== JSON.stringify(fwd)
       ? [
           `This inbox already existed, so its forward setting was not changed (it is "${kept.mode}"). PATCH /v1/inboxes/${inbox.id} {"forward":{...}} changes it.`,
@@ -267,6 +322,8 @@ export async function listInboxes(env: AppEnv, accountId: string, opts: { limit?
   return {
     inboxes: results.map((r) => inboxJson(r, ctx)),
     shared_domain: sharedDomain(env),
+    // Every shared domain, the one new inboxes go to first (inboxes on the others keep working).
+    shared_domains: sharedDomains(env),
     // Mail kept for the account (raw messages, HTML bodies, sent attachments). At the limit, new
     // mail is rejected ("Mailbox full") until old mail is deleted.
     storage: { used_bytes: used, limit_bytes: Number.isFinite(limit_bytes) ? limit_bytes : null },
@@ -355,7 +412,7 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
   // project's erasure): it may be the recovery email of accounts elsewhere, whether or not mail has
   // arrived yet, so it is never given to another account (migrations/0016). Its old account may
   // create it again. Addresses on an account's own domain are that domain owner's business.
-  const tombstone = row.domain === sharedDomain(env);
+  const tombstone = isSharedDomain(env, row.domain);
   await env.DB.batch([
     env.DB.prepare("UPDATE domains SET catch_all_inbox_id = NULL WHERE catch_all_inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM threads WHERE inbox_id = ?").bind(id),
@@ -438,9 +495,9 @@ export async function purgeOldSharedMessages(env: AppEnv, now = Date.now(), budg
   for (;;) {
     if (Date.now() >= stop) return { purged_messages: purged, more: true };
     const { results } = await env.DB.prepare(
-      "SELECT m.id, m.thread_id, m.raw_key, m.html_key FROM messages m JOIN inboxes i ON i.id = m.inbox_id WHERE i.domain = ? AND m.received_at < ? LIMIT ?",
+      "SELECT m.id, m.thread_id, m.raw_key, m.html_key FROM messages m JOIN inboxes i ON i.id = m.inbox_id WHERE i.domain IN (SELECT value FROM json_each(?)) AND m.received_at < ? LIMIT ?",
     )
-      .bind(sharedDomain(env), cutoff, PURGE_BATCH)
+      .bind(JSON.stringify(sharedDomains(env)), cutoff, PURGE_BATCH)
       .all<{ id: string; thread_id: string; raw_key: string | null; html_key: string | null }>();
     purged += await deleteMessageRows(env, results);
     if (results.length < PURGE_BATCH) return { purged_messages: purged, more: false };
@@ -475,17 +532,17 @@ export async function findInboxForRecipient(
   address: string,
   now = Date.now(),
 ): Promise<{ inbox: InboxRow; via: "address" | "catch_all" } | null> {
-  const shared = sharedDomain(env);
+  const shared = sharedDomains(env);
   const direct = await env.DB.prepare(
     `SELECT i.* FROM inboxes i WHERE i.address = ? AND (i.expires_at IS NULL OR i.expires_at > ?)
-       AND (i.domain = ? OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id AND d.owner_verified_at IS NOT NULL
+       AND (i.domain IN (SELECT value FROM json_each(?)) OR EXISTS (SELECT 1 FROM domains d WHERE d.domain = i.domain AND d.account_id = i.account_id AND d.owner_verified_at IS NOT NULL
             AND d.receiving_enabled = 1))`,
   )
-    .bind(address, now, shared)
+    .bind(address, now, JSON.stringify(shared))
     .first<InboxRow>();
   if (direct) return { inbox: direct, via: "address" };
   const domain = address.split("@")[1];
-  if (!domain || domain === shared) return null;
+  if (!domain || shared.includes(domain)) return null;
   const ca = await env.DB.prepare(
     `SELECT i.* FROM domains d JOIN inboxes i ON i.id = d.catch_all_inbox_id
      WHERE d.domain = ? AND d.owner_verified_at IS NOT NULL AND d.receiving_enabled = 1 AND i.account_id = d.account_id AND (i.expires_at IS NULL OR i.expires_at > ?)`,

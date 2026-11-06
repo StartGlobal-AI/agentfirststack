@@ -73,6 +73,9 @@
     // "true" only in local dev (.dev.vars): x-dev-geo-country, localhost origins and verify.
     "DEV_MODE": ""
   },
+  // Optional: USER_CONTENT_BASE_URL, the origin of a domain of its own for the share player
+  // (<it>/r/<token>; `pnpm afs config` derives it and the Worker route from the profile's
+  // user_content_domain). Unset = the player stays at /play/<token> on this host.
   // Optional fair-use vars a deployment can add (README "Config" lists them with their defaults;
   // count caps also take an UNCLAIMED_<NAME> variant): SIGNUP_HOURLY_LIMIT, MAX_SITES_PER_ACCOUNT,
   // MAX_UNVERIFIED_SITES_PER_ACCOUNT, MAX_SAMPLE_RATE, MAX_SESSION_MINUTES, MAX_SESSIONS_PER_SITE_PER_DAY,

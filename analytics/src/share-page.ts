@@ -1,6 +1,6 @@
 /**
  * The public share dashboard: one self-contained HTML page, no framework, no external assets.
- * Reads GET /share/:token/data. Every data value is written with textContent (page paths and
+ * Reads GET <base>/:token/data (base: /share on the service host, /a on the user-content host). Every data value is written with textContent (page paths and
  * referrers are visitor-controlled), and the inline SVG chart is built with createElementNS.
  * Its inline style and script carry a per-response nonce; routes/share.ts sends the matching CSP
  * (sharePageCsp), which also forbids framing. Both pages are noindex and carry a visible "Report
@@ -48,6 +48,7 @@ export function sharePasswordPage(
   wrong: boolean,
   retryAfterS?: number,
   reportUrl = DEFAULT_ABUSE_REPORT_URL,
+  base = "/share",
 ): string {
   const heading = domain ? esc(domain) : "Shared analytics";
   return `<!DOCTYPE html>
@@ -69,7 +70,7 @@ button{font:inherit;padding:8px 10px;border:0;border-radius:8px;background:#2a78
 </style>
 </head>
 <body>
-<form method="post" action="/share/${esc(token)}/unlock">
+<form method="post" action="${esc(base)}/${esc(token)}/unlock">
 <h1>${heading}</h1>
 <label for="pw">This dashboard is protected. Password:</label>
 <input id="pw" name="password" type="password" autocomplete="current-password" required minlength="1" maxlength="200" autofocus>
@@ -87,6 +88,21 @@ ${reportLink(reportUrl)}
 </html>`;
 }
 
+/** The old host's password form, posted after its dashboard moved to the user-content host. */
+export function shareMovedPage(url: string, nonce: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Shared analytics · moved</title>
+<style nonce="${nonce}">body{margin:0;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center}</style>
+</head>
+<body><p>This dashboard has moved. <a href="${esc(url)}">Open it here</a> and enter the password there.</p></body>
+</html>`;
+}
+
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /**
@@ -94,7 +110,13 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
  * site's free-form name is never shown: anyone can call a site "Stripe", only the owner of a
  * domain can verify it.
  */
-export function sharePage(token: string, domain: string | null, nonce: string, reportUrl = DEFAULT_ABUSE_REPORT_URL): string {
+export function sharePage(
+  token: string,
+  domain: string | null,
+  nonce: string,
+  reportUrl = DEFAULT_ABUSE_REPORT_URL,
+  base = "/share",
+): string {
   const heading = domain ? esc(domain) : "Unverified site";
   const title = domain ? `${esc(domain)} · analytics` : "Shared analytics (unverified site)";
   const source = domain
@@ -170,7 +192,7 @@ details{margin-top:8px;color:var(--text-secondary);font-size:12px}
 </div></div>
 <script nonce="${nonce}">
 (function(){
-var TOKEN=${JSON.stringify(token)};
+var TOKEN=${JSON.stringify(token)},BASE=${JSON.stringify(base)};
 var period=new URLSearchParams(location.search).get("period")||"30d";
 var NS="http://www.w3.org/2000/svg";
 function el(tag,attrs,text){var e=document.createElement(tag);for(var k in attrs||{})e.setAttribute(k,attrs[k]);if(text!=null)e.textContent=text;return e}
@@ -229,7 +251,7 @@ function goals(rows){
 }
 function load(){
   document.querySelectorAll(".periods button").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.p===period))});
-  fetch("/share/"+TOKEN+"/data?period="+encodeURIComponent(period)).then(function(r){return r.json()}).then(function(d){
+  fetch(BASE+"/"+TOKEN+"/data?period="+encodeURIComponent(period)).then(function(r){return r.json()}).then(function(d){
     if(d.error){document.getElementById("range").textContent=d.error.message;return}
     var extra=(d.share&&d.share.segment?" · segment: "+d.share.segment:"")+(d.share&&d.share.expires_at?" · link expires "+new Date(d.share.expires_at).toISOString().slice(0,10):"");
     document.getElementById("range").textContent=d.period.from+" to "+d.period.to+" ("+d.period.timezone+")"+extra;

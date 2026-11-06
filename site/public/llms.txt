@@ -82,7 +82,9 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
      Write down each tool with its id (GTM-..., G-..., AW-..., pixel ids) and the event names it
      tracks: keep those names, so its history and the new data line up.
    Put this list in `AGENTFIRSTSTACK.md`. The steps below cover every item on it.
-3. **Inbox.** Create one for the project (mail manual). Use its address whenever the setup needs an
+3. **Inbox.** Create one for the project (mail manual):
+   `POST https://mail.agentfirststack.com/v1/inboxes {"username":"<project>-signups"}` gives
+   `<project>-signups@agentfirstinbox.com`. Use its address whenever the setup needs an
    email for a third-party service, and `wait_for_email` / `latest-code` for the code, always with
    the sending service's domain (`from=stripe.com`: inbox names are guessable, so a stranger could
    race the real email; without it the answer warns, and two sender domains answer 409). Forward its
@@ -350,7 +352,8 @@ reports as missing; never invent them.
 ```sh
 M=https://mail.agentfirststack.com
 curl -s -X POST $M/v1/inboxes -H "$H" -H 'content-type: application/json' -d '{"username":"acme-signups"}'
-# -> { "inbox": { "id": "inb_...", "address": "acme-signups@agentfirststack.com" }, ... }
+# -> { "inbox": { "id": "inb_...", "address": "acme-signups@agentfirstinbox.com" }, ... }
+# Inboxes made earlier on @agentfirststack.com keep working as before; new ones go on agentfirstinbox.com.
 # Use the address in the signup form, then block until the email arrives (no polling).
 # Always pass the service's domain: inbox names are guessable, so a stranger could race the real email.
 curl -s "$M/v1/inboxes/$INBOX/latest-code?timeout=60&from=stripe.com" -H "$H"
@@ -644,9 +647,10 @@ moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/conta
   (`429 proof_of_work_required`, section 1). Reuse your key instead when you have one.
 - 10 analytics sites, 10 tag containers (5 destinations and 10 versions each) and 10 inboxes per
   account.
-- Inboxes on @agentfirststack.com can reply to anyone who wrote to them, up to 20 recipients a
-  day. To send to anyone, add your own domain: `POST https://mail.agentfirststack.com/v1/domains`.
-- Mail on @agentfirststack.com addresses is deleted after 14 days. An inbox holds up to 100
+- Inboxes on the shared domains (@agentfirstinbox.com, and @agentfirststack.com for inboxes made
+  before it) can reply to anyone who wrote to them, up to 20 recipients a day. To send to anyone,
+  add your own domain: `POST https://mail.agentfirststack.com/v1/domains`.
+- Mail on shared-domain addresses is deleted after 14 days. An inbox holds up to 100
   messages and an account receives up to 100 a day; delete what you no longer need.
 - Addresses like admin@, postmaster@ and other role names can't be claimed.
 - Replay: 5 sites per account, 200 recorded sessions per site a day, sessions up to 30 minutes

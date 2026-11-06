@@ -60,6 +60,49 @@ export function publicBaseUrl(c: Context): string {
   return (configured || new URL(c.req.url).origin).replace(/\/$/, "");
 }
 
+/**
+ * USER_CONTENT_BASE_URL: the origin (scheme and host; any path is ignored) where an app serves its
+ * pages that show customer-controlled content (replay's share player under /r/, analytics' public
+ * dashboards under /a/), on a domain of its own, so no cookie and no origin is shared with the
+ * platform's own domain. That host serves those pages and nothing else. Null when unset, not an
+ * http(s) URL, or the app's own PUBLIC_BASE_URL host (then the pages stay where they always were).
+ */
+export function userContentOrigin(env: { USER_CONTENT_BASE_URL?: string; PUBLIC_BASE_URL?: string } | undefined): string | null {
+  return userContentHost(env)?.origin ?? null;
+}
+
+/** Did this request arrive on the user-content host (userContentOrigin)? */
+export function onUserContentHost(env: { USER_CONTENT_BASE_URL?: string; PUBLIC_BASE_URL?: string } | undefined, req: Request): boolean {
+  const uc = userContentHost(env);
+  return !!uc && new URL(req.url).host === uc.host;
+}
+
+// Parsed once per isolate and value: onUserContentHost runs on every request (tracker hits too).
+const ucCache = new Map<string, { origin: string; host: string } | null>();
+
+function userContentHost(env: { USER_CONTENT_BASE_URL?: string; PUBLIC_BASE_URL?: string } | undefined) {
+  const raw = env?.USER_CONTENT_BASE_URL?.trim();
+  if (!raw) return null;
+  const key = `${raw}|${env?.PUBLIC_BASE_URL ?? ""}`;
+  if (ucCache.has(key)) return ucCache.get(key)!;
+  let out: { origin: string; host: string } | null = null;
+  try {
+    const u = new URL(raw);
+    let own: string | null = null;
+    try {
+      own = env?.PUBLIC_BASE_URL ? new URL(env.PUBLIC_BASE_URL).host : null;
+    } catch {
+      /* an unparseable PUBLIC_BASE_URL is the app's own problem */
+    }
+    if ((u.protocol === "https:" || u.protocol === "http:") && u.host !== own) out = { origin: u.origin, host: u.host };
+  } catch {
+    /* not a URL: off */
+  }
+  if (ucCache.size > 16) ucCache.clear();
+  ucCache.set(key, out);
+  return out;
+}
+
 /** Best-effort client IP (Cloudflare sets cf-connecting-ip). */
 export function clientIp(req: Request): string | null {
   return req.headers.get("cf-connecting-ip") ?? req.headers.get("x-real-ip") ?? null;

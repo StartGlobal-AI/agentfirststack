@@ -28,6 +28,9 @@ export default defineConfig({
                 SEND_DAILY_LIMIT: "6",
                 // Fair-use controls stay off in tests (deployments may turn them on); fair-use tests set their own.
                 MAIL_DOMAIN: "mail.example.com",
+                // One shared domain, as in the generic template; the shared-domain move tests set their own.
+                SHARED_INBOX_DOMAIN: "",
+                SHARED_SENDING_DOMAINS: "",
                 PUBLIC_BASE_URL: "",
                 // As deployed, whatever a local .dev.vars says; tests that need it set DEV_MODE themselves.
                 DEV_MODE: "false",

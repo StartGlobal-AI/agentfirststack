@@ -6,6 +6,11 @@ export interface Bindings extends AuthBindings {
   DB: D1Database;
   SITE: DurableObjectNamespace<SiteDO>;
   PUBLIC_BASE_URL?: string;
+  /**
+   * Optional origin of the user-content host (e.g. https://afsusercontent.com): share links point at
+   * <it>/a/<token>, and that host serves only the public dashboards (routes/share.ts). Unset = /share/ here.
+   */
+  USER_CONTENT_BASE_URL?: string;
   SIGNUP_MODE?: string;
   SIGNUP_TOKEN?: string;
   ADMIN_TOKEN?: string;

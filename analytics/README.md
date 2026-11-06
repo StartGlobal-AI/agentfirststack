@@ -274,8 +274,8 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | GET | `/sites/:id/digest` | period summary: kpis and revenue with change, goals, channels, alerts fired; top sources / pages / countries, movers and annotations under `untrusted` |
 | POST/GET/PATCH/DELETE | `/sites/:id/reports[/:report_id]`, `POST .../send` | the digest weekly or monthly at an hour of the site timezone, through the destinations |
 
-Public: `GET /s.js`, `POST /e` (both under any prefix), `GET /share/:token`,
-`GET /share/:token/data`, `GET /llms.txt`, `POST /mcp`, `POST /webhooks/stripe/:site_id` (signed).
+Public: `GET /s.js`, `POST /e` (both under any prefix), `GET /share/:token` (on the user-content
+host `/a/:token` when `USER_CONTENT_BASE_URL` is set), `GET /share/:token/data`, `GET /llms.txt`, `POST /mcp`, `POST /webhooks/stripe/:site_id` (signed).
 
 Query params for stats/timeseries/breakdowns/funnel:
 - `period`: `today`, `yesterday`, `24h`, `7d`, `30d` (default), `90d`, `12mo`, `mtd`, `ytd`, `all`, or `from`/`to` (YYYY-MM-DD inclusive, site timezone, or ISO timestamps for an exact `[from, to)` range). `7d`/`30d`/`90d` include today. `timezone=` (IANA) overrides the site's for one query.
@@ -744,11 +744,23 @@ headline numbers and % change, a visitors chart (inline SVG, hover tooltip, tabl
 pages/sources/countries/devices tables, light and dark. It reads `GET /share/:token/data`
 (aggregates only, no filters or SQL). For humans; agents use the API.
 
+With `USER_CONTENT_BASE_URL` (e.g. `https://afsusercontent.com`; `pnpm afs config` derives it, and
+the Worker route `<domain>/a/*`, from the profile's `user_content_domain`) the dashboards live on a
+domain of their own: new links are `<it>/a/shr_...` (`/a/<token>/data`, `POST /a/<token>/unlock`),
+and the unlock cookie is set there (host-only, `Path=/a/<token>`), so nothing is shared with the
+service's domain. That host answers only those paths (everything else 404: no API, MCP, tracker or
+collection). A valid link's old `/share/<token>` URL answers 301 to the new one (query kept;
+revoked, expired, suspended and paused links answer as before); `/share/<token>/data` keeps
+answering here (scripts with `x-share-password`), and a password form posted from a page loaded
+before the move gets a link to the new page (its `form-action 'self'` would block a redirect). Same
+CSP, `noindex`, Report abuse and pause checks. Unset: everything stays on `/share/`.
+
 ## Config
 
 | Var / secret | |
 |---|---|
 | `PUBLIC_BASE_URL` | var; the URL agents and snippets use (empty = request origin) |
+| `USER_CONTENT_BASE_URL` | optional var; origin of a domain of its own for public dashboards (`<it>/a/<token>`, see Dashboard). Unset = `/share/<token>` here |
 | `SIGNUP_MODE`, `SIGNUP_TOKEN`, `ADMIN_TOKEN` | see `@afs/shared` auth |
 | `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SALT_SECRET` | secret, required; derives the daily visitor salt and each site's proxy key (`/e` returns 503 without it) |

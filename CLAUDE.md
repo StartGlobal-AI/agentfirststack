@@ -11,7 +11,7 @@ and hosted for free at https://agentfirststack.com.
 | [`site/`](site) | Landing page, master `llms.txt` (with the full-setup procedure the prompt points to), the setup check and test (`/v1/setup`, `/v1/setup/test`, `src/setup-check.ts`, `src/setup-test.ts`), platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard (projects, then a project's Overview, Analytics, Tags, Replay, Mail and Settings tabs: `src/dashboard.ts`, `src/dashboard-frame.ts`, `src/analytics-dashboard.ts`, `src/service-views.ts`, `public/dashboard-app.js`), OAuth 2.1 server for MCP connectors (see `docs/accounts.md`), project deletion with 7 days to restore and a daily purge across the services (`src/project-deletion.ts`), emails to people about their projects (`src/email.ts`, `src/email-messages.ts`), usage and alerts (`src/project-health.ts`: `GET /v1/usage`, limit warnings, quiet sites), the dashboard's live analytics stream (`/dashboard/projects/:id/live/analytics/:site`, a WebSocket to the analytics site object), first-party domains on Cloudflare for SaaS (`src/first-party-domains.ts`: `/v1/first-party-domains`, MCP `afs_*_first_party_domain*`; the edge that serves them, before every other route, is `firstPartyEdge` in `src/first-party.ts`), abuse handling (capability pauses `src/pauses.ts`, abuse reports and `/report-abuse` `src/abuse-reports.ts`, the operator summary's reputation checks `src/reputation.ts`, `/acceptable-use`) | agentfirststack.com | 8786 |
 | [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue, subscriptions/MRR, ad spend, ecommerce items, AI crawlers, alerts and reports, a live WebSocket stream) | analytics.agentfirststack.com | 8787 |
 | [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap, X) with dedup | tags.agentfirststack.com | 8788 |
-| [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
+| [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` (new ones `*@agentfirstinbox.com` once `shared_inbox_domain` is set: `SHARED_INBOX_DOMAIN`) | 8789 |
 | [`replay/`](replay/README.md) | Hotjar / Microsoft Clarity: headless session replay masked in the browser by default, sessions as readable transcripts, rage/dead/error clicks, heatmaps and JS errors as data, share-link player | replay.agentfirststack.com | 8790 |
 | [`shared/`](shared/src) | `@afs/shared`: accounts, API keys, instant signup (with the proof of work past the breaker, `signup-challenge.ts`), shared identity, capability pauses (`pauses.ts`), JSON errors, ids, crypto, stateless MCP handler | n/a | n/a |
 
@@ -129,7 +129,11 @@ The public side: `/acceptable-use`, `POST /v1/abuse-reports` and `/report-abuse`
   `agentfirststack.com`, Workers `afs-site|analytics|tags|mail|replay`, D1 `afs-identity|analytics|tags|mail|replay`,
   R2 `afs-mail-blobs`, `afs-replay-chunks`, queues `afs-tags-dispatch`, `afs-mail-webhooks` (+ `-dlq`). Email Routing
   catch-all on the apex goes to `afs-mail`; the apex is onboarded for Email Sending (DKIM
-  `cf-bounce`, DMARC reject). Release = `pnpm afs deploy hosted && pnpm afs check hosted`.
+  `cf-bounce`, DMARC reject). Two more zones in the account: `agentfirstinbox.com` (profile
+  `shared_inbox_domain`: new shared inboxes; its own catch-all to `afs-mail` and Email Sending) and
+  `afsusercontent.com` (profile `user_content_domain`: share pages, Worker routes `/a/*` analytics,
+  `/r/*` replay). Runbook: docs/operations.md, "Own domains for shared inboxes and share pages".
+  Release = `pnpm afs deploy hosted && pnpm afs check hosted`.
 - Docs for humans: `docs/self-hosting.md`, `docs/operations.md`, `docs/architecture.md`,
   `docs/development.md`. Keep them true when behaviour changes.
 

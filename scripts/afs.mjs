@@ -127,6 +127,23 @@ function names(profile) {
 
 const hostOf = (profile, app) => (app === "site" ? profile.domain : `${app}.${profile.domain}`);
 
+/** Paths each app serves on the user-content domain (its share pages), as Worker route patterns. */
+export const USER_CONTENT_PATHS = { analytics: "/a/*", replay: "/r/*" };
+
+/** profile.user_content_domain, a bare hostname (a zone apex in the account), or null. */
+function userContentDomain(profile) {
+  const d = String(profile.user_content_domain ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+  if (!d) return null;
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) die(`deploy/${profile.name}.json: user_content_domain "${d}" is not a hostname.`);
+  if (d === profile.domain || d.endsWith(`.${profile.domain}`))
+    die(`deploy/${profile.name}.json: user_content_domain must be a domain of its own, not ${profile.domain} or under it.`);
+  return d;
+}
+
 /** The deploy config for one app: its template with the profile's account, names, ids and vars. */
 export function buildConfig(profile, app, template) {
   const n = names(profile);
@@ -140,6 +157,11 @@ export function buildConfig(profile, app, template) {
           { pattern: `www.${profile.domain}`, custom_domain: true },
         ]
       : [{ pattern: hostOf(profile, app), custom_domain: true }];
+  // The user-content domain (profile.user_content_domain): share pages of replay (/r/*) and
+  // analytics (/a/*) on a zone of their own, by Worker routes (a custom domain is one Worker per
+  // host). Listed here because wrangler deploy replaces a Worker's routes with the config's.
+  const uc = userContentDomain(profile);
+  if (uc && USER_CONTENT_PATHS[app]) cfg.routes.push({ pattern: `${uc}${USER_CONTENT_PATHS[app]}`, zone_name: uc });
   // Only the custom domains: a *.workers.dev or preview URL would skip the zone's WAF and
   // rate-limit rules.
   cfg.workers_dev = false;
@@ -180,8 +202,11 @@ export function buildConfig(profile, app, template) {
   if (app === "tags") derived.ANALYTICS_BASE_URL = `https://${hostOf(profile, "analytics")}`;
   // The analytics tracker loads the replay recorder on sites linked to a replay site.
   if (app === "analytics") derived.REPLAY_BASE_URL = `https://${hostOf(profile, "replay")}`;
+  if (uc && USER_CONTENT_PATHS[app]) derived.USER_CONTENT_BASE_URL = `https://${uc}`;
   if (app === "mail") {
     derived.MAIL_DOMAIN = profile.mail_domain || profile.domain;
+    // A second shared domain new inboxes go to (MAIL_DOMAIN keeps working); its own zone apex.
+    if (profile.shared_inbox_domain) derived.SHARED_INBOX_DOMAIN = String(profile.shared_inbox_domain).toLowerCase();
     derived.WORKER_NAME = n.worker("mail");
   }
   // First-party domains (Cloudflare for SaaS): the site Worker serves them; customers CNAME to
@@ -374,14 +399,27 @@ async function cmdEmail(name) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (!token) {
     die(
-      "Set CLOUDFLARE_API_TOKEN to a token with Zone Read, Zone Settings Edit, Email Routing Rules Edit and Email Sending Edit on the mail domain's zone.",
+      "Set CLOUDFLARE_API_TOKEN to a token with Zone Read, Zone Settings Edit, Email Routing Rules Edit and Email Sending Edit on the mail domain's zone (and on shared_inbox_domain's zone when the profile has one).",
     );
   }
-  const domain = profile.mail_domain || profile.domain;
   const worker = names(profile).worker("mail");
+  // The shared domains: mail_domain (or the apex), and shared_inbox_domain, where new inboxes go.
+  const domains = [
+    ...new Set([profile.mail_domain || profile.domain, profile.shared_inbox_domain].filter(Boolean).map((d) => String(d).toLowerCase())),
+  ];
+  for (const domain of domains) await emailSetup(token, domain, worker);
+  log("\nReceiving works once MX has propagated; sending once the status above is ready.");
+  if (profile.shared_inbox_domain)
+    log(
+      `Once Email Sending for ${profile.shared_inbox_domain} is ready, list it in vars.mail.SHARED_SENDING_DOMAINS (e.g. "${domains.join(",")}") and \`pnpm afs deploy ${name} mail\`: until then its inboxes receive, but mail to outside addresses is refused (503 domain_not_onboarded).`,
+    );
+}
+
+/** Email Routing (catch-all -> the mail Worker) and Email Sending for one shared domain (a zone apex). */
+async function emailSetup(token, domain, worker) {
   const zone = await cf(token, "GET", `/zones?name=${encodeURIComponent(domain)}`);
   const zoneId = zone.result?.[0]?.id;
-  if (!zoneId) die(`Zone ${domain} not found for this token. The mail domain must be a zone in your Cloudflare account (its apex).`);
+  if (!zoneId) die(`Zone ${domain} not found for this token. A shared mail domain must be a zone in your Cloudflare account (its apex).`);
   log(`Zone ${domain} (${zoneId})`);
 
   const routing = await cf(token, "GET", `/zones/${zoneId}/email/routing`);
@@ -402,7 +440,7 @@ async function cmdEmail(name) {
   let sub = (subs.result ?? []).find((s) => s.name === domain);
   if (!sub) {
     const created = await cf(token, "POST", `/zones/${zoneId}/email/sending/subdomains`, { name: domain });
-    if (!created.ok) die(`Email Sending onboarding failed: ${JSON.stringify(created.errors)} (needs the Workers Paid plan).`);
+    if (!created.ok) die(`Email Sending onboarding of ${domain} failed: ${JSON.stringify(created.errors)} (needs the Workers Paid plan).`);
     sub = created.result;
   }
   await cf(token, "POST", `/zones/${zoneId}/email/sending/subdomains/${sub.id}/dns`, {});
@@ -410,7 +448,6 @@ async function cmdEmail(name) {
   log(
     `  Email Sending for ${domain}: ${status.result?.status ?? "unknown"}${status.result?.errors?.length ? ` ${JSON.stringify(status.result.errors)}` : ""}`,
   );
-  log("\nReceiving works once MX has propagated; sending once the status above is ready.");
 }
 
 async function cmdCheck(name) {
@@ -462,6 +499,10 @@ async function cmdCheck(name) {
   step("tags: create container with the shared key", !!ctr.json?.container?.id);
   const inbox = await call(`${base("mail")}/v1/inboxes`, { method: "POST", headers: H, body: JSON.stringify({}) });
   step("mail: create inbox with the shared key", !!inbox.json?.inbox?.id, inbox.json?.inbox?.address ?? "");
+  if (profile.shared_inbox_domain) {
+    const want = `@${String(profile.shared_inbox_domain).toLowerCase()}`;
+    step(`mail: new inboxes go on ${want.slice(1)}`, String(inbox.json?.inbox?.address ?? "").endsWith(want));
+  }
   // Linked to the analytics site: its tracker loads the recorder, so there's no second snippet.
   const rsite = await call(`${base("replay")}/v1/sites`, {
     method: "POST",
@@ -478,6 +519,17 @@ async function cmdCheck(name) {
     });
     const want = `${base("replay")}/r/${rsite.json.site.id}.js`;
     step("analytics: tracker answer names the replay loader", pv.json?.r === want, pv.json?.r ?? `HTTP ${pv.status}`);
+  }
+  // The user-content domain: each route reaches its Worker, which serves only share pages there.
+  const uc = userContentDomain(profile);
+  if (uc) {
+    const nil = "0".repeat(32);
+    const a = await call(`https://${uc}/a/shr_${nil}`);
+    step(`analytics: ${uc}/a/* reaches the share pages`, a.status === 404 && a.json?.error?.code === "not_found", `HTTP ${a.status}`);
+    const r = await call(`https://${uc}/r/rpt_${nil}`);
+    step(`replay: ${uc}/r/* reaches the share player`, r.status === 404 && r.text.includes("expired or was revoked"), `HTTP ${r.status}`);
+    const api = await call(`https://${uc}/a/v1/sites`, { headers: H });
+    step(`${uc} serves no API`, api.status === 404 && !api.json?.sites, `HTTP ${api.status}`);
   }
   const as = await call(`${base("site")}/.well-known/oauth-authorization-server`);
   step("OAuth authorization server metadata", as.json?.issuer === base("site"), as.json?.issuer ?? `HTTP ${as.status}`);

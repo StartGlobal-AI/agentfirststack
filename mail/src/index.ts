@@ -7,7 +7,14 @@ import { purgeEvents } from "./service/feed";
 import { llmsTxt } from "./llms";
 import { MCP_INSTRUCTIONS, registerTools } from "./mcp";
 import { api } from "./routes/api";
-import { createDefaultInbox, pruneCounters, purgeExpiredInboxes, purgeOldSharedMessages, sharedDomain } from "./service/inboxes";
+import {
+  createDefaultInbox,
+  pruneCounters,
+  purgeExpiredInboxes,
+  purgeOldSharedMessages,
+  sharedDomain,
+  sharedDomains,
+} from "./service/inboxes";
 import { forwardEach, runForwards } from "./service/forward";
 import { purgeSendKeys } from "./service/idempotency";
 import { checkReservedNames } from "./service/reserved";
@@ -69,6 +76,7 @@ app.get("/", (c) => {
     app: "mail",
     version: VERSION,
     shared_domain: sharedDomain(c.env),
+    shared_domains: sharedDomains(c.env),
     docs: `${base}/llms.txt`,
     mcp: `${base}/mcp`,
     ui: `${base}/ui`,

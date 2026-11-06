@@ -1,11 +1,11 @@
-import { networkKey, publicBaseUrl } from "@afs/shared";
-import { Hono, type MiddlewareHandler } from "hono";
+import { networkKey, onError, publicBaseUrl, userContentOrigin } from "@afs/shared";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { type AppEnv, isDev } from "../env";
 import { expiredPage, PLAYER_HEADERS, pausedPage, playerHeaders, playerPage, reportAbuseUrl } from "../player-page";
 import { platformBase } from "../service/install";
 import { geo, ingestChunk, visitorIp } from "../service/ingest";
 import { proxyTrust } from "../service/proxy";
-import { playerChunk, playerData, recordView, resolveToken, siteHostsForCsp } from "../service/links";
+import { playerChunk, playerData, playerUrl, recordView, resolveToken, siteHostsForCsp } from "../service/links";
 import { playerHash, servePlayerAsset, serveLoader, serveRecorder } from "../service/scripts";
 import { serveSurveyScript, submitSurvey } from "../service/survey-ingest";
 import { waitUntilOf } from "./api";
@@ -77,10 +77,76 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
   return next();
 };
 
-/** The human player behind share links, and its assets. */
-export const playerRoutes = new Hono<AppEnv>();
+/**
+ * The human player behind share links (page, its JSON, its chunks) and its assets, mounted twice:
+ *
+ *   service host     /play/<token>, /play/<token>/data, /play/<token>/chunks/<seq>, /assets/<name>
+ *   user-content     /r/<token>, /r/<token>/data, /r/<token>/chunks/<seq>, /r/assets/<name>, on
+ *                    USER_CONTENT_BASE_URL (a domain of its own, so the recorded pages it shows
+ *                    share no cookie or origin with the platform). That host serves nothing else.
+ *
+ * With USER_CONTENT_BASE_URL set, new links point at the user-content host and a page on the
+ * service host answers 301 to the same link there while the link is valid (expired, revoked and
+ * paused links answer as before). Its /data and /chunks keep answering, for players opened before.
+ */
+function mountPlayer(r: Hono<AppEnv>, mount: { page: string; assets: string; pageUrl: (c: Context<AppEnv>, token: string) => string }) {
+  r.get(`${mount.assets}/:name`, async (c) => (await servePlayerAsset(c.req.param("name"))) ?? c.notFound());
 
-playerRoutes.get("/assets/:name", async (c) => (await servePlayerAsset(c.req.param("name"))) ?? c.notFound());
+  r.get(`${mount.page}/:token`, async (c) => {
+    const token = c.req.param("token");
+    const res = await resolveToken(c.env, token);
+    const abuse = reportAbuseUrl(platformBase(c.env), mount.pageUrl(c, token));
+    if (res === "paused") return c.html(pausedPage(abuse), 403, PLAYER_HEADERS);
+    if (!res) return c.html(expiredPage(), 404, PLAYER_HEADERS);
+    const moved = mount.page === "/play" ? userContentOrigin(c.env) : null;
+    if (moved) {
+      // Not cached by browsers: the target follows the link (and the deployment's host) as it is now.
+      c.header("cache-control", "no-store");
+      c.header("x-robots-tag", "noindex, nofollow");
+      c.header("referrer-policy", "no-referrer");
+      return c.redirect(`${playerUrl(c.env, publicBaseUrl(c), token)}${new URL(c.req.url).search}`, 301);
+    }
+    waitUntilOf(c)(recordView(c.env, res.link.id).catch(() => {}));
+    const h = await playerHash();
+    return c.html(
+      playerPage({ js: `${mount.assets}/player-${h}.js`, css: `${mount.assets}/player-${h}.css` }, abuse),
+      200,
+      playerHeaders(siteHostsForCsp(c.env, res.site)),
+    );
+  });
+
+  r.get(`${mount.page}/:token/data`, async (c) => {
+    const res = await resolveToken(c.env, c.req.param("token"));
+    const headers = { "cache-control": "private, no-store", "x-robots-tag": "noindex" };
+    if (res === "paused") return c.json(PAUSED, 403, headers);
+    if (!res) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404, headers);
+    const d = await playerData(c.env, res);
+    if (!d) return c.json({ error: { code: "not_found", message: "The session is no longer stored." } }, 404, headers);
+    return c.json(d, 200, headers);
+  });
+
+  r.get(`${mount.page}/:token/chunks/:seq`, async (c) => {
+    const seq = c.req.param("seq");
+    const res = /^\d{1,6}$/.test(seq) ? await resolveToken(c.env, c.req.param("token")) : null;
+    if (res === "paused") return c.json(PAUSED, 403, { "x-robots-tag": "noindex" });
+    if (!res) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404);
+    const body = await playerChunk(c.env, res, Number(seq));
+    if (body === "budget")
+      return c.json(
+        { error: { code: "rate_limited", message: "This link served its daily share of recording data; it works again tomorrow (UTC)." } },
+        429,
+      );
+    if (!body) return c.json({ error: { code: "not_found", message: "Chunk not stored." } }, 404);
+    return new Response(body, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "cache-control": "private, max-age=300",
+        "x-content-type-options": "nosniff",
+        "x-robots-tag": "noindex",
+      },
+    });
+  });
+}
 
 const PAUSED = {
   error: {
@@ -90,49 +156,12 @@ const PAUSED = {
   },
 };
 
-playerRoutes.get("/play/:token", async (c) => {
-  const token = c.req.param("token");
-  const r = await resolveToken(c.env, token);
-  const abuse = reportAbuseUrl(platformBase(c.env), `${publicBaseUrl(c)}/play/${token}`);
-  if (r === "paused") return c.html(pausedPage(abuse), 403, PLAYER_HEADERS);
-  if (!r) return c.html(expiredPage(), 404, PLAYER_HEADERS);
-  waitUntilOf(c)(recordView(c.env, r.link.id).catch(() => {}));
-  const h = await playerHash();
-  return c.html(
-    playerPage({ js: `/assets/player-${h}.js`, css: `/assets/player-${h}.css` }, abuse),
-    200,
-    playerHeaders(siteHostsForCsp(c.env, r.site)),
-  );
-});
+/** The player on the service host (/play/..., /assets/...). */
+export const playerRoutes = new Hono<AppEnv>();
+mountPlayer(playerRoutes, { page: "/play", assets: "/assets", pageUrl: (c, token) => `${publicBaseUrl(c)}/play/${token}` });
 
-playerRoutes.get("/play/:token/data", async (c) => {
-  const r = await resolveToken(c.env, c.req.param("token"));
-  const headers = { "cache-control": "private, no-store", "x-robots-tag": "noindex" };
-  if (r === "paused") return c.json(PAUSED, 403, headers);
-  if (!r) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404, headers);
-  const d = await playerData(c.env, r);
-  if (!d) return c.json({ error: { code: "not_found", message: "The session is no longer stored." } }, 404, headers);
-  return c.json(d, 200, headers);
-});
-
-playerRoutes.get("/play/:token/chunks/:seq", async (c) => {
-  const seq = c.req.param("seq");
-  const r = /^\d{1,6}$/.test(seq) ? await resolveToken(c.env, c.req.param("token")) : null;
-  if (r === "paused") return c.json(PAUSED, 403, { "x-robots-tag": "noindex" });
-  if (!r) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404);
-  const body = await playerChunk(c.env, r, Number(seq));
-  if (body === "budget")
-    return c.json(
-      { error: { code: "rate_limited", message: "This link served its daily share of recording data; it works again tomorrow (UTC)." } },
-      429,
-    );
-  if (!body) return c.json({ error: { code: "not_found", message: "Chunk not stored." } }, 404);
-  return new Response(body, {
-    headers: {
-      "content-type": "application/octet-stream",
-      "cache-control": "private, max-age=300",
-      "x-content-type-options": "nosniff",
-      "x-robots-tag": "noindex",
-    },
-  });
-});
+/** The user-content host (USER_CONTENT_BASE_URL): the player under /r/ and nothing else. */
+export const userContentRoutes = new Hono<AppEnv>();
+userContentRoutes.onError(onError);
+userContentRoutes.notFound((c) => c.text("Not found", 404, { "x-robots-tag": "noindex", "x-content-type-options": "nosniff" }));
+mountPlayer(userContentRoutes, { page: "/r", assets: "/r/assets", pageUrl: (c, token) => playerUrl(c.env, publicBaseUrl(c), token) });

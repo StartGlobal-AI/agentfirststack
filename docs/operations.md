@@ -77,8 +77,11 @@ deploy.
 - **Email.**
   - Check sending reputation, bounces and complaints under Email Service in the dashboard, or with
     `GET /accounts/<id>/email/sending/reputation`.
-  - Keep DMARC at `p=reject` on the mail domain; it stops others from forging
-    `@<mail-domain>` addresses.
+  - Keep DMARC at `p=reject` on the mail domain (and on the shared inbox domain, once mail flows);
+    it stops others from forging `@<mail-domain>` addresses.
+  - A shared domain that isn't in `SHARED_SENDING_DOMAINS` sends nothing to outside addresses
+    (`503 domain_not_onboarded`); forwards to members from its inboxes wait in the queue (up to 30
+    days) and log `forward.cannot_send`. Seeing that log line means a domain needs onboarding.
   - Delivery status (per-recipient delivered / bounced / complained, `GET /v1/messages/:id/delivery`)
     needs an Email Sending event subscription per sending domain publishing to a queue the mail
     Worker consumes, and the mail var `DELIVERY_EVENTS_QUEUE`; see the mail README, "Delivery
@@ -87,6 +90,42 @@ deploy.
   idempotency keys, event-feed rows older than 7 days, and sends scheduled messages whose inbox
   alarm did not fire; its log line is `cron.purge`. Scheduled sends log `mail.scheduled` from the
   inbox's Durable Object.
+
+## Own domains for shared inboxes and share pages
+
+Shared inboxes and share pages carry other people's content, so the hosted platform gives them
+domains of their own: `agentfirstinbox.com` for new inboxes, `afsusercontent.com` for share pages.
+Both are zones in the same account as `agentfirststack.com`. In order:
+
+1. **Inbox domain, receiving.** Add `"shared_inbox_domain": "agentfirstinbox.com"` to the profile.
+   `CLOUDFLARE_API_TOKEN=<token with Zone Read, Zone Settings Edit, Email Routing Rules Edit, Email
+   Sending Edit on both zones> pnpm afs email hosted`: Email Routing on for the new zone (MX
+   `route1/2/3.mx.cloudflare.net`, SPF, DKIM `cf2024-1._domainkey`, added and locked by
+   Cloudflare), catch-all -> `afs-mail`, Email Sending onboarded (MX and SPF on
+   `cf-bounce.agentfirstinbox.com`, DKIM `cf-bounce._domainkey`). Add DMARC:
+   `_dmarc.agentfirstinbox.com TXT "v=DMARC1; p=none; rua=mailto:<you>"`, tightened to `p=reject`
+   once mail flows.
+2. **Deploy mail** (`pnpm afs deploy hosted mail`). New inboxes go on agentfirstinbox.com and
+   receive at once; old ones on agentfirststack.com keep working. Their outside mail answers
+   `503 domain_not_onboarded` until step 3.
+3. **Inbox domain, sending.** When `wrangler email sending dns get agentfirstinbox.com` shows the
+   records verified: `vars.mail.SHARED_SENDING_DOMAINS = "agentfirststack.com,agentfirstinbox.com"`,
+   deploy mail again. With delivery status on, subscribe the domain's Email Sending events to
+   `afs-mail-webhooks` (mail README, "Delivery status").
+4. **User-content domain.** On `afsusercontent.com`: `AAAA @ 100::` proxied, Always Use HTTPS on.
+   Add `"user_content_domain": "afsusercontent.com"` to the profile and
+   `pnpm afs deploy hosted analytics replay`: the Worker routes `afsusercontent.com/a/*` (analytics)
+   and `afsusercontent.com/r/*` (replay) and their `USER_CONTENT_BASE_URL` come from it. Keep the
+   routes in the profile, not the dashboard (`wrangler deploy` replaces a Worker's routes).
+5. **Reputation.** `vars.site.REPUTATION_DOMAINS = "agentfirstinbox.com,afsusercontent.com"` and
+   deploy the site, so the daily summary checks them too.
+6. `pnpm afs check hosted`: new inboxes on the new domain, both user-content paths reach their
+   Worker, no API there.
+
+Once inboxes exist on agentfirstinbox.com, keep `shared_inbox_domain` set: the mail Worker treats
+only `MAIL_DOMAIN` and `SHARED_INBOX_DOMAIN` as shared, so inboxes on a domain taken out of both stop
+receiving and sending. Taking `user_content_domain` out moves new share links back to the service
+hosts; links handed out on afsusercontent.com stop working once its routes are gone.
 
 ## Abuse handling
 
