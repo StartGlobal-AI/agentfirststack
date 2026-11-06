@@ -461,12 +461,21 @@ describe("finding 7: only the container's own proxy may set the visitor IP", () 
         body: JSON.stringify({ container_id: C, type: "visit", visitor_id: vid, consent: granted, page_url: "https://edge-proxy.test/" }),
       });
     const ipOf = async (vid: string) => (await a.api("GET", `/v1/containers/${C}/visitors/${vid}`)).body.visitor.ip;
-    expect((await edge("https://tags.internal/_t/collect", "vis_edge_1", { "x-afs-internal": env.INTERNAL_TOKEN! })).status).toBe(200);
+    expect(
+      (
+        await edge("https://tags.internal/_t/collect", "vis_edge_1", {
+          "x-afs-internal": (env as unknown as { INTERNAL_TOKEN?: string }).INTERNAL_TOKEN!,
+        })
+      ).status,
+    ).toBe(200);
     expect(await ipOf("vis_edge_1")).toBe("198.51.100.88");
     // the same headers with a wrong token, or from the internet: cf-connecting-ip
     expect((await edge("https://tags.internal/_t/collect", "vis_edge_2", { "x-afs-internal": "wrong-token" })).status).toBe(200);
     expect(await ipOf("vis_edge_2")).toBe("203.0.113.5");
-    expect((await edge(`${B}/_t/collect`, "vis_edge_3", { "x-afs-internal": env.INTERNAL_TOKEN! })).status).toBe(200);
+    expect(
+      (await edge(`${B}/_t/collect`, "vis_edge_3", { "x-afs-internal": (env as unknown as { INTERNAL_TOKEN?: string }).INTERNAL_TOKEN! }))
+        .status,
+    ).toBe(200);
     expect(await ipOf("vis_edge_3")).toBe("203.0.113.5");
   });
 });

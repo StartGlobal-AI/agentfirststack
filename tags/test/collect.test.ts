@@ -60,7 +60,8 @@ describe("/collect helpers", () => {
     expect(i.snippet).not.toContain("k".repeat(10));
     expect(p.snippet).not.toContain("k".repeat(10));
     // vercel.json: a route whose request-header transform adds the key (Vercel forwards the visitor's IP and geo)
-    const vercel = JSON.parse(p.vercel.slice(p.vercel.indexOf("{")));
+    const vercelText = p.vercel ?? "";
+    const vercel = JSON.parse(vercelText.slice(vercelText.indexOf("{")));
     expect(vercel.routes[0]).toMatchObject({ src: "/_t/(.*)", dest: "https://tags.example.net/_t/$1" });
     expect(vercel.routes[0].transforms[0]).toMatchObject({
       type: "request.headers",
