@@ -1261,37 +1261,91 @@ pre {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.72);
 }
-/* Fair use, under the free card */
-.limits-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: 8px 48px;
-  margin-top: 32px;
-}
-.limits-row h3 {
-  font-size: 16.5px;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+/* Fair use, under the free card: a spec sheet, two limits per service */
+.limits-block {
+  margin-top: 40px;
   scroll-margin-top: 88px;
 }
-.limits-row .limits {
-  margin-top: 0;
+.limits-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 32px;
 }
-.limits-row p {
-  grid-column: 2;
+.limits-head h3 {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.limits-head p {
   font-size: 14.5px;
   color: var(--ink-2);
 }
-.limits-row a {
+.limit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, auto);
+  grid-auto-flow: column;
+  gap: 1px;
+  margin-top: 16px;
+  overflow: hidden;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.limit {
+  padding: 16px 18px 14px;
+  background: #fff;
+}
+.limit-svc {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.limit-n {
+  margin-top: 10px;
+  font-size: clamp(26px, 2.6vw, 32px);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.limit-what {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.limit-pre {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.limits-foot {
+  margin-top: 12px;
+  max-width: 90ch;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.limits-foot + .limits-foot {
+  margin-top: 4px;
+}
+.limits-foot a {
   color: var(--ink);
 }
-.limits {
-  margin-top: 10px;
-  padding-left: 18px;
-  display: grid;
-  gap: 6px;
-  font-size: 15px;
-  color: var(--ink-2);
+.limits-foot code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+@media (max-width: 980px) {
+  .limit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    grid-auto-flow: row;
+  }
 }
 .code {
   margin: 12px 0 0;
@@ -1389,12 +1443,6 @@ pre {
   }
   .free {
     grid-template-columns: 1fr;
-  }
-  .limits-row {
-    grid-template-columns: 1fr;
-  }
-  .limits-row p {
-    grid-column: auto;
   }
 }
 @keyframes travel-down {

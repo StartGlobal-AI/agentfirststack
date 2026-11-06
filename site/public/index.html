@@ -253,16 +253,23 @@
         <div><dt>of projects run free</dt><dd>100%</dd></div>
       </dl>
     </div>
-    <div class="limits-row">
-      <h3 id="limits">Fair-use limits on the hosted service</h3>
-      <ul class="limits">
-        <li>3 new accounts per hour from one network</li>
-        <li>10 sites, 10 tag containers and 10 inboxes per account; 5 replay sites</li>
-        <li>Shared inboxes reply to people who wrote to them, up to 20 recipients a day. Add your own domain to send to anyone.</li>
-        <li>Mail on shared addresses is kept for 14 days, up to 100 messages per inbox</li>
-        <li>Replay keeps recordings for up to 14 days, 200 sessions per site a day</li>
-      </ul>
-      <p>The rest is in the <a href="/acceptable-use">acceptable use policy</a> and the <a href="/llms.txt">manual</a>. Need more? Run your own copy, with your own limits.</p>
+    <div class="limits-block" id="limits">
+      <div class="limits-head">
+        <h3>Fair-use limits on the hosted service</h3>
+        <p>The same for every project. One your agent made has the lower number until a person claims it.</p>
+      </div>
+      <div class="limit-grid">
+        <div class="limit" style="--c: var(--orange)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Analytics</p><p class="limit-n">10</p><p class="limit-what">sites per project</p><p class="limit-pre">3 before it's claimed</p></div>
+        <div class="limit" style="--c: var(--orange)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Analytics</p><p class="limit-n">400 days</p><p class="limit-what">of history kept</p><p class="limit-pre">&nbsp;</p></div>
+        <div class="limit" style="--c: var(--yellow)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Tags</p><p class="limit-n">10</p><p class="limit-what">tag containers per project</p><p class="limit-pre">3 before it's claimed</p></div>
+        <div class="limit" style="--c: var(--yellow)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Tags</p><p class="limit-n">5</p><p class="limit-what">conversion APIs per container</p><p class="limit-pre">&nbsp;</p></div>
+        <div class="limit" style="--c: var(--blue)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Mail</p><p class="limit-n">10</p><p class="limit-what">inboxes per project</p><p class="limit-pre">5 before it's claimed</p></div>
+        <div class="limit" style="--c: var(--blue)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Mail</p><p class="limit-n">20</p><p class="limit-what">recipients a day from shared inboxes</p><p class="limit-pre">10 before it's claimed</p></div>
+        <div class="limit" style="--c: var(--green)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Replay</p><p class="limit-n">5</p><p class="limit-what">replay sites per project</p><p class="limit-pre">2 before it's claimed</p></div>
+        <div class="limit" style="--c: var(--green)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Replay</p><p class="limit-n">200</p><p class="limit-what">recorded sessions per site a day</p><p class="limit-pre">100 before it's claimed</p></div>
+      </div>
+      <p class="limits-foot">Also: 3 new projects an hour from one network. Shared inboxes reply only to people who wrote first, and keep mail for 14 days; replay keeps recordings for 14 days. Add your own domain to send to anyone.</p>
+      <p class="limits-foot">Every limit is in the <a href="/acceptable-use">acceptable use policy</a> and the <a href="/llms.txt">manual</a>, and <code>GET /v1/usage</code> shows what a project has used. Need more? Run your own copy, with your own limits.</p>
     </div>
   </div>
 </section>
