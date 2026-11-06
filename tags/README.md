@@ -430,9 +430,9 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 |---|---|---|
 | POST | `/signup` | account + key (public) |
 | GET | `/schema` | JSON Schema for the config, tag/trigger/variable catalog with examples, destination credential schemas (public) |
-| GET | `/usage` | every cap for the account (its standing's values) with `label`, `used / limit / remaining / resets_at`, `unit`, `var`, `note`, `drops_data`, and `per` (every container, highest first, at most 25) for per-container caps; read keys and the platform's internal calls too |
-| POST, GET | `/containers` | `{ domain, name?, allowed_hostnames? }`; same domain returns existing |
-| GET, PATCH, DELETE | `/containers/:id` | GET includes destinations, last-24h stats and `container.last_scan` / `container.last_import` (null until there is one); PATCH `{ name?, allowed_hostnames? }` |
+| GET | `/usage` | every cap for the account (its standing's values) with `label`, `used / limit / remaining / resets_at`, `unit`, `var`, `note`, `drops_data`, and `per` (every container, highest first, at most 25) for per-container caps, plus `attacks` (containers under attack, contained, or ended in the last 24 h); read keys and the platform's internal calls too |
+| POST, GET | `/containers` | `{ domain, name?, allowed_hostnames?, protection? }`; same domain returns existing |
+| GET, PATCH, DELETE | `/containers/:id` | GET includes destinations, last-24h stats and `container.last_scan` / `container.last_import` (null until there is one) and `protection` (attack protection state); PATCH `{ name?, allowed_hostnames?, protection?: "auto"\|"strict"\|"off" }` |
 | GET | `/containers/:id/install` | snippet, API guide and how to get the proxy configs; `?proxy=1` (full-access key) adds the first-party proxy configs (Cloudflare Worker, Next.js middleware, Vercel, netlify.toml, nginx) with the container's secret `proxy_key` |
 | POST | `/containers/:id/scan` | `{ url?, paths? (at most 5), follow_links? }`: fetch the site (own domain only, https on the default port, no IP literals; the homepage (or url) plus up to 5 paths, 6 pages at most, with up to 3 linked contact/signup/pricing pages filling the room left; 2 at a time; redirects followed by hand, at most 3 hops and only within the domain; 1 MB per page; write key; `SCAN_LIMITER` per account; finding this container's snippet on `https://<domain>/` verifies the domain): existing tags (GTM-, G-, AW-, fbq, ttq, LinkedIn, UET, Reddit, X, Pinterest, our container/analytics, Plausible, Fathom, Umami, Matomo, Simple Analytics, DataFast, PostHog, Mixpanel, Amplitude, Segment, Heap, Hotjar, Clarity, FullStory, LogRocket, ...; only from script src, inline code, globals and noscript pixels, never links or text; kept on the container as `last_scan`, with next_steps for bringing GTM, analytics history and ad pixels over), consent platforms, CMS, forms, CTAs (buttons outside forms, data-attribute and button-styled links, nav/header and outbound links, with kind, area and a selector), thank-you pages; text in `<pre>`, `<code>`, `<template>`, comments and escaped markup is ignored; suggested config |
 | POST | `/containers/:id/verify` | `{ method?: "auto"\|"dns"\|"snippet" }`: domain verification (needed to publish custom code), rate limited with scan |
@@ -450,6 +450,7 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | GET | `/containers/:id/versions`, `/versions/:n` | newest `max_versions` kept (plus live and environment-pinned ones) |
 | POST, GET, PATCH, DELETE | `/containers/:id/environments[/:eid]` | `{ name, version: n\|"draft" }`: a named snippet pinned to a version; PATCH version = publish to it; `POST .../:eid/reauthorize` rotates its token |
 | PUT, GET, DELETE | `/containers/:id/lookups[/:name]` | lookup tables for destinations' `settings.params.set` |
+| GET | `/containers/:id/quarantine` | what attack protection set aside, `?since=7d` (at most 7 days): by reason, type and day, top network operators (ASN), countries; pages and browsers under `untrusted` |
 | GET | `/containers/:id/tag-stats`, `/coverage` | per-tag fire counts (`settings.report_tag_fires`) and pages that sent hits, `?since=7d` |
 | POST | `/containers/:id/rollback` | `{ version }`: moves the live pointer to that version; the draft is unchanged |
 | POST, GET, PATCH, DELETE | `/containers/:id/destinations[/:did]` | POST: `403 quota_exceeded` past `MAX_DESTINATIONS_PER_CONTAINER` |
@@ -481,7 +482,7 @@ content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`,
 `update_environment`, `reauthorize_environment`, `delete_environment`, `add_destination`,
 `list_destinations`, `update_destination`, `remove_destination`, `test_destination`, `put_lookup`,
 `list_lookups`, `get_lookup`, `delete_lookup`, `send_server_events`, `get_event_log`,
-`get_visitor`, `get_tag_stats`, `get_coverage`, `get_usage`, `setup_conversion_tracking` (recipe: given
+`get_visitor`, `get_tag_stats`, `get_coverage`, `get_quarantine`, `get_usage`, `setup_conversion_tracking` (recipe: given
 platforms + conversions in plain terms, writes a complete draft, creates destinations for
 platforms with credentials, validates it, and returns what's left to do, e.g. which IDs are
 missing and where to find them; a conversion gets `server: true` only when a destination will
@@ -526,6 +527,19 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   (backend events keep working up to 25% past it); bounded maps and strings in everything
   `/collect` stores (known click ids, utm_* and consent keys only, 25 scalar params, bounded
   first touch, id-shaped fbp/fbc/GA ids, 512-character user agent).
+- **Attack protection** (`src/service/protection.ts`, per container `protection: auto | strict | off`):
+  container ids are public, so one source could fill a container's daily budget. Past
+  `MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY` browser hits from one network (IPv4 address or
+  IPv6 /48, counted by an HMAC of container id, UTC day and network keyed from `ENCRYPTION_KEY`, one
+  upsert per hit into the DO's `net_daily`), the rest of its hits that day are quarantined and the
+  container is "contained". A 15-minute window with at least 10x the usual rate (the previous 7
+  days' `browser_events` / 96) and at least 1000 (`SPIKE_MIN_EVENTS`) puts it "under_attack" (in
+  memory, no extra query per hit): data-centre ASNs are quarantined and browser conversions are held
+  (each destination skipped with a `held: ...` reason). `strict` applies those measures always.
+  Episodes end an hour after the last trigger. Quarantined hits are logged (`status: quarantined`,
+  `quarantine`, `asn`, `as_org`; up to `MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY`), never
+  delivered, never stored as visitors and not counted against the daily budgets. Backend events
+  are never affected. `GET /v1/usage` reports episodes in `attacks` for the platform site's emails.
 - **Custom code** needs a verified domain and a claimed account (above), for tags and
   `custom_js` variables, imported or not; environments and `publish { version }` apply the same
   rule, and a page can block types itself (`data-afst-block`).
@@ -582,6 +596,9 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
 | `MAX_EVENTS_PER_CONTAINER_PER_DAY` | optional var; browser hits per container per UTC day, and separately backend events (unset = off) |
 | `MAX_EVENTS_PER_ACCOUNT_PER_DAY` | optional var; the same summed over an account's containers, counted in D1 (unset = off) |
 | `MAX_EVENTS_PER_DAY` | optional var; the same for the whole deployment; unclaimed accounts stop at `UNCLAIMED_MAX_EVENTS_PER_DAY` on the same counter (unset = off) |
+| `MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY` | optional var; browser hits one network may send a container per UTC day before the rest are quarantined (attack protection; unset = off) |
+| `MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY` | optional var; quarantined hits logged per container per UTC day, the rest counted only (unset = off) |
+| `SPIKE_MIN_EVENTS` | optional var; fewest browser hits in 15 minutes that count as a spike, default `1000` (for tests) |
 | `MAX_VISITORS_PER_CONTAINER` | optional var; visitor rows kept per container, least recently seen evicted, default `250000` |
 | `MAX_CONTAINER_DB_BYTES` | optional var; ContainerDO database size above which `/collect` stops writing (backend events up to 25% more), default `1073741824` (1 GiB) |
 | `CIRCUIT_BREAKER_FAILURES`, `CIRCUIT_BREAKER_MINUTES` | optional vars; consecutive failed attempts that open a destination's circuit (default `20`, `0` = off) and minutes it stays open (default `60`) |

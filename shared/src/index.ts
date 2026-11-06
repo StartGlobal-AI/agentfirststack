@@ -8,3 +8,4 @@ export * from "./notices";
 export * from "./resource";
 export * from "./standing";
 export * from "./text";
+export * from "./protection";

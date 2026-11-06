@@ -52,7 +52,7 @@ export const purgeInput = z.object({
 /** Delete events matching filters in a period (test traffic, a broken deploy). Dry run by default. */
 export async function purgeEvents(ctx: Ctx, siteId: string, raw: unknown) {
   const q = parse(purgeInput, raw);
-  if (!q.filters?.trim() && !q.filters_json && !q.segment && q.debug !== "only")
+  if (!q.filters?.trim() && !q.filters_json && !q.segment && q.debug !== "only" && q.debug !== "quarantined")
     throw badRequest(
       "A purge needs filters.",
       'Example: {"period":"7d","filters":"hostname==staging.example.com","dry_run":true} (filters_json, segment, or debug: only work too). To delete everything, DELETE /v1/sites/:id.',

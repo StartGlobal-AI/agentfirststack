@@ -32,6 +32,7 @@ import { cleanEvent } from "../lib/ingest-rules";
 import { MAX_PATH_RULES, normalizePathRules } from "../lib/pathrules";
 import { type Ctx, type SiteRow, isVerified, jsonList, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
 import { REPLAY_SITE_RE, proxyKeyFor } from "./ingest";
+import { protectionField, protectionJson } from "./quarantine";
 import { type Framework, installInstructions, scriptSnippet } from "./install";
 
 const hostnamePattern = z
@@ -180,6 +181,7 @@ const settingsShape = {
     .describe(
       "Drop matching events at ingest (from now on; stored data is not changed). Replaces the whole set; null clears it. Drops are counted per reason (excluded_ip, excluded_path, excluded_hostname, excluded_country, excluded_referrer); IPs are compared in memory, never stored.",
     ),
+  protection: protectionField,
 };
 
 export const createSiteInput = z.object({
@@ -249,6 +251,7 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     session_timeout_minutes: s.session_timeout_minutes ?? 30,
     channel_groups: jsonList<ChannelGroup>(s.channel_groups) ?? [],
     currency: s.currency ?? null,
+    protection: s.protection ?? "auto",
     verification: verificationJson(s),
     created_at: s.created_at,
     updated_at: s.updated_at,
@@ -281,6 +284,8 @@ export function siteLimits(env: Bindings, standing: Standing) {
     share_links_per_site: fin(siteCap(env, standing, "MAX_SHARE_LINKS_PER_SITE", DEFAULT_MAX_SHARE_LINKS_PER_SITE)),
     sites_per_account: fin(siteCap(env, standing, "MAX_SITES_PER_ACCOUNT", Number.POSITIVE_INFINITY)),
     sql_time_ms_per_10_min: fin(sqlBudget),
+    events_per_network_per_site_per_day: fin(caps.networkShare),
+    quarantined_events_per_site_per_day: fin(caps.quarantineDaily),
     note: `Daily counts reset at 00:00 UTC. Unclaimed accounts may have lower limits than claimed ones. SQL time is measured per ${SQL_BUDGET_WINDOW_MS / 60_000} minutes.`,
   };
 }
@@ -346,6 +351,7 @@ const SETTING_COLUMNS = [
   "currency",
   "session_timeout_minutes",
   "channel_groups",
+  "protection",
 ] as const satisfies readonly (keyof SiteRow)[];
 
 const columnValues = (row: SiteRow) => SETTING_COLUMNS.map((c) => (row[c] ?? null) as string | number | null);
@@ -436,6 +442,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     session_timeout_minutes: input.session_timeout_minutes ?? null,
     channel_groups: channelGroupsColumn(input.channel_groups),
     currency: input.currency ?? null,
+    protection: input.protection ?? "auto",
     created_at: now,
     updated_at: now,
   };
@@ -473,13 +480,15 @@ export async function listSites(ctx: Ctx) {
 export async function getSite(ctx: Ctx, siteId: string) {
   const s = await loadSite(ctx, siteId);
   const [summary, standing] = await Promise.all([siteStub(ctx.env, s.id).summary(), standingOf(ctx)]);
-  const data = "error" in summary ? null : summary;
+  const { protection, ...data } = "error" in summary ? { protection: undefined } : summary;
+  const known = !("error" in summary);
   const limits = siteLimits(ctx.env, standing);
   return {
     site: { ...siteJson(s, ctx.baseUrl), effective_retention_days: effectiveRetention(ctx.env, standing, s.retention_days) },
-    data,
+    data: known ? data : null,
     limits,
-    status: data ? budgetStatus(data, limits) : null,
+    status: known ? budgetStatus(data, limits) : null,
+    protection: protectionJson(ctx.baseUrl, s.id, protection, s.protection ?? "auto"),
   };
 }
 
@@ -543,6 +552,7 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.session_timeout_minutes !== undefined) next.session_timeout_minutes = input.session_timeout_minutes ?? null;
   if (input.channel_groups !== undefined) next.channel_groups = channelGroupsColumn(input.channel_groups);
   if (input.currency !== undefined) next.currency = input.currency ?? null;
+  if (input.protection !== undefined) next.protection = input.protection;
   if (replayChange) next.replay_site_id = replaySiteColumn(input.replay_site_id ?? null);
   // A new domain has to be proven again (share pages show the domain only while it is).
   const domainChanged = next.domain !== s.domain;

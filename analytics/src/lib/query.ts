@@ -92,8 +92,12 @@ const goalValueFrag = (ctx: QueryCtx) =>
     `(SELECT g.value FROM goals g WHERE ${GOAL_MATCH} AND g.value IS NOT NULL${ctx.hasOnceGoals ? ` AND ${ONCE_FIRST}` : ""} ORDER BY g.created_at LIMIT 1)`,
   );
 
-/** Events marked debug (afsa('debug'), debug: true on server events): left out unless asked for. */
-export type DebugMode = "exclude" | "include" | "only";
+/**
+ * events.debug: 0 = counted, 1 = test traffic (afsa('debug'), debug: true on server events),
+ * 2 = quarantined (attack protection). exclude (default) reads only 0; include adds test traffic
+ * (never quarantine); only = the test traffic alone; quarantined = the quarantined events alone.
+ */
+export type DebugMode = "exclude" | "include" | "only" | "quarantined";
 
 export interface QueryCtx {
   start: number;
@@ -286,9 +290,9 @@ function filterFrag(f: Filter, ctx: QueryCtx): Frag {
   return valueCond(columnFor(f.key, ctx), f.op, f.values);
 }
 
-export function debugFrag(mode: DebugMode | undefined, alias = "e"): Frag | null {
-  if (mode === "include") return null;
-  return raw(`${alias}.debug = ${mode === "only" ? 1 : 0}`);
+export function debugFrag(mode: DebugMode | undefined, alias = "e"): Frag {
+  if (mode === "include") return raw(`${alias}.debug < 2`);
+  return raw(`${alias}.debug = ${mode === "only" ? 1 : mode === "quarantined" ? 2 : 0}`);
 }
 
 /** A nested and / or / not group (filters_json, segments) as SQL over events e. */
@@ -303,11 +307,10 @@ export function exprFrag(e: FilterExpr, ctx: QueryCtx): Frag {
 }
 
 export function whereFrag(ctx: QueryCtx): Frag {
-  const dbg = debugFrag(ctx.debug);
   return join(
     [
       sql`e.ts >= ${ctx.start} AND e.ts < ${ctx.end}`,
-      ...(dbg ? [dbg] : []),
+      debugFrag(ctx.debug),
       ...ctx.filters.map((f) => filterFrag(f, ctx)),
       ...(ctx.where ? [exprFrag(ctx.where, ctx)] : []),
     ],

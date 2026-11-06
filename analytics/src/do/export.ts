@@ -60,7 +60,7 @@ export interface ExportRequest {
   /** last id of the previous page */
   after: number;
   limit: number;
-  debug: "exclude" | "include" | "only";
+  debug: "exclude" | "include" | "only" | "quarantined";
 }
 
 export function exportEvents(db: Db, q: ExportRequest, dailyBudget: number, now = Date.now()) {
@@ -78,7 +78,7 @@ export function exportEvents(db: Db, q: ExportRequest, dailyBudget: number, now 
   // Columns this database has (older sites may lack a late one), from the table's own SQL.
   const ddl = String(db.all("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'")[0]?.sql ?? "");
   const select = EXPORT_COLUMNS.filter((c) => new RegExp(`[(,]\\s*"?${c}"?\\s`, "i").test(ddl));
-  const dbg = q.debug === "include" ? "" : q.debug === "only" ? "AND debug = 1" : "AND debug = 0";
+  const dbg = q.debug === "include" ? "AND debug < 2" : `AND debug = ${q.debug === "only" ? 1 : q.debug === "quarantined" ? 2 : 0}`;
   const rows = db.all(`SELECT ${select.join(", ")} FROM events WHERE id > ? AND ts >= ? AND ts < ? ${dbg} ORDER BY id LIMIT ?`, [
     q.after,
     q.start,

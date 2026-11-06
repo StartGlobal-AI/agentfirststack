@@ -134,7 +134,7 @@ const USAGE_TOOL: Tool = {
   name: "afs_get_usage",
   title: "Get this project's usage and fair-use limits",
   description:
-    "Every fair-use cap of every service for this project (analytics, tags, mail, replay) with used / limit / remaining, when daily budgets reset (00:00 UTC), and close_to_limits: the caps at 80% or more, most urgent first. drops_data: true marks caps where reaching the limit loses incoming data (events, mail, sessions) instead of failing your own call; the project's people get an email when one gets close. Same as GET /v1/usage; each service's own get_usage has the details.",
+    "Every fair-use cap of every service for this project (analytics, tags, mail, replay) with used / limit / remaining, when daily budgets reset (00:00 UTC), and close_to_limits: the caps at 80% or more, most urgent first. drops_data: true marks caps where reaching the limit loses incoming data (events, mail, sessions) instead of failing your own call; the project's people get an email when one gets close. attacks lists analytics sites and tag containers getting suspicious traffic (under_attack, contained) or that did in the last 24 hours (ended), with what was quarantined and next_steps to review, release or purge it. Same as GET /v1/usage; each service's own get_usage has the details.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };

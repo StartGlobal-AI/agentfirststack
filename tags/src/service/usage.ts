@@ -1,10 +1,11 @@
-import { accountStanding } from "@afs/shared";
+import { type AttackItem, accountStanding } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { ContainerUsage } from "../do/container-do";
 import type { Bindings } from "../env";
 import { containerStub } from "./containers";
 import { containerCaps, deliveryBudgets, eventBudgets, limits, standingFlag, utcDay } from "./limits";
 import { customCodeIn } from "./verify";
+import { attackItem, protectionCaps } from "./protection";
 
 /**
  * GET /v1/usage (MCP get_usage): every cap tags enforces for this account, with what it has used,
@@ -16,6 +17,10 @@ import { customCodeIn } from "./verify";
  * counts through the container_id indexes, today's budget rows) and one point-read call per
  * container's Durable Object. Deployment-wide budgets (MAX_EVENTS_PER_DAY, MAX_DELIVERIES_PER_DAY)
  * are the deployment's volume, not the account's, and are left out.
+ *
+ * `attacks` (attack protection, src/service/protection.ts) lists every container under attack,
+ * contained, or ended in the last 24 h; it rides on the same Durable Object answers (no extra call),
+ * so the site's hourly check can email people and show a banner from it.
  */
 
 /** One container under a per-container cap. */
@@ -125,7 +130,7 @@ function perContainer(rows: ContainerUsageRow[], value: (r: ContainerUsageRow) =
   };
 }
 
-export async function getUsage(env: Bindings, accountId: string, now = Date.now()) {
+export async function getUsage(env: Bindings, accountId: string, now = Date.now(), base = "") {
   const standing = await accountStanding(env, accountId);
   const day = utcDay(now);
   const resets = nextUtcMidnight(now);
@@ -133,6 +138,7 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
   const cc = containerCaps(env, standing);
   const events = eventBudgets(env, standing);
   const deliveries = deliveryBudgets(env, standing);
+  const protect = protectionCaps(env, standing);
   const countCustomCode = Number.isFinite(caps.maxCustomCodeBytes);
 
   // Containers per account are capped (MAX_CONTAINERS_PER_ACCOUNT), and each subquery reads one
@@ -167,7 +173,7 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
   const answers = await Promise.all(
     asked.map(async (r) => {
       try {
-        return [r.id, await containerStub(env, r.id).usageToday(day)] as const;
+        return [r.id, await containerStub(env, r.id).usageToday(day, standing, now)] as const;
       } catch (e) {
         console.error(`usage: container ${r.id} did not answer`, e);
         return [r.id, null] as const;
@@ -176,7 +182,7 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
   );
   const live = new Map<string, ContainerUsage>();
   for (const [id, u] of answers) if (u) live.set(id, u);
-  const fromDO = (k: keyof ContainerUsage) => (r: ContainerUsageRow) => live.get(r.id)?.[k];
+  const fromDO = (k: Exclude<keyof ContainerUsage, "protection">) => (r: ContainerUsageRow) => live.get(r.id)?.[k];
 
   // The account's daily totals, as the budgets count them: each container's own count (fresher
   // than its last report to D1), plus what containers deleted today reported.
@@ -219,6 +225,8 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
   const queued = per(fromDO("deliveries"), cc.deliveriesPerDay);
   const visitors = per(fromDO("visitors"), cc.visitors);
   const dbBytes = per(fromDO("db_bytes"), cc.dbBytes);
+  const perNetwork = per(fromDO("network_max"), protect.perNetwork);
+  const quarantined = per(fromDO("quarantined"), protect.quarantinedPerDay);
   const storage = rows.reduce((n, r) => n + r.draft_bytes + r.version_bytes + r.lookup_bytes, 0);
 
   const limitsOut = {
@@ -337,6 +345,30 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
         per: dbBytes.per,
       },
     ),
+    events_per_network_per_container_per_day: item(
+      "Browser events a day from one network in one container",
+      perNetwork.used,
+      protect.perNetwork,
+      "browser hits one client network (an IPv4 address or IPv6 /48, the visitor's behind your first-party proxy with its key) sends one container (used = the busiest network of the busiest container)",
+      "MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY",
+      resets,
+      {
+        note: "Attack protection, not a loss: past it that network's browser hits are quarantined until 00:00 UTC (logged for review with GET /v1/containers/:id/quarantine, never sent to destinations, not counted against the daily budgets), so one source can't use up the budget real visitors need. Off with protection: off. Backend events are never affected.",
+        per: perNetwork.per,
+      },
+    ),
+    quarantined_events_per_container_per_day: item(
+      "Quarantined browser hits a day in one container",
+      quarantined.used,
+      protect.quarantinedPerDay,
+      "browser hits attack protection set aside in one container today (a network past its share, or data-centre traffic during an attack; used = the container with the most)",
+      "MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY",
+      resets,
+      {
+        note: "Past it further quarantined hits are counted but not logged. They were never going to be delivered, so nothing from real visitors is lost; GET /v1/containers/:id/quarantine shows what was set aside.",
+        per: quarantined.per,
+      },
+    ),
     destinations_per_container: item(
       "Destinations in one container",
       destinations.used,
@@ -428,6 +460,15 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
     ),
   } satisfies Record<string, UsageItem>;
 
+  // Attack protection: every container under attack, contained, or ended in the last 24 h (the
+  // platform site emails people and shows a banner from these; they ride on the answers above).
+  const attacks: AttackItem[] = [];
+  for (const r of asked) {
+    const v = live.get(r.id)?.protection;
+    const a = v ? attackItem(base, r.id, r.domain, v) : null;
+    if (a) attacks.push(a);
+  }
+
   const missing = rows.length - live.size;
   const claim = env.AUTH_ISSUER ? `POST ${env.AUTH_ISSUER.replace(/\/$/, "")}/v1/claim-link` : "POST /v1/claim-link (on the platform site)";
   return {
@@ -436,6 +477,7 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
     resets_at_iso: new Date(resets).toISOString(),
     claimed: standing.claimed,
     limits: limitsOut,
+    attacks,
     policy: { custom_code_allowed: standingFlag(env, standing, "ALLOW_CUSTOM_CODE", true, false) },
     rate_limits:
       "Bursts are also limited at the edge: /collect per client network and per container (conversions tighter), and scan + verify, destination tests and backend event requests per account (429 rate_limited). Those counters are approximate and not listed here.",

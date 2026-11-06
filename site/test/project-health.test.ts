@@ -1,8 +1,9 @@
+import type { AttackItem } from "@afs/shared";
 import { describe, expect, it } from "vitest";
 import { createClaimLink } from "../src/claims";
 import { deliverDue } from "../src/email";
-import { limitLine } from "../src/email-messages";
-import { type UsageItem, checkProjectLimits, checkQuietSites, limitHits, quietSpell } from "../src/project-health";
+import { attackHeadline, attackLine, limitLine } from "../src/email-messages";
+import { type UsageItem, attackItems, checkProjectLimits, checkQuietSites, limitHits, quietSpell } from "../src/project-health";
 import {
   BASE,
   Browser,
@@ -266,5 +267,288 @@ describe("health: settings", () => {
     expect(await prefs()).toEqual({ email_updates: 1, email_alerts: 0 });
     await b.post("/dashboard/account/emails", { csrf: csrfOf(page.text), alerts: "on" });
     expect(await prefs()).toEqual({ email_updates: 0, email_alerts: 1 });
+  });
+});
+
+// ---------- attacks ----------
+
+/** One entry of a service's `attacks` (the contract in @afs/shared). */
+const attack = (o: Partial<AttackItem> & Pick<AttackItem, "service" | "resource_id">): AttackItem => ({
+  resource_label: "attack.test",
+  state: "under_attack",
+  mode: "auto",
+  since: Date.now() - HOUR,
+  last_seen_at: Date.now() - 60_000,
+  ended_at: null,
+  reasons: [{ kind: "spike", detail: "9,800 events in 15 minutes, about 40 times the usual" }],
+  quarantined: 4200,
+  next_steps: [`Review: GET https://analytics.afs.test/v1/sites/${o.resource_id}/quarantine`],
+  ...o,
+});
+
+/** The attack emails one address got, by subject. */
+const attackMail = (address: string, subject: string) => emailsTo(address).filter((m) => m.subject === subject);
+
+describe("health: attacks, the rules", () => {
+  it("merges analytics and tags attacks, checked, active first, and drops what it can't use", () => {
+    const now = Date.now();
+    const items = attackItems(
+      {
+        analytics: {
+          attacks: [
+            attack({ service: "analytics", resource_id: "site_ended", state: "ended", ended_at: now - HOUR }),
+            attack({ service: "analytics", resource_id: "site_old", state: "ended", ended_at: now - 2 * DAY }), // ended too long ago
+            attack({ service: "analytics", resource_id: "site_net", state: "contained", reasons: [{ kind: "network_share", detail: "" }] }),
+            { resource_id: "ctr_wrongservice", state: "under_attack", since: 1 },
+            { resource_id: "site_nostate", since: 1 },
+            { resource_id: "site_proto", state: "toString", since: 1 },
+            "nonsense",
+          ],
+        },
+        tags: { attacks: [attack({ service: "tags", resource_id: "ctr_spike", mode: "bogus" as AttackItem["mode"] })] },
+        mail: { attacks: [attack({ service: "analytics", resource_id: "site_mail" })] }, // only analytics and tags have them
+      },
+      now,
+    );
+    expect(items.map((a) => [a.service, a.resource_id, a.state])).toEqual([
+      ["tags", "ctr_spike", "under_attack"],
+      ["analytics", "site_net", "contained"],
+      ["analytics", "site_ended", "ended"],
+    ]);
+    expect(items[0]?.mode).toBe("auto");
+
+    const [spike, contained, ended] = items as [AttackItem, AttackItem, AttackItem];
+    expect(attackLine(spike)).toContain("Tags on attack.test, since ");
+    expect(attackLine(spike)).toContain(
+      "9,800 events in 15 minutes, about 40 times the usual. 4,200 events set aside so far, none of them sent anywhere;",
+    );
+    expect(attackLine(spike)).toContain("traffic from data-centre networks is set aside too");
+    expect(attackLine(spike)).toContain("aren't sent to your ad platforms");
+    expect(attackLine(contained)).toContain("One network sent more than its daily share. 4,200 events set aside so far.");
+    expect(attackLine(contained)).not.toContain("data-centre");
+    expect(attackLine(ended)).toContain("It ended at ");
+    expect(attackLine({ ...spike, service: "analytics", mode: "off" })).toContain("Protection is off here, so nothing was set aside");
+    expect(attackHeadline([contained], "Acme")).toBe("attack.test: traffic from one network was set aside");
+    expect(attackHeadline([spike, contained], "Acme")).toBe("attack.test is getting suspicious traffic");
+    expect(attackHeadline([ended], "Acme")).toBe("Suspicious traffic to attack.test has ended");
+    expect(attackHeadline([spike, { ...contained, resource_label: "b.test" }], "Acme")).toBe(
+      "attack.test and b.test are getting suspicious traffic",
+    );
+  });
+});
+
+describe("health: attacks in usage", () => {
+  it("passes the merged attacks through GET /v1/usage and afs_get_usage", async () => {
+    const agent = await signup("attackusage.test");
+    usageFixtures.set(`analytics:${agent.accountId}`, {
+      limits: {},
+      attacks: [attack({ service: "analytics", resource_id: "site_usage1", state: "contained" })],
+    });
+    usageFixtures.set(`tags:${agent.accountId}`, { limits: {}, attacks: [attack({ service: "tags", resource_id: "ctr_usage1" })] });
+    const rest = await call("GET", "/v1/usage", { key: agent.key });
+    expect(rest.status).toBe(200);
+    expect(rest.json.attacks.map((a: AttackItem) => [a.service, a.resource_id, a.state])).toEqual([
+      ["tags", "ctr_usage1", "under_attack"],
+      ["analytics", "site_usage1", "contained"],
+    ]);
+    expect(rest.json.attacks[1]).toMatchObject({
+      quarantined: 4200,
+      resource_label: "attack.test",
+      next_steps: [expect.stringContaining("/quarantine")],
+    });
+    expect(rest.json.next_steps.some((s: string) => s.startsWith("Suspicious traffic was set aside"))).toBe(true);
+    const viaMcp = await call("POST", "/mcp", {
+      key: agent.key,
+      json: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "afs_get_usage", arguments: {} } },
+    });
+    expect(JSON.parse(viaMcp.json.result.content[0].text).attacks).toHaveLength(2);
+
+    // No attacks: an empty list, and no next step about them.
+    const calm = await signup("calm.test");
+    const quiet = await call("GET", "/v1/usage", { key: calm.key });
+    expect(quiet.json.attacks).toEqual([]);
+    expect(quiet.json.next_steps).toEqual([]);
+  });
+});
+
+describe("health: attack emails", () => {
+  it("tells the project's people once per episode, again for a new one or when it grows, and respects alerts off", async () => {
+    const t = await team("attack");
+    const unclaimed = await signup("attack-nobody.test");
+    const id = t.agent.accountId;
+    const start = Date.now() - HOUR;
+    const spike = {
+      analytics: {
+        limits: {},
+        attacks: [
+          attack({
+            service: "analytics",
+            resource_id: "site_atk1",
+            since: start,
+            reasons: [
+              { kind: "spike", detail: "9,800 events in 15 minutes, about 40 times the usual" },
+              { kind: "datacenter", detail: "" },
+            ],
+          }),
+        ],
+      },
+      tags: { limits: {}, attacks: [attack({ service: "tags", resource_id: "ctr_atk1", since: start, quarantined: 120 })] },
+    };
+    usageFixtures.set(`analytics:${id}`, spike.analytics);
+    usageFixtures.set(`tags:${id}`, spike.tags);
+    usageFixtures.set(`analytics:${unclaimed.accountId}`, spike.analytics);
+    const env = testEnv();
+    const now = Date.now();
+    serviceCalls.length = 0;
+    expect((await checkProjectLimits(env, BASE, now)).attacks).toBeGreaterThanOrEqual(1);
+    expect(serviceCalls.some((s) => s.path === "/v1/usage" && s.account === unclaimed.accountId)).toBe(false);
+    await deliverDue(env, BASE, Date.now());
+    const subject = "attack.test is getting suspicious traffic";
+    for (const address of [t.ownerEmail, t.memberEmail]) {
+      const mail = attackMail(address, subject);
+      expect(mail).toHaveLength(1); // analytics and tags in one email
+      const text = mail[0]!.text;
+      expect(text).toContain("Analytics on attack.test, since ");
+      expect(text).toContain(
+        "9,800 events in 15 minutes, about 40 times the usual; much of it from data-centre networks (hosting and cloud providers).",
+      );
+      expect(text).toContain("4,200 events set aside so far");
+      expect(text).toContain("Tags on attack.test");
+      expect(text).toContain("120 events set aside so far, none of them sent anywhere");
+      expect(text).toContain("aren't sent to your ad platforms");
+      expect(text).toContain("out of your reports and out of the daily budget");
+      expect(text).toContain("https://analytics.afs.test/v1/sites/site_atk1/quarantine");
+      expect(text).toContain("https://tags.afs.test/v1/containers/ctr_atk1/quarantine");
+      expect(text).toContain("POST .../quarantine/release");
+      expect(text).toContain(`Open analytics: ${BASE}/dashboard/projects/${id}/analytics/site_atk1`);
+      expect(text).toContain("Turn off these alerts:");
+      expect(mail[0]?.headers["List-Unsubscribe"]).toContain("&c=alerts");
+    }
+
+    // Two hours on, the same episode is still going (more set aside): nobody is told again.
+    usageFixtures.set(`analytics:${id}`, {
+      limits: {},
+      attacks: [attack({ service: "analytics", resource_id: "site_atk1", since: start, quarantined: 9000, last_seen_at: now + HOUR })],
+    });
+    await checkProjectLimits(env, BASE, now + 2 * HOUR);
+    await deliverDue(env, BASE, now + 2 * HOUR);
+    expect(attackMail(t.ownerEmail, subject)).toHaveLength(1);
+
+    // A new episode (one network over its share, later a spike in the same episode) is news, twice.
+    const later = now + 3 * HOUR;
+    const contained = attack({
+      service: "analytics",
+      resource_id: "site_atk1",
+      since: later,
+      state: "contained",
+      quarantined: 500,
+      reasons: [{ kind: "network_share", detail: "One network sent 2,000 events today" }],
+    });
+    usageFixtures.set(`analytics:${id}`, { limits: {}, attacks: [contained] });
+    usageFixtures.set(`tags:${id}`, { limits: {}, attacks: [] });
+    await checkProjectLimits(env, BASE, now + 4 * HOUR);
+    await deliverDue(env, BASE, now + 4 * HOUR);
+    const set = attackMail(t.ownerEmail, "attack.test: traffic from one network was set aside");
+    expect(set).toHaveLength(1);
+    expect(set[0]?.text).toContain("One network sent 2,000 events today. 500 events set aside so far.");
+    expect(set[0]?.text).not.toContain("data-centre");
+    usageFixtures.set(`analytics:${id}`, { limits: {}, attacks: [{ ...contained, state: "under_attack" }] });
+    await checkProjectLimits(env, BASE, now + 6 * HOUR);
+    await deliverDue(env, BASE, now + 6 * HOUR);
+    expect(attackMail(t.ownerEmail, subject)).toHaveLength(2);
+    // ...and back to contained (or ended) is not.
+    usageFixtures.set(`analytics:${id}`, {
+      limits: {},
+      attacks: [{ ...contained, state: "ended", ended_at: now + 7 * HOUR }],
+    });
+    await checkProjectLimits(env, BASE, now + 8 * HOUR);
+    await deliverDue(env, BASE, now + 8 * HOUR);
+    expect(emailsTo(t.ownerEmail).filter((m) => m.subject.startsWith("attack.test") || m.subject.includes("suspicious"))).toHaveLength(3);
+
+    // The member turns alerts off: the next episode reaches the owner only.
+    const alert = attackMail(t.memberEmail, subject)[0];
+    const url = /^<(.+)>$/.exec(alert?.headers["List-Unsubscribe"] ?? "")?.[1] ?? "";
+    expect((await call("POST", new URL(url).pathname + new URL(url).search)).status).toBe(200);
+    usageFixtures.set(`tags:${id}`, {
+      limits: {},
+      attacks: [attack({ service: "tags", resource_id: "ctr_atk1", resource_label: "shop.attack.test", since: now + 9 * HOUR })],
+    });
+    usageFixtures.set(`analytics:${id}`, { limits: {}, attacks: [] });
+    await checkProjectLimits(env, BASE, now + 10 * HOUR);
+    await deliverDue(env, BASE, now + 10 * HOUR);
+    const tagsOnly = "shop.attack.test is getting suspicious traffic";
+    expect(attackMail(t.ownerEmail, tagsOnly)).toHaveLength(1);
+    expect(attackMail(t.ownerEmail, tagsOnly)[0]?.text).toContain(`Open tags: ${BASE}/dashboard/projects/${id}/tags/ctr_atk1`);
+    expect(attackMail(t.ownerEmail, tagsOnly)[0]?.text).not.toContain("quarantine/release");
+    expect(attackMail(t.memberEmail, tagsOnly)).toHaveLength(0);
+  });
+});
+
+describe("health: attacks on the dashboard", () => {
+  it("shows a banner on the overview and on the analytics and tags tabs", async () => {
+    const t = await team("atkpanel");
+    const id = t.agent.accountId;
+    const now = Date.now();
+    fixtures.set(id, {
+      sites: [
+        { id: "site_dashatk", domain: "atk.test", name: null, created_at: now },
+        { id: "site_dashatk2", domain: "other.atk.test", name: null, created_at: now },
+      ],
+      containers: [{ id: "ctr_dashatk", domain: "atk.test", name: null, live_version: 1, created_at: now }],
+    });
+    const page = (path: string) => t.owner.get(path).then((r) => r.text);
+    const overview = `/dashboard/projects/${id}`;
+    expect(await page(overview)).not.toContain('id="attacks"');
+    expect(await page(`${overview}/analytics/site_dashatk`)).not.toContain('id="attacks"');
+
+    usageFixtures.set(`analytics:${id}`, {
+      limits: {},
+      attacks: [attack({ service: "analytics", resource_id: "site_dashatk", resource_label: "atk.test" })],
+    });
+    usageFixtures.set(`tags:${id}`, {
+      limits: {},
+      attacks: [
+        attack({
+          service: "tags",
+          resource_id: "ctr_dashatk",
+          resource_label: "atk.test",
+          state: "ended",
+          ended_at: now - HOUR,
+          quarantined: 75,
+        }),
+      ],
+    });
+    const html = await page(overview);
+    expect(html).toContain('id="attacks"');
+    expect(html).toContain("atk.test is getting suspicious traffic");
+    expect(html).toContain("4,200 events set aside so far");
+    expect(html).toContain(`href="/dashboard/projects/${id}/analytics/site_dashatk">Open analytics</a>`);
+    expect(html).toContain(`href="/dashboard/projects/${id}/tags/ctr_dashatk">Open tags</a>`);
+    expect(html).toContain("https://analytics.afs.test/v1/sites/site_dashatk/quarantine");
+    expect(html).toContain('class="ask-line"');
+
+    // The analytics tab: only analytics, without a link to the page it's on.
+    const site = await page(`${overview}/analytics/site_dashatk`);
+    expect(site).toContain('id="attacks"');
+    expect(site).toContain("atk.test is getting suspicious traffic");
+    expect(site).not.toContain("Tags on atk.test");
+    expect(site).not.toContain(">Open analytics</a>");
+    expect(site.indexOf('id="attacks"')).toBeLessThan(site.indexOf('id="afa"'));
+    // Another site of the project links to the one under attack.
+    expect(await page(`${overview}/analytics/site_dashatk2`)).toContain(
+      `href="/dashboard/projects/${id}/analytics/site_dashatk">Open analytics</a>`,
+    );
+
+    // The tags tab: its episode ended an hour ago, so the banner is the quiet kind.
+    const tags = await page(`${overview}/tags`);
+    expect(tags).toContain('class="tile attack-tile ended"');
+    expect(tags).toContain("Suspicious traffic to atk.test has ended");
+    expect(tags).toContain("It ended at ");
+    expect(tags).toContain("75 events were set aside");
+    expect(tags).not.toContain("Analytics on atk.test");
+
+    // A service that fails: the page still renders, without the banner.
+    usageFixtures.set(`tags:${id}`, { attacks: "not a list" });
+    expect(await page(`${overview}/tags`)).not.toContain('id="attacks"');
   });
 });

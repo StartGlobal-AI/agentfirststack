@@ -12,6 +12,7 @@ import { DEFAULT_MAX_IMPORTED_ROWS_PER_SITE, DEFAULT_MAX_IMPORTS_PER_SITE } from
 import { DEFAULT_MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY, DEFAULT_MAX_ALERT_EMAILS_PER_SITE_PER_DAY } from "./notify";
 import { DEFAULT_MAX_REPORTS_PER_SITE } from "./reports";
 import { DEFAULT_MAX_SEGMENTS_PER_SITE } from "./segments";
+import { attackItem } from "./quarantine";
 
 /**
  * GET /v1/usage: every fair-use cap this service holds an account to, with what it uses now, the
@@ -390,6 +391,31 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
       resets,
       { note: "Beyond it every site's crawler hits are refused until 00:00 UTC (429 daily_limit) and not counted.", drops_data: true },
     ),
+    events_per_network_per_site_per_day: perSite(
+      "Events a day from one network on one site",
+      (s) => {
+        const p = live.get(s.id)?.protection;
+        return p ? p.busiest_network_today : null;
+      },
+      caps.networkShare,
+      "browser events from one network (an IPv4 address or IPv6 /48) on one site in a UTC day (used = the busiest network today)",
+      "MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY",
+      resets,
+      {
+        note: "Attack protection: past it that network's browser events are quarantined until 00:00 UTC (kept for review, out of reports and of the daily event budget), unless the site's protection is off. Real visitors on other networks are not affected. GET /v1/sites/:id/quarantine to review.",
+      },
+    ),
+    quarantined_events_per_site_per_day: perSite(
+      "Quarantined events a day on one site",
+      fromDo("quarantined_today"),
+      caps.quarantineDaily,
+      "browser events attack protection set aside on one site in a UTC day (not counted in events_per_site_per_day)",
+      "MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY",
+      resets,
+      {
+        note: "Past it further quarantined events are dropped (drop reason quarantine_full) until 00:00 UTC. They are suspicious traffic, not your visitors' counted events.",
+      },
+    ),
     export_rows_per_site_per_day: perSite(
       "Exported events a day on one site",
       fromDo("export_rows_today"),
@@ -402,12 +428,15 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
   };
 
   const unmeasured = sites.length - live.size;
+  // Attack protection: every measured site under attack, contained, or ended in the last 24 h.
+  const attacks = sites.map((s) => attackItem(ctx.baseUrl, s, live.get(s.id)?.protection)).filter((a) => a !== null);
   return {
     day,
     resets_at: resets,
     resets_at_iso: new Date(resets).toISOString(),
     claimed: standing.claimed,
     limits,
+    attacks,
     sites: sites.length,
     rate_limits:
       "Bursts are also limited per minute (POST /e per network and per site, server events and payments per account, SQL, verify): 429 rate_limited. SQL time has its own budget per site per 10 minutes (SQL_TIME_BUDGET_MS, in get_site limits; 429 sql_budget_exhausted). Those are not listed here.",
@@ -423,6 +452,7 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
           ]
         : []),
       "GET /v1/sites/:id shows one site's limits and whether it is refusing events now (status: storage_full, daily_limit_reached).",
+      ...(attacks.length ? attacks.flatMap((a) => a.next_steps.slice(0, 1)) : []),
     ],
   };
 }
@@ -430,6 +460,7 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
 const EMPTY_USAGE: SiteUsage = {
   day: "",
   events_today: 0,
+  quarantined_today: 0,
   crawl_hits_today: 0,
   export_rows_today: 0,
   annotations: 0,

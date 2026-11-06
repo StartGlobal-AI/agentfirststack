@@ -29,7 +29,7 @@ const listish = z.union([z.string(), z.array(z.string())]).optional();
 const boolish = z.union([z.boolean(), z.enum(["true", "false", "1", "0"])]).optional();
 const truthy = (v: z.infer<typeof boolish>) => v === true || v === "true" || v === "1";
 
-export const DEBUG_MODES = ["exclude", "include", "only"] as const;
+export const DEBUG_MODES = ["exclude", "include", "only", "quarantined"] as const;
 
 export const periodShape = {
   period: z
@@ -45,7 +45,12 @@ export const periodShape = {
     .optional()
     .describe("YYYY-MM-DD, inclusive (defaults to today when only `from` is given); or an ISO timestamp, exclusive."),
   timezone: z.string().max(64).optional().describe("IANA timezone for this query's periods and buckets (default: the site's)."),
-  debug: z.enum(DEBUG_MODES).optional().describe("Test traffic marked debug: exclude (default), include, or only (the debug view)."),
+  debug: z
+    .enum(DEBUG_MODES)
+    .optional()
+    .describe(
+      "Test traffic marked debug: exclude (default), include, or only (the debug view). quarantined: only the events attack protection set aside (never part of the other modes).",
+    ),
 };
 
 /** The period part of a request, as the site's Durable Object takes it. */

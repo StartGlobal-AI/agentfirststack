@@ -435,7 +435,7 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (246 tools: 239 prefixed `analytics_`, `tags_`, `mail_` and
+One MCP server for every service (250 tools: 243 prefixed `analytics_`, `tags_`, `mail_` and
 `replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_get_usage`, `afs_test_setup` and `afs_check_test_visit`):
 
 ```sh
@@ -569,6 +569,19 @@ caps where reaching the limit loses incoming data instead of failing your own ca
 answer's `close_to_limits` lists the caps at 80% or more, most urgent first. When a `drops_data`
 cap gets there, the project's people get an email with a prompt that asks you to find what is
 using it up and cut what isn't needed (bot or test traffic, old data, old mail).
+
+Attack protection (analytics and tags; each site and container has `protection`: `auto`, the
+default, `strict` or `off`): one network (as above) sends at most 2,000 events a day to a site and
+1,000 to a container (500 and 200 unclaimed); past that, its events for the rest of the UTC day
+are quarantined, kept out of reports and the daily budget instead of dropped. A sudden spike puts
+the site or container under attack for at least an hour: data-centre traffic is quarantined too,
+and tags stop forwarding browser conversions to ad platforms (the ones your backend sends with a
+key keep flowing). The project's people get an email and a dashboard banner, and `attacks` in
+`GET https://agentfirststack.com/v1/usage` lists each episode with its next_steps. Review with
+`GET https://analytics.agentfirststack.com/v1/sites/:id/quarantine`, then `POST
+.../quarantine/release` (real visitors) or `.../quarantine/purge`; tags:
+`GET https://tags.agentfirststack.com/v1/containers/:id/quarantine` (nothing to release: quarantined
+hits are never delivered).
 
 Need more? The owner can reply to any AgentFirstStack email or write to
 support@agentfirststack.com. Or self-host: every service is a Cloudflare Worker (see the

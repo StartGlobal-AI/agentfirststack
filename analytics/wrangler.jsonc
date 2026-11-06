@@ -85,7 +85,8 @@
   // SQL_TIME_BUDGET_MS (default 60000 per 10 minutes), MAX_ALERTS_PER_SITE (default 20),
   // MAX_ALERT_DESTINATIONS_PER_SITE (default 5), MAX_REPORTS_PER_SITE (default 5),
   // MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY (default 100), MAX_ALERT_EMAILS_PER_SITE_PER_DAY (default 10),
-  // MAX_SEGMENTS_PER_SITE (default 50). Each also has an UNCLAIMED_<NAME> form for accounts no
+  // MAX_SEGMENTS_PER_SITE (default 50), MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY and
+  // MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY (attack protection; unset = off), SPIKE_MIN_EVENTS (default 1000). Each also has an UNCLAIMED_<NAME> form for accounts no
   // person has claimed (see README "Config"). ALERT_EMAIL_FROM: the sender of alert and report
   // emails (with the EMAIL binding below); unset = no email.
   // REPLAY_BASE_URL: the replay service's public URL; the tracker of a site with replay_site_id then

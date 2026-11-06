@@ -83,7 +83,7 @@ function eventOut(e: Row) {
     revenue_type: e.revenue_type ?? null,
     engagement_s: e.engagement_ms ? round(num(e.engagement_ms) / 1000, 1) : null,
     scroll_depth: e.scroll_depth ?? null,
-    ...(e.debug ? { debug: true } : {}),
+    ...(num(e.debug) === 1 ? { debug: true } : num(e.debug) === 2 ? { quarantined: true } : {}),
   };
 }
 

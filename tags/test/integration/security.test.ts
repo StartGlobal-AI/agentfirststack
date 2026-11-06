@@ -287,7 +287,7 @@ describe("event log schema upgrade (objects created by older code)", () => {
           .exec("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events' AND name LIKE 'events_%' ORDER BY name")
           .toArray()
           .map((r) => r.name),
-      ).toEqual(["events_name", "events_received", "events_txn"]);
+      ).toEqual(["events_name", "events_quarantine", "events_received", "events_txn"]);
       // Same id from both origins now coexists.
       sql.exec(
         "INSERT INTO events (event_id, type, name, source, ts, received_at, status, data) VALUES ('e1', 'conversion', 'purchase', 'server', 1, 1, 'logged', '{}')",

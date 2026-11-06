@@ -43,7 +43,8 @@
   //   MAX_CONTAINER_DB_BYTES (default 1073741824), CIRCUIT_BREAKER_FAILURES (default 20),
   //   CIRCUIT_BREAKER_MINUTES (default 60), MAX_ENVIRONMENTS_PER_CONTAINER (default 5),
   //   MAX_LOOKUPS_PER_CONTAINER (default 10), MAX_LOOKUP_ROWS (default 10000),
-  //   MAX_LOOKUP_BYTES (default 1048576). See README.md "Config".
+  //   MAX_LOOKUP_BYTES (default 1048576), MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY,
+  //   MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY (attack protection; unset = off). See README.md "Config".
   // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared by the
   // deployment's Workers: the site's dashboard and the ANALYTICS binding use it).
 

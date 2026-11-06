@@ -311,6 +311,7 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `setup_notice` (updates) | the daily notices found new setup items for a project whose agent ran the check before | the owner |
 | `setup_reminder` (updates) | 3 to 14 days after the claim, the last setup check wasn't ready (`setup_state.ready`, migration `0009`) or never ran | the owner, once |
 | `site_quiet` (alerts) | daily: an analytics site with steady page views (50+ in a week, on 4+ days) has had none for two whole days, and has no enabled `no_data` alert of its own | the owner and members, once per outage |
+| `site_attack` (alerts) | hourly: an analytics site's or tags container's attack protection started or escalated (`attacks` in the service's `GET /v1/usage`: a network over its daily share, or a spike) | the owner and members, once per episode (again if it escalates to under attack) |
 | `limit_warning` (alerts) | hourly: a fair-use cap whose limit drops incoming data (`drops_data` in a service's `GET /v1/usage`) is at 80% or reached; a daily one isn't a "near" in its last hour | the owner and members, once a week per cap and level |
 
 - Every email is an `email_outbox` row first, keyed by `dedupe_key` (one per event and person),

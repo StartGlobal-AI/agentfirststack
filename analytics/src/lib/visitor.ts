@@ -1,4 +1,4 @@
-import { hmacSha256Hex, sha256Hex } from "@afs/shared";
+import { hmacSha256Hex, networkKey, sha256Hex } from "@afs/shared";
 
 /**
  * Cookieless visitor identity:
@@ -27,6 +27,18 @@ export async function dailySalt(secret: string, day: string): Promise<string> {
 export async function visitorHash(secret: string, siteId: string, ip: string, ua: string, ts: number): Promise<string> {
   const salt = await dailySalt(secret, utcDay(ts));
   return (await sha256Hex(`${salt}|${siteId}|${ip}|${ua}`)).slice(0, 16);
+}
+
+/**
+ * The client's network for its daily share of a site's events: networkKey (an IPv4 address or an
+ * IPv6 /48, the per-IP limiter's unit) hashed with the daily salt, the site id and the UTC day, so
+ * the site's Durable Object counts a network without ever seeing it, and the hash means nothing the
+ * next day or on another site.
+ */
+export async function networkHash(secret: string, siteId: string, ip: string, ts: number): Promise<string> {
+  const day = utcDay(ts);
+  const salt = await dailySalt(secret, day);
+  return (await sha256Hex(`${salt}|net|${siteId}|${day}|${networkKey(ip)}`)).slice(0, 16);
 }
 
 const proxyKeyCache = new Map<string, string>();

@@ -1,3 +1,4 @@
+import { type AttackItem, sha256Hex } from "@afs/shared";
 import { type OutgoingEmail, type QueueResult, queueEmail } from "./email";
 import type { Bindings } from "./env";
 import { finishPrompt } from "./dashboard-prompt";
@@ -29,6 +30,8 @@ import { itemsAfter } from "./setup-catalog";
  *
  *   site_quiet          a site with steady page views has had none for 2 days    to the owner and members
  *   limit_warning       a cap that drops data is at 80% or reached               to the owner and members
+ *   site_attack         a site or container is getting suspicious traffic, and   to the owner and members
+ *                       some was set aside (once per episode)
  */
 
 type WaitUntil = ((p: Promise<unknown>) => void) | undefined;
@@ -611,6 +614,150 @@ export async function emailLimitWarning(
           ask: limitsPrompt(base, name, shown),
           action: { label: "Open the project", url: `${projectUrl(base, p.accountId)}#limits` },
           after: env.NOTIFY_REPLY_TO ? ["If the project needs more than these limits, reply to this email and tell us about it."] : [],
+        },
+      },
+      true,
+    );
+    if (res === "queued") queued++;
+  }
+  return queued;
+}
+
+// ---------- attacks ----------
+
+const SVC_NAME = { analytics: "Analytics", tags: "Tags" } as const;
+const REASON_TEXT: Record<AttackItem["reasons"][number]["kind"], string> = {
+  spike: "a sudden spike in traffic",
+  network_share: "one network sent more than its daily share",
+  datacenter: "much of it from data-centre networks (hosting and cloud providers)",
+};
+/** under_attack or contained (project-health.ts attackActive; not imported, to keep the import one-way). */
+const active = (a: AttackItem) => a.state !== "ended";
+const count = (n: number, one: string, many: string) => `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
+/** "14:05 UTC on 6 November 2026" */
+const when = (ms: number) => `${new Date(ms).toISOString().slice(11, 16)} UTC on ${day(ms)}`;
+const trimEnd = (s: string) => s.trim().replace(/[\s.;,]+$/, "");
+const sentence = (s: string) => (s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}.` : "");
+
+/** Data-centre traffic is set aside while a resource is under attack (auto), and always (strict). */
+const datacentreAside = (a: AttackItem) => a.mode === "strict" || (a.mode === "auto" && a.state === "under_attack");
+/** Tags: browser conversions aren't forwarded to ad platforms, on the same rule. */
+export const adsPaused = (a: AttackItem) => a.service === "tags" && a.state !== "ended" && datacentreAside(a);
+
+/** What we saw, as one sentence (the services' own details, or what the reason means). */
+export function attackReasons(a: AttackItem) {
+  const parts = [...new Set(a.reasons.map((r) => trimEnd(r.detail) || REASON_TEXT[r.kind]))];
+  if (!parts.length) parts.push(a.state === "contained" ? REASON_TEXT.network_share : REASON_TEXT.spike);
+  return sentence(parts.join("; "));
+}
+
+/** What we did about it. */
+export function attackMeasures(a: AttackItem) {
+  const n = count(a.quarantined, "event", "events");
+  if (a.state === "ended")
+    return `It ended at ${when(a.ended_at ?? a.last_seen_at)}${a.quarantined ? `; ${n} ${a.quarantined === 1 ? "was" : "were"} set aside` : ""}.`;
+  if (a.mode === "off") return "Protection is off here, so nothing was set aside: this traffic counts in reports and the daily budget.";
+  const parts = [
+    a.quarantined ? `${n} set aside so far${a.service === "tags" ? ", none of them sent anywhere" : ""}` : "nothing set aside yet",
+  ];
+  if (datacentreAside(a)) parts.push("while it lasts, traffic from data-centre networks is set aside too");
+  return `${sentence(parts.join("; "))}${
+    adsPaused(a)
+      ? " Conversions from visitors' browsers aren't sent to your ad platforms (Meta, Google Ads and the others) until it's over; the ones your backend sends with an API key keep flowing."
+      : ""
+  }`;
+}
+
+/** One line per site or container: "Analytics on a.com, since 14:05 UTC on 6 November 2026: <what we saw> <what we did>" */
+export function attackLine(a: AttackItem) {
+  return `${SVC_NAME[a.service]} on ${a.resource_label}, since ${when(a.since)}: ${attackReasons(a)} ${attackMeasures(a)}`;
+}
+
+const labelsOf = (items: AttackItem[], name: string) => {
+  const labels = [...new Set(items.map((a) => a.resource_label))];
+  return labels.length === 1 ? labels[0]! : labels.length === 2 ? `${labels[0]} and ${labels[1]}` : `${labels.length} of ${name}'s sites`;
+};
+
+/** The email's subject and the banner's heading. */
+export function attackHeadline(items: AttackItem[], name: string) {
+  const now = items.filter(active);
+  if (!now.length) return `Suspicious traffic to ${labelsOf(items, name)} has ended`;
+  const labels = labelsOf(now, name);
+  const one = new Set(now.map((a) => a.resource_label)).size === 1;
+  if (now.some((a) => a.state === "under_attack")) return `${labels} ${one ? "is" : "are"} getting suspicious traffic`;
+  const networks = Math.max(...now.map((a) => a.reasons.filter((r) => r.kind === "network_share").length));
+  return `${labels}: traffic from ${networks > 1 ? "several networks" : "one network"} was set aside`;
+}
+
+/** Where an agent reviews what a site or container set aside. */
+export const quarantineUrl = (base: string, a: Pick<AttackItem, "service" | "resource_id">) =>
+  `${serviceBase(base, a.service)}/v1/${a.service === "analytics" ? "sites" : "containers"}/${a.resource_id}/quarantine`;
+
+/** The prompt that asks the project's agent to review what was set aside (email and dashboard). */
+export function attackPrompt(base: string, name: string, items: AttackItem[]) {
+  const shown = items.slice(0, 6);
+  const analytics = shown.some((a) => a.service === "analytics");
+  const tags = shown.some((a) => a.service === "tags");
+  const one = shown.length === 1;
+  const release = analytics ? `release it (POST .../quarantine/release${tags ? "; tags keeps no copy to release" : ""}) and ` : "";
+  return `AgentFirstStack set aside suspicious traffic to ${labelsOf(shown, name)} in our project ${name}. Review what was quarantined (${shown
+    .map((a) => `GET ${quarantineUrl(base, a)}`)
+    .join(
+      ", ",
+    )}; attacks in GET ${base}/v1/usage has each one's next_steps) and tell me whether it looks like an attack or real visitors. If it's real visitors, ${release}set ${
+    one ? "its" : "their"
+  } protection to off${analytics ? "" : " (tags keeps no copy to release)"}; if it's an attack, ${
+    analytics ? "purge it (POST .../quarantine/purge) and " : ""
+  }keep protection on, or set it to strict if it keeps coming.${
+    shown.some((a) => a.reasons.some((r) => r.kind === "network_share"))
+      ? " One thing to check first: if the site sends events through a first-party proxy, the proxy must send its proxy key (x-afs-proxy-key, from the install instructions); without it every visitor looks like the proxy's one network, and that network's share fills up with real visitors."
+      : ""
+  } Then tell me what you did.`;
+}
+
+/** The project tab where a person sees it: the site's analytics, or the container's tags. */
+export const attackTabUrl = (base: string, accountId: string, a: Pick<AttackItem, "service" | "resource_id">) =>
+  `${projectUrl(base, accountId)}/${a.service}/${a.resource_id}`;
+
+/** Hourly cron: sites or containers whose attack protection just started (or grew to under_attack); one email per project. */
+export async function emailAttack(env: Bindings, base: string, p: { accountId: string; name: string | null; attacks: AttackItem[] }) {
+  const name = nameOf(p.name);
+  const shown = p.attacks.slice(0, 6);
+  const first = shown[0];
+  if (!first) return 0;
+  const episodes = (await sha256Hex(shown.map((a) => `${a.service}:${a.resource_id}:${a.since}:${a.state}`).join(","))).slice(0, 16);
+  const acted = shown.some((a) => a.mode !== "off");
+  let queued = 0;
+  for (const person of await projectPeople(env.DB, p.accountId)) {
+    const res = await send(
+      env,
+      base,
+      undefined,
+      {
+        kind: "site_attack",
+        category: "alerts",
+        dedupeKey: `site_attack:${p.accountId}:${episodes}:${person.userId}`,
+        to: person,
+        accountId: p.accountId,
+        content: {
+          subject: attackHeadline(shown, name),
+          body: [
+            `Some traffic to ${labelsOf(shown, name)} (project ${name}) doesn't look like real visitors${acted ? ", so AgentFirstStack stepped in" : ""}:`,
+            ...shown.map(attackLine),
+            ...(p.attacks.length > shown.length ? [`And ${p.attacks.length - shown.length} more.`] : []),
+            ...(acted
+              ? [
+                  "What was set aside is kept for 7 days for review, out of your reports and out of the daily budget, so your numbers stay clean and real visitors keep being counted. These measures end by themselves an hour after the last sign of it.",
+                ]
+              : []),
+            "Your agent can look at it, tell you whether it's an attack or real visitors, and release or delete it. Paste this into it:",
+          ],
+          askFirst: true,
+          ask: attackPrompt(base, name, shown),
+          action: { label: first.service === "analytics" ? "Open analytics" : "Open tags", url: attackTabUrl(base, p.accountId, first) },
+          after: [
+            "We send this once each time it starts. Your agent can make the protection stricter, or turn it off for a site or container (protection: strict or off).",
+          ],
         },
       },
       true,

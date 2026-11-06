@@ -1,3 +1,5 @@
+import type { AttackItem } from "@afs/shared";
+import { attackHeadline, attackLine, attackTabUrl } from "./email-messages";
 import { type SafeHtml, html } from "./html";
 import type { InboxItem, Resources } from "./services";
 import { STATUS_MARK, STATUS_WORD, type SetupReport } from "./setup-check";
@@ -13,6 +15,35 @@ export const askText = (text: string) => html`<q class="ask-q">${text}</q>`;
 /** "Ask your agent: “…”" as one quiet line (lead null: just the prompt). */
 export const askLine = (text: string, lead: string | null = "Ask your agent") =>
   html`<p class="ask-line">${lead === null ? "" : html`<span class="ask-lead">${lead}</span>`}${askText(text)}</p>`;
+
+/**
+ * Suspicious traffic a site or container set aside (project-health.ts attackItems), as a banner on
+ * the Overview and the Analytics and Tags tabs: what was seen, what was done (the same lines as the
+ * site_attack email), and the prompt to review it. An episode that ended (last 24 h) is quieter.
+ * With `projectId`, each line links to its tab (except `current`, the page it's on).
+ */
+export function attacksView(items: AttackItem[], o: { name: string; prompt: string; projectId?: string; current?: string }): SafeHtml {
+  const active = items.some((a) => a.state !== "ended");
+  return html`<section class="tile attack-tile${active ? "" : " ended"}" id="attacks" aria-labelledby="attacks-title">
+  <h2 id="attacks-title">${attackHeadline(items, o.name)}</h2>
+  <ul class="attack-list">${items
+    .slice(0, 8)
+    .map(
+      (a) =>
+        html`<li class="${a.state}">${attackLine(a)}${
+          o.projectId && a.resource_id !== o.current
+            ? html` <a href="${attackTabUrl("", o.projectId, a)}">Open ${a.service === "analytics" ? "analytics" : "tags"}</a>`
+            : ""
+        }</li>`,
+    )}</ul>
+  <p class="small">${
+    active
+      ? "What was set aside is kept for 7 days for review, out of your reports and the daily budget. These measures end by themselves an hour after the last sign of it."
+      : "What was set aside stays out of your reports. Your agent can still review it and release what's real."
+  }</p>
+  ${askLine(o.prompt, "Ask your agent")}
+</section>`;
+}
 
 const unavailable = html`<p class="muted small">Couldn't load this service right now.</p>`;
 

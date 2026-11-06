@@ -2,7 +2,7 @@ import { ApiError, accountSuspended, networkKey, parse } from "@afs/shared";
 import UAParser from "ua-parser-js";
 import type { ContainerConfig } from "../config/schema";
 import type { CollectResult } from "../do/container-do";
-import type { Bindings } from "../env";
+import { type Bindings, isDevMode } from "../env";
 import { CLICK_ID_DAYS, clickCookieName, VISITOR_COOKIE } from "../lib/clickids";
 import { eventQuotaError } from "./budget";
 import { containerStub, resyncById } from "./containers";
@@ -15,6 +15,8 @@ import { MAX_USER_AGENT } from "./sanitize";
 import { environmentByToken } from "./environments";
 import { previewConfig, previewToken } from "./versions";
 import { sha256Hex } from "@afs/shared";
+import { utcDay } from "./limits";
+import { networkHash, networkOperator } from "./protection";
 
 const BOT =
   /bot|crawl|spider|slurp|headless|lighthouse|pingdom|uptime|facebookexternalhit|preview|prerender|python-requests|go-http-client|scrapy|httpclient/i;
@@ -175,8 +177,10 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
         hint: "Known bot/headless user agent. To test with a headless browser, mark the visit as test traffic: open the first page with ?afsa_debug=1 (or call afst('test', true)), or use a preview link (POST /v1/containers/:id/preview).",
       });
     // Rate limits before any storage is touched (the preview lookup reads D1).
-    const ip = clientIpFrom(req, await fromTrustedProxy(env, req, payload.container_id));
-    const limited = await collectRateLimited(env, networkKey(ip ?? null), payload.container_id, payload.type === "conversion");
+    const trusted = await fromTrustedProxy(env, req, payload.container_id);
+    const ip = clientIpFrom(req, trusted);
+    const network = networkKey(ip ?? null);
+    const limited = await collectRateLimited(env, network, payload.container_id, payload.type === "conversion");
     if (limited) throw rateLimited(limited, RATE_HINT);
     const host = originHost(req.headers.get("origin") ?? undefined, payload.page_url);
     let preview: ContainerConfig | undefined;
@@ -202,6 +206,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
       return json({ ok: true, stored: r.stored });
     }
     if (payload.env && !preview) envConfig = (await environmentByToken(env, payload.container_id, payload.env))?.config;
+    const receivedAt = Date.now();
     const hit: CollectHit = {
       payload,
       enrich: {
@@ -210,7 +215,10 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
         geo: geoFrom(req),
         device: deviceFrom(ua, req.headers.get("accept-language")),
         origin_host: host ?? undefined,
-        received_at: Date.now(),
+        received_at: receivedAt,
+        // Attack protection: the network is counted by a keyed hash that changes daily, never stored as is.
+        net_hash: await networkHash(env, payload.container_id, utcDay(receivedAt), network),
+        ...networkOperator(req, trusted, isDevMode(env)),
       },
       preview_config: preview,
       env_config: envConfig,

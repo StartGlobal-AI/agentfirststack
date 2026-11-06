@@ -56,8 +56,10 @@ describe("SQL building is parameterised", () => {
     const w = whereFrag({ ...ctx, filters: [] });
     // debug (test) events are left out unless asked for
     expect(w).toEqual({ sql: "e.ts >= ? AND e.ts < ? AND e.debug = 0", args: [1, 2] });
-    expect(whereFrag({ ...ctx, filters: [], debug: "include" })).toEqual({ sql: "e.ts >= ? AND e.ts < ?", args: [1, 2] });
+    // include = test traffic too, never quarantine (debug = 2), which only debug=quarantined reads
+    expect(whereFrag({ ...ctx, filters: [], debug: "include" })).toEqual({ sql: "e.ts >= ? AND e.ts < ? AND e.debug < 2", args: [1, 2] });
     expect(whereFrag({ ...ctx, filters: [], debug: "only" }).sql).toContain("e.debug = 1");
+    expect(whereFrag({ ...ctx, filters: [], debug: "quarantined" }).sql).toContain("e.debug = 2");
   });
   it("glob escaping keeps * as the only wildcard", () => {
     expect(toGlob("/a?b[c]/*")).toBe("/a[?]b[[]c]/*");

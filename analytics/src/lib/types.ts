@@ -1,5 +1,6 @@
 import type { Item } from "./items";
 import type { Breakdown, Filter, FilterExpr, Metric } from "./filters";
+import type { ProtectionMode } from "@afs/shared";
 import type { DebugMode, FunnelMode, FunnelStep, FunnelWindow } from "./query";
 import type { CompareSpec, Interval, Period } from "./time";
 import type { Geo } from "./geo";
@@ -8,6 +9,14 @@ import type { Channel, ClickIdType } from "./channel";
 import type { Exclusions } from "./exclusions";
 
 export type VisitorIdMode = "cookieless" | "persistent";
+
+/**
+ * Why a browser event was quarantined (stored with debug = 2, out of reports and of the daily event
+ * budget): its network passed its daily share, or it came from a data-centre network while the site
+ * was under attack (or with protection strict).
+ */
+export const QUARANTINE_REASONS = ["network_share", "datacenter"] as const;
+export type QuarantineReason = (typeof QUARANTINE_REASONS)[number];
 
 /** A path cleaning rule: `*` matches one path segment, `**` any run of characters. */
 export interface PathRule {
@@ -69,6 +78,8 @@ export interface SiteSettings {
   session_timeout_minutes?: number | null;
   /** custom channel groups, first match wins, evaluated at query time */
   channel_groups?: ChannelGroup[] | null;
+  /** attack protection: auto (default; older copies have no field), strict or off */
+  protection?: ProtectionMode;
   created_at: number;
   goals: Goal[];
 }
@@ -151,6 +162,12 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   lcp?: number | null;
   inp?: number | null;
   cls?: number | null;
+  /**
+   * Browser events: a keyed hash of the client's network (networkKey: IPv4 address or IPv6 /48)
+   * with the daily salt, the site id and the UTC day, for the network's daily share. Never the
+   * address or the network itself; it changes every day.
+   */
+  net_hash?: string | null;
 }
 
 export interface IngestOutcome {
@@ -172,6 +189,8 @@ export interface IngestOutcome {
   warnings?: string[];
   /** events stored along with this one (a site_search event), counted against the daily budget */
   extra_events?: number;
+  /** stored as quarantined (debug = 2): out of reports and of the daily event budget, for review */
+  quarantined?: QuarantineReason;
 }
 
 export interface IngestResponse {

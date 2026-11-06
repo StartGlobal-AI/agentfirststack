@@ -2474,3 +2474,37 @@ body.app .nav {
 .limit-list li.reached {
   font-weight: 600;
 }
+
+/* Suspicious traffic a site or container set aside (views.ts attacksView): Overview, Analytics, Tags. */
+.attack-bento {
+  margin-bottom: var(--gap);
+}
+.attack-tile {
+  grid-column: 1 / -1;
+  border-color: #eba59f;
+  background: #fff6f5;
+}
+.attack-tile.ended {
+  border-color: var(--line);
+  background: var(--paper);
+}
+.attack-tile.ended h2 {
+  color: var(--ink-2);
+}
+.attack-list {
+  margin: 4px 0 12px;
+  padding-left: 1.1em;
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+.attack-list li.under_attack {
+  font-weight: 600;
+}
+.attack-list li.ended {
+  color: var(--ink-2);
+}
+.attack-list a {
+  font-weight: 400;
+  white-space: nowrap;
+}

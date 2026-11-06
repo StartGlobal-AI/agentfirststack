@@ -1,9 +1,9 @@
 import { ApiError, timingSafeEqual } from "@afs/shared";
 import { type Context, Hono } from "hono";
-import { NOSCRIPT } from "./analytics-dashboard";
+import { NOSCRIPT, attackBanner, tabAttacks } from "./analytics-dashboard";
 import { dashPage, type ProjectTab, projectHeader, projectId } from "./dashboard-frame";
 import type { SiteEnv } from "./env";
-import { html } from "./html";
+import { type SafeHtml, html } from "./html";
 import { type Project, requireProject } from "./identity";
 import { type ContainerItem, type InboxItem, type ReplaySiteItem, type Service, callService } from "./services";
 import { askLine } from "./views";
@@ -161,7 +161,14 @@ function pick<T extends { id: string }>(list: T[], wanted: string | undefined, r
   return found;
 }
 
-const shell = (c: Context<SiteEnv>, p: Project, tab: ProjectTab, title: string, attrs: Record<string, unknown>) =>
+const shell = (
+  c: Context<SiteEnv>,
+  p: Project,
+  tab: ProjectTab,
+  title: string,
+  attrs: Record<string, unknown>,
+  banner: SafeHtml | "" = "",
+) =>
   dashPage(c, {
     title,
     project: p,
@@ -169,6 +176,7 @@ const shell = (c: Context<SiteEnv>, p: Project, tab: ProjectTab, title: string, 
     scripts: ["/dashboard-app.js"],
     styles: ["/dashboard-app.css"],
     body: html`${projectHeader(p, tab)}
+${banner}
 <div class="afa" id="afa" data-view="${tab}" data-project="${p.id}" data-csrf="${c.var.session.csrf}" data-role="${p.role}" ${Object.entries(
       attrs,
     ).map(([k, v]) => html`data-${k}="${data(v)}" `)}>${NOSCRIPT}</div>`,
@@ -177,15 +185,26 @@ const shell = (c: Context<SiteEnv>, p: Project, tab: ProjectTab, title: string, 
 for (const path of ["/projects/:id/tags", "/projects/:id/tags/:item"])
   serviceViews.get(path, async (c) => {
     const p = await requireProject(c.env.DB, c.var.session.user.id, projectId(c));
-    const r = await callService<{ containers?: ContainerItem[] }>(c.env, "tags", p.id, "/v1/containers");
+    const item = c.req.param("item");
+    const [r, attacks] = await Promise.all([
+      callService<{ containers?: ContainerItem[] }>(c.env, "tags", p.id, "/v1/containers"),
+      tabAttacks(c, p, "tags"),
+    ]);
     const list = r.json?.containers ?? [];
     if (!list.length)
       return emptyTab(c, p, "tags", r.ok, "tag containers", "Track our sign-ups and key actions with AgentFirstStack tags.");
-    const one = pick(list, c.req.param("item"), ID.tags, "Container");
-    return shell(c, p, "tags", `${one.domain} tags`, {
-      container: one,
-      containers: list.map((x) => ({ id: x.id, domain: x.domain })),
-    });
+    const one = pick(list, item, ID.tags, "Container");
+    return shell(
+      c,
+      p,
+      "tags",
+      `${one.domain} tags`,
+      {
+        container: one,
+        containers: list.map((x) => ({ id: x.id, domain: x.domain })),
+      },
+      attackBanner(c, p, attacks, one.id),
+    );
   });
 
 for (const path of ["/projects/:id/replay", "/projects/:id/replay/:item"])

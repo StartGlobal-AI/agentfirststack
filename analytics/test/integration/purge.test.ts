@@ -182,7 +182,7 @@ describe("DELETE /v1/account (purge of a deleted project)", () => {
     });
     const names = (tools.body.result.tools as { name: string }[]).map((t) => t.name);
     expect(names).toContain("delete_site");
-    expect(names.filter((n) => /account|purge/.test(n)).sort()).toEqual(["get_account_rollup", "purge_events"]);
+    expect(names.filter((n) => /account|purge/.test(n)).sort()).toEqual(["get_account_rollup", "purge_events", "purge_quarantine"]);
   });
 
   it("stops when its time budget runs out (at least one site per call) and finishes on the next calls", async () => {

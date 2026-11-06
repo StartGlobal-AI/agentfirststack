@@ -27,7 +27,7 @@ const COPY: Record<OptionalCategory, { title: string; what: string; done: string
   },
   alerts: {
     title: "Turn off alerts",
-    what: "stops getting alerts when a site stops sending data or a project is close to a fair-use limit",
+    what: "stops getting alerts when a site stops sending data or gets suspicious traffic, or a project is close to a fair-use limit",
     done: "You won't get alerts about your projects any more. Turn them back on in your account.",
   },
 };

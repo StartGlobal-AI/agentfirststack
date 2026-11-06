@@ -24,10 +24,11 @@ import {
   emailMemberRemoved,
   emailProjectDeleted,
   emailProjectRestored,
+  attackPrompt,
   limitLine,
   limitsPrompt,
 } from "./email-messages";
-import { type LimitHit, limitHits, projectUsage } from "./project-health";
+import { type LimitHit, attackItems, limitHits, projectUsage } from "./project-health";
 import { analyticsDashboard } from "./analytics-dashboard";
 import { serviceViews } from "./service-views";
 import { type BuildKind, buildPrompt, finishPrompt } from "./dashboard-prompt";
@@ -36,7 +37,7 @@ import { readSetupState } from "./notices";
 import { itemsAfter } from "./setup-catalog";
 import { setupReport } from "./setup-check";
 import { clearSessionCookie, readForm, redirect, requireSession } from "./session";
-import { askLine, askText, forwardView, plural, resourceCounts, resourcesView, setupView } from "./views";
+import { askLine, askText, attacksView, forwardView, plural, resourceCounts, resourcesView, setupView } from "./views";
 
 /**
  * /dashboard: server-rendered pages for signed-in people. Every project route goes through
@@ -210,6 +211,7 @@ dashboard.get("/projects/:id", async (c) => {
     projectUsage(c.env, p.id).catch(() => null),
   ]);
   const limits = usage ? limitHits(usage) : [];
+  const attacks = usage ? attackItems(usage) : [];
   const project = { id: p.id, name: projectName(p) };
   const ids = {
     sites: (resources.sites ?? []).map((x) => x.id),
@@ -224,6 +226,15 @@ dashboard.get("/projects/:id", async (c) => {
     scripts: ["/dashboard-app.js"],
     styles: ["/dashboard-app.css"],
     body: html`${projectHeader(p, "overview")}
+${
+  attacks.length
+    ? html`<div class="bento attack-bento">${attacksView(attacks, {
+        name: projectName(p),
+        prompt: attackPrompt(siteBase(c), projectName(p), attacks),
+        projectId: p.id,
+      })}</div>`
+    : ""
+}
 <div class="afa afa-week" id="afa" data-view="project-overview" data-project="${p.id}" data-ids="${JSON.stringify(ids)}"></div>
 ${limits.length ? html`<div class="bento">${limitsView(limits, limitsPrompt(siteBase(c), projectName(p), limits))}</div>` : ""}
 ${
@@ -772,7 +783,7 @@ dashboard.get("/account", async (c) => {
   ${saved ? notice("Saved.", "ok") : ""}
   <p class="small">We email ${s.user.email} when something happens to your projects: you claim one, someone joins or is removed, you connect an app, a project is deleted or suspended. Those always go out.</p>
   ${csrfField(s)}
-  <label class="check"><input type="checkbox" name="alerts" value="on"${prefs?.email_alerts === 0 ? "" : html` checked`}> <span>Alert me when a site stops sending analytics data, or a project gets close to a fair-use limit</span></label>
+  <label class="check"><input type="checkbox" name="alerts" value="on"${prefs?.email_alerts === 0 ? "" : html` checked`}> <span>Alert me when a site stops sending analytics data or gets suspicious traffic, or a project gets close to a fair-use limit</span></label>
   <label class="check"><input type="checkbox" name="updates" value="on"${prefs?.email_updates === 0 ? "" : html` checked`}> <span>Tell me when there's something new to set up in my projects</span></label>
   <p class="row"><button class="btn btn-quiet" type="submit">Save</button></p>
   ${

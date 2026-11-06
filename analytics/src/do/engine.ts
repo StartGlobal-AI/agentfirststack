@@ -81,6 +81,7 @@ import type {
   FunnelRequest,
   IngestOutcome,
   IngestResponse,
+  QuarantineReason,
   SiteSettings,
   SortSpec,
   StatsRequest,
@@ -123,7 +124,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export const ATTR_COLS = [
   "referrer",
@@ -370,6 +371,19 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       );
     },
   },
+  {
+    // Attack protection: quarantined browser events are stored with debug = 2 and why (quarantine),
+    // out of reports and of the daily event budget, with their own daily counter (usage.quarantined);
+    // each network's browser events today, by a keyed hash that rotates daily (net_daily, pruned
+    // after the day). The partial index keeps the quarantine view, release and the 7-day purge cheap.
+    version: 12,
+    up: (db) => {
+      addColumn(db, "events", "quarantine", "TEXT");
+      db.run("CREATE INDEX IF NOT EXISTS events_quarantined ON events(ts) WHERE debug = 2");
+      addColumn(db, "usage", "quarantined", "INTEGER NOT NULL DEFAULT 0");
+      db.run(NET_DAILY_SQL);
+    },
+  },
 ];
 
 /** Columns and their meaning, for llms.txt / the query_sql tool description. */
@@ -379,7 +393,8 @@ export const SCHEMA_DOC = `events(id, ts unix ms, name ['pageview', 'engagement'
   click_id_type, click_id, country, region, region_code, city, continent, timezone, latitude, longitude, asn, as_org,
   browser, browser_version, os, os_version, device, language, screen [xs|sm|md|lg], title, props [JSON text], revenue [refunds negative], currency,
   revenue_type [new|renewal|refund|NULL], engagement_ms, scroll_depth [0-100, pageviews], lcp [ms], inp [ms], cls,
-  debug [1 = test traffic, left out of reports by default], non_interactive [1 = doesn't un-bounce],
+  debug [0 = counted, 1 = test traffic, 2 = quarantined by attack protection; reports read debug = 0 only by default, add AND debug = 0 yourself],
+  quarantine [network_share|datacenter: why a debug = 2 event was quarantined], non_interactive [1 = doesn't un-bounce],
   no_visit [1 = a server event sent with visit: false that joined no visit: its session_id has no sessions row; reports never count it as a visitor or a visit, add AND no_visit = 0 when you count visitors])
 sessions(id, visitor_id, user_id, user_source [server|browser: who sent the user id], started_at, last_seen_at, hostname, entry_page,
   exit_page, pageviews, custom_events, engagement_ms, + the same attribution, geo and device columns as events)
@@ -388,7 +403,8 @@ payments(id, ref [provider:external_id], provider, external_id, type [new|renewa
   event_rowid [events.id], linked_by [session|visitor|user|customer|original_payment|NULL], livemode,
   original_amount, original_currency, fx_rate, fx_day, fx_fallback [before conversion to the site currency], created_at, updated_at)
 annotations(id, kind [note|traffic_spike|alert], ts, end_ts, title, description, source [api|auto|alert], details [JSON], created_at, updated_at)
-usage(day [UTC YYYY-MM-DD], events [accepted events + engagement beacons], bytes, refused, flushed)
+usage(day [UTC YYYY-MM-DD], events [accepted events + engagement beacons], bytes, refused, flushed, quarantined [events quarantined that day])
+net_daily(day [UTC], net [a keyed hash of one network, new every day], events [its browser events that day; pruned after the day])
 subscriptions(id, ref [provider:external_id], provider, external_id, customer [salted hash], status [trialing|active|past_due|unpaid|paused|canceled|incomplete|incomplete_expired],
   plan, currency, mrr [monthly, while paying], price_mrr, interval, interval_count, quantity, trial_start, trial_end, started_at, canceled_at, ended_at,
   original_mrr, original_currency, fx_rate, period_amount, last_paid_at, current_period_end,
@@ -465,6 +481,10 @@ export function configure(db: Db, settings: SiteSettings): void {
 
 // ------------------------------------------------------------------ ingest
 
+/** Browser events per network (a keyed hash of it that rotates daily) per UTC day, for the network's share. */
+export const NET_DAILY_SQL =
+  "CREATE TABLE IF NOT EXISTS net_daily (day TEXT NOT NULL, net TEXT NOT NULL, events INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, net))";
+
 export function recordDrop(db: Db, reason: string, sample: string | null, now = Date.now(), count = 1): void {
   db.run(
     `INSERT INTO drops (day, reason, count, last_at, sample) VALUES (?, ?, ?, ?, ?)
@@ -481,23 +501,33 @@ export interface UsageDay {
   refused: number;
   /** events already reported to the account / platform aggregate (D1) */
   flushed: number;
+  /** events quarantined (stored with debug = 2, not in `events`): MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY */
+  quarantined: number;
 }
 
 /** Today's (UTC) counters. They only ever go up: purges and deletes don't touch them. */
 export function usageOn(db: Db, day: string): UsageDay {
-  const r = db.all("SELECT events, bytes, refused, flushed FROM usage WHERE day = ?", [day])[0];
-  return { events: num(r?.events), bytes: num(r?.bytes), refused: num(r?.refused), flushed: num(r?.flushed) };
+  const r = db.all("SELECT events, bytes, refused, flushed, quarantined FROM usage WHERE day = ?", [day])[0];
+  return {
+    events: num(r?.events),
+    bytes: num(r?.bytes),
+    refused: num(r?.refused),
+    flushed: num(r?.flushed),
+    quarantined: num(r?.quarantined),
+  };
 }
 
-export function addUsage(db: Db, day: string, delta: { events?: number; bytes?: number; refused?: number }): void {
+export function addUsage(db: Db, day: string, delta: { events?: number; bytes?: number; refused?: number; quarantined?: number }): void {
   const e = delta.events ?? 0;
   const b = delta.bytes ?? 0;
   const r = delta.refused ?? 0;
-  if (!e && !b && !r) return;
+  const q = delta.quarantined ?? 0;
+  if (!e && !b && !r && !q) return;
   db.run(
-    `INSERT INTO usage (day, events, bytes, refused) VALUES (?, ?, ?, ?)
-     ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, bytes = bytes + excluded.bytes, refused = refused + excluded.refused`,
-    [day, e, b, r],
+    `INSERT INTO usage (day, events, bytes, refused, quarantined) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, bytes = bytes + excluded.bytes, refused = refused + excluded.refused,
+       quarantined = quarantined + excluded.quarantined`,
+    [day, e, b, r, q],
   );
 }
 
@@ -560,6 +590,14 @@ export interface IngestOptions {
   userPropKeys?: number;
   /** keys only browsers created (default DEFAULT_MAX_BROWSER_USER_PROP_KEYS) */
   browserUserPropKeys?: number;
+  /**
+   * Attack protection, browser events only, after the drop checks: why to quarantine the event, or
+   * null to store it as usual. Quarantined events are stored with debug = 2 and don't count against
+   * the daily caps (they count in usage.quarantined instead).
+   */
+  quarantine?: (ev: EnrichedEvent) => QuarantineReason | null;
+  /** quarantined events kept per UTC day (default no cap); past it they are dropped (quarantine_full) */
+  quarantineDaily?: number;
 }
 
 /** The daily cap an event would break with `used` events already counted today, or null. */
@@ -631,9 +669,19 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
       }
     : (opts.drop ?? ((reason: string, sample: string | null) => recordDrop(db, reason, sample, now)));
   const run = () => {
-    let used = usageOn(db, day).events;
+    const today = usageOn(db, day);
+    let used = today.events;
     let accepted = 0;
     let bytes = 0;
+    // Quarantined events: their own daily cap, never the event budget.
+    let quarantinedUsed = today.quarantined;
+    let quarantined = 0;
+    const qCap = opts.quarantineDaily ?? Number.POSITIVE_INFINITY;
+    const classify = (ev: EnrichedEvent): QuarantineReason | "full" | null => {
+      if (ev.origin !== "browser" || !opts.quarantine) return null;
+      const reason = opts.quarantine(ev);
+      return reason && quarantinedUsed >= qCap ? "full" : reason;
+    };
     for (const ev of events) {
       warnings = [];
       const refusal: string | null = opts.storageFull ? "storage_full" : capRefusal(opts, used);
@@ -646,13 +694,14 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
         results.push({ ok: false, reason: "event_too_large" });
         continue;
       }
-      // A site_search event rides along only while the daily caps leave room for a second event.
-      const room = () => capRefusal(opts, used + 1) === null;
+      // A site_search event rides along only while the daily caps (or the quarantine's) leave room for a second event.
+      const room = (q: boolean) => (q ? quarantinedUsed + 1 < qCap : capRefusal(opts, used + 1) === null);
       const before = dry ? num(db.all("SELECT MAX(id) AS m FROM events")[0]?.m) : 0;
       const r = ingestOne(db, settings, ev, now, {
         dev: !!opts.dev,
         drop,
         room,
+        classify,
         itemsPerEvent: opts.itemsPerEvent ?? DEFAULT_MAX_ITEMS_PER_EVENT,
         userPropKeys: opts.userPropKeys ?? DEFAULT_MAX_USER_PROP_KEYS,
         browserUserPropKeys: opts.browserUserPropKeys ?? DEFAULT_MAX_BROWSER_USER_PROP_KEYS,
@@ -663,14 +712,18 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
           r.stored = r.engagement ? null : storedEventOut(db.all("SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 1", [before])[0]);
       }
       results.push(r);
-      if (r.ok && !r.uncounted) {
+      if (r.ok && r.quarantined && !r.engagement) {
+        const n = 1 + (r.extra_events ?? 0);
+        quarantinedUsed += n;
+        quarantined += n;
+      } else if (r.ok && !r.uncounted) {
         const n = 1 + (r.extra_events ?? 0);
         used += n;
         accepted += n;
         bytes += size * n;
       }
     }
-    if (!dry) addUsage(db, day, { events: accepted, bytes });
+    if (!dry) addUsage(db, day, { events: accepted, bytes, quarantined });
   };
   if (dry) {
     try {
@@ -728,7 +781,9 @@ function ingestOne(
   o: {
     dev: boolean;
     drop: (reason: string, sample: string | null) => void;
-    room: () => boolean;
+    room: (quarantined: boolean) => boolean;
+    /** attack protection's decision for a browser event (null = store as usual, full = the quarantine's daily cap is used up) */
+    classify?: (ev: EnrichedEvent) => QuarantineReason | "full" | null;
     itemsPerEvent?: number;
     userPropKeys?: number;
     browserUserPropKeys?: number;
@@ -791,8 +846,15 @@ function ingestOne(
     // A leave beacon with under a second of visible time only tells us the visitor left: it costs
     // no budget, and the time is ignored (shorter beacons were never sent before leaves were).
     if (ev.leave && ev.engagement_ms < 1000) return { ok: true, visitor_id: visitorId, engagement: true, uncounted: true };
-    return { ...engagement(db, visitorId, ev), engagement: true };
+    // From a quarantined network: it still updates its pageview, but costs no event budget.
+    const q = o.classify?.(ev) ?? null;
+    if (q === "full") return quarantineFull(drop);
+    const r = engagement(db, visitorId, ev);
+    return { ...r, engagement: true, ...(q && r.ok ? { quarantined: q, uncounted: true } : {}) };
   }
+  // Attack protection: kept for review (debug = 2), out of reports and of the daily event budget.
+  const quarantine = o.classify?.(ev) ?? null;
+  if (quarantine === "full") return quarantineFull(drop);
 
   const isPageview = ev.name === "pageview";
   // The site's session timeout (minutes of inactivity), 30 by default.
@@ -933,8 +995,8 @@ function ingestOne(
 
   db.run(
     `INSERT INTO events (ts, name, visitor_id, session_id, user_id, origin, hostname, pathname, url,
-       ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, revenue, currency, engagement_ms, debug, title, non_interactive, no_visit)
-     VALUES (${Array(9 + ATTR_COLS.length + GEO_COLS.length + DEVICE_COLS.length + 8)
+       ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, revenue, currency, engagement_ms, debug, title, non_interactive, no_visit, quarantine)
+     VALUES (${Array(9 + ATTR_COLS.length + GEO_COLS.length + DEVICE_COLS.length + 9)
        .fill("?")
        .join(", ")})`,
     [
@@ -954,13 +1016,15 @@ function ingestOne(
       ev.revenue,
       ev.currency,
       ev.engagement_ms || 0,
-      ev.debug ? 1 : 0,
+      quarantine ? 2 : ev.debug ? 1 : 0,
       isPageview ? (ev.title ?? null) : null,
       !isPageview && ev.interactive === false ? 1 : 0,
       noVisit ? 1 : 0,
+      quarantine,
     ],
   );
-  if (userId && ev.user_props && Object.keys(ev.user_props).length) {
+  // A quarantined event's user properties are not kept (they would change reports at once).
+  if (userId && !quarantine && ev.user_props && Object.keys(ev.user_props).length) {
     // Anyone can send browser events: their user properties count only with browser_user_props.
     if (ev.origin !== "server" && !settings.browser_user_props) o.drop(`${WARN_PREFIX}browser_user_props_ignored`, null);
     else {
@@ -1008,19 +1072,31 @@ function ingestOne(
   // Site search: a pageview whose URL carries one of the site's search_params also records a
   // site_search event {term} (an event of its own, within the daily budget).
   let extra = 0;
-  if (isPageview && ev.search_term && o.room()) {
+  if (isPageview && ev.search_term && o.room(!!quarantine)) {
     db.run(
       `INSERT INTO events (ts, name, visitor_id, session_id, user_id, origin, hostname, pathname, url,
-         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, debug, non_interactive, no_visit)
+         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, props, debug, non_interactive, no_visit, quarantine)
        SELECT ts, 'site_search', visitor_id, session_id, user_id, origin, hostname, pathname, url,
-         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, ?, debug, 1, no_visit
+         ${ATTR_COLS.join(", ")}, ${GEO_COLS.join(", ")}, ${DEVICE_COLS.join(", ")}, ?, debug, 1, no_visit, quarantine
        FROM events WHERE id = last_insert_rowid()`,
       [JSON.stringify({ term: ev.search_term })],
     );
     extra = 1;
   }
   const ids = noVisit ? { no_visit: true } : { visitor_id: visitorId, session_id: sessionId };
-  return { ok: true, ...ids, new_session: newSession, ...(extra ? { extra_events: extra } : {}) };
+  return {
+    ok: true,
+    ...ids,
+    new_session: newSession,
+    ...(extra ? { extra_events: extra } : {}),
+    ...(quarantine ? { quarantined: quarantine } : {}),
+  };
+}
+
+/** The site's quarantine is full for today: the event is dropped (and counted as a drop). */
+function quarantineFull(drop: (reason: string, sample: string | null) => void): IngestOutcome {
+  drop("quarantine_full", null);
+  return { ok: false, reason: "quarantine_full" };
 }
 
 /** The first configured search parameter's value: trimmed, lowercased, 100 characters; null if none. */
@@ -1766,7 +1842,8 @@ export function realtime(db: Db, q: RealtimeRequest = { filters: [] }, now = Dat
       debug: q.debug ?? "exclude",
       recent_events: recent.map((r) => ({
         ...r,
-        debug: !!r.debug,
+        debug: num(r.debug) === 1,
+        ...(num(r.debug) === 2 ? { quarantined: true } : {}),
         time: new Date(Number(r.ts)).toISOString(),
         props: r.props ? JSON.parse(String(r.props)) : null,
       })),
@@ -2189,8 +2266,25 @@ export function summary(db: Db, now = Date.now()) {
   };
 }
 
-/** Debug events are kept this long, whatever the site's retention. */
+/** Debug (test) and quarantined events are kept this long, whatever the site's retention. */
 export const DEBUG_RETENTION_DAYS = 7;
+
+/**
+ * Delete quarantined events older than `before` and the sessions left with no events (a
+ * session a quarantined event joined keeps its other events). Bounded by the quarantine's
+ * daily cap. Returns the events deleted.
+ */
+export function purgeQuarantined(db: Db, before: number): number {
+  const sessions = db.all("SELECT DISTINCT session_id AS s FROM events WHERE debug = 2 AND ts < ?", [before]).map((r) => String(r.s));
+  if (!sessions.length) return 0;
+  const n = num(db.all("SELECT COUNT(*) AS n FROM events WHERE debug = 2 AND ts < ?", [before])[0]?.n);
+  db.run("DELETE FROM events WHERE debug = 2 AND ts < ?", [before]);
+  db.run(
+    "DELETE FROM sessions WHERE id IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = sessions.id)",
+    [JSON.stringify(sessions)],
+  );
+  return n;
+}
 
 /** Delete raw data older than the retention window. Returns rows deleted. */
 export function purge(db: Db, retentionDays: number, now = Date.now()): { events: number; sessions: number } {
@@ -2207,6 +2301,10 @@ export function purge(db: Db, retentionDays: number, now = Date.now()): { events
   db.run("DELETE FROM annotations WHERE kind != 'note' AND ts < ?", [cutoff]);
   // Test traffic is for checking a setup, not for history: a week is enough (indexed: events_debug).
   db.run("DELETE FROM events WHERE debug = 1 AND ts < ?", [now - DEBUG_RETENTION_DAYS * DAY]);
+  // Quarantined events are kept a week for review too (indexed: events_quarantined), with the
+  // sessions only they made (an attack's sessions would otherwise wait for retention_days).
+  purgeQuarantined(db, now - DEBUG_RETENTION_DAYS * DAY);
+  db.run("DELETE FROM net_daily WHERE day < ?", [utcDay(now)]);
   // First-touch rows of identities not seen within retention.
   db.run("DELETE FROM identities WHERE last_seen < ?", [cutoff]);
   // User properties last set before the retention window.

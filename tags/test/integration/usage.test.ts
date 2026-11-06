@@ -119,6 +119,8 @@ const PER_CONTAINER = [
   "deliveries_per_container_per_day",
   "visitors_per_container",
   "container_db_bytes",
+  "events_per_network_per_container_per_day",
+  "quarantined_events_per_container_per_day",
   "destinations_per_container",
   "versions_per_container",
   "draft_bytes",
@@ -138,7 +140,12 @@ const DROPS_DATA = [
   "visitors_per_container",
   "container_db_bytes",
 ];
-const DAILY = DROPS_DATA.filter((n) => n.includes("_per_day"));
+// Attack protection's caps reset daily but lose nothing from real visitors (quarantine, not drops).
+const DAILY = [
+  ...DROPS_DATA.filter((n) => n.includes("_per_day")),
+  "events_per_network_per_container_per_day",
+  "quarantined_events_per_container_per_day",
+];
 
 describe("GET /v1/usage and MCP get_usage", () => {
   it("lists every account and per-container cap with the shared item shape, and no deployment-wide budget", async () => {

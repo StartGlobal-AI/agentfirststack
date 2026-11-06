@@ -46,6 +46,9 @@ export default defineConfig({
                   "MIN_RETENTION_DAYS",
                   "MAX_RETENTION_DAYS",
                   "SQL_TIME_BUDGET_MS",
+                  "MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY",
+                  "MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY",
+                  "SPIKE_MIN_EVENTS",
                 ]),
                 SIGNUP_HOURLY_LIMIT: "0",
                 // Replay loading off (and a local .dev.vars overridden); tests that need it pass it per call.

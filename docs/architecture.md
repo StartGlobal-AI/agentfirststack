@@ -194,6 +194,12 @@ The apex serves what agents and crawlers look for, from `site/public/`:
 - **Storage.** It then forwards the event to the site's own SQLite Durable Object (`SiteDO`),
   which stores events and sessions and runs every query. The site's settings are copied into the
   DO, so ingest never touches D1.
+- **Protection.** Each site's DO counts browser events per network a day (a keyed hash that rotates
+  daily, never the address) and watches 15-minute windows for spikes (`src/do/protection.ts`). Past a
+  network's share, or from a data-centre network while the site is under attack, events are stored
+  quarantined (`debug = 2`): out of reports and the budget, kept 7 days for review (`/quarantine`,
+  release or purge). Tags does the same per container and holds browser conversions during an attack.
+  The site's hourly check emails the people from `attacks` in each service's usage answer.
 - **Live.** The same DO holds the site's live streams (`GET /v1/sites/:id/realtime/stream`, and
   the dashboard's `/dashboard/projects/:id/live/analytics/:site`, which the site Worker checks and
   hands over a service binding). They are hibernating WebSockets: an idle stream costs nothing, and

@@ -57,6 +57,12 @@ export interface Bindings extends AuthBindings {
   DAILY_EVENT_BUDGET?: string;
   /** Stop storing a site's events once its Durable Object database passes this many MB. Unset = no budget. */
   MAX_SITE_STORAGE_MB?: string;
+  /** Attack protection: browser events one network may send a site per UTC day before the rest are quarantined. Unset = no share. */
+  MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY?: string;
+  /** Quarantined events kept per site per UTC day (past it they are dropped). Unset = no cap. */
+  MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY?: string;
+  /** Spike detection: the fewest accepted browser events in 15 minutes that count as a spike. Default 1000. */
+  SPIKE_MIN_EVENTS?: string;
   /** Bounds for retention_days (and what the daily purge applies). Unset = 1..3650. */
   MIN_RETENTION_DAYS?: string;
   MAX_RETENTION_DAYS?: string;

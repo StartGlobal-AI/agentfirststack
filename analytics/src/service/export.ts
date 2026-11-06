@@ -23,7 +23,10 @@ export const exportInput = z.object({
     .optional()
     .describe("next_cursor of the previous page."),
   limit: z.coerce.number().int().min(1).max(MAX_EXPORT_PAGE).optional().describe(`Rows per page (default 5000, max ${MAX_EXPORT_PAGE}).`),
-  debug: z.enum(["exclude", "include", "only"]).optional().describe("Test traffic: exclude (default), include, only."),
+  debug: z
+    .enum(["exclude", "include", "only", "quarantined"])
+    .optional()
+    .describe("Test traffic: exclude (default), include, only. quarantined: only the events attack protection set aside."),
 });
 
 function bound(v: string, tz: string, end: boolean): number {

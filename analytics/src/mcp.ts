@@ -91,6 +91,7 @@ import { getUsage } from "./service/usage";
 import { verifyInput, verifyInstall } from "./service/verify";
 import { getSchema, listProps, propsInput, schemaInput } from "./service/schema";
 import { deleteVisitor, deleteVisitorInput, purgeEvents, purgeInput } from "./service/privacy";
+import { getQuarantine, purgeQuarantine, quarantineInput, releaseQuarantine } from "./service/quarantine";
 import { createDestination, createDestinationInput, deleteDestination, listDestinations, testDestination } from "./service/destinations";
 import {
   alertHistory,
@@ -156,7 +157,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     "get_site",
     {
       title: "Get site",
-      description: `One site's settings plus a data summary: total events, last 24h, events dropped in the last 7 days by reason (bots, hostname not allowed, DNT, exclusions) and setup warnings (proxy_key_missing / proxy_key_invalid, browser_revenue_ignored), today's usage, storage, the fair-use limits that apply (limits) and whether the site is refusing events now (status: storage_full, daily_limit_reached). ${UNTRUSTED_FIELD}`,
+      description: `One site's settings plus a data summary: total events, last 24h, events dropped in the last 7 days by reason (bots, hostname not allowed, DNT, exclusions) and setup warnings (proxy_key_missing / proxy_key_invalid, browser_revenue_ignored), today's usage, storage, the fair-use limits that apply (limits), whether the site is refusing events now (status: storage_full, daily_limit_reached) and attack protection (protection: mode, state under_attack | contained | ended | none, since, last_seen_at, reasons, quarantined_today, next_steps). ${UNTRUSTED_FIELD}`,
       input: { site_id: siteId },
     },
     (a) => getSite(ctx, a.site_id),
@@ -166,7 +167,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Update site",
       description:
-        "Change a site's settings (name, domain, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions, browser_revenue, trust_browser_user_id). Only the fields you pass change; exclusions replaces the whole rule set (check it with get_exclusions). Lowering retention_days purges older data at once. A new domain has to be verified again. replay_site_id is set only by the replay service (link from the replay site's analytics_site_id); changing it here is refused.",
+        "Change a site's settings (name, domain, timezone, visitor_id_mode, retention_days, allowed_hostnames, respect_dnt, exclusions, browser_revenue, trust_browser_user_id, protection: auto | strict | off). Only the fields you pass change; exclusions replaces the whole rule set (check it with get_exclusions). Lowering retention_days purges older data at once. A new domain has to be verified again. replay_site_id is set only by the replay service (link from the replay site's analytics_site_id); changing it here is refused.",
       input: { site_id: siteId, ...updateSiteInput.shape },
     },
     ({ site_id, ...rest }) => updateSite(ctx, site_id, rest),
@@ -395,6 +396,38 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     ({ site_id, ...rest }) => purgeEvents(ctx, site_id, rest),
   );
 
+  // ---------------------------------------------------------------- attack protection
+  t.read(
+    "get_quarantine",
+    {
+      title: "Get quarantine",
+      description: `Browser events attack protection set aside on a site (stored, but out of every report, the daily event budget and realtime): counts by reason (network_share: one network past its daily share; datacenter: a data-centre network while the site was under attack, or with protection strict), by UTC day, top networks (asn, as_org, datacenter), countries, and under \`untrusted\` the pages, hostnames and browsers they claimed, plus the site's protection state {mode, state: under_attack | contained | ended | none, since, last_seen_at, reasons, quarantined_today} and next_steps. period defaults to 7d (they are kept 7 days); reason narrows it. ${UNTRUSTED_FIELD}`,
+      input: { site_id: siteId, ...quarantineInput.shape },
+    },
+    ({ site_id, ...rest }) => getQuarantine(ctx, site_id, rest),
+  );
+  t.write(
+    "release_quarantine",
+    {
+      title: "Release quarantine",
+      description:
+        "The quarantined events are real traffic: count them in every report from now on (debug 0) and add them to their day's usage count (it may pass the daily budget). period (default 7d) and reason narrow it; at most 50,000 per call (more: true = call again). The same traffic is quarantined again while protection is on: update_site protection: off if it is real.",
+      input: { site_id: siteId, ...quarantineInput.shape },
+    },
+    ({ site_id, ...rest }) => releaseQuarantine(ctx, site_id, rest),
+  );
+  t.write(
+    "purge_quarantine",
+    {
+      title: "Purge quarantine",
+      description:
+        "Delete quarantined events now (otherwise they are purged after 7 days); sessions left empty go too. period (default 7d) and reason narrow it; at most 50,000 per call (more: true = call again). Cannot be undone.",
+      input: { site_id: siteId, ...quarantineInput.shape },
+      destructive: true,
+    },
+    ({ site_id, ...rest }) => purgeQuarantine(ctx, site_id, rest),
+  );
+
   // ---------------------------------------------------------------- revenue
   t.read(
     "get_stripe_integration",
@@ -597,7 +630,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Get usage and limits",
       description:
-        "Every fair-use limit that applies to this account with used / limit / remaining and when daily budgets reset (00:00 UTC): events a day per site and across sites, storage per site, sites, goals, funnels, segments, share links, annotations, alerts, destinations, reports, alert deliveries, ad spend rows, imports, user property keys, crawler hits and exports. Each limit has label (a short name for a person), unit, var; drops_data: true marks caps where reaching them silently loses incoming data (events refused, storage full, new user property keys or crawler hits not stored) instead of failing your call. Per-site caps have per: every site { id, label (its domain), used, remaining }, highest first, at most 25 (used = the top site). limit null = no cap. Read it before a 429, not after.",
+        "Every fair-use limit that applies to this account with used / limit / remaining and when daily budgets reset (00:00 UTC): events a day per site and across sites, events a day from one network and quarantined events a day per site (attack protection), storage per site, sites, goals, funnels, segments, share links, annotations, alerts, destinations, reports, alert deliveries, ad spend rows, imports, user property keys, crawler hits and exports. Each limit has label (a short name for a person), unit, var; drops_data: true marks caps where reaching them silently loses incoming data (events refused, storage full, new user property keys or crawler hits not stored) instead of failing your call. Per-site caps have per: every site { id, label (its domain), used, remaining }, highest first, at most 25 (used = the top site). limit null = no cap. attacks: every site under attack, contained (a network past its share was quarantined) or ended in the last 24 h, with since, last_seen_at, reasons, quarantined and next_steps. Read it before a 429, not after.",
     },
     () => getUsage(ctx),
   );

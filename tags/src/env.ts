@@ -34,6 +34,15 @@ export type Bindings = Env & {
    */
   MAX_EVENTS_PER_ACCOUNT_PER_DAY?: string;
   MAX_EVENTS_PER_DAY?: string;
+  /**
+   * Attack protection (src/service/protection.ts): browser hits one client network may send a
+   * container per UTC day before the rest are quarantined, and quarantined hits logged per container
+   * per day (past it they're counted only). Unset = off. SPIKE_MIN_EVENTS: the fewest hits in 15
+   * minutes that count as a spike (default 1000; for tests).
+   */
+  MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY?: string;
+  MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY?: string;
+  SPIKE_MIN_EVENTS?: string;
   /** Visitor rows kept per container (least recently seen evicted). Default 250000. */
   MAX_VISITORS_PER_CONTAINER?: string;
   /** A container's Durable Object database size above which /collect stops writing. Default 1 GiB. */

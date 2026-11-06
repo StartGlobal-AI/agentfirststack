@@ -1,4 +1,4 @@
-import { type AuthContext, ApiError, accountSuspended, notFound } from "@afs/shared";
+import { type AuthContext, ApiError, type ProtectionMode, accountSuspended, notFound } from "@afs/shared";
 import type { Bindings } from "../env";
 import type { Breakdown } from "../lib/filters";
 import type {
@@ -26,6 +26,7 @@ import type { CostInput, CostOutcome } from "../do/costs";
 import type { CrawlHit } from "../do/crawlers";
 import type { ImportRow } from "../lib/imports";
 import type { SiteUsage } from "../do/usage";
+import type { ProtectionView } from "../do/protection";
 
 /** What every service call needs: bindings, the caller's account, and the public base URL. */
 export interface Ctx {
@@ -80,6 +81,8 @@ export interface SiteRow {
   channel_groups?: string | null;
   /** reporting currency, ISO 4217 (migration 0016; NULL = none: money stays in its own currency) */
   currency?: string | null;
+  /** attack protection: auto | strict | off (migration 0020; default auto) */
+  protection?: ProtectionMode;
   created_at: number;
   updated_at: number;
 }
@@ -159,6 +162,9 @@ export interface SiteStub {
   alertAnnotation(a: { alert_id: string; ts: number; title: string; description: string | null; details: Obj }): Promise<Obj | DoError>;
   deleteAnnotation(id: string): Promise<Obj | DoError>;
   schemaVersion(): Promise<number>;
+  quarantineSummary(q: Obj): Promise<Obj | DoError>;
+  releaseQuarantine(q: Obj): Promise<Obj | DoError>;
+  purgeQuarantine(q: Obj): Promise<Obj | DoError>;
 }
 
 export interface PaymentsSummary {
@@ -187,6 +193,8 @@ export interface SiteSummary {
   warnings_last_7d: Record<string, DropCount>;
   usage_today?: { day: string; events: number; bytes: number; refused: number };
   database_bytes?: number;
+  /** attack protection's state (the DO's view) */
+  protection?: ProtectionView;
   /** strings visitors (or anyone with the public site id) sent: never interpolated into other fields */
   untrusted: {
     notice: string;
@@ -251,6 +259,7 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     session_timeout_minutes: site.session_timeout_minutes ?? 30,
     channel_groups: jsonList<ChannelGroup>(site.channel_groups),
     currency: site.currency ?? null,
+    protection: site.protection ?? "auto",
     created_at: site.created_at,
     goals,
   };

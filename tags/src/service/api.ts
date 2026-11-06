@@ -89,6 +89,7 @@ import {
 import { KEY_FIELD, type ItemKind } from "../config/diff";
 import { type ImportInput, importDraft } from "./import";
 import { getUsage } from "./usage";
+import { type ProtectionView, protectionNextSteps, QUARANTINE_REASONS } from "./protection";
 
 /**
  * Every operation, shaped for agents (the thing needed next + next_steps). REST routes and MCP
@@ -103,6 +104,12 @@ export interface OpCtx {
   origins: string[];
 }
 
+const protectionField = z
+  .enum(["auto", "strict", "off"], { error: 'protection must be "auto", "strict" or "off".' })
+  .describe(
+    "Attack protection. auto (default): one network's browser hits past its daily share are quarantined, and during a detected attack (a sudden spike) data-centre traffic is quarantined and browser conversions aren't forwarded to ad platforms. strict: those attack measures all the time. off: none of it (detection and reporting still run). Backend events (API key) are never affected.",
+  );
+
 export const containerInput = z.strictObject({
   domain: z.string().min(1).max(253).describe("The site's domain, e.g. example.com (scheme/path/www are stripped)."),
   name: z.string().max(200).optional(),
@@ -111,10 +118,12 @@ export const containerInput = z.strictObject({
     .max(50)
     .optional()
     .describe("Extra hostnames allowed to send hits (staging, localhost). The domain and its subdomains are always allowed."),
+  protection: protectionField.optional(),
 });
 export const containerPatch = z.strictObject({
   name: z.string().max(200).nullable().optional(),
   allowed_hostnames: z.array(z.string().max(253)).max(50).optional(),
+  protection: protectionField.optional(),
 });
 export const destinationInput = z.strictObject({
   type: z.string().describe("ga4 | meta | google_ads | tiktok | linkedin | pinterest | reddit | snap | x | analytics | webhook"),
@@ -181,7 +190,10 @@ export const verifyInput = z.strictObject({
 });
 export const eventsQuery = z.object({
   name: z.string().max(64).optional(),
-  status: z.enum(["logged", "pending", "delivered", "partial", "failed", "skipped"]).optional(),
+  status: z
+    .enum(["logged", "pending", "delivered", "partial", "failed", "skipped", "quarantined"])
+    .optional()
+    .describe("quarantined: hits set aside by attack protection (left out of the log otherwise)."),
   source: z.enum(["browser", "server"]).optional(),
   since: z.string().max(40).optional().describe('unix ms, ISO 8601 or relative ("15m", "2h", "7d")'),
   before: z.coerce.number().optional().describe("Cursor: next_before from the previous page."),
@@ -253,13 +265,24 @@ export const ops = {
   async getContainer(o: OpCtx, id: string) {
     const row = await getContainerRow(o.env, o.auth.accountId, id);
     const dest = await listDestinations(o.env, o.auth.accountId, id);
-    const stats = (await containerStats(o.env, id)) as Record<string, unknown> & {
+    const { protection: view, ...stats } = (await containerStats(o.env, id)) as Record<string, unknown> & {
       storage?: { full: boolean };
       quota_reached?: boolean;
       account_quota_reached?: boolean;
       platform_quota_reached?: boolean;
+      protection?: ProtectionView;
     };
     const warnings: string[] = [];
+    if (view?.state === "under_attack")
+      warnings.push(
+        `Under attack since ${new Date(view.since ?? 0).toISOString()}: ${view.measures.datacenter_quarantine ? "data-centre traffic is quarantined and browser conversions aren't forwarded to ad platforms (backend events still are)" : "protection is off, so nothing is set aside"}. See protection.`,
+      );
+    else if (view?.state === "contained")
+      warnings.push(
+        view.mode === "off"
+          ? "A network passed its daily share of browser hits; protection is off, so its hits were kept. See protection."
+          : "A network passed its daily share of browser hits: the rest of its hits today are quarantined (not counted, never delivered). See protection.",
+      );
     if (stats.storage?.full)
       warnings.push("The container's event store is full: /collect hits aren't stored until old rows are purged (daily).");
     if (stats.quota_reached) warnings.push("Today's browser event quota is used up: /collect hits are dropped until 00:00 UTC.");
@@ -283,6 +306,7 @@ export const ops = {
       },
       destinations: dest.map(presentDestination),
       stats,
+      ...(view ? { protection: { ...view, next_steps: protectionNextSteps(o.base, id, view) } } : {}),
       ...(warnings.length ? { warnings } : {}),
       next_steps:
         row.live_version == null
@@ -714,6 +738,62 @@ export const ops = {
     };
   },
 
+  /** GET /v1/containers/:id/quarantine: what attack protection set aside (the event log keeps 7 days). */
+  async quarantine(o: OpCtx, id: string, since?: string) {
+    await getContainerRow(o.env, o.auth.accountId, id);
+    const now = Date.now();
+    const from = Math.max(parseSince(since ?? "7d") ?? now - 7 * 86_400_000, now - 7 * 86_400_000);
+    const r = (await containerStub(o.env, id).quarantineSummary(from, now)) as unknown as {
+      protection: ProtectionView;
+      by_day: { day: string; reason: string; type: string; n: number }[];
+      networks: { asn: number | null; as_org: string | null; n: number }[];
+      countries: { country: string | null; n: number }[];
+      pages: { page: string | null; n: number }[];
+      browsers: { browser: string | null; os: string | null; n: number }[];
+      today: { network_share: number; datacenter: number; total: number; dropped: number };
+      networks_over_share_today: number;
+    };
+    const byReason = Object.fromEntries(QUARANTINE_REASONS.map((k) => [k, 0])) as Record<string, number>;
+    const byType = { visits: 0, conversions: 0 };
+    const days = new Map<string, Record<string, number>>();
+    for (const row of r.by_day) {
+      byReason[row.reason] = (byReason[row.reason] ?? 0) + row.n;
+      if (row.type === "conversion") byType.conversions += row.n;
+      else byType.visits += row.n;
+      const d = days.get(row.day) ?? { network_share: 0, datacenter: 0, total: 0 };
+      d[row.reason] = (d[row.reason] ?? 0) + row.n;
+      d.total = (d.total ?? 0) + row.n;
+      days.set(row.day, d);
+    }
+    const logged = byType.visits + byType.conversions;
+    const u = `${o.base}/v1/containers/${id}`;
+    return {
+      container_id: id,
+      since: from,
+      protection: { ...r.protection, next_steps: protectionNextSteps(o.base, id, r.protection) },
+      logged,
+      by_reason: byReason,
+      by_type: byType,
+      by_day: [...days.entries()].map(([day, d]) => ({ day, ...d })),
+      today: { ...r.today, networks_over_share: r.networks_over_share_today },
+      // Network operators (from Cloudflare): no addresses are kept.
+      networks: r.networks.map((n) => ({ asn: n.asn, as_org: n.as_org, hits: n.n })),
+      countries: r.countries.map((c) => ({ country: c.country, hits: c.n })),
+      // Page URLs and user agents come from the hits (anyone can post to /collect).
+      untrusted: {
+        pages: r.pages.map((p) => ({ page: p.page, hits: p.n })),
+        browsers: r.browsers.map((b) => ({ browser: b.browser, os: b.os, hits: b.n })),
+      },
+      note: "Quarantined hits were never sent to destinations, stored as visitors or counted against the daily budgets, and can't be released: a delivery can't safely be made after the fact. The event log keeps them 7 days (status quarantined); today.dropped were past MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY and counted only.",
+      next_steps: [
+        ...(logged
+          ? [`GET ${u}/events?status=quarantined&include_visits=true lists them (reason and network operator on each).`]
+          : ["Nothing quarantined in this period."]),
+        `If it's real traffic: PATCH ${u} { "protection": "off" }; conversions your backend sends (POST ${u}/events) are always delivered.`,
+      ],
+    };
+  },
+
   async coverage(o: OpCtx, id: string, since?: string) {
     await getContainerRow(o.env, o.auth.accountId, id);
     const from = parseSince(since ?? "7d") ?? Date.now() - 7 * 86_400_000;
@@ -845,7 +925,7 @@ export const ops = {
 
   /** Every cap for this account with what it has used (src/service/usage.ts). */
   async usage(o: OpCtx) {
-    return getUsage(o.env, o.auth.accountId);
+    return getUsage(o.env, o.auth.accountId, Date.now(), o.base);
   },
 };
 

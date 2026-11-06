@@ -199,7 +199,8 @@ export default {
   async scheduled(controller, env, ctx) {
     if (controller.cron === HOURLY_CRON) {
       // Emails: the reminders before a deleted project is erased, warnings for projects close to a
-      // fair-use limit, then everything due (queued in bulk, or waiting for a retry).
+      // fair-use limit or getting suspicious traffic, then everything due (queued in bulk, or
+      // waiting for a retry).
       const base = noticeBase(env);
       ctx.waitUntil(
         emailPurgeReminders(env, base)

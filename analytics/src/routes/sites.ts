@@ -35,6 +35,7 @@ import {
 import { verifyInstall } from "../service/verify";
 import { getSchema, listProps } from "../service/schema";
 import { deleteVisitor, purgeEvents } from "../service/privacy";
+import { getQuarantine, purgeQuarantine, releaseQuarantine } from "../service/quarantine";
 import { createDestination, deleteDestination, listDestinations, testDestination } from "../service/destinations";
 import { alertHistory, createAlert, deleteAlert, getAlert, listAlerts, testAlert, updateAlert } from "../service/alerts";
 import { createReport, deleteReport, getDigest, listReports, sendReport, updateReport } from "../service/reports";
@@ -102,6 +103,10 @@ r.delete("/:id/visitors/:visitor", async (c) =>
   c.json(await deleteVisitor(ctxOf(c), c.req.param("id"), c.req.param("visitor"), c.req.query())),
 );
 r.post("/:id/purge", async (c) => c.json(await purgeEvents(ctxOf(c), c.req.param("id"), await body(c))));
+// Attack protection: what was quarantined, and the owner's decision about it.
+r.get("/:id/quarantine", async (c) => c.json(await getQuarantine(ctxOf(c), c.req.param("id"), c.req.query())));
+r.post("/:id/quarantine/release", async (c) => c.json(await releaseQuarantine(ctxOf(c), c.req.param("id"), await body(c))));
+r.post("/:id/quarantine/purge", async (c) => c.json(await purgeQuarantine(ctxOf(c), c.req.param("id"), await body(c))));
 r.get("/:id/sessions/:session_id", async (c) => c.json(await getSession(ctxOf(c), c.req.param("id"), c.req.param("session_id"))));
 r.get("/:id/journeys", async (c) => c.json(await getJourneys(ctxOf(c), c.req.param("id"), c.req.query())));
 

@@ -64,6 +64,8 @@ const SITE_CAPS = [
   "reports_per_site",
   "alert_deliveries_per_site_per_day",
   "alert_emails_per_site_per_day",
+  "events_per_network_per_site_per_day",
+  "quarantined_events_per_site_per_day",
   "cost_rows_per_site",
   "imported_rows_per_site",
   "imports_per_site",

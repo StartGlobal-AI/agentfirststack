@@ -228,7 +228,7 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | GET | `/sites/:id/crawlers` | crawler hits by bot, operator, category, page or status; daily series per category |
 | GET | `/crawlers` | the maintained crawler list and a prefilter regex (no key) |
 | GET | `/rollup` | every site of the account: per-site totals for a period (optional compare) and sums |
-| GET | `/usage` | every fair-use limit for the account with `label`, `used`, `limit`, `remaining`, `resets_at`, `unit`, `var`, `drops_data` and, for per-site caps, `per` (every site, highest first); see Fair use |
+| GET | `/usage` | every fair-use limit for the account with `label`, `used`, `limit`, `remaining`, `resets_at`, `unit`, `var`, `drops_data` and, for per-site caps, `per` (every site, highest first); `attacks` (sites under attack protection now or in the last 24 h); see Fair use |
 | GET | `/sites/:id/realtime` | visitors in last 5 / 30 min, top pages/countries/sources (30 min), a 1-60 minute `window` (`minutes`, `breakdown`), recent events (`since`, `limit`); `filters` and `debug=only` (the debug view) apply to all of it |
 | GET | `/sites/:id/funnel?steps=...` | funnel (or `funnel_id=`): `mode=ordered\|any`, `window=session\|1h\|1d\|7d\|30d` (by person across sessions), revenue per step, `compare`, `compare_segments` |
 | GET | `/sites/:id/attribution` | conversions and revenue credited by `model` (`last_non_direct`, `last_touch`, `first_touch`, `linear`, `position_based`, `time_decay`) over the person's sessions in `lookback_days`, by `breakdown`; `paths=true` for conversion paths |
@@ -239,6 +239,9 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | GET | `/sites/:id/visitors`, `/sites/:id/visitors/:visitor` | visitor list (generated names, user_id, location, device, source, spent, last seen) and one visitor's timeline |
 | DELETE | `/sites/:id/visitors/:visitor` | erase one person: visitor id, `user:<id>` (with pre-identify sessions) or `customer:<provider>:<id>`; payments kept unlinked or `?payments=delete` |
 | POST | `/sites/:id/purge` | delete events matching filters in a period; `dry_run` (default true) counts first; 50,000 events per call |
+| GET | `/sites/:id/quarantine` | attack protection: browser events set aside (by reason, UTC day, network, country; pages, hostnames, browsers under `untrusted`), the protection state, `next_steps`; `period` (default 7d), `reason` |
+| POST | `/sites/:id/quarantine/release` | `{period?, reason?}`: quarantined events count in reports from now on and in their day's usage; 50,000 per call |
+| POST | `/sites/:id/quarantine/purge` | `{period?, reason?}`: delete quarantined events now (otherwise after 7 days); 50,000 per call |
 | GET | `/sites/:id/sessions/:session_id` | one session and its events |
 | GET | `/sites/:id/journeys` | visitors who completed a goal (or a first purchase): source, time, visits, touchpoints |
 | GET | `/sites/:id/retention` | cohorts by first-seen day / week / month with returns per later period, optionally split or filtered by first touch; identified users only in cookieless mode |
@@ -612,7 +615,7 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
 `update_funnel`, `delete_funnel`, `create_destination`, `list_destinations`, `test_destination`,
 `delete_destination`, `create_alert`, `list_alerts`, `get_alert`, `update_alert`, `delete_alert`,
 `test_alert`, `get_alert_history`, `get_digest`, `create_report`, `list_reports`, `update_report`,
-`delete_report`, `send_report`. Write tools are hidden from read-only keys; `verify_install` is a write tool
+`delete_report`, `send_report`, `get_quarantine`, `release_quarantine`, `purge_quarantine`. Write tools are hidden from read-only keys; `verify_install` is a write tool
 (like `POST /sites/:id/verify`, it makes outbound fetches). `get_site` and `verify_install` return
 third-party strings (bot user agents, dropped hostnames, the last event, anything copied from the
 fetched page) only under an `untrusted` key with a notice, like the mail tools, and say so in
@@ -678,6 +681,24 @@ counts of small tables; user property keys by an index skip-scan), never a scan 
   call again (about 20 s of work per call).
 - **Writes under a flood** of junk (dropped hostnames, bots) are coalesced: the DO writes its drop
   and warning counters at most every 10 seconds.
+- **Attack protection** (`src/do/protection.ts`, `src/do/quarantine.ts`, `src/service/quarantine.ts`;
+  the vocabulary is `@afs/shared` `protection.ts`). Site ids are public, so per-site budgets alone
+  let one network use up a site's day. The Worker hashes the client's network (`networkKey`) with
+  the daily salt, the site id and the day (`net_hash`; the network is never stored); the DO counts
+  it in `net_daily` (one upsert per browser event, pruned after the day). Past
+  `MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY` that network's browser events are quarantined: stored
+  with `debug = 2` and `quarantine` = `network_share`, not counted against the daily caps, counted
+  in `usage.quarantined` against `MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY` (past it: dropped,
+  `quarantine_full`). Accepted browser events are counted per 15-minute window in memory; a window
+  of at least max(10 x the usual rate from the previous 7 days' `usage`, `SPIKE_MIN_EVENTS` = 1000)
+  sets the site `under_attack`, and then (protection `auto`, or always with `strict`) browser events
+  from data-centre ASNs (`isDatacenterAsn`) are quarantined (`datacenter`). Episodes (`meta`
+  key `protection`, written on state changes and at most every 10 s) end an hour after the last
+  trigger. Reports read `debug = 0`, so quarantine is out of everything (`debug=quarantined` shows
+  it); release sets `debug = 0` and adds the events to their day's `usage.events`; the daily alarm
+  purges quarantined rows after 7 days with the sessions only they made. `GET /v1/sites/:id`
+  has `protection`, `GET /v1/usage` has `attacks` (the platform site emails owners from them).
+  Server events are never quarantined.
 
 ## Dashboard
 
@@ -704,6 +725,9 @@ pages/sources/countries/devices tables, light and dark. It reads `GET /share/:to
 | `MAX_SITE_STORAGE_MB` | optional var; stop storing a site's data once its DO database passes this size (`507 storage_full`). Unset = no budget (the DO's own limit is 10 GB) |
 | `MIN_RETENTION_DAYS`, `MAX_RETENTION_DAYS` | optional vars; bounds for `retention_days` (default 1..3650); the daily purge clamps to them |
 | `MAX_SITES_PER_ACCOUNT` | optional var; sites per account (`403 quota_exceeded`). Unset = no cap |
+| `MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY` | optional var; browser events one network may send a site per UTC day before the rest are quarantined (attack protection). Unset = no share |
+| `MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY` | optional var; quarantined events kept per site per UTC day; past it they are dropped (`quarantine_full`). Unset = no cap |
+| `SPIKE_MIN_EVENTS` | optional var; the fewest accepted browser events in 15 minutes that count as a spike. Default 1000 |
 | `REPLAY_BASE_URL` | optional var; the replay app's public URL. With it, `/e` answers for sites with `replay_site_id` carry `r` and the tracker loads the replay recorder. Unset = off. `pnpm afs config` derives it from the profile's replay host |
 | `MAX_GOALS_PER_SITE` | optional var; goals per site. Default 100 |
 | `MAX_SHARE_LINKS_PER_SITE` | optional var; active share links per site. Default 10 |

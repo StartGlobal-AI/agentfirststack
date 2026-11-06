@@ -24,6 +24,9 @@ export const LIMIT_VARS = [
   "MAX_ITEMS_PER_EVENT",
   "MAX_USER_PROP_KEYS_PER_SITE",
   "MAX_BROWSER_USER_PROP_KEYS_PER_SITE",
+  "MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY",
+  "MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY",
+  "SPIKE_MIN_EVENTS",
 ] as const;
 
 export type LimitVars = Record<string, string | undefined>;
@@ -56,7 +59,16 @@ export interface IngestCaps {
   userPropKeys: number;
   /** keys only browsers created, counted apart so they can never use up the server keys */
   browserUserPropKeys: number;
+  /** browser events one network may send a site per UTC day before the rest are quarantined (Infinity = no share) */
+  networkShare: number;
+  /** quarantined events stored per site per UTC day; past it they are dropped (quarantine_full) */
+  quarantineDaily: number;
+  /** spike detection: the fewest accepted browser events in 15 minutes that count as a spike */
+  spikeMin: number;
 }
+
+/** A spike needs at least this many accepted browser events in 15 minutes (SPIKE_MIN_EVENTS overrides it). */
+export const SPIKE_MIN = 1000;
 
 export function ingestCaps(vars: LimitVars, standing: Standing): IngestCaps {
   const mb = capFor(vars, standing, "MAX_SITE_STORAGE_MB", Number.POSITIVE_INFINITY);
@@ -68,6 +80,9 @@ export function ingestCaps(vars: LimitVars, standing: Standing): IngestCaps {
     itemsPerEvent: Math.max(0, Math.min(MAX_ITEMS_READ, capFor(vars, standing, "MAX_ITEMS_PER_EVENT", DEFAULT_MAX_ITEMS_PER_EVENT))),
     userPropKeys: Math.max(0, capFor(vars, standing, "MAX_USER_PROP_KEYS_PER_SITE", 50)),
     browserUserPropKeys: Math.max(0, capFor(vars, standing, "MAX_BROWSER_USER_PROP_KEYS_PER_SITE", 20)),
+    networkShare: Math.floor(capFor(vars, standing, "MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY", Number.POSITIVE_INFINITY)),
+    quarantineDaily: Math.floor(capFor(vars, standing, "MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY", Number.POSITIVE_INFINITY)),
+    spikeMin: Math.max(1, capFor(vars, standing, "SPIKE_MIN_EVENTS", SPIKE_MIN)),
   };
 }
 

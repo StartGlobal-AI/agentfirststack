@@ -1,12 +1,20 @@
 import { DurableObject } from "cloudflare:workers";
-import { accountStanding, randomString, type Standing } from "@afs/shared";
+import {
+  accountStanding,
+  isDatacenterAsn,
+  type ProtectionMode,
+  randomString,
+  SPIKE_FACTOR,
+  SPIKE_WINDOW_MS,
+  type Standing,
+} from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { DispatchEvent } from "../destinations/types";
 import type { Bindings } from "../env";
 import { type EventCounts, type EventScope, NO_EVENTS, reportEventUsage, reserveDeliveries } from "../service/budget";
 import { aggregateStatus, type DestinationInfo, planDispatch, type PlannedTarget, type TargetResult } from "../service/dispatch-plan";
 import { mergeVisitor, type VisitorData, type VisitorUpdate } from "../service/identity";
-import { containerCaps, type EventBudgets, eventBudgets, needsAggregate, shownCap, utcDay } from "../service/limits";
+import { CLAIMED, containerCaps, type EventBudgets, eventBudgets, needsAggregate, shownCap, utcDay } from "../service/limits";
 import {
   browserDispatchEvent,
   type CollectHit,
@@ -20,6 +28,19 @@ import {
 import type { ServerEvent } from "../service/ingest-schema";
 import { hostAllowed, originHost } from "../service/origin";
 import { eventForLog, LOG_IDENTITY } from "../service/privacy";
+import {
+  effectiveProtection,
+  heldReason,
+  isActive,
+  measuresOn,
+  type ProtectionView,
+  parseMode,
+  protectionCaps,
+  type QuarantineReason,
+  type StoredProtection,
+  spikeMin,
+  spikeThreshold,
+} from "../service/protection";
 
 export const EVENT_RETENTION_DAYS = 7;
 export const VISITOR_RETENTION_DAYS = 180;
@@ -46,6 +67,10 @@ export interface ContainerState {
   domain: string;
   allowed_hostnames: string[];
   live_version: number | null;
+  /** Attack protection (absent in objects synced by older code: auto). */
+  protection?: ProtectionMode;
+  /** For the spike baseline: days before the container existed don't count. */
+  created_at?: number;
 }
 
 /** One container's share of GET /v1/usage (ContainerDO.usageToday). */
@@ -55,6 +80,10 @@ export interface ContainerUsage {
   deliveries: number;
   visitors: number;
   db_bytes: number;
+  /** Browser hits quarantined today (attack protection), and the most hits one network sent today. */
+  quarantined: number;
+  network_max: number;
+  protection: ProtectionView;
 }
 
 export interface DispatchMessage {
@@ -116,18 +145,23 @@ type EventRow = {
   data: string;
   results: string;
   note: string | null;
+  /** Attack protection (schema v5): why the hit was quarantined (never delivered), and its network operator. */
+  quarantine?: string | null;
+  asn?: number | null;
+  as_org?: string | null;
 };
 
 /** Event log rows are keyed by (source, event_id): browser and server rows never collide. */
 type Origin = "browser" | "server";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const EVENTS_DDL = `
   CREATE TABLE events (
     event_id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL,
     ts INTEGER NOT NULL, received_at INTEGER NOT NULL, visitor_id TEXT, transaction_id TEXT,
     value REAL, currency TEXT, preview INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL,
     data TEXT NOT NULL, results TEXT NOT NULL DEFAULT '{}', note TEXT,
+    quarantine TEXT, asn INTEGER, as_org TEXT,
     PRIMARY KEY (source, event_id))`;
 const EVENT_COLS =
   "event_id, type, name, source, ts, received_at, visitor_id, transaction_id, value, currency, preview, status, data, results, note";
@@ -153,6 +187,15 @@ export class ContainerDO extends DurableObject<Bindings> {
   /** The last report to the D1 aggregate today: when, this container's counts then, and the totals it read back. */
   private agg = { day: "", at: 0, flushed: NO_EVENTS, account: NO_EVENTS, platform: NO_EVENTS };
   private aggInflight: Promise<void> | null = null;
+  /** Attack protection: the episode (meta "protection", loaded lazily, saved on change or every 30 s). */
+  private prot: StoredProtection | null | undefined = undefined;
+  private protSavedAt = 0;
+  /** Browser hits in the current 15-minute window (in memory only), and the usual rate per window for a day. */
+  private win = { start: 0, n: 0 };
+  private usual = { day: "", perWindow: 0 };
+  /** The day net_daily was last pruned for, and the most hits one network sent that day (-1: not read yet). */
+  private netDay = "";
+  private netMax = { day: "", n: -1 };
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
@@ -187,6 +230,7 @@ export class ContainerDO extends DurableObject<Bindings> {
         CREATE TABLE IF NOT EXISTS pages (
           host TEXT NOT NULL, path TEXT NOT NULL, hits INTEGER NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
           PRIMARY KEY (host, path));
+        CREATE TABLE IF NOT EXISTS net_daily (day TEXT NOT NULL, net TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, net));
       `);
       const hasEvents = this.tableExists("events");
       const version = hasEvents ? (this.getMeta<number>("schema") ?? 1) : 0;
@@ -213,11 +257,27 @@ export class ContainerDO extends DurableObject<Bindings> {
         );
       }
       if (version < 4 && hasEvents) this.scrubLegacyEvents();
+      if (version < 5) {
+        // v5 (attack protection): quarantined hits are logged with their reason and network operator.
+        const cols = new Set(
+          this.sql
+            .exec<{ name: string }>("SELECT name FROM pragma_table_info('events')")
+            .toArray()
+            .map((r) => r.name),
+        );
+        for (const [col, type] of [
+          ["quarantine", "TEXT"],
+          ["asn", "INTEGER"],
+          ["as_org", "TEXT"],
+        ])
+          if (!cols.has(col!)) this.sql.exec(`ALTER TABLE events ADD COLUMN ${col} ${type}`);
+      }
       if (version < SCHEMA_VERSION) this.setMeta("schema", SCHEMA_VERSION);
       this.sql.exec(`
         CREATE INDEX IF NOT EXISTS events_received ON events(received_at);
         CREATE INDEX IF NOT EXISTS events_name ON events(name, received_at);
         CREATE INDEX IF NOT EXISTS events_txn ON events(transaction_id, name, source);
+        CREATE INDEX IF NOT EXISTS events_quarantine ON events(received_at) WHERE quarantine IS NOT NULL;
       `);
     });
   }
@@ -291,6 +351,11 @@ export class ContainerDO extends DurableObject<Bindings> {
     this.ready = false;
     this.visitorCount = null;
     this.agg = { day: "", at: 0, flushed: NO_EVENTS, account: NO_EVENTS, platform: NO_EVENTS };
+    this.prot = undefined;
+    this.win = { start: 0, n: 0 };
+    this.usual = { day: "", perWindow: 0 };
+    this.netDay = "";
+    this.netMax = { day: "", n: -1 };
     return { ok: true };
   }
 
@@ -303,7 +368,9 @@ export class ContainerDO extends DurableObject<Bindings> {
     const now = Date.now();
     this.sql.exec("DELETE FROM events WHERE received_at < ?", now - EVENT_RETENTION_DAYS * DAY);
     this.sql.exec("DELETE FROM visitors WHERE last_seen < ?", now - VISITOR_RETENTION_DAYS * DAY);
-    this.sql.exec("DELETE FROM usage WHERE day < ?", utcDay(now - 3 * DAY));
+    // Eight days: the spike baseline reads the previous seven days' browser_events.
+    this.sql.exec("DELETE FROM usage WHERE day < ?", utcDay(now - 8 * DAY));
+    this.sql.exec("DELETE FROM net_daily WHERE day < ?", utcDay(now));
     this.sql.exec("DELETE FROM preview_log WHERE received_at < ?", now - PREVIEW_LOG_HOURS * 3_600_000);
     this.sql.exec("DELETE FROM tag_stats WHERE day < ?", utcDay(now - TAG_STATS_DAYS * DAY));
     this.sql.exec("DELETE FROM pages WHERE last_seen < ?", now - TAG_STATS_DAYS * DAY);
@@ -771,6 +838,303 @@ export class ContainerDO extends DurableObject<Bindings> {
     return { targets: next, results: planned };
   }
 
+  // ------------------------------------------------------------------ attack protection
+
+  private loadProt(): StoredProtection | null {
+    if (this.prot === undefined) this.prot = this.getMeta<StoredProtection>("protection");
+    return this.prot;
+  }
+
+  /** Persist the episode: at once on a change of state or reasons, else at most every 30 s (counts, last_seen_at). */
+  private saveProt(force: boolean) {
+    const t = Date.now();
+    if (!force && t - this.protSavedAt < 30_000) return;
+    this.protSavedAt = t;
+    this.setMeta("protection", this.prot ?? null);
+  }
+
+  /**
+   * A trigger: a spike (under_attack) or a network past its share (contained). Opens an episode when
+   * none is active, upgrades contained to under_attack, and refreshes last_seen_at (the cooldown
+   * counts from it). `detail` replaces the reason's text when given.
+   */
+  private trigger(kind: "spike" | "network_share", now: number, day: string, detail?: string) {
+    const cur = effectiveProtection(this.loadProt(), now);
+    const next = kind === "spike" ? "under_attack" : "contained";
+    let changed = false;
+    let ep: StoredProtection;
+    if (!cur || !isActive(cur.state)) {
+      ep = { state: next, since: now, last_seen_at: now, ended_at: null, reasons: [], quarantined: 0, q_day: day };
+      changed = true;
+    } else {
+      ep = cur;
+      if (next === "under_attack" && ep.state !== "under_attack") {
+        ep.state = "under_attack";
+        changed = true;
+      }
+      if (now > ep.last_seen_at) ep.last_seen_at = now;
+    }
+    const r = ep.reasons.find((x) => x.kind === kind);
+    if (!r) {
+      ep.reasons.push({
+        kind,
+        detail: detail ?? (kind === "spike" ? "A sudden spike in browser hits." : "A network passed its daily share."),
+      });
+      changed = true;
+    } else if (detail) r.detail = detail;
+    this.prot = ep;
+    this.saveProt(changed);
+  }
+
+  /** One upsert per hit: this network's hits today (`net` is the Worker's keyed daily hash, never the address). */
+  private countNetwork(day: string, net: string): number {
+    if (this.netDay !== day) {
+      this.sql.exec("DELETE FROM net_daily WHERE day < ?", day);
+      this.netDay = day;
+    }
+    const n =
+      this.sql
+        .exec<{ n: number }>(
+          "INSERT INTO net_daily (day, net, n) VALUES (?, ?, 1) ON CONFLICT(day, net) DO UPDATE SET n = n + 1 RETURNING n",
+          day,
+          net,
+        )
+        .toArray()[0]?.n ?? 1;
+    if (this.netMax.day === day && n > this.netMax.n) this.netMax.n = n;
+    return n;
+  }
+
+  /** The most hits one network sent today (read once per object lifetime and day, then kept in step). */
+  private networkMax(day: string): number {
+    if (this.netMax.day !== day || this.netMax.n < 0)
+      this.netMax = {
+        day,
+        n: this.sql.exec<{ n: number }>("SELECT COALESCE(MAX(n), 0) AS n FROM net_daily WHERE day = ?", day).toArray()[0]?.n ?? 0,
+      };
+    return this.netMax.n;
+  }
+
+  /**
+   * The container's usual browser hits per 15-minute window: the previous 7 UTC days' browser_events
+   * / 96, counting only days since it existed (no history = 0). Read once per object lifetime and day.
+   */
+  private usualPerWindow(state: ContainerState, day: string): number {
+    if (this.usual.day === day) return this.usual.perWindow;
+    const today = Date.parse(`${day}T00:00:00Z`);
+    let from = utcDay(today - 7 * DAY);
+    if (state.created_at && utcDay(state.created_at) > from) from = utcDay(state.created_at);
+    // Objects synced by older code have no created_at; their first counted day stands in.
+    const first = this.sql.exec<{ d: string | null }>("SELECT MIN(day) AS d FROM usage WHERE kind = 'browser_events'").toArray()[0]?.d;
+    if (!state.created_at && first && first > from) from = first;
+    const sum =
+      this.sql
+        .exec<{ n: number }>("SELECT COALESCE(SUM(n), 0) AS n FROM usage WHERE kind = 'browser_events' AND day >= ? AND day < ?", from, day)
+        .toArray()[0]?.n ?? 0;
+    const days = Math.max(0, Math.round((today - Date.parse(`${from}T00:00:00Z`)) / DAY));
+    const perWindow = days > 0 ? sum / (days * (DAY / SPIKE_WINDOW_MS)) : 0;
+    this.usual = { day, perWindow };
+    return perWindow;
+  }
+
+  /** Count a hit in the current window; past max(SPIKE_FACTOR x usual, SPIKE_MIN) it's a spike. In memory only. */
+  private countWindow(state: ContainerState, day: string, now: number) {
+    const start = now - (now % SPIKE_WINDOW_MS);
+    if (this.win.start !== start) this.win = { start, n: 0 };
+    const n = ++this.win.n;
+    const min = spikeMin(this.env);
+    if (n < min) return; // the usual rate is read only past the floor
+    const usual = this.usualPerWindow(state, day);
+    if (n >= spikeThreshold(usual, min))
+      this.trigger(
+        "spike",
+        now,
+        day,
+        `${n} browser hits in 15 minutes; usually about ${Math.round(usual)} (a spike is ${SPIKE_FACTOR}x that, and at least ${min}).`,
+      );
+  }
+
+  /**
+   * Attack protection for one live browser hit (preview links carry a valid token and are exempt):
+   * count its network and the window, then decide whether it's quarantined and whether browser
+   * conversions are held. With protection "off" detection still runs but nothing is set aside.
+   */
+  private guard(hit: CollectHit, state: ContainerState, standing: Standing, day: string, now: number) {
+    const mode = parseMode(state.protection);
+    const caps = protectionCaps(this.env, standing);
+    let overShare = false;
+    if (Number.isFinite(caps.perNetwork) && hit.enrich.net_hash) {
+      const n = this.countNetwork(day, hit.enrich.net_hash);
+      if (n > caps.perNetwork) {
+        overShare = true;
+        let detail: string | undefined;
+        if (n === caps.perNetwork + 1) {
+          this.bump(day, "networks_over_share", 1);
+          const nets = this.usage(day, "networks_over_share");
+          detail = `${nets} network${nets === 1 ? "" : "s"} passed ${caps.perNetwork} browser hits today; the rest of their hits today are quarantined.`;
+        }
+        this.trigger("network_share", now, day, detail);
+      }
+    }
+    // A network over its share is already contained: it doesn't count towards a spike.
+    if (!overShare) this.countWindow(state, day, now);
+    const on = measuresOn(mode, effectiveProtection(this.loadProt(), now)?.state ?? "none");
+    let quarantine: QuarantineReason | null = null;
+    if (mode !== "off") {
+      if (overShare) quarantine = "network_share";
+      else if (on && isDatacenterAsn(hit.enrich.asn)) quarantine = "datacenter";
+    }
+    return { mode, caps, quarantine, hold: on };
+  }
+
+  /** Today's quarantine counters: by reason, and the hits past MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY that weren't logged. */
+  private quarantineCounts(day: string) {
+    const rows = this.sql
+      .exec<{ kind: string; n: number }>(
+        "SELECT kind, n FROM usage WHERE day = ? AND kind IN ('q:network_share', 'q:datacenter', 'q_dropped')",
+        day,
+      )
+      .toArray();
+    const n = (k: string) => rows.find((r) => r.kind === k)?.n ?? 0;
+    const network_share = n("q:network_share");
+    const datacenter = n("q:datacenter");
+    return { network_share, datacenter, total: network_share + datacenter, dropped: n("q_dropped") };
+  }
+
+  /**
+   * A quarantined hit: counted, logged for review (status "quarantined", with the reason and network
+   * operator) up to the daily cap, never delivered, never stored as a visitor or a page, and not
+   * counted against the daily event budgets.
+   */
+  private quarantineHit(hit: CollectHit, eventId: string, reason: QuarantineReason, cap: number, day: string, now: number): CollectResult {
+    const p = hit.payload;
+    const before = Number.isFinite(cap) ? this.quarantineCounts(day) : null;
+    this.bump(day, `q:${reason}`, 1);
+    const ep = effectiveProtection(this.loadProt(), now);
+    if (ep && isActive(ep.state)) {
+      if (ep.q_day !== day) [ep.q_day, ep.quarantined] = [day, 0];
+      ep.quarantined++;
+      const add = reason === "datacenter" && !ep.reasons.some((r) => r.kind === "datacenter");
+      if (add)
+        ep.reasons.push({
+          kind: "datacenter",
+          detail:
+            "Browser hits from data-centre networks (hosting and cloud providers) are quarantined while the container is under attack.",
+        });
+      this.prot = ep;
+      this.saveProt(add);
+    }
+    if (before && before.total - before.dropped >= cap) {
+      this.bump(day, "q_dropped", 1);
+      return { ok: true, event_id: eventId };
+    }
+    if (p.type === "tags") return { ok: true, event_id: eventId }; // telemetry: counted only
+    const conversion = p.type === "conversion";
+    const d = hit.enrich.device;
+    this.sql.exec(
+      `INSERT INTO events (${EVENT_COLS}, quarantine, asn, as_org)
+       VALUES (?, ?, ?, 'browser', ?, ?, NULL, NULL, ?, ?, ?, 'quarantined', ?, '{}', ?, ?, ?, ?)
+       ON CONFLICT(source, event_id) DO NOTHING`,
+      eventId,
+      conversion ? "conversion" : "visit",
+      conversion ? (p.name ?? "conversion") : "page_view",
+      now,
+      now,
+      conversion ? (p.value ?? null) : null,
+      conversion ? (p.currency ?? null) : null,
+      hit.test ? 1 : 0,
+      JSON.stringify({ page: pageOf(p.page_url), country: hit.enrich.geo?.country, browser: d?.browser, os: d?.os }),
+      reason === "network_share"
+        ? "Quarantined: this network passed its daily share of browser hits for the container. Never sent to destinations."
+        : "Quarantined: a data-centre network while attack measures were on. Never sent to destinations.",
+      reason,
+      hit.enrich.asn ?? null,
+      hit.enrich.as_org ?? null,
+    );
+    return { ok: true, event_id: eventId };
+  }
+
+  /** Attack measures on: a browser conversion's server-side deliveries are skipped (held) with the reason. */
+  private hold(targets: PlannedTarget[], mode: ProtectionMode, day: string): PlannedTarget[] {
+    if (!targets.some((t) => t.status === "queued")) return targets;
+    this.bump(day, "held_conversions", 1);
+    const reason = heldReason(mode);
+    return targets.map((t) => (t.status === "queued" ? { ...t, status: "skipped" as const, reason } : t));
+  }
+
+  /** The container's protection as of `now` (next_steps are added by the Worker, which knows the public URL). */
+  private protectionView(state: ContainerState | null, now: number, standing: Standing = CLAIMED): ProtectionView {
+    const mode = parseMode(state?.protection);
+    const day = utcDay(now);
+    const ep = effectiveProtection(this.ready ? this.loadProt() : null, now);
+    const st = ep?.state ?? "none";
+    const on = measuresOn(mode, st);
+    const cap = protectionCaps(this.env, standing).perNetwork;
+    return {
+      mode,
+      state: st,
+      since: ep?.since ?? null,
+      last_seen_at: ep?.last_seen_at ?? null,
+      ended_at: ep?.state === "ended" ? ep.ended_at : null,
+      reasons: ep?.reasons ?? [],
+      quarantined: !ep ? 0 : isActive(st) && ep.q_day !== day ? 0 : ep.quarantined,
+      quarantined_today: this.ready ? this.quarantineCounts(day).total : 0,
+      conversions_held_today: this.ready ? this.usage(day, "held_conversions") : 0,
+      measures: {
+        network_share_limit: mode !== "off" && Number.isFinite(cap) ? cap : null,
+        datacenter_quarantine: on,
+        browser_conversions_held: on,
+      },
+    };
+  }
+
+  /** GET /v1/containers/:id protection (and tests, with another `now`). */
+  async protection(now = Date.now()): Promise<ProtectionView> {
+    const state = this.getMeta<ContainerState>("container");
+    const standing = state ? await accountStanding(this.env, state.account_id) : undefined;
+    return this.protectionView(state, now, standing);
+  }
+
+  /** GET /v1/containers/:id/quarantine: what was set aside since `since` (the log keeps 7 days). */
+  async quarantineSummary(since: number, now = Date.now()) {
+    const state = this.getMeta<ContainerState>("container");
+    const standing = state ? await accountStanding(this.env, state.account_id) : CLAIMED;
+    const protection = this.protectionView(state, now, standing);
+    const day = utcDay(now);
+    const empty = {
+      protection,
+      by_day: [] as { day: string; reason: string; type: string; n: number }[],
+      networks: [] as { asn: number | null; as_org: string | null; n: number }[],
+      countries: [] as { country: string | null; n: number }[],
+      pages: [] as { page: string | null; n: number }[],
+      browsers: [] as { browser: string | null; os: string | null; n: number }[],
+      today: { network_share: 0, datacenter: 0, total: 0, dropped: 0 },
+      networks_over_share_today: 0,
+    };
+    if (!this.ready) return empty;
+    const W = "FROM events WHERE quarantine IS NOT NULL AND received_at >= ?";
+    const rows = <T>(q: string) => this.sql.exec<T & Record<string, SqlStorageValue>>(q, since).toArray() as T[];
+    return {
+      ...empty,
+      by_day: rows<{ day: string; reason: string; type: string; n: number }>(
+        `SELECT strftime('%Y-%m-%d', received_at / 1000, 'unixepoch') AS day, quarantine AS reason, type, COUNT(*) AS n ${W} GROUP BY 1, 2, 3 ORDER BY 1`,
+      ),
+      networks: rows<{ asn: number | null; as_org: string | null; n: number }>(
+        `SELECT asn, as_org, COUNT(*) AS n ${W} GROUP BY asn, as_org ORDER BY n DESC LIMIT 10`,
+      ),
+      countries: rows<{ country: string | null; n: number }>(
+        `SELECT json_extract(data, '$.country') AS country, COUNT(*) AS n ${W} GROUP BY 1 ORDER BY n DESC LIMIT 10`,
+      ),
+      pages: rows<{ page: string | null; n: number }>(
+        `SELECT json_extract(data, '$.page') AS page, COUNT(*) AS n ${W} GROUP BY 1 ORDER BY n DESC LIMIT 10`,
+      ),
+      browsers: rows<{ browser: string | null; os: string | null; n: number }>(
+        `SELECT json_extract(data, '$.browser') AS browser, json_extract(data, '$.os') AS os, COUNT(*) AS n ${W} GROUP BY 1, 2 ORDER BY n DESC LIMIT 10`,
+      ),
+      today: this.quarantineCounts(day),
+      networks_over_share_today: this.usage(day, "networks_over_share"),
+    };
+  }
+
   async collect(hit: CollectHit): Promise<CollectResult> {
     const state = this.getMeta<ContainerState>("container");
     if (!state) return { ok: false, error: "not_synced" };
@@ -794,11 +1158,18 @@ export class ContainerDO extends DurableObject<Bindings> {
     if (this.eventRow("browser", eventId)) return duplicate;
     // Public ingest stops writing when the database or today's event quota (or budget) is full.
     if (this.sql.databaseSize > caps.dbBytes) return { ok: false, error: "storage_full", limit: caps.dbBytes };
+    const live = !hit.preview_config;
+    // Attack protection, before the budgets: quarantined hits don't count against them.
+    const guard = live ? this.guard(hit, state, standing, day, now) : null;
+    if (guard?.quarantine) {
+      const r = this.quarantineHit(hit, eventId, guard.quarantine, guard.caps.quarantinedPerDay, day, now);
+      await this.ensureAlarm();
+      return r;
+    }
     const used = this.usage(day, "browser_events");
     if (used >= caps.eventsPerDay) return { ok: false, error: "quota", scope: "container", limit: caps.eventsPerDay };
     const over = this.overBudget(others, budgets, "browser", used, 1);
     if (over) return { ok: false, error: "quota", scope: over.scope, limit: over.limit };
-    const live = !hit.preview_config;
     // Test traffic (preview, ?afsa_debug=1, afst('test', true)) is logged as test and delivered in
     // test mode; it never creates, updates or joins a visitor (so it can't lend one click ids,
     // hashes or consent), and browser hits never link identities anyway.
@@ -861,12 +1232,20 @@ export class ContainerDO extends DurableObject<Bindings> {
         this.eventRow("server", eventId) ?? (event.transaction_id ? this.serverRowByOrder(event.name, event.transaction_id) : null);
       if (server)
         note = `The backend already sent this conversion server-side (event ${server.event_id}); the browser copy is logged only.`;
-      else
-        targets = this.containerBudget(
-          planDispatch(event, this.getMeta<DestinationInfo[]>("destinations") ?? [], { matched: true, now }),
-          caps.deliveriesPerDay,
-          day,
-        );
+      else {
+        let plan = planDispatch(event, this.getMeta<DestinationInfo[]>("destinations") ?? [], { matched: true, now });
+        // Under attack (or protection strict): browser conversions aren't forwarded to ad platforms.
+        if (guard?.hold) {
+          const held = this.hold(plan, guard.mode, day);
+          if (held !== plan)
+            note =
+              guard.mode === "strict"
+                ? "Held: protection is strict, so browser conversions aren't forwarded server-side. Send this conversion from your backend (POST /v1/containers/:id/events)."
+                : "Held: the container is under attack, so browser conversions aren't forwarded to ad platforms until it ends. Your backend's conversions (POST /v1/containers/:id/events) are still delivered.";
+          plan = held;
+        }
+        targets = this.containerBudget(plan, caps.deliveriesPerDay, day);
+      }
     }
     let planned = this.plannedResults(targets, now);
     const inserted = this.insertEvent({
@@ -1074,6 +1453,8 @@ export class ContainerDO extends DurableObject<Bindings> {
     const where: string[] = [];
     const args: (string | number)[] = [];
     if (!f.include_visits && f.name !== "page_view") where.push("type != 'visit'");
+    // Quarantined hits (attack protection) only with status=quarantined: the log shows real traffic first.
+    if (!f.status) where.push("status != 'quarantined'");
     if (f.name) where.push("name = ?"), args.push(f.name);
     if (f.status) where.push("status = ?"), args.push(f.status);
     if (f.source) where.push("source = ?"), args.push(f.source);
@@ -1100,6 +1481,7 @@ export class ContainerDO extends DurableObject<Bindings> {
    * this service's own notes.
    */
   private present(r: EventRow, verbose: boolean) {
+    if (r.quarantine) return this.presentQuarantined(r);
     const results = JSON.parse(r.results) as Record<string, TargetResult>;
     const { [LOG_IDENTITY]: identity, ...data } = JSON.parse(r.data) as Record<string, unknown>;
     const isConversion = r.type === "conversion";
@@ -1143,6 +1525,28 @@ export class ContainerDO extends DurableObject<Bindings> {
     };
   }
 
+  /** A quarantined hit: only what the summary keeps (page, country, browser, os), never delivered. */
+  private presentQuarantined(r: EventRow) {
+    return {
+      event_id: r.event_id,
+      type: r.type,
+      name: r.name,
+      source: r.source,
+      ts: r.ts,
+      received_at: r.received_at,
+      value: r.value,
+      currency: r.currency,
+      test: !!r.preview,
+      status: r.status,
+      quarantine: r.quarantine,
+      network: { asn: r.asn ?? null, as_org: r.as_org ?? null },
+      ...(r.note ? { note: r.note } : {}),
+      destinations: [],
+      // Page and browser come from the hit (anyone can post to /collect).
+      untrusted: { page: JSON.parse(r.data) as Record<string, unknown> },
+    };
+  }
+
   async stats() {
     if (!this.ready)
       return {
@@ -1153,16 +1557,18 @@ export class ContainerDO extends DurableObject<Bindings> {
       };
     const since = Date.now() - DAY;
     const one = <T>(q: string, ...a: (string | number)[]) => this.sql.exec<T & Record<string, SqlStorageValue>>(q, ...a).toArray()[0] as T;
-    const ev = one<{ visits: number; conversions: number; last_visit: number | null; last_conversion: number | null }>(
-      `SELECT SUM(type = 'visit') AS visits, SUM(type = 'conversion') AS conversions,
-              MAX(CASE WHEN type = 'visit' THEN received_at END) AS last_visit,
-              MAX(CASE WHEN type = 'conversion' THEN received_at END) AS last_conversion
+    // Quarantined hits (attack protection) aren't visits or conversions: they're counted apart.
+    const ev = one<{ visits: number; conversions: number; quarantined: number; last_visit: number | null; last_conversion: number | null }>(
+      `SELECT SUM(type = 'visit' AND quarantine IS NULL) AS visits, SUM(type = 'conversion' AND quarantine IS NULL) AS conversions,
+              SUM(quarantine IS NOT NULL) AS quarantined,
+              MAX(CASE WHEN type = 'visit' AND quarantine IS NULL THEN received_at END) AS last_visit,
+              MAX(CASE WHEN type = 'conversion' AND quarantine IS NULL THEN received_at END) AS last_conversion
        FROM events WHERE received_at >= ?`,
       since,
     );
     const st = this.sql
       .exec<{ status: string; n: number }>(
-        "SELECT status, COUNT(*) AS n FROM events WHERE type = 'conversion' AND received_at >= ? GROUP BY status",
+        "SELECT status, COUNT(*) AS n FROM events WHERE type = 'conversion' AND quarantine IS NULL AND received_at >= ? GROUP BY status",
         since,
       )
       .toArray();
@@ -1193,11 +1599,13 @@ export class ContainerDO extends DurableObject<Bindings> {
         visits: ev?.visits ?? 0,
         conversions: ev?.conversions ?? 0,
         conversion_status: Object.fromEntries(st.map((s) => [s.status, s.n])),
+        quarantined: ev?.quarantined ?? 0,
         last_visit_at: ev?.last_visit ?? null,
         last_conversion_at: ev?.last_conversion ?? null,
       },
       visitors_stored: visitors?.n ?? 0,
       today,
+      protection: this.protectionView(state ?? null, Date.now(), standing),
       limits: {
         events_per_day: shownCap(caps.eventsPerDay),
         events_per_account_per_day: shownCap(budgets.perAccount),
@@ -1219,8 +1627,11 @@ export class ContainerDO extends DurableObject<Bindings> {
    * `day`'s counters (point reads), the visitor count eviction keeps (counted once per object
    * lifetime) and the database size. No D1 call; an object never synced answers zeros.
    */
-  async usageToday(day: string): Promise<ContainerUsage> {
-    if (!this.ready) return { browser_events: 0, server_events: 0, deliveries: 0, visitors: 0, db_bytes: 0 };
+  async usageToday(day: string, standing: Standing = CLAIMED, now = Date.now()): Promise<ContainerUsage> {
+    const state = this.getMeta<ContainerState>("container");
+    const protection = this.protectionView(state, now, standing);
+    if (!this.ready)
+      return { browser_events: 0, server_events: 0, deliveries: 0, visitors: 0, db_bytes: 0, quarantined: 0, network_max: 0, protection };
     this.visitorCount ??= this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM visitors").toArray()[0]?.n ?? 0;
     return {
       browser_events: this.usage(day, "browser_events"),
@@ -1228,6 +1639,9 @@ export class ContainerDO extends DurableObject<Bindings> {
       deliveries: this.usage(day, "deliveries"),
       visitors: this.visitorCount,
       db_bytes: this.sql.databaseSize,
+      quarantined: this.quarantineCounts(day).total,
+      network_max: this.networkMax(day),
+      protection,
     };
   }
 
@@ -1246,5 +1660,15 @@ export class ContainerDO extends DurableObject<Bindings> {
     const mine = this.eventsOn(day);
     const plus = (t: EventCounts) => ({ browser: t.browser + mine.browser, server: t.server + mine.server });
     return { account: plus(others.account), platform: plus(others.platform) };
+  }
+}
+
+/** host + path of a page URL (no query or fragment), for the quarantine summary. */
+function pageOf(url: string | undefined): string | null {
+  try {
+    const u = new URL(url ?? "");
+    return `${u.hostname.toLowerCase()}${u.pathname.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 200) || "/"}`;
+  } catch {
+    return null;
   }
 }

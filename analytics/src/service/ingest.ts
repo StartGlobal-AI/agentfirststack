@@ -6,7 +6,7 @@ import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/chann
 import { EMPTY_GEO, type Geo, PROXY_KEY_HEADER, geoFromFields, geoFromRequest, requestIp } from "../lib/geo";
 import { botReason, parseUserAgent } from "../lib/ua";
 import { hashRoute, parsePage, parseReferrer, primaryLanguage, queryOf, screenClass, takeDebugFlag } from "../lib/url";
-import { proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
+import { networkHash, proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
 import type { Attribution, EnrichedEvent, IngestResponse } from "../lib/types";
 import { allow, enforce, limitVars, STORAGE_FULL_HINT } from "../lib/limits";
 import { type Ctx, SITE_ID_RE, type SiteStub, loadSite, pushSettings, siteStub } from "./context";
@@ -336,6 +336,8 @@ export async function ingestBrowser(
     proxy_warning: viaProxy && !trusted ? (presented ? "proxy_key_invalid" : "proxy_key_missing") : null,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip,
+    // The network's daily share (attack protection): a hash that rotates daily, never the network.
+    net_hash: await networkHash(salt, siteId, ip, now),
     ...(name === "engagement" ? engagementMetrics(p) : {}),
     ...attribution(page.hostname, page, clip(p.r, 2000)),
     ...geo,
@@ -356,7 +358,9 @@ export async function ingestBrowser(
   }
   const r = res.results[0];
   if (!r?.ok) return { status: 202, body: { ok: false, dropped: r?.reason ?? "rejected", ...replay } };
-  return { status: 202, body: { ok: true, v: r.visitor_id, ...(res.persistent ? { p: 1 } : {}), ...replay } };
+  // Quarantined (attack protection): stored for the owner's review, out of reports until released.
+  const q = r.quarantined ? { quarantined: r.quarantined } : {};
+  return { status: 202, body: { ok: true, v: r.visitor_id, ...(res.persistent ? { p: 1 } : {}), ...q, ...replay } };
 }
 
 // ------------------------------------------------------------------ server: POST /v1/sites/:id/events

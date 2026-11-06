@@ -14,6 +14,8 @@ import * as crawlers from "./crawlers";
 import * as imports from "./imports";
 import * as exporter from "./export";
 import { type SiteUsage, siteUsage } from "./usage";
+import { Guard } from "./protection";
+import * as quarantine from "./quarantine";
 import type { ImportRow } from "../lib/imports";
 import { type CompareRequest, compareImports } from "./import-compare";
 import type { SubscriptionOutcome } from "./subscriptions";
@@ -125,6 +127,8 @@ export class SiteDO extends DurableObject<Bindings> {
   private liveLast = 0;
   private liveTimer: ReturnType<typeof setTimeout> | null = null;
   private livePending: { pageviews: number; latest: LiveEvent | null; dirty: boolean } = { pageviews: 0, latest: null, dirty: false };
+  /** attack protection: the network shares, spike windows and the site's episode */
+  private guard: Guard;
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
@@ -140,6 +144,7 @@ export class SiteDO extends DurableObject<Bindings> {
       cursor: (q: string) => sql.exec(q) as unknown as SqlCursor,
       transaction: <T>(fn: () => T): T => ctx.storage.transactionSync(fn),
     };
+    this.guard = new Guard(this.db);
     this.ready = this.db.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'").length > 0;
     if (this.ready) engine.migrate(this.db); // idempotent; picks up new tables/indexes after deploys
   }
@@ -185,11 +190,11 @@ export class SiteDO extends DurableObject<Bindings> {
   }
 
   /** After stored events: tell the open streams, at most once a second (a busy site sends one message). */
-  private liveAfterIngest(events: EnrichedEvent[], results: { ok: boolean }[]): void {
+  private liveAfterIngest(events: EnrichedEvent[], results: { ok: boolean; quarantined?: string }[]): void {
     if (!this.ctx.getWebSockets().length) return;
     events.forEach((ev, i) => {
-      // Test traffic is left out, as in realtime; plain engagement beacons change no count.
-      if (!results[i]?.ok || ev.debug || (ev.name === "engagement" && !ev.leave)) return;
+      // Test traffic and quarantine are left out, as in realtime; plain engagement beacons change no count.
+      if (!results[i]?.ok || ev.debug || results[i]?.quarantined || (ev.name === "engagement" && !ev.leave)) return;
       this.livePending.dirty = true;
       if (ev.name === "pageview") {
         this.livePending.pageviews++;
@@ -424,7 +429,9 @@ export class SiteDO extends DurableObject<Bindings> {
     const caps = ingestCaps(vars, standing);
     const aggregate = needsAggregate(caps) && !!accountId;
     const others = aggregate ? await this.othersToday(s.id, accountId!) : { account: 0, platform: 0 };
-    const res = engine.ingest(this.db, events, Date.now(), {
+    const now = Date.now();
+    const mode = s.protection ?? "auto";
+    const res = engine.ingest(this.db, events, now, {
       dev: vars.DEV_MODE === "true",
       caps: { siteDaily: caps.siteDaily, accountDaily: caps.accountDaily, platformDaily: caps.platformDaily },
       accountOthers: others.account,
@@ -438,8 +445,12 @@ export class SiteDO extends DurableObject<Bindings> {
       itemsPerEvent: caps.itemsPerEvent,
       userPropKeys: caps.userPropKeys,
       browserUserPropKeys: caps.browserUserPropKeys,
+      // Browser events only (server events, sent with an API key, are never quarantined).
+      quarantine: policy.dryRun ? undefined : (ev) => this.guard.classify(ev, { mode, share: caps.networkShare, now }),
+      quarantineDaily: caps.quarantineDaily,
     });
     if (policy.dryRun) return { ...res, replay_site_id: s.replay_site_id ?? null };
+    this.guard.afterIngest(events, res.results, { mode, spikeMin: caps.spikeMin, createdAt: s.created_at, now });
     this.pendingRefused += res.results.filter((r) => (engine.BUDGET_REASONS as readonly string[]).includes(r.reason ?? "")).length;
     this.writeDrops();
     this.liveAfterIngest(events, res.results);
@@ -773,16 +784,44 @@ export class SiteDO extends DurableObject<Bindings> {
   }
 
   summary() {
-    return this.withSettings(() => {
+    return this.withSettings((s) => {
       this.writeDrops(true);
-      return { ...engine.summary(this.db), database_bytes: this.ctx.storage.sql.databaseSize };
+      return {
+        ...engine.summary(this.db),
+        database_bytes: this.ctx.storage.sql.databaseSize,
+        protection: this.guard.view(s.protection ?? "auto"),
+      };
     });
   }
 
   /** The counters GET /v1/usage reads (no scan of events). null for an id that was never configured. */
   usage(): SiteUsage | null {
     if (!this.ready) return null;
-    return { ...siteUsage(this.db), database_bytes: this.ctx.storage.sql.databaseSize };
+    const s = this.settingsOrNull();
+    return {
+      ...siteUsage(this.db),
+      database_bytes: this.ctx.storage.sql.databaseSize,
+      ...(s ? { protection: this.guard.view(s.protection ?? "auto") } : {}),
+    };
+  }
+
+  // ---------------------------------------------------------------- attack protection: the quarantine
+
+  /** What was quarantined in a period, by reason, day, network, country, browser and page, with the protection state. */
+  quarantineSummary(q: quarantine.QuarantineRequest) {
+    return this.withSettings((s) => {
+      this.writeDrops(true);
+      return quarantine.quarantineSummary(this.db, s, q, this.guard.view(s.protection ?? "auto"));
+    });
+  }
+
+  /** Quarantined events become counted ones (debug 0), added to their day's usage counts. */
+  releaseQuarantine(q: quarantine.QuarantineRequest) {
+    return this.withSettings((s) => quarantine.releaseQuarantine(this.db, s, q));
+  }
+
+  purgeQuarantine(q: quarantine.QuarantineRequest) {
+    return this.withSettings((s) => quarantine.purgeQuarantine(this.db, s, q));
   }
 
   /** The DO's schema version (meta.schema_version), for operators and tests. */
@@ -806,6 +845,7 @@ export class SiteDO extends DurableObject<Bindings> {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.ready = false;
+    this.guard = new Guard(this.db);
     return { ok: true };
   }
 
@@ -814,6 +854,7 @@ export class SiteDO extends DurableObject<Bindings> {
     const s = this.settingsOrNull();
     if (!s) return; // deleted site: let the object go idle
     this.writeDrops(true);
+    this.guard.flush();
     // The account's bounds (MIN_/MAX_RETENTION_DAYS) apply to sites created before they were set, too.
     const { standing } = await this.standingOf(s);
     const days = effectiveRetention(this.env, standing, s.retention_days);

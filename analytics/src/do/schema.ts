@@ -32,10 +32,7 @@ export const AUTOMATIC_EVENTS = new Set([
   "refund",
 ]);
 
-const dbg = (mode: DebugMode | undefined, alias = "events") => {
-  const f = debugFrag(mode, alias);
-  return f ? ` AND ${f.sql}` : "";
-};
+const dbg = (mode: DebugMode | undefined, alias = "events") => ` AND ${debugFrag(mode, alias).sql}`;
 
 export function eventNames(db: Db, start: number, end: number, limit = MAX_EVENT_NAMES, debug?: DebugMode) {
   return db

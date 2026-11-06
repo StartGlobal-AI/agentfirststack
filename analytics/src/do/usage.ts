@@ -7,6 +7,7 @@
 import { type Db, num, utcDay } from "./common";
 import { usageOn } from "./engine";
 import { userPropKeyCounts } from "./user-props";
+import type { ProtectionView } from "./protection";
 
 export interface SiteUsage {
   day: string;
@@ -21,17 +22,23 @@ export interface SiteUsage {
   imported_rows: number;
   user_prop_keys: number;
   browser_user_prop_keys: number;
+  /** events quarantined today (UTC): MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY */
+  quarantined_today: number;
   /** set by the DO: the SQLite database's size (MAX_SITE_STORAGE_MB) */
   database_bytes?: number;
+  /** set by the DO: attack protection's state, today's busiest network (MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY) */
+  protection?: ProtectionView;
 }
 
 export function siteUsage(db: Db, now = Date.now()): SiteUsage {
   const day = utcDay(now);
   const one = (sql: string, args: string[] = []) => num(db.all(sql, args)[0]?.n);
   const keys = userPropKeyCounts(db);
+  const today = usageOn(db, day);
   return {
     day,
-    events_today: usageOn(db, day).events,
+    events_today: today.events,
+    quarantined_today: today.quarantined,
     crawl_hits_today: one("SELECT hits AS n FROM crawl_usage WHERE day = ?", [day]),
     export_rows_today: one("SELECT rows AS n FROM export_usage WHERE day = ?", [day]),
     annotations: one("SELECT COUNT(*) AS n FROM annotations WHERE kind = 'note'"),

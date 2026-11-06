@@ -1,4 +1,4 @@
-import { ApiError, accountStanding, badRequest, newId, notFound } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, newId, notFound, type ProtectionMode } from "@afs/shared";
 import { type ContainerConfig, EMPTY_CONFIG } from "../config/schema";
 import { validateConfig } from "../config/validate";
 import type { ContainerState } from "../do/container-do";
@@ -6,6 +6,7 @@ import type { Bindings } from "../env";
 import { isIpLiteral, isPublicSuffix, numericTld } from "../lib/domain";
 import type { DestinationInfo } from "./dispatch-plan";
 import { limits } from "./limits";
+import { parseMode } from "./protection";
 import { PROXY_KEY_HEADER } from "./proxy";
 import type { LastScan } from "./scan";
 import { customCodeProblem, verificationInfo } from "./verify";
@@ -29,6 +30,8 @@ export interface ContainerRow {
   /** JSON (migration 0009): the last scan's tools (LastScan) and the last non-dry-run import (LastImport). */
   last_scan?: string | null;
   last_import?: string | null;
+  /** Attack protection (migration 0010): auto (NULL), strict or off. */
+  protection?: string | null;
 }
 
 /** container.last_import: written by every draft/import that isn't a dry run. */
@@ -123,6 +126,8 @@ export function publicContainer(row: ContainerRow, base: string) {
     script_url: `${base}/c/${row.id}.js`,
     snippet: snippet(base, row.id),
     domain_verified: !!row.verified_at,
+    // Attack protection mode; GET /v1/containers/:id has its state (protection { mode, state, ... }).
+    protection: parseMode(row.protection),
     created_at: row.created_at,
     updated_at: row.updated_at,
     // What the site had at the last scan, and the last import: null until there is one.
@@ -180,6 +185,8 @@ export const containerState = (row: ContainerRow): ContainerState => ({
   domain: row.domain,
   allowed_hostnames: JSON.parse(row.allowed_hostnames) as string[],
   live_version: row.live_version,
+  protection: parseMode(row.protection),
+  created_at: row.created_at,
 });
 
 /** Push everything the data plane needs into the container's Durable Object. */
@@ -295,7 +302,7 @@ export function containerNextSteps(id: string, existing: boolean, published: boo
 export async function createContainer(
   env: Bindings,
   accountId: string,
-  input: { domain: string; name?: string; allowed_hostnames?: string[] },
+  input: { domain: string; name?: string; allowed_hostnames?: string[]; protection?: ProtectionMode },
 ) {
   const domain = normalizeDomain(input.domain);
   const found = await env.DB.prepare("SELECT * FROM containers WHERE account_id = ? AND domain = ?")
@@ -329,13 +336,14 @@ export async function createContainer(
     published_at: null,
     created_at: now,
     updated_at: now,
+    protection: input.protection && input.protection !== "auto" ? input.protection : null,
   };
   try {
     await env.DB.prepare(
-      `INSERT INTO containers (id, account_id, domain, name, allowed_hostnames, draft, draft_revision, draft_updated_at, live_version, published_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      `INSERT INTO containers (id, account_id, domain, name, allowed_hostnames, draft, draft_revision, draft_updated_at, live_version, published_at, created_at, updated_at, protection)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
     )
-      .bind(row.id, accountId, domain, row.name, row.allowed_hostnames, row.draft, 1, now, now, now)
+      .bind(row.id, accountId, domain, row.name, row.allowed_hostnames, row.draft, 1, now, now, now, row.protection ?? null)
       .run();
   } catch (e) {
     // Lost a race with a concurrent create for the same domain: return the winner.
@@ -360,16 +368,17 @@ export async function updateContainer(
   env: Bindings,
   accountId: string,
   id: string,
-  input: { name?: string | null; allowed_hostnames?: string[] },
+  input: { name?: string | null; allowed_hostnames?: string[]; protection?: ProtectionMode },
 ) {
   const row = await getContainerRow(env, accountId, id);
   const name = input.name === undefined ? row.name : input.name;
   const hosts = input.allowed_hostnames === undefined ? row.allowed_hostnames : JSON.stringify(normalizeHostnames(input.allowed_hostnames));
+  const protection = input.protection === undefined ? (row.protection ?? null) : input.protection === "auto" ? null : input.protection;
   const now = Date.now();
-  await env.DB.prepare("UPDATE containers SET name = ?, allowed_hostnames = ?, updated_at = ? WHERE id = ?")
-    .bind(name, hosts, now, id)
+  await env.DB.prepare("UPDATE containers SET name = ?, allowed_hostnames = ?, protection = ?, updated_at = ? WHERE id = ?")
+    .bind(name, hosts, protection, now, id)
     .run();
-  const next = { ...row, name, allowed_hostnames: hosts, updated_at: now };
+  const next = { ...row, name, allowed_hostnames: hosts, protection, updated_at: now };
   await containerStub(env, id).sync({ container: containerState(next) });
   return next;
 }

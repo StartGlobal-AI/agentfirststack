@@ -15,6 +15,14 @@ export interface Enrichment {
   device?: DispatchEvent["device"];
   origin_host?: string;
   received_at: number;
+  /**
+   * Attack protection (src/service/protection.ts): the client network's keyed hash for this container
+   * and UTC day (never the address), and its network operator from Cloudflare (unknown behind the
+   * container's own proxy).
+   */
+  net_hash?: string;
+  asn?: number;
+  as_org?: string;
 }
 
 export interface CollectHit {

@@ -191,7 +191,9 @@ Management), which shows who sends as the domain and their pass rate.
 Alerts (`site/src/project-health.ts`) go to claimed projects' owners and members, who can turn them
 off. `limit_warning`: a cap that drops data (incoming events, mail or sessions) is at 80% of its
 limit or reached, at most once a week per cap and level. `site_quiet`: an analytics site that had
-steady page views has had none for two whole days. The warnings name the caps a project is close to,
+steady page views has had none for two whole days. `site_attack`: an analytics site or tags
+container's attack protection started (or escalated), from the `attacks` in the services' usage
+answers; once per episode, recorded in `limit_warnings` as `<service>.attack:<id>:<since>`. The warnings name the caps a project is close to,
 and the people can reply to `support@` if a project needs more, so these emails are also where
 requests for higher limits come from. To see what a project is close to:
 `curl -H "Authorization: Bearer $KEY" https://agentfirststack.com/v1/usage` with one of its keys, or
@@ -222,6 +224,7 @@ pnpm afs restore hosted acct_...
 | Replay recordings | R2 chunks, Durable Object per site | Retention per site (14 days hosted), R2 lifecycle backstop |
 | Emails to people | D1 `email_outbox` | 30 days, deleted with the person's account |
 | Alert state | D1 `project_health`, `limit_warnings` | Warnings kept 30 days; both erased with the project |
+| Quarantine | analytics events `debug = 2`; tags event log `status: quarantined` | 7 days (with the test traffic purge), then deleted; never in reports |
 
 ## Dependencies and runtime
 

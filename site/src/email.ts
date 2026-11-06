@@ -15,8 +15,9 @@ import { type Bindings, DAY } from "./env";
  *     sending failed. Rows are deleted after 30 days, and when the person deletes their account.
  *   - Categories: "account" (claims, members, connected apps, deletion, suspension) always goes
  *     out; "updates" (new setup items) respects users.email_updates and "alerts" (a site stopped
- *     sending data, a project is close to a fair-use limit) users.email_alerts. Both carry a
- *     one-click unsubscribe (List-Unsubscribe, RFC 8058) signed for that person and category.
+ *     sending data or is getting suspicious traffic, a project is close to a fair-use limit)
+ *     users.email_alerts. Both carry a one-click unsubscribe (List-Unsubscribe, RFC 8058) signed
+ *     for that person and category.
  *   - At most MAX_EMAILS_PER_PERSON_PER_DAY (default 20) to one address a day; beyond that the
  *     email is recorded as skipped.
  */
