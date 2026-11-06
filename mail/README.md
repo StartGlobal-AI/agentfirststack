@@ -252,8 +252,10 @@ bytes per sender per day, stored bytes per sender).
     the From domain is authenticated: DMARC pass for that domain (the result's `header.from`, when
     present, must be the From domain), or a DKIM pass (`header.d`) or SPF pass (`smtp.mailfrom`)
     aligned with it (equal or parent/subdomain, never a bare TLD). Never `pass` with two From
-    headers or two mailboxes in From, or when the trusted header reports `dmarc` or `spf` twice
-    (injected text). `fail` = DMARC failed.
+    headers or two mailboxes in From, or when the trusted header reports `dmarc` twice, or `spf`
+    twice for the same identity (injected text). Cloudflare writes one SPF result for the HELO name
+    (`smtp.helo`) and one for the envelope sender (`smtp.mailfrom`); `spf` is the envelope
+    sender's. `fail` = DMARC failed.
   - `automated`: list, bulk or machine-generated mail (List-Id / List-Unsubscribe / List-Post,
     Precedence bulk|list|junk, Auto-Submitted other than `no`, X-Autoreply, delivery reports,
     bounces with an empty envelope sender).

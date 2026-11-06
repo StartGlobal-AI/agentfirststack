@@ -109,6 +109,52 @@ describe("auth: only the first Authentication-Results header, exactly mx.cloudfl
     expect(a.verdict).toBe("unknown");
     expect(a.dmarc).toBe("none"); // the first result is the result
   });
+  // Email Routing's own header on ordinary mail from Gmail / Google Workspace (as received, names
+  // changed): one SPF result for the HELO name, one for the envelope sender.
+  const gmail = [
+    "mx.cloudflare.net;",
+    "\tdkim=pass header.d=partner.example header.s=google header.b=e8mR0GV6;",
+    "\tdmarc=pass header.from=partner.example policy.dmarc=quarantine;",
+    "\tspf=none (mx.cloudflare.net: no SPF records found for postmaster@mail-ed1-x52c.google.com) smtp.helo=mail-ed1-x52c.google.com;",
+    "\tspf=pass (mx.cloudflare.net: domain of jane@partner.example designates 2a00:1450:4864:20::52c as permitted sender) smtp.mailfrom=jane@partner.example;",
+    '\tarc=pass smtp.remote-ip="2a00:1450:4864:20::52c"',
+  ].join("\r\n");
+  it("one SPF result for the HELO name and one for the envelope sender is Cloudflare's normal header, and passes", () => {
+    const a = extractAuth([ar(gmail), { key: "from", value: "Jane <jane@partner.example>" }], "jane@partner.example");
+    expect(a).toMatchObject({ trusted: true, verdict: "pass", spf: "pass", dkim: "pass", dmarc: "pass", arc: "pass" });
+    expect(a.dkim_domains).toEqual(["partner.example"]);
+    // SPF alone (no DMARC record, no DKIM) still counts the envelope sender's result, not the HELO one.
+    const spfOnly = extractAuth(
+      [ar("mx.cloudflare.net; dkim=none; dmarc=none; spf=none smtp.helo=mx.partner.example; spf=pass smtp.mailfrom=jane@partner.example")],
+      "jane@partner.example",
+    );
+    expect(spfOnly).toMatchObject({ spf: "pass", verdict: "pass" });
+    // Only a HELO result: that is the spf result, and it vouches for no From domain.
+    const heloOnly = extractAuth(
+      [ar("mx.cloudflare.net; dkim=none; dmarc=none; spf=pass smtp.helo=partner.example")],
+      "jane@partner.example",
+    );
+    expect(heloOnly).toMatchObject({ spf: "pass", verdict: "unknown" });
+  });
+  it("a second SPF result for the same identity is still injected text, and does not pass", () => {
+    for (const extra of [
+      "spf=pass smtp.mailfrom=ceo@victim.example",
+      "spf=pass smtp.helo=victim.example",
+      "dmarc=pass header.from=victim.example",
+    ]) {
+      const a = extractAuth(
+        [
+          ar(
+            `mx.cloudflare.net; dkim=none; dmarc=none; spf=none smtp.helo=x.evil.example; spf=none smtp.mailfrom=x@evil.example; ${extra}`,
+          ),
+        ],
+        "ceo@victim.example",
+      );
+      expect(a.verdict, extra).toBe("unknown");
+    }
+    const unnamed = extractAuth([ar("mx.cloudflare.net; dkim=none; dmarc=none; spf=none; spf=pass")], "ceo@victim.example");
+    expect(unnamed).toMatchObject({ spf: "none", verdict: "unknown" });
+  });
 });
 
 describe("latest-code sender filter", () => {

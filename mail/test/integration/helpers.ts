@@ -98,7 +98,10 @@ export function eml(opts: {
   const fromDomain = opts.from.split("@")[1]!.toLowerCase();
   const auth =
     opts.auth === undefined
-      ? [`mx.cloudflare.net; dkim=pass header.d=${fromDomain}; spf=pass smtp.mailfrom=${opts.from}; dmarc=pass header.from=${fromDomain}`]
+      ? // Email Routing's usual header: SPF for the HELO name (often none) and for the envelope sender.
+        [
+          `mx.cloudflare.net; dkim=pass header.d=${fromDomain}; dmarc=pass header.from=${fromDomain}; spf=none smtp.helo=mail-out.sender.example; spf=pass smtp.mailfrom=${opts.from}`,
+        ]
       : opts.auth === null
         ? []
         : [opts.auth].flat();

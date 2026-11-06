@@ -11,11 +11,17 @@ import { addressParser } from "postal-mime";
  * header's results are reported with `trusted: false` and verdict "unknown". Without an spf result,
  * Received-SPF fills in `spf` (informational only).
  *
+ * SPF is checked per identity, and Cloudflare writes one result for each: the HELO name
+ * (`spf=none ... smtp.helo=mail-ed1-x52c.google.com`) and the envelope sender
+ * (`spf=pass ... smtp.mailfrom=jane@example.com`), in that order, on ordinary mail from Gmail and
+ * most providers. `spf` is the envelope sender's result (the HELO one only when there is no other).
+ *
  * `verdict: "pass"` means the From address's domain is authenticated, on the trusted header only:
  * DMARC pass for that domain (header.from, when given, must be the From domain), or a DKIM pass
  * (header.d) or SPF pass (smtp.mailfrom) whose domain is aligned with it. Never "pass" when the
  * message is ambiguous about its author: more than one From header, more than one mailbox in From,
- * or a trusted header that reports dmarc or spf more than once (a sign of injected text).
+ * or a trusted header that reports dmarc more than once, or spf more than once for the same
+ * identity (a sign of injected text).
  * SHARED_SEND_POLICY=reply_only and latest-code rely on this, so a forged From never counts.
  */
 
@@ -154,8 +160,14 @@ export function extractAuth(headers: HeaderLike[], fromAddress?: string | null):
       return asResult(all.find((x) => x.result === "pass")?.result ?? all[0]!.result);
     };
     const pickFirst = (m: string): AuthResult => asResult(by(m)[0]?.result);
-    duplicated = by("dmarc").length > 1 || by("spf").length > 1;
-    res.spf = pickFirst("spf");
+    // One SPF result per identity: the envelope sender (smtp.mailfrom), the HELO name (smtp.helo).
+    const spfs = by("spf");
+    const identity = (x: (typeof spfs)[number]) => ("smtp.mailfrom" in x.props ? "mailfrom" : "smtp.helo" in x.props ? "helo" : "unnamed");
+    const perIdentity = new Map<string, number>();
+    for (const x of spfs) perIdentity.set(identity(x), (perIdentity.get(identity(x)) ?? 0) + 1);
+    duplicated = by("dmarc").length > 1 || [...perIdentity.values()].some((n) => n > 1);
+    const spf = spfs.find((x) => identity(x) === "mailfrom") ?? spfs[0];
+    res.spf = asResult(spf?.result);
     res.dkim = pickAny("dkim");
     res.dmarc = pickFirst("dmarc");
     res.arc = pickFirst("arc");
@@ -170,7 +182,7 @@ export function extractAuth(headers: HeaderLike[], fromAddress?: string | null):
     dmarcFrom = first("dmarc")
       .filter((x) => x.result === "pass")
       .map((x) => domainOf(x.props["header.from"]) ?? "");
-    spfDomains = first("spf")
+    spfDomains = (spf ? [spf] : [])
       .filter((x) => x.result === "pass")
       .map((x) => domainOf(x.props["smtp.mailfrom"]))
       .filter((d): d is string => !!d);

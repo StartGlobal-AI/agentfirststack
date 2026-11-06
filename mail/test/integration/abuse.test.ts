@@ -67,7 +67,7 @@ function rawMail(o: {
   const domain = o.from.split("@")[1]!;
   const auth =
     o.auth === undefined
-      ? `mx.cloudflare.net; dkim=pass header.d=${domain}; spf=pass smtp.mailfrom=${o.from}; dmarc=pass header.from=${domain}`
+      ? `mx.cloudflare.net; dkim=pass header.d=${domain}; dmarc=pass header.from=${domain}; spf=none smtp.helo=mail-out.sender.example; spf=pass smtp.mailfrom=${o.from}`
       : o.auth;
   return [
     ...(auth ? [`Authentication-Results: ${auth}`] : []),
