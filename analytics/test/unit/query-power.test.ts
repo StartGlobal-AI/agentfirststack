@@ -205,12 +205,12 @@ describe("goals: prop conditions and once per visit", () => {
         NOW,
       ) as Rows
     ).results;
-    expect(rows.map((r) => [r.value, r.conversions, r.revenue])).toEqual([
-      ["Viewed pricing", 2, 10],
-      ["Pro signup", 1, 0],
+    expect(rows.map((r) => [r.value, r.conversions, r.revenue, r.goal_value])).toEqual([
+      ["Viewed pricing", 2, 0, 10],
+      ["Pro signup", 1, 0, 0],
     ]);
-    const t = engine.stats(db, settings({ goals }), q({ metrics: ["conversions", "revenue"] }), NOW) as any;
-    expect(t.metrics).toEqual({ conversions: 3, revenue: 10 });
+    const t = engine.stats(db, settings({ goals }), q({ metrics: ["conversions", "revenue", "goal_value"] }), NOW) as any;
+    expect(t.metrics).toEqual({ conversions: 3, revenue: 0, goal_value: 10 });
   });
 });
 

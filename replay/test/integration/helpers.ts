@@ -1,3 +1,4 @@
+import { forgetPauses, forgetStanding } from "@afs/shared";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import type { Bindings } from "../../src/env";
 import { app } from "../../src/index";
@@ -75,6 +76,51 @@ export async function newSite(
   const site = r.json.site.id as string;
   if (opts.verified !== false) await markVerified(site);
   return { key, account, site, created: r };
+}
+
+/** A person claims the account (a user and a membership in the identity DB), as the platform's claim link does. */
+export async function claim(account: string) {
+  const users = E.AUTH_DB!;
+  const user = `usr_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  await users.batch([
+    users
+      .prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
+      .bind(user, `google-${user}`, `${user}@claim.test`, Date.now()),
+    users
+      .prepare("INSERT INTO memberships (user_id, account_id, role, created_at) VALUES (?, ?, 'owner', ?)")
+      .bind(user, account, Date.now()),
+  ]);
+  forgetStanding(account);
+}
+
+/**
+ * Pause (or with `lift`, lift) a capability of an account in the identity DB, as the platform's
+ * internal pause route and the operator do. Creates the table when this run's site migrations
+ * don't have it yet (the shape of @afs/shared pauses.ts).
+ */
+export async function setPause(account: string, capability: string, reason: string, lift = false) {
+  const db = E.AUTH_DB!;
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS capability_pauses (account_id TEXT NOT NULL, capability TEXT NOT NULL, reason TEXT NOT NULL,
+         paused_at INTEGER NOT NULL, paused_by TEXT NOT NULL, until INTEGER, details TEXT, notified_at INTEGER, lifted_at INTEGER,
+         lifted_by TEXT, PRIMARY KEY (account_id, capability))`,
+    )
+    .run();
+  if (lift)
+    await db
+      .prepare("UPDATE capability_pauses SET lifted_at = ?, lifted_by = 'operator' WHERE account_id = ? AND capability = ?")
+      .bind(Date.now(), account, capability)
+      .run();
+  else
+    await db
+      .prepare(
+        `INSERT INTO capability_pauses (account_id, capability, reason, paused_at, paused_by) VALUES (?, ?, ?, ?, 'operator')
+         ON CONFLICT (account_id, capability) DO UPDATE SET reason = excluded.reason, lifted_at = NULL`,
+      )
+      .bind(account, capability, reason, Date.now())
+      .run();
+  forgetPauses(account);
 }
 
 /** Mark a site verified directly in D1 (what a successful verify does). */

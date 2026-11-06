@@ -11,6 +11,7 @@ import { parseUserAgent } from "../lib/ua";
 import { secureOriginHost, siteHostAllowed } from "../lib/url";
 import { isVerified, jsonList, siteById, siteStub } from "./context";
 import { allowed, geo, visitorIp } from "./ingest";
+import { PROXY_KEY_HEADER, proxyTrust } from "./proxy";
 import { cleanVisitorId, surveyScores, tagsEvent, tagsSignalsOf } from "../lib/tags";
 import { tagsAvailable } from "./tags";
 import { JS, safeJson } from "./scripts";
@@ -32,7 +33,8 @@ const js = (body: string, status: number, cache: string) =>
   new Response(body, { status, headers: { ...JS, "cache-control": cache, "x-robots-tag": "noindex" } });
 
 export async function serveSurveyScript(env: Bindings, req: Request, siteId: string, base: string): Promise<Response> {
-  if (!(await allowed(env.INGEST_IP_LIMITER, `l:${networkKey(visitorIp(req, env))}`)))
+  const trust = await proxyTrust(env, req, siteId);
+  if (!(await allowed(env.INGEST_IP_LIMITER, `l:${networkKey(visitorIp(req, env, trust))}`)))
     return js("/* afs-replay: too many requests */\n", 429, "no-store");
   if (!SITE_ID_RE.test(siteId)) return js("/* afs-replay: bad site id */\n", 404, "no-store");
   const site = await siteById(env, siteId);
@@ -43,7 +45,7 @@ export async function serveSurveyScript(env: Bindings, req: Request, siteId: str
   const pt = u.get("pt");
   const preview = p && /^rsv_[0-9a-z]{16}$/.test(p) && pt && PREVIEW_TOKEN_RE.test(pt) ? { id: p, token: pt } : null;
   // Unverified or disabled sites show no surveys (a draft can't be previewed either).
-  const surveys = isVerified(site) && site.enabled ? await widgetSurveys(env, site, geo(req, isDev(env), env).country, preview) : [];
+  const surveys = isVerified(site) && site.enabled ? await widgetSurveys(env, site, geo(req, isDev(env), env, trust).country, preview) : [];
   const tags =
     isVerified(site) && !!site.tags_container_id && tagsAvailable(env) && tagsSignalsOf(site.tags_signals).includes("survey_response");
   const cfg = { site: site.id, base, s: surveys, ...(tags ? { tg: 1 } : {}) };
@@ -77,8 +79,11 @@ const HINTS: Record<string, [number, string]> = {
 };
 
 export async function submitSurvey(env: Bindings, req: Request, waitUntil: (p: Promise<unknown>) => void): Promise<SurveyIngestResponse> {
-  const net = networkKey(visitorIp(req, env));
-  if (!(await allowed(env.INGEST_IP_LIMITER, `f:${net}`))) return fail(429, "rate_limited", "Too many survey requests from this network.");
+  // The site id (whose proxy key a path proxy sends) is in the body: without a key, a flood from one
+  // network stops before any parsing; with one, the visitor's network is limited once it is known.
+  const keyed = req.headers.has(PROXY_KEY_HEADER);
+  if (!keyed && !(await allowed(env.INGEST_IP_LIMITER, `f:${networkKey(visitorIp(req, env))}`)))
+    return fail(429, "rate_limited", "Too many survey requests from this network.");
   const { bytes, truncated } = await readCapped(req.body, SURVEY_LIMITS.BODY_BYTES);
   if (truncated) return fail(413, "body_too_large", `A survey post is at most ${SURVEY_LIMITS.BODY_BYTES} bytes.`);
   let b: Record<string, unknown>;
@@ -93,6 +98,10 @@ export async function submitSurvey(env: Bindings, req: Request, waitUntil: (p: P
   if (extra !== undefined) return fail(400, "invalid_body", `Unknown field ${JSON.stringify(extra.slice(0, 40))}.`);
   const siteId = typeof b.s === "string" ? b.s : "";
   if (!SITE_ID_RE.test(siteId)) return fail(400, "bad_site_id", "s must be a replay site id.");
+  const trust = await proxyTrust(env, req, siteId);
+  const net = networkKey(visitorIp(req, env, trust));
+  if (keyed && !(await allowed(env.INGEST_IP_LIMITER, `f:${net}`)))
+    return fail(429, "rate_limited", "Too many survey requests from this network.");
   const site = await siteById(env, siteId);
   if (!site) return fail(404, "unknown_site", "This replay site does not exist.");
   const standing = await accountStanding(env, site.account_id);
@@ -193,7 +202,7 @@ export async function submitSurvey(env: Bindings, req: Request, waitUntil: (p: P
     test,
     path: cleanPath(b.p),
     device: parseUserAgent(req.headers.get("user-agent")).device,
-    country: geo(req, dev, env).country,
+    country: geo(req, dev, env, trust).country,
     element: el,
     net: netHash,
     bytes: bytes.byteLength,

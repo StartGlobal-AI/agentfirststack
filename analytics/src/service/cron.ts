@@ -1,5 +1,6 @@
 import { refreshFxRates } from "./fx";
 import { purgeShareAttempts } from "./share";
+import { purgeAccountUsage } from "./account-budgets";
 import { accountStanding } from "@afs/shared";
 import type { Bindings } from "../env";
 import type { Fetcher } from "../lib/delivery";
@@ -78,6 +79,7 @@ export async function runCron(env: Bindings, now = Date.now(), opts: CronOptions
     out.retried = await retryDue(env, now, RETRIES_PER_RUN, opts.fetcher, stopAt);
     out.history_purged = await purgeHistory(env, now);
     out.share_attempts_purged = await purgeShareAttempts(env, now);
+    out.account_usage_purged = await purgeAccountUsage(env, now);
   } catch (e) {
     console.error("cron retries / purge failed", e);
   }

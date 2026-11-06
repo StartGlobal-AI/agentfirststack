@@ -456,7 +456,7 @@ export async function runBackfill(
         ...state,
         status: "paused",
         paused_until: tomorrow,
-        error: "daily event budget used up: resumes after 00:00 UTC",
+        error: "daily budget for server events and payments used up: resumes after 00:00 UTC",
         updated_at: now,
       };
       if (accepted > 0) state.cursor = objects[accepted - 1]!.id;

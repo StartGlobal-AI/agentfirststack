@@ -9,6 +9,7 @@ import { toCsv } from "../lib/csv";
 import { siteCap } from "../lib/limits";
 import { parseInstant, parseYmd, zonedToUtc } from "../lib/time";
 import { type Ctx, callSite, loadSite } from "./context";
+import { accountBudget, accountBudgetExhausted, chargeAccount } from "./account-budgets";
 
 export const MAX_EXPORT_PAGE = 10_000;
 export const DEFAULT_MAX_EXPORT_ROWS_PER_SITE_PER_DAY = 1_000_000;
@@ -49,19 +50,26 @@ export async function exportEvents(ctx: Ctx, siteId: string, raw: unknown, maxLi
     "MAX_EXPORT_ROWS_PER_SITE_PER_DAY",
     DEFAULT_MAX_EXPORT_ROWS_PER_SITE_PER_DAY,
   );
+  // The account's rows a day over all its sites (MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY), on top of the site's.
+  const acct = await accountBudget(ctx.env, ctx.accountId, "export_rows");
+  if (acct.left <= 0) throw accountBudgetExhausted(acct);
   const res = (await callSite(ctx.env, site, (s) =>
     s.exportEvents(
       {
         start,
         end,
         after: q.cursor ? Number.parseInt(q.cursor.slice(1), 36) : 0,
-        limit: Math.min(q.limit ?? 5000, maxLimit),
+        limit: Math.min(q.limit ?? 5000, maxLimit, acct.left),
         debug: q.debug ?? "exclude",
       },
       Number.isFinite(budget) ? budget : 1e15,
     ),
   )) as { columns: string[]; rows: Record<string, unknown>[]; next_cursor: string | null; used_today: number; daily_budget: number | null };
-  return { site_id: site.id, format: q.format, from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...res };
+  await chargeAccount(ctx.env, acct, ctx.accountId, res.rows?.length ?? 0);
+  const account = Number.isFinite(acct.limit)
+    ? { account_used_today: acct.used + (res.rows?.length ?? 0), account_daily_budget: acct.limit }
+    : {};
+  return { site_id: site.id, format: q.format, from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...res, ...account };
 }
 
 /** The REST body of an export page. */

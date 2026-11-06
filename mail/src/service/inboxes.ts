@@ -6,6 +6,7 @@ import { headerSafe } from "../lib/headers";
 import { assertActive, dailyLimitError, maxBlobBytes, refundDaily, reserveDaily, storedBlobBytes } from "./budgets";
 import { type InboxRow, inboxJson, utcDay } from "./format";
 import { forwardContext, forwardNextSteps, settingOf } from "./forward-settings";
+import { inboxCreateAttempt } from "./pauses";
 
 export const MAX_TTL_DAYS = 3650;
 const DAY = 86_400_000;
@@ -93,6 +94,10 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   const dom = await resolveInboxDomain(env, accountId, input.domain);
   const expiresAt = input.ttl_days ? now + Math.round(input.ttl_days * DAY) : null;
   const display = cleanDisplayName(input.display_name);
+  // mail.inbox_create pause and burst detection (src/service/pauses.ts): once per call, on the first
+  // address that would be new (taken ones too, so they answer alike); never for one the account owns.
+  let attempt: Promise<void> | null = null;
+  const noteAttempt = () => (attempt ??= inboxCreateAttempt(env, accountId, standing, now));
 
   /** null = the address is someone else's: taken by another account, or (shared domain) once theirs. */
   const insert = async (username: string): Promise<{ row: InboxRow; existing: boolean } | null> => {
@@ -104,11 +109,12 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
     )
       .bind(address)
       .first<InboxRow & { id: string | null; tomb_account: string | null }>();
-    if (found?.id) {
-      if (found.account_id !== accountId) return null;
+    if (found?.id && found.account_id === accountId) {
       const { tomb_account: _t, ...row } = found;
       return { row: row as InboxRow, existing: true };
     }
+    await noteAttempt();
+    if (found?.id) return null;
     if (found?.tomb_account && found.tomb_account !== accountId) return null;
     await assertInboxQuota(env, standing, accountId);
     // MAX_INBOX_CREATES_PER_DAY: only real creations count (not "existing": true).

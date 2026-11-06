@@ -52,4 +52,33 @@ describe("our pages' first-party paths", () => {
   it("is a plain 404 without the keys", async () => {
     expect((await call("GET", "/_a/s.js", { env: testEnv({ ANALYTICS: echo("analytics") }) })).status).toBe(404);
   });
+
+  it("sends /_r/* to replay the way the edge does: the internal token and our own host, the visitor's IP and geo", async () => {
+    const env = testEnv({ REPLAY: echo("replay") });
+    const r = await call("POST", "/_r/i?s=rsite_x", {
+      env,
+      ip: "203.0.113.9",
+      cf: { country: "FR" },
+      body: "chunk",
+      headers: { "x-afs-edge-host": "evil.example", "x-afs-internal": "forged", cookie: "session=secret" },
+    });
+    expect(r.json).toMatchObject({ service: "replay", url: "https://replay.internal/_r/i?s=rsite_x", method: "POST", body: "chunk" });
+    expect(r.json.headers).toMatchObject({
+      "x-afs-internal": "test-internal-token-0123456789",
+      "x-afs-edge-host": "afs.test",
+      "x-forwarded-for": "203.0.113.9",
+      "x-afs-geo-country": "FR",
+    });
+    expect(r.json.headers.cookie).toBeUndefined();
+    expect(r.json.headers["x-afs-proxy-key"]).toBeUndefined();
+    const keyed = await call("POST", "/_r/i", {
+      env: testEnv({ REPLAY: echo("replay"), OWN_REPLAY_PROXY_KEY: "pk_replay_test" }),
+      body: "c",
+    });
+    expect(keyed.json.headers["x-afs-proxy-key"]).toBe("pk_replay_test");
+    const loader = await call("GET", "/_r/r/rsite_x.js", { env });
+    expect(loader.json).toMatchObject({ service: "replay", url: "https://replay.internal/_r/r/rsite_x.js" });
+    // Without the internal token there is no trust to give: 404.
+    expect((await call("GET", "/_r/r/rsite_x.js", { env: testEnv({ REPLAY: echo("replay"), INTERNAL_TOKEN: "" }) })).status).toBe(404);
+  });
 });

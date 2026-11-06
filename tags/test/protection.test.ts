@@ -11,6 +11,7 @@ import {
   protectionCaps,
   type StoredProtection,
   spikeMin,
+  spikeMinNetworks,
   spikeThreshold,
 } from "../src/service/protection";
 
@@ -35,7 +36,7 @@ const view = (over: Partial<ProtectionView> = {}): ProtectionView => ({
   quarantined: 3,
   quarantined_today: 3,
   conversions_held_today: 1,
-  measures: { network_share_limit: 1000, datacenter_quarantine: true, browser_conversions_held: true },
+  measures: { network_share_limit: 1000, datacenter_quarantine: true, browser_conversions_held: false },
   ...over,
 });
 
@@ -63,6 +64,10 @@ describe("attack protection: episode state", () => {
     expect(spikeThreshold(12.3, 5)).toBe(123);
     expect(spikeMin({})).toBe(1000);
     expect(spikeMin({ SPIKE_MIN_EVENTS: "5" })).toBe(5);
+    // An attack also needs that many distinct networks in the window (fewer = contained).
+    expect(spikeMinNetworks({})).toBe(20);
+    expect(spikeMinNetworks({ SPIKE_MIN_NETWORKS: "3" })).toBe(3);
+    expect(spikeMinNetworks({ SPIKE_MIN_NETWORKS: "0" })).toBe(0);
   });
 
   it("the network share and quarantine caps are off when unset and read UNCLAIMED_ first", () => {
@@ -123,7 +128,16 @@ describe("attack protection: the usage contract", () => {
     expect(a!.next_steps.join("\n")).toContain("GET https://tags.example/v1/containers/ctr_x/quarantine");
     expect(a!.next_steps.join("\n")).toContain('PATCH https://tags.example/v1/containers/ctr_x { "protection": "off" }');
     expect(a!.next_steps.join("\n")).toContain('"protection": "strict"');
-    expect(a!.next_steps.join("\n")).toMatch(/aren't forwarded to ad platforms/);
+    expect(a!.next_steps.join("\n")).toMatch(
+      /Conversions from quarantined traffic .*data-centre networks while under attack.* aren't forwarded to ad platforms; conversions from every other network keep flowing/,
+    );
+    const strict = attackItem(
+      "https://tags.example",
+      "ctr_x",
+      "shop.test",
+      view({ mode: "strict", measures: { network_share_limit: 1000, datacenter_quarantine: true, browser_conversions_held: true } }),
+    );
+    expect(strict!.next_steps.join("\n")).toMatch(/protection is strict, so browser conversions aren't forwarded/);
     const ended = attackItem(
       "https://tags.example",
       "ctr_x",

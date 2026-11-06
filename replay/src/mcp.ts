@@ -150,7 +150,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Install snippet",
       description:
-        "The exact code to install the recorder for a framework or platform (html, nextjs, react, astro, wordpress, gtm, shopify, webflow, wix, squarespace, framer), with_tools (Segment, Mixpanel, Amplitude: replay_session_id on their events, their identify passed on), the page API (afsr.sessionId(), identify, event, consent, stop), the data-afsr-* masking attributes and how to test (?afsr=1). For a site linked to analytics (loads_with_analytics), nothing_to_paste says the analytics tracker already loads it; otherwise with_analytics suggests linking the account's analytics site instead of a second snippet.",
+        "The exact code to install the recorder for a framework or platform (html, nextjs, react, astro, wordpress, gtm, shopify, webflow, wix, squarespace, framer), with_tools (Segment, Mixpanel, Amplitude: replay_session_id on their events, their identify passed on), the page API (afsr.sessionId(), identify, event, consent, stop), the data-afsr-* masking attributes and how to test (?afsr=1). For a site linked to analytics (loads_with_analytics), nothing_to_paste says the analytics tracker already loads it; otherwise with_analytics suggests linking the account's analytics site instead of a second snippet. first_party (first-party domain, path proxy, direct, best first) and first_party_proxy: ready /_r/* proxy code (Cloudflare Worker, Next.js, Vercel, Netlify, nginx) with the site's x-afs-proxy-key, filled in only for full-access keys (a secret: keep it server-side).",
       input: { site_id: siteId, framework: z.enum(FRAMEWORKS).optional().describe("Default html.") },
     },
     (a) => getInstall(ctx, a.site_id, a.framework),
@@ -334,7 +334,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     "get_heatmap_image",
     {
       title: "Heatmap image (PNG)",
-      description: `Draw a heatmap over the page as it was recorded: the latest stored snapshot of a page load (masked in the visitor's browser) with click dots (rage red, dead amber, error purple), scroll-reach bands or attention bands, rendered by Cloudflare Browser Rendering. Verified sites only; needs the deployment's BROWSER binding. Cached for a day per page + device + type + period (fetching again is free); a new render counts against MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY / _PER_ACCOUNT_PER_DAY / MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY. Returns image.url (GET it with your API key for the PNG; or include_base64 for up to 1.5 MB inline), what it shows and today's usage. The numbers behind it: get_heatmap.${UNTRUSTED_TOOL_NOTE}`,
+      description: `Draw a heatmap over the page as it was recorded: the latest stored snapshot of a page load (masked in the visitor's browser) with click dots (rage red, dead amber, error purple), scroll-reach bands or attention bands, rendered by Cloudflare Browser Rendering. Verified sites of claimed projects only (403 claim_required for a project no person has claimed, unless the deployment allows some: the browser is shared); needs the deployment's BROWSER binding. Cached for a day per page + device + type + period (fetching again is free); a new render counts against MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY / _PER_ACCOUNT_PER_DAY / MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY. Returns image.url (GET it with your API key for the PNG; or include_base64 for up to 1.5 MB inline), what it shows and today's usage. The numbers behind it: get_heatmap.${UNTRUSTED_TOOL_NOTE}`,
       input: {
         site_id: siteId,
         ...heatmapImageInput.shape,
@@ -575,7 +575,7 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
     {
       title: "Create replay link",
       description:
-        "An expiring link to a human player for one session (rrweb player with skip-inactivity, an event timeline with errors and notes; the page as recorded, i.e. masked). A clip: start_ms / end_ms (ms since the session started) open the player at the start, pause at the end and serve only that window's recording; note is shown above it. Needs a verified domain and the project's own API key (a connected app's OAuth access token can't create one: the link can outlive it). Anyone with the URL can watch until it expires (expires_in seconds, default 7 days, max 30) or is revoked; the URL is returned once.",
+        "An expiring link to a human player for one session (rrweb player with skip-inactivity, an event timeline with errors and notes; the page as recorded, i.e. masked). A clip: start_ms / end_ms (ms since the session started) open the player at the start, pause at the end and serve only that window's recording; note is shown above it. Needs a verified domain and the project's own API key (a connected app's OAuth access token can't create one: the link can outlive it). Anyone with the URL can watch until it expires (expires_in seconds, default 1 day, max 30) or is revoked; the URL is returned once. The player is noindex and shows a Report abuse link; 403 capability_paused while the project's share links are paused (existing links then show a paused page).",
       input: { site_id: siteId, ...createLinkInput.shape },
     },
     ({ site_id, ...rest }) => createLink(ctx, site_id, rest),

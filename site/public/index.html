@@ -449,7 +449,7 @@ pnpm afs deploy mystack</pre>
 <footer class="footer">
   <div class="wrap footer-inner">
     <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
-    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a><a href="mailto:abuse@agentfirststack.com">Report abuse</a></p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a><a href="/report-abuse">Report abuse</a></p>
   </div>
 </footer>
 
@@ -457,7 +457,7 @@ pnpm afs deploy mystack</pre>
 
 First, look at what this site uses today (Google Analytics, Google Tag Manager, Plausible, DataFast, ad pixels, any other analytics or replay tool) without changing anything. Then ask me once and wait for my answer: should email that reaches the project's inbox be forwarded to me as each one arrives, or as one daily digest (and at what time, in my time zone)? And if you found other tools: shall you bring their setup and history over, and if you need it to export their data, may you use my browser where I'm signed in? If I can't answer, forward each one as it arrives and bring over whatever needs no help from me.
 
-1. Read https://agentfirststack.com/llms.txt, then follow its "Full setup" section from start to finish. Read each service's manual before you use that service.
+1. Read https://agentfirststack.com/llms.txt and the Acceptable Use Policy (https://agentfirststack.com/acceptable-use), then follow the manual's "Full setup" section from start to finish. Read each service's manual before you use that service.
 
 2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, read AGENTFIRSTSTACK.md, and run the setup check (step 4) to see what earlier runs set up and what's missing. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
 

@@ -105,7 +105,7 @@ Set up AgentFirstStack for this project, completely, and verify it yourself. It'
 
 First, look at what this site uses today (Google Analytics, Google Tag Manager, Plausible, DataFast, ad pixels, any other analytics or replay tool) without changing anything. Then ask me once and wait for my answer: should email that reaches the project's inbox be forwarded to me as each one arrives, or as one daily digest (and at what time, in my time zone)? And if you found other tools: shall you bring their setup and history over, and if you need it to export their data, may you use my browser where I'm signed in? If I can't answer, forward each one as it arrives and bring over whatever needs no help from me.
 
-1. Read https://agentfirststack.com/llms.txt, then follow its "Full setup" section from start to finish. Read each service's manual before you use that service.
+1. Read https://agentfirststack.com/llms.txt and the Acceptable Use Policy (https://agentfirststack.com/acceptable-use), then follow the manual's "Full setup" section from start to finish. Read each service's manual before you use that service.
 
 2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, read AGENTFIRSTSTACK.md, and run the setup check (step 4) to see what earlier runs set up and what's missing. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
 

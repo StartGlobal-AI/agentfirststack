@@ -13,11 +13,18 @@ export type AppEnv = Omit<
   | "PUBLIC_BASE_URL"
   | "DEV_MODE"
   | "INBOX"
+  | "SITE"
   | "WAIT_LIMITER"
   | "WEBHOOK_TEST_LIMITER"
   | "SEARCH_LIMITER"
 > & {
   INBOX: DurableObjectNamespace<import("./inbox-do").InboxDO>;
+  /**
+   * Optional service binding to the platform's site (wrangler.jsonc): capability pauses are posted
+   * to https://site.internal/v1/internal/pauses so the project's people and the operator are
+   * emailed at once. Without it the pause is written to AUTH_DB directly (the site's cron emails).
+   */
+  SITE?: Fetcher;
   /** Optional Workers rate-limit bindings (wrangler.jsonc); a deployment without them skips the check. */
   WAIT_LIMITER?: RateLimit;
   WEBHOOK_TEST_LIMITER?: RateLimit;
@@ -88,6 +95,15 @@ export type AppEnv = Omit<
    *   MAX_FORWARDS_PER_ACCOUNT_PER_DAY  emails forwarded to the project's members (forwards and
    *                            digests, counted per recipient) per account per UTC day (default 100;
    *                            "0" = forwarding off). Never counts toward SEND_DAILY_LIMIT.
+   * Automatic capability pauses (src/service/pauses.ts; recorded through @afs/shared, lifted only by
+   * the operator). Each also reads UNCLAIMED_<name>; unset or "0" = that signal is off.
+   *   SEND_PAUSE_BOUNCE_PERCENT / SEND_PAUSE_COMPLAINT_PERCENT  pause mail.send when more than this
+   *                            percent of the external recipients the account sent to in the last
+   *                            hour bounced / complained (Email Sending delivery events).
+   *   SEND_PAUSE_MIN_SENDS     recipients the last hour must have before those rates count (default 10).
+   *   INBOX_CREATE_BURST_PER_HOUR  pause mail.inbox_create when the account tries to create more new
+   *                            inboxes than this in one UTC hour (refused attempts count too). Unset =
+   *                            3 x MAX_INBOX_CREATES_PER_DAY when that is set, else off.
    */
   SHARED_SEND_POLICY?: string;
   SHARED_RETENTION_DAYS?: string;
@@ -113,6 +129,10 @@ export type AppEnv = Omit<
   MAX_ATTACHMENT_TEXT_PER_DAY?: string;
   DELIVERY_EVENTS_QUEUE?: string;
   MAX_FORWARDS_PER_ACCOUNT_PER_DAY?: string;
+  SEND_PAUSE_BOUNCE_PERCENT?: string;
+  SEND_PAUSE_COMPLAINT_PERCENT?: string;
+  SEND_PAUSE_MIN_SENDS?: string;
+  INBOX_CREATE_BURST_PER_HOUR?: string;
   /** Optional Workers AI binding (not in the template): attachment text via toMarkdown. Without it that route answers 501. */
   AI?: Ai;
 } & { [K in CapName as `UNCLAIMED_${K}`]?: string };
@@ -145,7 +165,11 @@ export type CapName =
   | "MAX_INBOX_CLEARS_PER_DAY"
   | "MAX_SCHEDULED_PER_ACCOUNT"
   | "MAX_ATTACHMENT_TEXT_PER_DAY"
-  | "MAX_FORWARDS_PER_ACCOUNT_PER_DAY";
+  | "MAX_FORWARDS_PER_ACCOUNT_PER_DAY"
+  | "SEND_PAUSE_BOUNCE_PERCENT"
+  | "SEND_PAUSE_COMPLAINT_PERCENT"
+  | "SEND_PAUSE_MIN_SENDS"
+  | "INBOX_CREATE_BURST_PER_HOUR";
 
 /**
  * A per-account cap for an account of this standing: `UNCLAIMED_<name>` for unclaimed accounts

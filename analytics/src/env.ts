@@ -51,6 +51,8 @@ export interface Bindings extends AuthBindings {
    * site that has replay_site_id loads REPLAY_BASE_URL/r/<replay_site_id>.js by itself. Unset = off.
    */
   REPLAY_BASE_URL?: string;
+  /** The platform's abuse report form, linked from every public share page (default https://agentfirststack.com/report-abuse). */
+  ABUSE_REPORT_URL?: string;
 
   // Fair use (all optional; every account-level one also reads UNCLAIMED_<NAME> for accounts no
   // person has claimed, via capFor). See src/lib/limits.ts and README "Config".
@@ -109,7 +111,7 @@ export interface Bindings extends AuthBindings {
   SQL_LIMITER?: RateLimit;
   /** verify per account and per verified domain. */
   VERIFY_LIMITER?: RateLimit;
-  /** Stripe webhook deliveries per site id. */
+  /** Payment webhook deliveries that fail authentication, per client network and per endpoint (signed ones are never limited). */
   WEBHOOK_LIMITER?: RateLimit;
   /** Public share dashboard reads per share token. */
   SHARE_LIMITER?: RateLimit;

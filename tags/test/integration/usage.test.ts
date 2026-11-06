@@ -112,7 +112,15 @@ const purchaseDraft = {
   conversions: [{ name: "purchase", trigger: "p", currency: "USD", send_to: { analytics: { event_name: "purchase" } }, server: true }],
 };
 
-const ACCOUNT_CAPS = ["containers", "storage_bytes", "browser_events_per_day", "server_events_per_day", "deliveries_per_day"];
+const ACCOUNT_CAPS = [
+  "containers",
+  "storage_bytes",
+  "browser_events_per_day",
+  "server_events_per_day",
+  "deliveries_per_day",
+  "scans_per_day",
+  "destination_tests_per_day",
+];
 const PER_CONTAINER = [
   "browser_events_per_container_per_day",
   "server_events_per_container_per_day",
@@ -147,6 +155,8 @@ const DAILY = [
   ...DROPS_DATA.filter((n) => n.includes("_per_day")),
   "events_per_network_per_container_per_day",
   "quarantined_events_per_container_per_day",
+  "scans_per_day",
+  "destination_tests_per_day",
 ];
 
 describe("GET /v1/usage and MCP get_usage", () => {
@@ -160,7 +170,7 @@ describe("GET /v1/usage and MCP get_usage", () => {
       resets_at: midnight,
       resets_at_iso: new Date(midnight).toISOString(),
       claimed: false,
-      policy: { custom_code_allowed: false },
+      policy: { custom_code_allowed: false, custom_code_paused: null },
     });
     expect(Object.keys(u.limits).sort()).toEqual([...ACCOUNT_CAPS, ...PER_CONTAINER].sort());
     for (const [name, it] of Object.entries(u.limits)) {

@@ -62,6 +62,8 @@ export interface SiteSettings {
   trust_browser_user_id?: boolean;
   /** linked replay site (rsite_...): the tracker loads its recorder. Older copies have no field: null. */
   replay_site_id?: string | null;
+  /** where the site's own replay proxy lives ("/_r"): path-proxy events get the replay loader there (older copies: none) */
+  replay_proxy_path?: string | null;
   /** referrer hosts treated as no referrer, on top of DEFAULT_IGNORED_REFERRERS (older copies: none) */
   ignored_referrers?: string[] | null;
   /** path cleaning rules applied at ingest, in order (older copies: none) */
@@ -208,9 +210,21 @@ export interface IngestResponse {
   persistent: boolean;
   results: IngestOutcome[];
   /** every event was refused for this one reason (suspended account, storage or daily budget) */
-  refused?: "account_suspended" | "storage_full" | "daily_limit" | "account_daily_limit" | "platform_daily_budget";
+  refused?:
+    | "account_suspended"
+    | "storage_full"
+    | "daily_limit"
+    | "account_daily_limit"
+    | "platform_daily_budget"
+    | "server_daily_limit"
+    | "account_server_daily_limit"
+    | "platform_server_daily_budget";
   /** the site's linked replay site from the settings copy (known sites only, not for suspended accounts) */
   replay_site_id?: string | null;
+  /** the site's replay proxy path from the settings copy ("/_r"), or null */
+  replay_proxy_path?: string | null;
+  /** the (one browser) event's network is past its daily share on this site: the Worker sheds its next events */
+  over_share?: boolean;
 }
 
 export interface PeriodParams {

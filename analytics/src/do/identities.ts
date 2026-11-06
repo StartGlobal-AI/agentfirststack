@@ -118,6 +118,21 @@ export function backfillIdentities(db: Db): void {
 
 /** The identity whose first touch an event reports: its user, else its visitor id. */
 export const EVENT_IDENT = "COALESCE('user:' || e.user_id, e.visitor_id)";
-/** The canonical identity of a session (a visitor id that was identified counts as its user). */
-export const SESSION_IDENT =
-  "COALESCE('user:' || s.user_id, (SELECT i.canonical FROM identities i WHERE i.ident = s.visitor_id), s.visitor_id)";
+
+/**
+ * The canonical identity of a session (a visitor id that was identified counts as its user). Only
+ * a trusted user id counts: one a server sent (user_source = 'server'), or any when the site sets
+ * trust_browser_user_id. A browser id (afsa('identify')) never makes a session someone else's.
+ */
+export const sessionIdent = (trustBrowser: boolean) =>
+  `COALESCE(${trustBrowser ? "'user:' || s.user_id" : "CASE WHEN s.user_source = 'server' THEN 'user:' || s.user_id END"}, (SELECT i.canonical FROM identities i WHERE i.ident = s.visitor_id), s.visitor_id)`;
+
+/**
+ * The person behind a conversion event `e`, matching sessionIdent: a server event's own user id,
+ * else its session's identity, else (no session row: an unlinked payment or a no-visit event) the
+ * user id a server or payment carried, the identified visitor's user, or the visitor id.
+ */
+export const conversionPerson = (trustBrowser: boolean) =>
+  trustBrowser
+    ? "COALESCE('user:' || e.user_id, (SELECT i.canonical FROM identities i WHERE i.ident = e.visitor_id), e.visitor_id)"
+    : `COALESCE(CASE WHEN e.origin = 'server' THEN 'user:' || e.user_id END, (SELECT ${sessionIdent(false)} FROM sessions s WHERE s.id = e.session_id), CASE WHEN e.origin = 'payment' THEN 'user:' || e.user_id END, (SELECT i.canonical FROM identities i WHERE i.ident = e.visitor_id), e.visitor_id)`;

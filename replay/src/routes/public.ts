@@ -1,8 +1,10 @@
 import { networkKey, publicBaseUrl } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AppEnv, isDev } from "../env";
-import { expiredPage, PLAYER_HEADERS, playerHeaders, playerPage } from "../player-page";
+import { expiredPage, PLAYER_HEADERS, pausedPage, playerHeaders, playerPage, reportAbuseUrl } from "../player-page";
+import { platformBase } from "../service/install";
 import { geo, ingestChunk, visitorIp } from "../service/ingest";
+import { proxyTrust } from "../service/proxy";
 import { playerChunk, playerData, recordView, resolveToken, siteHostsForCsp } from "../service/links";
 import { playerHash, servePlayerAsset, serveLoader, serveRecorder } from "../service/scripts";
 import { serveSurveyScript, submitSurvey } from "../service/survey-ingest";
@@ -26,11 +28,13 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
   const method = c.req.method;
   const loader = /\/r\/([^/]+)\.js$/.exec(path);
   if (loader && (method === "GET" || method === "HEAD")) {
-    // Per network before the site lookup: random site ids can't make D1 reads cheaply.
+    // Per network before the site lookup: random site ids can't make D1 reads cheaply. A keyed
+    // path proxy's visitors count as their own networks (the key is derived, no D1 read).
+    const trust = await proxyTrust(c.env, c.req.raw, loader[1]!);
     const limiter = c.env.INGEST_IP_LIMITER;
     if (
       limiter &&
-      !(await limiter.limit({ key: `l:${networkKey(visitorIp(c.req.raw, c.env))}` }).then(
+      !(await limiter.limit({ key: `l:${networkKey(visitorIp(c.req.raw, c.env, trust))}` }).then(
         (r) => r.success,
         () => true,
       ))
@@ -44,7 +48,7 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
       loader[1]!,
       publicBaseUrl(c),
       c.req.header("if-none-match") ?? null,
-      geo(c.req.raw, isDev(c.env), c.env).country,
+      geo(c.req.raw, isDev(c.env), c.env, trust).country,
     );
     return method === "HEAD" ? new Response(null, { status: res.status, headers: res.headers }) : res;
   }
@@ -78,13 +82,24 @@ export const playerRoutes = new Hono<AppEnv>();
 
 playerRoutes.get("/assets/:name", async (c) => (await servePlayerAsset(c.req.param("name"))) ?? c.notFound());
 
+const PAUSED = {
+  error: {
+    code: "capability_paused",
+    message: "Share links of this project are paused while it is reviewed.",
+    hint: "Nothing to do here; the project's people were emailed.",
+  },
+};
+
 playerRoutes.get("/play/:token", async (c) => {
-  const r = await resolveToken(c.env, c.req.param("token"));
+  const token = c.req.param("token");
+  const r = await resolveToken(c.env, token);
+  const abuse = reportAbuseUrl(platformBase(c.env), `${publicBaseUrl(c)}/play/${token}`);
+  if (r === "paused") return c.html(pausedPage(abuse), 403, PLAYER_HEADERS);
   if (!r) return c.html(expiredPage(), 404, PLAYER_HEADERS);
   waitUntilOf(c)(recordView(c.env, r.link.id).catch(() => {}));
   const h = await playerHash();
   return c.html(
-    playerPage({ js: `/assets/player-${h}.js`, css: `/assets/player-${h}.css` }),
+    playerPage({ js: `/assets/player-${h}.js`, css: `/assets/player-${h}.css` }, abuse),
     200,
     playerHeaders(siteHostsForCsp(c.env, r.site)),
   );
@@ -93,6 +108,7 @@ playerRoutes.get("/play/:token", async (c) => {
 playerRoutes.get("/play/:token/data", async (c) => {
   const r = await resolveToken(c.env, c.req.param("token"));
   const headers = { "cache-control": "private, no-store", "x-robots-tag": "noindex" };
+  if (r === "paused") return c.json(PAUSED, 403, headers);
   if (!r) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404, headers);
   const d = await playerData(c.env, r);
   if (!d) return c.json({ error: { code: "not_found", message: "The session is no longer stored." } }, 404, headers);
@@ -102,6 +118,7 @@ playerRoutes.get("/play/:token/data", async (c) => {
 playerRoutes.get("/play/:token/chunks/:seq", async (c) => {
   const seq = c.req.param("seq");
   const r = /^\d{1,6}$/.test(seq) ? await resolveToken(c.env, c.req.param("token")) : null;
+  if (r === "paused") return c.json(PAUSED, 403, { "x-robots-tag": "noindex" });
   if (!r) return c.json({ error: { code: "not_found", message: "This replay link has expired or was revoked." } }, 404);
   const body = await playerChunk(c.env, r, Number(seq));
   if (body === "budget")

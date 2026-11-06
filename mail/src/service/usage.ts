@@ -7,6 +7,7 @@ import { attachmentTextPerDay } from "./attachment-text";
 import { maxListEntries } from "./lists";
 import { utcDay } from "./format";
 import { SMALL_MESSAGE_BYTES, formatBytes, maxInboundBytesPerSender, maxInboundMessageBytes, maxInboundPerDay } from "./ingest";
+import { activePauses, sendHealthJson } from "./pauses";
 import { dailyLimit, maxScheduled } from "./send";
 import { DEFAULT_MAX_CONCURRENT_WAITS, DEFAULT_MAX_CONCURRENT_WAITS_PER_INBOX } from "./wait";
 import { maxWebhooks } from "./webhooks";
@@ -120,7 +121,12 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
   )
     .bind(accountId)
     .all<{ id: string; address: string; inbound_count: number }>();
-  const [row, perInbox] = await Promise.all([counters, inboxes]);
+  const [row, perInbox, paused, sendHealth] = await Promise.all([
+    counters,
+    inboxes,
+    activePauses(env, accountId),
+    sendHealthJson(env, accountId, standing, now),
+  ]);
   const v = (k: string) => row?.[k] ?? 0;
   const maxMessages = c("MAX_MESSAGES_PER_INBOX");
   const maxMessagesN = num(maxMessages);
@@ -318,6 +324,9 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
     claimed: standing.claimed,
     limits,
     delivery: await deliveryCounts(env, accountId, opts.days ?? 30, now),
+    // Capabilities paused automatically (src/service/pauses.ts): { capability, reason, paused_at, paused_by, until }.
+    paused,
+    send_health: sendHealth,
     policy: {
       shared_send_policy: env.SHARED_SEND_POLICY === "reply_only" ? "reply_only" : "open",
       shared_retention_days: retention > 0 ? retention : null,
@@ -325,6 +334,10 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
     rate_limits:
       "Bursts are also limited per account per minute (wait, search, webhook tests): 429 rate_limited with Retry-After. Those counters are approximate and not listed here.",
     next_steps: [
+      ...paused.map(
+        (p) =>
+          `${p.capability} is paused because ${p.reason}. The project's people were emailed; only the operator lifts it (the 403 capability_paused hint says how to appeal). Don't retry or work around it.`,
+      ),
       ...(standing.claimed
         ? []
         : [

@@ -21,6 +21,14 @@ describe("first touch", () => {
     engine.ingest(db, [ev({ ts: NOW - DAY, visitor_hash: "va", ...fb })], NOW); // a later session: first touch stays Google
     engine.ingest(db, [ev({ ts: NOW - DAY + MIN, visitor_hash: "va", origin: "server", name: "signup", user_id: "u1" })], NOW);
     engine.ingest(db, [ev({ ts: NOW - 10 * MIN, visitor_hash: "vb", user_id: "u1", ...fb })], NOW); // the same user on another device
+    // afsa('identify') from the browser alone doesn't merge vb into u1 (anyone can send any id)...
+    expect(ids()).toEqual([
+      { ident: "user:u1", canonical: null, channel: "Organic Search", entry_page: "/blog" },
+      { ident: "va", canonical: "user:u1", channel: "Organic Search", entry_page: "/blog" },
+      { ident: "vb", canonical: null, channel: "Organic Social", entry_page: "/" },
+    ]);
+    // ...the site's server confirming it does.
+    engine.ingest(db, [ev({ ts: NOW - 9 * MIN, visitor_hash: "vb", origin: "server", name: "login", user_id: "u1" })], NOW);
     expect(ids()).toEqual([
       { ident: "user:u1", canonical: null, channel: "Organic Search", entry_page: "/blog" },
       { ident: "va", canonical: "user:u1", channel: "Organic Search", entry_page: "/blog" },
@@ -32,7 +40,7 @@ describe("first touch", () => {
       { ...q({ period: "7d", metrics: ["visitors", "events"] }), breakdown: "first_channel" } as any,
       NOW,
     ) as any;
-    expect(rows.results).toEqual([{ value: "Organic Search", visitors: 2, events: 4 }]);
+    expect(rows.results).toEqual([{ value: "Organic Search", visitors: 2, events: 5 }]);
     expect(rows.notes.join(" ")).toContain("first_* dimensions");
     const f = engine.stats(
       db,

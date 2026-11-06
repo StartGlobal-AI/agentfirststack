@@ -1,10 +1,10 @@
-import { accountStanding, sha256Hex } from "@afs/shared";
+import { accountStanding, capabilityPaused, sha256Hex } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { Bindings } from "../env";
 import { bannerAsks } from "../lib/consent";
 import type { BootConfig } from "../runtime/types";
 import { environmentByToken } from "./environments";
-import { customCodeProblem, stripCustomCode } from "./verify";
+import { codeGate, customCodeProblem, hasCustomCode, stripCustomCode } from "./verify";
 import { previewConfig, previewToken } from "./versions";
 
 /**
@@ -166,14 +166,14 @@ export async function serveScript(
       .bind(id)
       .first<{ id: string; account_id: string; domain: string; verified_at: number | null }>();
     if (!row) return null;
-    const standing = await accountStanding(env, row.account_id);
+    const { standing, pause } = await codeGate(env, row.account_id);
     if (standing.suspended) return { suspended: true as const };
-    const custom = customCodeProblem(env, row, cfg, standing);
+    const custom = customCodeProblem(env, row, cfg, standing, pause);
     if (!custom) return { row, cfg, prelude: "" };
     return {
       row,
       cfg: stripCustomCode(cfg, env),
-      prelude: `console.warn(${JSON.stringify(`[afst] ${label}: custom code tags are left out (${custom.code}). ${custom.hint}`)});\n`,
+      prelude: `console.warn(${JSON.stringify(`[afst] ${label}: custom code tags are left out (${custom.code}). ${custom.code === "capability_paused" ? `GET /v1/containers/${id} says why.` : custom.hint}`)});\n`,
     };
   };
   if (req.env && !req.preview) {
@@ -272,9 +272,21 @@ async function serveLive(
     }
   }
   if (cached.account_id && (await accountStanding(env, cached.account_id)).suspended) return suspendedScript();
-  const boot: BootConfig = { ...cached.boot, base: req.origin, ...(ui && bannerOn(cached.boot) ? { ui } : {}) };
+  // Custom code paused for the account (a strong match at publish, or the operator): the live
+  // script runs without it until the pause is lifted.
+  let cfg = cached.boot.cfg;
+  let prelude = "";
+  if (cached.account_id && hasCustomCode(cfg, env)) {
+    const pause = await capabilityPaused(env, cached.account_id, "tags.custom_code");
+    if (pause) {
+      cfg = stripCustomCode(cfg, env);
+      // No reason here: every visitor reads this script. GET /v1/containers/:id tells the owner.
+      prelude = `console.warn(${JSON.stringify(`[afst] custom code is paused for this project; custom code tags are left out (GET /v1/containers/${req.id} says why).`)});\n`;
+    }
+  }
+  const boot: BootConfig = { ...cached.boot, cfg, base: req.origin, ...(ui && bannerOn(cached.boot) ? { ui } : {}) };
   const runtime = pickRuntime(runtimes, boot.cfg);
-  const etag = `W/"${req.id}-v${cached.live_version}-${await runtimeVersion(runtime)}${boot.ui ? `-${boot.ui}` : ""}-${req.geo?.country ?? "xx"}${req.geo?.region ? `-${req.geo.region}` : ""}"`;
+  const etag = `W/"${req.id}-v${cached.live_version}${prelude ? "-p" : ""}-${await runtimeVersion(runtime)}${boot.ui ? `-${boot.ui}` : ""}-${req.geo?.country ?? "xx"}${req.geo?.region ? `-${req.geo.region}` : ""}"`;
   const headers = {
     ...JS_HEADERS,
     "cache-control": `${dependsOnCountry(boot.cfg) ? "private" : "public"}, max-age=${BROWSER_TTL_SECONDS}`,
@@ -283,5 +295,5 @@ async function serveLive(
     ...bannerHeader(boot.cfg, req.geo),
   };
   if (req.ifNoneMatch && req.ifNoneMatch.split(/\s*,\s*/).includes(etag)) return new Response(null, { status: 304, headers });
-  return new Response(compileScript(runtime, boot, req.geo), { headers });
+  return new Response(compileScript(runtime, boot, req.geo, prelude), { headers });
 }

@@ -161,7 +161,7 @@ describe("engine", () => {
     ]);
   });
 
-  it("goals: conversions, rate, revenue (incl. goal value), goal filter and breakdown", () => {
+  it("goals: conversions, rate, revenue and goal value (apart), goal filter and breakdown", () => {
     engine.configure(
       db,
       settings({
@@ -176,13 +176,41 @@ describe("engine", () => {
     engine.ingest(db, [ev({ visitor_hash: "b", ts: NOW - 3 * MIN, pathname: "/thanks/order-1", revenue: 30 })], NOW);
     engine.ingest(db, [ev({ visitor_hash: "c", ts: NOW - 3 * MIN, country: "US" }), ev({ visitor_hash: "d", ts: NOW - 3 * MIN })], NOW);
     const s = engine.stats(db, settings(), q(), NOW) as { metrics: Record<string, number> };
-    expect(s.metrics).toMatchObject({ visitors: 4, conversions: 2, conversion_rate: 50, revenue: 35 });
-    const f = engine.stats(db, settings(), q({ filters: parseFilters("goal==Signup") }), NOW) as { metrics: Record<string, number> };
-    expect(f.metrics).toMatchObject({ visitors: 1, pageviews: 1, conversions: 1, revenue: 5 });
+    // A goal's value is never revenue: revenue is what was paid, goal_value what conversions are worth.
+    expect(s.metrics).toMatchObject({ visitors: 4, conversions: 2, conversion_rate: 50, revenue: 30 });
+    const v = engine.stats(db, settings(), q({ metrics: ["revenue", "goal_value"] }), NOW) as { metrics: Record<string, number> };
+    expect(v.metrics).toEqual({ revenue: 30, goal_value: 5 });
+    const f = engine.stats(
+      db,
+      settings(),
+      q({ filters: parseFilters("goal==Signup"), metrics: ["visitors", "pageviews", "conversions", "revenue", "goal_value"] }),
+      NOW,
+    ) as {
+      metrics: Record<string, number>;
+    };
+    expect(f.metrics).toMatchObject({ visitors: 1, pageviews: 1, conversions: 1, revenue: 0, goal_value: 5 });
     const g = engine.breakdown(db, settings(), { ...q(), breakdown: "goal" }, NOW) as { results: Record<string, unknown>[] };
     expect(g.results).toEqual([
-      { value: "Signup", goal_type: "event", goal_match: "signup", visitors: 1, conversions: 1, conversion_rate: 25, revenue: 5 },
-      { value: "Thanks", goal_type: "pageview", goal_match: "/thanks*", visitors: 1, conversions: 1, conversion_rate: 25, revenue: 30 },
+      {
+        value: "Signup",
+        goal_type: "event",
+        goal_match: "signup",
+        visitors: 1,
+        conversions: 1,
+        conversion_rate: 25,
+        revenue: 0,
+        goal_value: 5,
+      },
+      {
+        value: "Thanks",
+        goal_type: "pageview",
+        goal_match: "/thanks*",
+        visitors: 1,
+        conversions: 1,
+        conversion_rate: 25,
+        revenue: 30,
+        goal_value: 0,
+      },
     ]);
     expect(engine.stats(db, settings(), q({ filters: parseFilters("goal==Nope") }), NOW)).toMatchObject({
       error: { code: "unknown_goal" },

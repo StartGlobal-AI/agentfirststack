@@ -1,4 +1,4 @@
-import { ApiError, assertPermanentKey, decryptSecret, encryptSecret, newId, notFound, parse } from "@afs/shared";
+import { ApiError, assertPermanentKey, decryptSecret, encryptSecret, networkKey, newId, notFound, parse } from "@afs/shared";
 import { allow, enforce, limitVars } from "../lib/limits";
 import { z } from "zod";
 import { periodOf } from "./stats";
@@ -281,6 +281,23 @@ const REJECTED: WebhookResult = fail(
   "Signature verification failed for this endpoint. Check that the URL is the webhook_url from GET /v1/sites/:id/integrations/stripe and that the connected signing secret is the endpoint's current whsec_ (re-connect with POST /v1/sites/:id/integrations/stripe), and that the server clock is right (5 minute tolerance).",
 );
 
+/**
+ * A delivery that failed authentication (unknown site, no integration, missing or wrong signature).
+ * Only these are rate limited, per client network and per endpoint (WEBHOOK_LIMITER), and only
+ * after the signature was checked: a correctly signed delivery is never limited, so a flood of junk
+ * can't hold up the provider's real deliveries. Past the limit the answer is 429 instead of 400.
+ */
+export async function rejectedDelivery(env: Bindings, endpoint: string, req: Request, rejected: WebhookResult): Promise<WebhookResult> {
+  const net = networkKey(req.headers.get("cf-connecting-ip"));
+  if (!(await allow(env.WEBHOOK_LIMITER, `bad:ip:${net}`)) || !(await allow(env.WEBHOOK_LIMITER, `bad:${endpoint}`)))
+    return fail(
+      429,
+      "rate_limited",
+      "Too many deliveries with a bad signature; correctly signed deliveries are still accepted. Check that the connected signing secret is the endpoint's current one.",
+    );
+  return rejected;
+}
+
 export async function stripeWebhook(
   env: Bindings,
   siteId: string,
@@ -289,16 +306,15 @@ export async function stripeWebhook(
 ): Promise<WebhookResult> {
   // Deployment-wide answers first: they say nothing about any one site.
   if (!env.ENCRYPTION_KEY) return fail(503, "not_configured", "The deployment's ENCRYPTION_KEY is missing; the operator must set it.");
-  if (!(await allow(env.WEBHOOK_LIMITER, `stripe:${siteId}`)))
-    return fail(429, "rate_limited", "Too many deliveries for this endpoint; Stripe retries later.");
   if (Number(req.headers.get("content-length")) > MAX_WEBHOOK_BYTES)
     return fail(413, "payload_too_large", "Stripe events are far smaller than 1 MB.");
   const { text, truncated } = await readTextCapped(req.body, MAX_WEBHOOK_BYTES);
   if (truncated) return fail(413, "payload_too_large", "Stripe events are far smaller than 1 MB.");
-  if (!SITE_ID_RE.test(siteId) || !req.headers.get("stripe-signature")) return REJECTED;
+  const reject = () => rejectedDelivery(env, `stripe:${siteId.slice(0, 40)}`, req, REJECTED);
+  if (!SITE_ID_RE.test(siteId) || !req.headers.get("stripe-signature")) return reject();
   const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<SiteRow>();
   const row = site ? await integrationRow(env, site.id) : null;
-  if (!site || !row) return REJECTED;
+  if (!site || !row) return reject();
   const now = Date.now();
   const status = (sql: string, ...args: (string | number | null)[]) =>
     waitUntil(
@@ -314,10 +330,10 @@ export async function stripeWebhook(
     // A deployment fault (ENCRYPTION_KEY changed), not caller input: noted once for the owner.
     if (row.last_error !== "secret_unreadable")
       status("UPDATE integrations SET last_error = ?, last_error_at = ? WHERE id = ?", "secret_unreadable", now);
-    return REJECTED;
+    return reject();
   }
   const sig = await verifyStripeSignature(text, req.headers.get("stripe-signature"), secret, now);
-  if (!sig.ok) return REJECTED;
+  if (!sig.ok) return reject();
   // Authenticated from here on: Stripe signed this body with the site's secret.
   let event: unknown;
   try {

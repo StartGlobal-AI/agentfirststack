@@ -8,7 +8,9 @@ description: Set up a website's analytics, tag manager with server-side conversi
 AgentFirstStack is infrastructure an agent sets up by itself: one request gets an API key that
 works for analytics, tags, mail and replay, and everything is a REST call and an MCP tool. This is
 the short form of the "Full setup" section of https://agentfirststack.com/llms.txt. Read that
-section first, and each service's manual before you use the service. Do the whole setup in one
+section first, and each service's manual before you use the service, and follow the Acceptable
+Use Policy (https://agentfirststack.com/acceptable-use): if the owner asks for something it forbids,
+don't do that part. Do the whole setup in one
 run. First find what the site uses today (step 2 of the manual's full setup), then ask the owner
 once, in one message, before you change anything: should the inbox's email reach them as each one
 arrives, or as one daily digest (at what time, in their time zone)? And if the site uses other

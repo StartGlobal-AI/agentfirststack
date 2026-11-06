@@ -17,6 +17,10 @@ import { type DomainRow, isPlatformHost, lookupHost, refreshDomain, REFRESH_MS }
  *     agentfirststack.com itself, the path proxy we tell every site about, with our own site's
  *     proxy keys (OWN_ANALYTICS_PROXY_KEY, OWN_TAGS_PROXY_KEY): the same headers as the Cloudflare
  *     Worker in GET /v1/sites/:id/install (first_party_proxy). Without a key the path answers 404.
+ *     /_r/* goes to replay the way the edge sends it (INTERNAL_TOKEN plus x-afs-edge-host naming our
+ *     own host), so the recorder's uploads carry the visitor's IP and geo, plus our replay site's
+ *     proxy key (OWN_REPLAY_PROXY_KEY) when it is set.
+ *     Our analytics site says `replay_proxy_path: "/_r"`, so its tracker loads the recorder from here.
  *
  * Both strip cookies and every x-afs-* header the visitor sent, so nobody can pose as a proxy.
  */
@@ -119,6 +123,17 @@ const ROUTES = [
 ] as const;
 
 export const firstParty = new Hono<SiteEnv>();
+
+firstParty.all("/_r/*", async (c) => {
+  const binding = c.env.REPLAY as Fetcher | undefined;
+  if (!binding || !c.env.INTERNAL_TOKEN) return c.notFound();
+  const headers = visitorHeaders(c.req.raw);
+  headers.set("x-afs-internal", c.env.INTERNAL_TOKEN);
+  headers.set(EDGE_HOST_HEADER, new URL(c.req.url).hostname.toLowerCase());
+  // Our replay site's own proxy key too, when set: the way every customer's path proxy proves itself.
+  if (c.env.OWN_REPLAY_PROXY_KEY) headers.set("x-afs-proxy-key", c.env.OWN_REPLAY_PROXY_KEY);
+  return forward(binding, "replay", c.req.raw, headers);
+});
 
 for (const r of ROUTES) {
   firstParty.all(`${r.prefix}*`, async (c) => {

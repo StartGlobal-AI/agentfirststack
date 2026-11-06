@@ -62,6 +62,12 @@ export async function userVisitorId(siteId: string, userId: string): Promise<str
   return `u${(await sha256Hex(`${siteId}|user|${userId}`)).slice(0, 15)}`;
 }
 
+/**
+ * The shape of userVisitorId. A browser may not claim one as its persistent id: anyone can compute
+ * it from a user id, and it would put the browser in that user's server-only visits.
+ */
+export const USER_VISITOR_ID_RE = /^u[0-9a-f]{15}$/;
+
 /** Client-supplied persistent ids (localStorage in persistent mode) and server visitor_ids. */
 export const VISITOR_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 

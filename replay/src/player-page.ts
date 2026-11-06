@@ -49,11 +49,23 @@ aside h2{font-size:13px;margin:0;padding:10px 12px;border-bottom:1px solid var(-
 ul{list-style:none;margin:0;padding:0}li{display:grid;grid-template-columns:52px 52px 1fr;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line);font-size:12px}
 li button{font:inherit;font-variant-numeric:tabular-nums;border:0;background:none;color:var(--fg);cursor:pointer;text-align:left;padding:0;text-decoration:underline dotted}
 .kind{color:var(--muted)}.text{overflow-wrap:anywhere}.signals{grid-column:3;color:var(--accent);font-weight:600}li.sig{background:color-mix(in srgb,var(--accent) 6%,transparent)}
-#status{padding:12px 24px;color:var(--muted)}footer{padding:0 24px 24px}
+#status{padding:12px 24px;color:var(--muted)}footer{padding:0 24px 24px}#abuse{color:var(--muted);font-size:12px}#abuse a{color:inherit}
 #banner{margin-top:8px;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-weight:600}
 `;
 
-export function playerPage(assets: { js: string; css: string }): string {
+const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/** The platform's abuse form for this page, or null when this service runs without the platform site. */
+export function reportAbuseUrl(platform: string | null, pageUrl: string): string | null {
+  return platform ? `${platform}/report-abuse?url=${encodeURIComponent(pageUrl)}` : null;
+}
+
+const abuseLink = (href: string | null) =>
+  href
+    ? `<p id="abuse"><a href="${esc(href)}" rel="nofollow noopener noreferrer" target="_blank">Report abuse</a> (phishing, malware, someone else's content)</p>`
+    : "";
+
+export function playerPage(assets: { js: string; css: string }, abuseHref: string | null = null): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>Session replay · AgentFirstStack Replay</title>
@@ -62,7 +74,13 @@ export function playerPage(assets: { js: string; css: string }): string {
 <body><header><h1 id="title">Session replay</h1><div id="meta"></div><div id="banner" hidden></div></header>
 <div id="status">Loading…</div>
 <main><div id="player"></div><aside><h2>Timeline</h2><ul id="timeline"></ul></aside></main>
-<footer id="expires"></footer></body></html>`;
+<footer><div id="expires"></div>${abuseLink(abuseHref)}</footer></body></html>`;
+}
+
+/** A share link of a project whose share links are paused (capability replay.share_links). */
+export function pausedPage(abuseHref: string | null = null): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Link unavailable</title><style>${STYLE}</style></head>
+<body><header><h1>This replay link isn't available.</h1><div id="meta">Share links of this project are paused while it is reviewed.</div></header><footer>${abuseLink(abuseHref)}</footer></body></html>`;
 }
 
 export function expiredPage(): string {

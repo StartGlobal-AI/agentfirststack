@@ -23,13 +23,17 @@ import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
 import { setupTestApi } from "./setup-test";
+import { abuseReportsApi, pruneAbuseReports } from "./abuse-reports";
+import { notifyPendingPauses, pausesApi } from "./pauses";
 
 // The platform apex (agentfirststack.com). Static assets in public/ (landing page, llms.txt,
 // privacy and terms, /.well-known/*) are served by the assets binding. This Worker runs first for:
 //   /             content negotiation (Accept: text/markdown -> /index.md) and discovery Link headers
 //   /mcp          the MCP gateway over every service
 //   /v1/*         the one signup endpoint for the whole platform, key management, claim links,
-//                 first-party domains, and the operator's /v1/admin/* (ADMIN_TOKEN only)
+//                 first-party domains, abuse reports, the services' /v1/internal/pauses (service
+//                 bindings only), and the operator's /v1/admin/* (ADMIN_TOKEN only)
+//   /report-abuse the abuse report form for people (src/abuse-reports.ts)
 //   /signin, /auth/*, /claim/*, /dashboard/*   optional accounts for people (docs/accounts.md)
 //   /oauth/*, /.well-known/oauth-*             the OAuth 2.1 server for MCP connectors
 const app = new Hono<SiteEnv>();
@@ -143,6 +147,8 @@ app.route("/", deletionApi);
 app.route("/", usageApi);
 app.route("/", firstPartyDomainsApi);
 app.route("/", emailRoutes);
+app.route("/", pausesApi);
+app.route("/", abuseReportsApi);
 app.route("/dashboard", dashboard);
 
 // A project created here is a conversion only the backend sees (agents sign up with curl): with
@@ -216,6 +222,11 @@ export default {
       ctx.waitUntil(
         emailPurgeReminders(env, base)
           .then(async (reminders) => ({ reminders, limits: await checkProjectLimits(env, base) }))
+          // Capability pauses a service wrote directly (no SITE binding, or the site was unreachable).
+          .then(async (n) => ({
+            ...n,
+            ...(await notifyPendingPauses(env, base).catch((e) => (console.error("cron.pauses failed", e), { pauses: -1 }))),
+          }))
           .then(async (n) => ({ ...n, ...(await deliverDue(env, base)) }))
           .then((n) => console.log(JSON.stringify({ event: "cron.email", ...n })))
           .catch((e) => console.error("cron.email failed", e)),
@@ -225,6 +236,7 @@ export default {
     ctx.waitUntil(purgeExpired(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.purge", ...n }))));
     ctx.waitUntil(pruneOutbox(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.email_prune", deleted: n }))));
     ctx.waitUntil(pruneLimitWarnings(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.limit_warnings_prune", deleted: n }))));
+    ctx.waitUntil(pruneAbuseReports(env.DB).then((n) => console.log(JSON.stringify({ event: "cron.abuse_reports_prune", deleted: n }))));
     // Analytics sites that had steady page views and have had none for two days (sent by the hourly run).
     ctx.waitUntil(
       checkQuietSites(env, noticeBase(env))

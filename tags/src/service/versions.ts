@@ -6,7 +6,7 @@ import { mergePatch } from "../lib/merge-patch";
 import { assertConfigObject, type ContainerRow, draftConfig, draftValidation, getContainerRow, syncToDO } from "./containers";
 import { limits, shownCap } from "./limits";
 import { purgeScriptCache } from "./script";
-import { assertCustomCodeSize, customCodeProblem } from "./verify";
+import { assertCodeSafe, assertCustomCodeSize, codeGate, customCodeProblem } from "./verify";
 
 const byteLength = (s: string) => new TextEncoder().encode(s).byteLength;
 
@@ -201,6 +201,8 @@ export async function publish(
     const validation = validateConfig((await getVersion(env, accountId, id, opts.version)).config, { domain: row.domain });
     return { version: r.live_version, published_at: r.rolled_back_at, validation, row: { ...row, live_version: r.live_version } };
   }
+  // Known-bad custom code is refused with its own error (and a strong match pauses custom code).
+  await assertCodeSafe(env, row, draftConfig(row));
   const validation = await draftValidation(env, row);
   if (!validation.valid) throw invalidForVersion(validation, "nothing was published");
   const { version, now } = await saveVersion(env, row, { note: opts.note, keyId: opts.keyId, live: true });
@@ -295,7 +297,10 @@ export async function rollback(env: Bindings, accountId: string, id: string, ver
       `GET /v1/containers/${id}/versions lists published versions (only the newest max_versions are kept).`,
     );
   // Rolling back republishes that version, so the same custom-code rules as publish apply.
-  const custom = customCodeProblem(env, row, JSON.parse(v.config) as ContainerConfig, await accountStanding(env, row.account_id));
+  const cfg = JSON.parse(v.config) as ContainerConfig;
+  await assertCodeSafe(env, row, cfg, `version ${version} didn't go live`);
+  const { standing, pause } = await codeGate(env, row.account_id);
+  const custom = customCodeProblem(env, row, cfg, standing, pause);
   if (custom) throw new ApiError(422, "validation_failed", `Version ${version} can't go live: ${custom.message}`, custom.hint, [custom]);
   const now = Date.now();
   await env.DB.prepare("UPDATE containers SET live_version = ?, published_at = ?, updated_at = ? WHERE id = ?")

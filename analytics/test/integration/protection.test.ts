@@ -3,6 +3,7 @@ import { createExecutionContext, env, runInDurableObject, waitOnExecutionContext
 import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import { siteStub } from "../../src/service/context";
+import { forgetOverShare } from "../../src/service/ingest";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const B = "http://analytics.test";
@@ -79,17 +80,20 @@ describe("attack protection: a network's daily share", () => {
     const { key, site: id, pk } = await site("share.test");
     const flood = [];
     for (let i = 0; i < 5; i++) flood.push((await beacon(V, pk, id, "203.0.113.7", RESIDENTIAL, `/f${i}`)).body);
-    expect(flood.map((b) => b.quarantined ?? null)).toEqual([null, null, null, "network_share", "network_share"]);
-    expect(flood.every((b) => b.ok === true && typeof b.v === "string")).toBe(true);
+    // The 4th is quarantined, and the Worker learns the network is past its share: the 5th is shed
+    // before the site's rate limiter (counted as a drop), so it can't crowd out other visitors.
+    expect(flood.map((b) => b.quarantined ?? b.dropped ?? null)).toEqual([null, null, null, "network_share", "network_over_share"]);
+    expect(flood.slice(0, 4).every((b) => b.ok === true && typeof b.v === "string")).toBe(true);
+    expect(flood[4]).toEqual({ ok: false, dropped: "network_over_share" });
     // Another network still has the site's budget: the quarantined events didn't use it.
     for (let i = 0; i < 3; i++) expect((await beacon(V, pk, id, `198.51.100.${i + 1}`)).body).toMatchObject({ ok: true });
     expect((await beacon(V, pk, id, "198.51.100.9")).status).toBe(429);
 
     expect(await pageviews(V, key, id)).toBe(6);
     expect(await pageviews(V, key, id, "include")).toBe(6);
-    expect(await pageviews(V, key, id, "quarantined")).toBe(2);
+    expect(await pageviews(V, key, id, "quarantined")).toBe(1);
     const rt = (await callWith(V, `/v1/sites/${id}/realtime?debug=quarantined`, { key })).body;
-    expect(rt.recent_events.map((e: any) => e.pathname).sort()).toEqual(["/f3", "/f4"]);
+    expect(rt.recent_events.map((e: any) => e.pathname).sort()).toEqual(["/f3"]);
     expect(rt.recent_events.every((e: any) => e.quarantined === true)).toBe(true);
 
     const got = (await callWith(V, `/v1/sites/${id}`, { key })).body;
@@ -97,11 +101,12 @@ describe("attack protection: a network's daily share", () => {
     expect(got.protection).toMatchObject({
       mode: "auto",
       state: "contained",
-      quarantined: 2,
-      quarantined_today: 2,
-      busiest_network_today: 5,
+      quarantined: 1,
+      quarantined_today: 1,
+      busiest_network_today: 4,
       networks_over_share_today: 1,
     });
+    expect(got.data.dropped_last_7d.network_over_share.count).toBe(1);
     expect(got.protection.reasons[0].kind).toBe("network_share");
     expect(got.protection.next_steps[0]).toContain(`GET ${B}/v1/sites/${id}/quarantine`);
     expect(got.limits).toMatchObject({ events_per_network_per_site_per_day: 3, quarantined_events_per_site_per_day: null });
@@ -116,7 +121,7 @@ describe("attack protection: a network's daily share", () => {
         state: "contained",
         mode: "auto",
         ended_at: null,
-        quarantined: 2,
+        quarantined: 1,
         reasons: [expect.objectContaining({ kind: "network_share" })],
       }),
     ]);
@@ -125,30 +130,31 @@ describe("attack protection: a network's daily share", () => {
     expect(steps).toContain(`POST ${B}/v1/sites/${id}/quarantine/release`);
     expect(steps).toContain('{"protection":"strict"}');
     expect(usage.limits.events_per_network_per_site_per_day).toMatchObject({
-      used: 5,
+      used: 4,
       limit: 3,
       var: "MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY",
     });
-    expect(usage.limits.quarantined_events_per_site_per_day).toMatchObject({ used: 2, limit: null });
+    expect(usage.limits.quarantined_events_per_site_per_day).toMatchObject({ used: 1, limit: null });
     expect(usage.limits.quarantined_events_per_site_per_day.drops_data).toBeUndefined();
     expect(usage.limits.events_per_network_per_site_per_day.drops_data).toBeUndefined();
     // MCP get_usage carries the same attacks.
     expect((await tool(V, key, "get_usage", {})).data.attacks[0].resource_id).toBe(id);
 
     const q = (await callWith(V, `/v1/sites/${id}/quarantine`, { key })).body;
-    expect(q).toMatchObject({ site_id: id, quarantined: 2, by_reason: { network_share: 2 }, period: { name: "7d" } });
-    expect(q.networks[0]).toMatchObject({ asn: 7922, as_org: "Comcast", events: 2, datacenter: false });
-    expect(q.untrusted.pages.map((p: any) => p.pathname).sort()).toEqual(["/f3", "/f4"]);
+    expect(q).toMatchObject({ site_id: id, quarantined: 1, by_reason: { network_share: 1 }, period: { name: "7d" } });
+    expect(q.networks[0]).toMatchObject({ asn: 7922, as_org: "Comcast", events: 1, datacenter: false });
+    expect(q.untrusted.pages.map((p: any) => p.pathname).sort()).toEqual(["/f3"]);
     expect(q.protection.state).toBe("contained");
 
     // Real traffic after all: release it. It counts from now on, over the day's budget (the owner's call).
     const rel = (await callWith(V, `/v1/sites/${id}/quarantine/release`, { method: "POST", key, json: { reason: "network_share" } })).body;
-    expect(rel).toMatchObject({ released: 2, more: false });
+    expect(rel).toMatchObject({ released: 1, more: false });
     expect(rel.next_steps.join(" ")).toContain('{"protection":"off"}');
-    expect(await pageviews(V, key, id)).toBe(8);
-    expect((await callWith(V, `/v1/sites/${id}`, { key })).body.status.events_today).toBe(8);
+    expect(await pageviews(V, key, id)).toBe(7);
+    expect((await callWith(V, `/v1/sites/${id}`, { key })).body.status.events_today).toBe(7);
 
-    // More of it, then deleted at once.
+    // More of it (another isolate, which hasn't learned the network yet), then deleted at once.
+    forgetOverShare();
     const V2 = { ...V, MAX_EVENTS_PER_SITE_PER_DAY: "100" };
     expect((await beacon(V2, pk, id, "203.0.113.7")).body.quarantined).toBe("network_share");
     const pur = (await callWith(V2, `/v1/sites/${id}/quarantine/purge`, { method: "POST", key, json: { period: "today" } })).body;
@@ -156,12 +162,40 @@ describe("attack protection: a network's daily share", () => {
     expect(await pageviews(V2, key, id, "quarantined")).toBe(0);
   });
 
+  it("the site's rate limiter: networks past their share are shed before it (counted), and data-centre traffic has its own share of it", async () => {
+    const keys: string[] = [];
+    let dcFull = false;
+    const limiter = {
+      limit: async ({ key }: { key: string }) => {
+        keys.push(key);
+        return { success: !(dcFull && key.startsWith("dc:")) };
+      },
+    };
+    const V = { MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY: "2", INGEST_SITE_LIMITER: limiter };
+    const { key, site: id, pk } = await site("shed.test");
+    for (let i = 0; i < 3; i++) await beacon(V, pk, id, "203.0.113.20"); // the 3rd is past the share
+    keys.length = 0;
+    for (let i = 0; i < 5; i++) expect((await beacon(V, pk, id, "203.0.113.20")).body.dropped).toBe("network_over_share");
+    expect(keys).toEqual([]); // never reached the site's limiter
+    expect((await beacon(V, pk, id, "198.51.100.20")).body.ok).toBe(true);
+    expect(keys).toEqual([`site:${id}`]);
+    // A data-centre flood uses up its own share: visitors on residential networks still get in.
+    dcFull = true;
+    expect((await beacon(V, pk, id, "192.0.2.50", AWS)).status).toBe(429);
+    expect((await beacon(V, pk, id, "198.51.100.21")).body.ok).toBe(true);
+    expect(keys.slice(-2)).toEqual([`dc:${id}`, `site:${id}`]);
+    const got = (await callWith(V, `/v1/sites/${id}`, { key })).body;
+    expect(got.data.dropped_last_7d.network_over_share.count).toBeGreaterThanOrEqual(1);
+  });
+
   it("past the quarantine's own daily cap events are dropped, and server events are never quarantined", async () => {
     const V = { MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY: "1", MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY: "1" };
     const { key, site: id, pk } = await site("qcap.test");
     const out = [];
-    for (let i = 0; i < 3; i++) out.push((await beacon(V, pk, id, "203.0.113.8")).body);
-    expect(out.map((b) => b.quarantined ?? b.dropped ?? "ok")).toEqual(["ok", "network_share", "quarantine_full"]);
+    for (let i = 0; i < 2; i++) out.push((await beacon(V, pk, id, "203.0.113.8")).body);
+    forgetOverShare(); // as if the next one reached another isolate, which hasn't learned the network
+    for (let i = 0; i < 2; i++) out.push((await beacon(V, pk, id, "203.0.113.8")).body);
+    expect(out.map((b) => b.quarantined ?? b.dropped ?? "ok")).toEqual(["ok", "network_share", "quarantine_full", "network_over_share"]);
     const got = (await callWith(V, `/v1/sites/${id}`, { key })).body;
     expect(got.data.dropped_last_7d.quarantine_full.count).toBe(1);
     // A backend's events (API key) are never quarantined, whatever its IP sent from the browser.

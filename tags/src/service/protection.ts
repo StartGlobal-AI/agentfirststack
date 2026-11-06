@@ -17,12 +17,18 @@ import { capVar, standingCap } from "./limits";
  *  - A network's daily share (MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY): past it, that network's
  *    browser hits are quarantined for the rest of the UTC day, and the container is "contained".
  *  - A spike (a 15-minute window SPIKE_FACTOR times the usual rate, and at least SPIKE_MIN hits)
- *    puts the container under attack: data-centre traffic is quarantined and browser conversions
- *    are held (not forwarded to ad platforms). Backend events (API key) are never touched.
+ *    from at least SPIKE_MIN_NETWORKS distinct networks puts the container under attack: data-centre
+ *    traffic is quarantined (its conversions with it). Conversions from every other network keep
+ *    flowing. The same volume from fewer networks is a flood each network's share already bounds:
+ *    the container is "contained", not under attack.
+ *  - strict (the owner's choice) quarantines data-centre traffic and holds every browser conversion
+ *    all the time. Backend events (API key) are never touched.
  */
 
 /** The fewest hits in one window that count as a spike (SPIKE_MIN_EVENTS overrides it, for tests). */
 export const SPIKE_MIN = 1000;
+/** The fewest distinct networks in that window for a spike to be an attack (SPIKE_MIN_NETWORKS overrides it). */
+export const SPIKE_MIN_NETWORKS = 20;
 /** An ended episode is still reported (GET /v1/usage attacks, GET /v1/containers/:id) this long. */
 export const ENDED_VISIBLE_MS = 24 * 3_600_000;
 
@@ -54,9 +60,9 @@ export interface ProtectionView {
   quarantined: number;
   /** Every hit quarantined today, in an episode or not (strict mode quarantines data-centre traffic all the time). */
   quarantined_today: number;
-  /** Browser conversions not forwarded server-side today because attack measures were on. */
+  /** Browser conversions not forwarded server-side today: quarantined ones, and every one while protection is strict. */
   conversions_held_today: number;
-  /** What applies to the next browser hit. */
+  /** What applies to the next browser hit (browser_conversions_held: all of them, strict only). */
   measures: { network_share_limit: number | null; datacenter_quarantine: boolean; browser_conversions_held: boolean };
 }
 
@@ -72,6 +78,12 @@ export function protectionCaps(env: object, standing: Standing) {
 
 /** SPIKE_MIN_EVENTS (default 1000; "0" = never a spike). */
 export const spikeMin = (env: { SPIKE_MIN_EVENTS?: string }) => capVar(env.SPIKE_MIN_EVENTS, SPIKE_MIN);
+
+/** SPIKE_MIN_NETWORKS (default 20; "0" = any number of networks). */
+export const spikeMinNetworks = (env: { SPIKE_MIN_NETWORKS?: string }) => {
+  const n = capVar(env.SPIKE_MIN_NETWORKS, SPIKE_MIN_NETWORKS);
+  return Number.isFinite(n) ? n : 0;
+};
 
 /** Hits in one window that make a spike, given the usual hits per window. */
 export const spikeThreshold = (perWindow: number, min: number) => Math.max(Math.ceil(SPIKE_FACTOR * perWindow), min);
@@ -152,11 +164,9 @@ export function networkOperator(req: Request, trustedProxy: boolean, dev: boolea
   };
 }
 
-const HELD_ATTACK =
-  "held: the container is under attack, so browser conversions aren't forwarded to ad platforms until it ends (conversions your backend sends with an API key still are)";
-const HELD_STRICT =
+/** Only strict holds browser conversions; under attack only quarantined traffic's conversions are set aside. */
+export const HELD_STRICT =
   "held: protection is strict, so browser conversions aren't forwarded server-side (send them from your backend: POST /v1/containers/:id/events)";
-export const heldReason = (mode: ProtectionMode) => (mode === "strict" ? HELD_STRICT : HELD_ATTACK);
 
 /** What an agent or the owner can do next about the container's protection. Absolute URLs (they go into emails). */
 export function protectionNextSteps(base: string, id: string, v: ProtectionView): string[] {
@@ -166,16 +176,18 @@ export function protectionNextSteps(base: string, id: string, v: ProtectionView)
   const steps: string[] = [];
   if (isActive(v.state)) {
     steps.push(review);
-    if (v.measures.browser_conversions_held)
+    if (v.mode !== "off")
       steps.push(
-        `Browser conversions aren't forwarded to ad platforms while this lasts (until ${ATTACK_COOLDOWN_MS / 60_000} minutes after the last trigger). ${backend}`,
+        v.measures.browser_conversions_held
+          ? `protection is strict, so browser conversions aren't forwarded to ad platforms. ${backend}`
+          : `Conversions from quarantined traffic (networks over their share${v.measures.datacenter_quarantine ? ", data-centre networks while under attack" : ""}) aren't forwarded to ad platforms; conversions from every other network keep flowing. The episode ends ${ATTACK_COOLDOWN_MS / 60_000} minutes after the last trigger. ${backend}`,
       );
     steps.push(
       `If it's real traffic: PATCH ${u} { "protection": "off" }. Quarantined hits were never sent to destinations and can't be released later (a delivery can't safely be made after the fact).`,
     );
     if (v.mode !== "strict")
       steps.push(
-        `Stricter: PATCH ${u} { "protection": "strict" } quarantines data-centre traffic and holds browser conversions all the time.`,
+        `Stricter: PATCH ${u} { "protection": "strict" } quarantines data-centre traffic and holds every browser conversion all the time.`,
       );
   } else if (v.state === "ended") {
     steps.push(`The episode ended at ${new Date(v.ended_at ?? 0).toISOString()}; nothing is set aside now. ${review}`);

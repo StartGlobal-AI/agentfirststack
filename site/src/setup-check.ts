@@ -136,7 +136,7 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
   { part: "Consent banner", ids: ["tags.consent_banner"], show: ["tags.consent_banner"], perDomain: true },
   {
     part: "Session replay",
-    ids: ["replay.site", "replay.linked", "replay.verified", "replay.recording", "replay.consent"],
+    ids: ["replay.site", "replay.linked", "replay.verified", "replay.recording", "replay.proxy_key", "replay.consent"],
     show: ["replay.site", "replay.recording"],
     perDomain: true,
   },
@@ -356,7 +356,12 @@ interface ReplaySite {
     mask_mode?: string;
     verification?: { verified?: boolean } | null;
   };
-  data: { sessions_total: number; last_session_started_at: number | null } | null;
+  data: {
+    sessions_total: number;
+    last_session_started_at: number | null;
+    /** setup problems on uploads that were kept, by reason (proxy_key_missing, proxy_key_invalid; absent on older replay deployments) */
+    warnings_last_7d?: Record<string, { count: number }>;
+  } | null;
 }
 
 type Read = <T>(service: "analytics" | "tags" | "mail" | "replay", path: string) => Promise<T | null>;
@@ -1690,6 +1695,22 @@ async function replayChecks(domain: string, rsite: ReplaySiteItem | null, analyt
           fix: `Open https://${domain}/?afsa_debug=1&afsr=1 in a browser (a forced test recording), then GET ${R}${p}/sessions`,
         }),
   );
+  // A first-party proxy for /_r/* that doesn't send the replay site's proxy key: recordings carry
+  // the proxy's address and country, and per-network limits count every visitor as one network.
+  const warn = d.data?.warnings_last_7d ?? {};
+  const keyless = (warn.proxy_key_missing?.count ?? 0) + (warn.proxy_key_invalid?.count ?? 0);
+  if (keyless)
+    checks.push(
+      at({
+        id: "replay.proxy_key",
+        status: "failing",
+        title: "Recordings through a first-party proxy carry its proxy key",
+        detail: `${plural(keyless, "upload")} in the last 7 days came through a first-party proxy ${
+          warn.proxy_key_invalid?.count ? "with a wrong" : "without an"
+        } x-afs-proxy-key header, so they carry the proxy's address and country instead of the visitor's, and the per-network limits count every visitor as one network.`,
+        fix: `Re-apply the proxy config from GET ${R}${p}/install (first_party_proxy): it sends x-afs-proxy-key with the replay site's proxy key and the visitor's IP and geo. Or serve /_r/* from a first-party domain (POST ${x.S}/v1/first-party-domains, MCP afs_add_first_party_domain), which needs no key.`,
+      }),
+    );
   if (!d.site.require_consent)
     checks.push(
       at({

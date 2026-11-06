@@ -15,7 +15,9 @@ export const METRIC_DOCS: Record<Metric, string> = {
   conversions: "Events matching a goal (goals with counting once_per_visit count once per session).",
   conversion_rate: "% of visitors with a conversion.",
   revenue:
-    "Event revenue plus payments, refunds subtracted, goal values for matching events without revenue. Currencies are summed as sent.",
+    "Event revenue plus payments, refunds subtracted (money that was paid; goal values are goal_value, never added here). Currencies are summed as sent.",
+  goal_value:
+    "Sum of the goal values of conversions (each matching event counts its goal's value): what the owner says conversions are worth, reported apart from revenue.",
   revenue_per_visitor: "revenue / visitors.",
   new_revenue: "Revenue that is not a renewal (refunds aside).",
   renewal_revenue: "Subscription renewals.",

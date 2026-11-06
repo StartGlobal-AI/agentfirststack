@@ -9,7 +9,7 @@ import { limits } from "./limits";
 import { parseMode } from "./protection";
 import { PROXY_KEY_HEADER } from "./proxy";
 import type { LastScan } from "./scan";
-import { customCodeProblem, verificationInfo } from "./verify";
+import { codeGate, customCodeProblem, verificationInfo } from "./verify";
 
 export interface ContainerRow {
   id: string;
@@ -478,13 +478,13 @@ export function draftConfig(row: ContainerRow): ContainerConfig {
 /**
  * Full validation of the draft (or `config`) for this container: destinations (with their
  * circuit state) and whether its custom code may be published (account standing, domain
- * verification, MAX_CUSTOM_CODE_BYTES).
+ * verification, MAX_CUSTOM_CODE_BYTES, the known-bad pattern check, a tags.custom_code pause).
  */
 export async function draftValidation(env: Bindings, row: ContainerRow, config?: unknown) {
   const dest = await destinationInfos(env, row.id);
   const candidate = config ?? draftConfig(row);
-  const standing = await accountStanding(env, row.account_id);
-  const custom = (cfg: ContainerConfig) => customCodeProblem(env, row, cfg, standing);
+  const { standing, pause } = await codeGate(env, row.account_id);
+  const custom = (cfg: ContainerConfig) => customCodeProblem(env, row, cfg, standing, pause);
   return validateConfig(candidate, {
     destinations: dest,
     domain: row.domain,

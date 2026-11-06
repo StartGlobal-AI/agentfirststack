@@ -48,7 +48,8 @@ browser ── /r/<site>.js (2 KB loader, config inlined) ── decides: enable
                                  filter (forced: own quota), derive the chunk (lib/derive.ts, bounded)
                                    ├─► ReplaySiteDO (one SQLite DO per site): session index, pages,
                                    │   derived events, signal resolution across chunks, non-decreasing
-                                   │   daily counters and caps, frustration score, heatmap rollups,
+                                   │   daily counters and caps (site, network byte share; attack mode:
+                                   │   no new data-centre sessions while it is under attack), frustration score, heatmap rollups,
                                    │   drop counters, its own retention alarm; reports usage to D1
                                    │   (account_usage) at most once a minute for account/deployment budgets
                                    ├─► R2 CHUNKS: <site_id>/<session_id>/<seq 6 digits> (gzip, as received);
@@ -349,7 +350,7 @@ description that it is untrusted.
 
 `create_replay_link` (verified sites only; the project's own key, since a connected app's OAuth
 access token gets `403 temporary_credential`) returns `/play/rpt_<32 chars>` (only the SHA-256 is stored;
-default 7 days, max 30; revocable; views counted). The page is a static shell with no inline script,
+default 1 day, max 30; revocable; views counted). The page is a static shell with no inline script,
 served with `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' <site hosts>;
 img-src 'self' data: blob: <site hosts>; font-src data: <site hosts>; connect-src 'self';
 frame-ancestors 'none'; base-uri 'none'; form-action 'none'`, where the site hosts are
@@ -359,7 +360,22 @@ frame-ancestors 'none'; base-uri 'none'; form-action 'none'`, where the site hos
 signals, click to seek. A link serves only chunks ingest accepted with rrweb events, at most
 `MAX_LINK_BYTES_PER_DAY` per day; the player holds at most 64 MB / 300k events. If the site isn't
 verified any more (domain changed), the page shows an "unverified site" banner, no domain and no
-replay. Links of suspended accounts stop working.
+replay. Links of suspended accounts stop working. Every player page has a "Report abuse" link to the
+platform's `/report-abuse` (`AUTH_ISSUER`; none when replay runs alone). While the account's
+`replay.share_links` capability is paused (`@afs/shared` `capabilityPaused`, the identity DB's
+`capability_pauses`, lifted only by the operator), creating a link answers `403 capability_paused` and
+existing links show a "paused" page (403) and serve no data or chunks.
+
+## Path proxy key
+
+A customer's own path proxy (`/_r/*` forwarded unchanged; ready configs in the install answer's
+`first_party_proxy`: Cloudflare Worker, Next.js `proxy.ts`, `vercel.json`, Netlify Edge Function, nginx) sends
+`x-afs-proxy-key`: hex HMAC-SHA256(`ENCRYPTION_KEY`, `"afs-replay-proxy:" + site_id`), derived on demand and
+never stored (`src/service/proxy.ts`). Only with it (constant-time compare) are X-Forwarded-For and
+`x-afs-geo-*` (or Vercel's `x-vercel-ip-*`) the visitor's, for the loader, chunk uploads and surveys; without
+it the IP is the proxy's and the country unknown, and the chunk counts a `warn:proxy_key_missing` /
+`warn:proxy_key_invalid` (`data.warnings_last_7d`, verify check `proxy_key`). Install answers show the key only
+to full-access keys. The platform's edge (first-party domains) is trusted as before, without a key.
 
 ## Config
 
@@ -375,13 +391,15 @@ replay. Links of suspended accounts stop working.
 | `MAX_UNVERIFIED_SITES_PER_ACCOUNT` | sites whose domain isn't verified, per account (unset = 1) |
 | `MAX_SAMPLE_RATE` | cap on every site's `sample_rate`, 0..1 (unset = 1) |
 | `MAX_SESSION_MINUTES` | cap on `max_session_minutes` (unset = 240) |
-| `MAX_SESSIONS_PER_SITE_PER_DAY` | new sessions per site per UTC day (non-decreasing counter), more get 429 `daily_session_limit` and the recorder stops (unset = no cap) |
+| `MAX_SESSIONS_PER_SITE_PER_DAY` | new sessions per site per UTC day (non-decreasing counter), more get 429 `daily_session_limit` and the recorder stops (unset = half of `MAX_SESSIONS_PER_ACCOUNT_PER_DAY` when that is set, else no cap) |
+| `MAX_CHUNKS_PER_SITE_PER_DAY`, `MAX_BYTES_PER_SITE_PER_DAY`, `MAX_DERIVED_PER_SITE_PER_DAY` | one site's own daily budget (429 `site_daily_limit`, the recorder stops): a flooded site stops alone while the account's other sites keep recording (unset = half the account's budget for that counter when it has one, else no cap) |
+| `MAX_BYTES_PER_IP_PER_SITE_PER_DAY` | stored bytes one client network sends one site per UTC day, every chunk counted (429 `ip_bytes_limit`; unset = a tenth of the site's byte budget when it has one, else no cap) |
 | `MAX_UNVERIFIED_SESSIONS_PER_SITE_PER_DAY` | the trial quota while the domain isn't verified (unset = 20) |
 | `MAX_FORCED_SESSIONS_PER_SITE_PER_DAY` | `?afsr=1` sessions per site per day (unset = 20) |
 | `MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY` | new sessions per client network (IPv4, IPv6 /48) per site per day (unset = 50) |
 | `MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY` | analytics events forwarded per site per day (unset = 500) |
 | `MAX_TAGS_EVENTS_PER_SITE_PER_DAY` | signals and survey scores queued for the linked tags container per site per day (unset = 500) |
-| `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY`, `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY`, `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | heatmap images rendered per UTC day (unset = 10 / 30 / 300; cached images are free). Browser Rendering bills browser time: about 2-5 s per image, so 300 a day is at most ~12 browser hours a month |
+| `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY`, `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY`, `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | heatmap images rendered per UTC day (unset = 10 / 30 / 300; cached images are free). Claimed projects only by default: an unclaimed account gets `UNCLAIMED_MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY` (unset = 0, `403 claim_required`), never the claimed value. Browser Rendering bills browser time: about 2-5 s per image, so 300 a day is at most ~12 browser hours a month |
 | `MAX_CHUNK_BYTES` | compressed bytes per ingest request, below the built-in 1 MB (unset = 1 MB) |
 | `MAX_SESSION_BYTES` | stored bytes per session, below the built-in 20 MB (unset = 20 MB) |
 | `MAX_CHUNKS_PER_SESSION` | chunks per session, below the built-in 2,000 |
@@ -395,7 +413,7 @@ replay. Links of suspended accounts stop working.
 | `MAX_VERIFY_PER_ACCOUNT_PER_HOUR` | verify calls per account per hour (unset = 30) |
 | `CAPTURE_CONSOLE_ERRORS_DEFAULT` | `false`: new sites start with `capture_console_errors` off |
 | `CAPTURE_NETWORK_ERRORS_DEFAULT` | `true`: new sites start with `capture_network_errors` on (unset = off) |
-| `ENCRYPTION_KEY` | secret, 32 bytes base64: seals webhook secrets at rest. Without it webhooks can't be created (503 `webhooks_unavailable`; `DEV_MODE` stores them plain) |
+| `ENCRYPTION_KEY` | secret, 32 bytes base64: seals webhook secrets at rest and derives each site's path-proxy key (rotating it changes every proxy key). Without it webhooks can't be created (503 `webhooks_unavailable`; `DEV_MODE` stores them plain) |
 | `MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY` | new sessions `afsr('upgrade')` may start per site per day (unset = 50) |
 | `MAX_SEGMENTS_PER_SITE` | saved segments (unset = 50) |
 | `MAX_EVENT_DEFINITIONS_PER_SITE` | event definitions (unset = 20) |

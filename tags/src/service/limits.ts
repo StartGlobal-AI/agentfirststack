@@ -108,6 +108,21 @@ export function deliveryBudgets(env: object, standing: Standing = CLAIMED) {
 }
 
 /**
+ * Daily budgets of the calls that make this platform fetch other sites or call ad platforms:
+ * scans + domain verifications (`scans`) and destination tests (`tests`), per account and for the
+ * whole deployment (one platform counter; unclaimed accounts stop at UNCLAIMED_<NAME> on it).
+ * Counted in D1 delivery_usage (see reserveOutbound in budget.ts). Unset = off.
+ */
+export function outboundBudgets(env: object, standing: Standing = CLAIMED) {
+  const cap = (name: string) => standingCap(env, standing, name, Number.POSITIVE_INFINITY);
+  return {
+    scans: { perAccount: cap("MAX_SCANS_PER_ACCOUNT_PER_DAY"), platform: cap("MAX_SCANS_PER_DAY") },
+    tests: { perAccount: cap("MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY"), platform: cap("MAX_DESTINATION_TESTS_PER_DAY") },
+  };
+}
+export type OutboundKind = keyof ReturnType<typeof outboundBudgets>;
+
+/**
  * Account and platform-wide daily event budgets (each ContainerDO reports its counts to D1, see
  * budget.ts). Browser hits and backend events are counted, and capped, separately, like
  * MAX_EVENTS_PER_CONTAINER_PER_DAY.

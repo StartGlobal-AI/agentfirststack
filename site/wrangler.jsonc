@@ -113,10 +113,16 @@
   //   SaaS zone), CF_SAAS_FALLBACK_HOST (the originless fallback customers CNAME to, fp.<domain>),
   //   CF_SAAS_WORKER (this Worker's name; `pnpm afs config` derives both), with the secret
   //   CF_SAAS_API_TOKEN; off (503 not_configured) unless all four are set;
-  //   MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT (+ UNCLAIMED_).
+  //   MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT (+ UNCLAIMED_);
+  //   abuse handling (docs/operations.md, "Abuse"): SIGNUP_POW_DIFFICULTY (the proof of work past
+  //   SIGNUP_GLOBAL_HOURLY_LIMIT, default 20 bits), PAUSE_LIFT_GRACE_HOURS (default 24; src/pauses.ts),
+  //   ABUSE_REPORTS_HOURLY_LIMIT (per network, default 5), ABUSE_REPORTS_DAILY_LIMIT (deployment, 500),
+  //   ABUSE_REPORT_EMAILS_PER_DAY (phishing/malware emailed to OPERATOR_EMAIL at once, 20)
+  //   (src/abuse-reports.ts), REPUTATION_DOMAINS (extra domains for the summary's reputation checks).
   // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard
   // and the first-party edge), GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google),
-  // CF_SAAS_API_TOKEN (Zone SSL and Certificates Edit + Workers Routes Edit). See docs/accounts.md
-  // and docs/self-hosting.md.
+  // CF_SAAS_API_TOKEN (Zone SSL and Certificates Edit + Workers Routes Edit), SAFE_BROWSING_API_KEY and
+  // SPAMHAUS_DQS_KEY (reputation checks, src/reputation.ts; optional). See docs/accounts.md and
+  // docs/self-hosting.md.
   "observability": { "enabled": true }
 }

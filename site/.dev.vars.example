@@ -14,3 +14,7 @@ CF_SAAS_API_TOKEN=
 CF_SAAS_ZONE_ID=
 CF_SAAS_FALLBACK_HOST=
 CF_SAAS_WORKER=
+# Optional: reputation checks in the operator's daily summary (src/reputation.ts): a Google Safe
+# Browsing API key, and a Spamhaus Data Query Service key (public resolvers are refused without one).
+SAFE_BROWSING_API_KEY=
+SPAMHAUS_DQS_KEY=

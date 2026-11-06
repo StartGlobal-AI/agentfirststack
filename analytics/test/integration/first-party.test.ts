@@ -182,7 +182,9 @@ describe("install answers lead with first_party", () => {
     expect(next.install.code).not.toContain("afterInteractive");
     const files = Object.fromEntries((next.install.files as { file: string; code: string }[]).map((f) => [f.file, f.code]));
     expect(files["proxy.ts"]).toContain(proxyKey);
-    expect(files["proxy.ts"]).toContain('matcher: "/_a/:path*"');
+    // with a replay service, the same proxy forwards /_r/* to it (one proxy for analytics and replay)
+    expect(files["proxy.ts"]).toContain('matcher: ["/_a/:path*", "/_r/:path*"]');
+    expect(files["proxy.ts"]).toContain('replay ? "https://replay.example.net"');
     expect(files["pages/_document.tsx"]).toContain(`<script defer src="/_a/s.js" data-site="${site}" />`);
     // What React renders for it in the server HTML is what verify looks for.
     const ssr = `<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><script defer="" src="/_a/s.js" data-site="${site}"></script></head><body></body></html>`;
@@ -228,7 +230,57 @@ describe("install answers lead with first_party", () => {
     expect(p.netlify.code).toContain('headers.set("x-forwarded-for", context.ip)');
     expect(p.netlify.code).toContain("context.geo");
     expect(p.netlify.code).toContain(proxyKey);
-    expect(p.netlify.code).toContain('export const config: Config = { path: "/_a/*" }');
+    expect(p.netlify.code).toContain('export const config: Config = { path: ["/_a/*", "/_r/*"] }');
     expect(JSON.parse(p.vercel.code).routes[0].transforms[0]).toMatchObject({ type: "request.headers", op: "set", args: proxyKey });
+    // /_r/* goes to session replay, without analytics' proxy key
+    expect(JSON.parse(p.vercel.code).routes[1]).toEqual({ src: "/_r/(.*)", dest: "https://replay.example.net/_r/$1" });
+    expect(p.cloudflare_worker.route).toContain("/_r/*");
+    expect(p.cloudflare_worker.code).toContain('if (!url.pathname.startsWith("/_r/")) headers.set("x-afs-proxy-key"');
+    expect(p.nginx.code).toContain("location /_r/ {\n    proxy_pass https://replay.example.net/_r/;");
+    expect(p.replay).toContain('{"replay_proxy_path":"/_r"}');
+    // without a replay service on the deployment: /_a only, as before
+    const solo = (await send(`/v1/sites/${site}/install`, { key }, { ...VARS, REPLAY_BASE_URL: "" })).body.first_party_proxy;
+    expect(solo.netlify.code).toContain('export const config: Config = { path: "/_a/*" }');
+    expect(JSON.parse(solo.vercel.code).routes).toHaveLength(1);
+    expect(solo.replay).toBeUndefined();
+  });
+
+  it("replay_proxy_path: path-proxy events get the replay loader on the site's own replay proxy (validated; edge and direct unchanged)", async () => {
+    const domain = "rproxy.test";
+    const { key, accountId, site, created } = await siteFor(domain);
+    const proxyKey = created.install.first_party_proxy.proxy_key as string;
+    expect(
+      (
+        await send(`https://analytics.internal/v1/sites/${site}`, {
+          method: "PATCH",
+          headers: { "x-afs-internal": INTERNAL, "x-afs-account": accountId },
+          json: { replay_site_id: RSITE },
+        })
+      ).status,
+    ).toBe(200);
+    for (const bad of ["_r", "/_r/", "/_a", "/a b", "/x/y/z/w", "//r"])
+      expect((await send(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_proxy_path: bad } })).status, bad).toBe(400);
+    const set = await send(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_proxy_path: "/_r" } });
+    expect(set.status).toBe(200);
+    expect(set.body.site.replay_proxy_path).toBe("/_r");
+    const proxied = () =>
+      send("/_a/e", {
+        method: "POST",
+        body: JSON.stringify({ s: site, u: `https://www.${domain}/pricing?x=1` }),
+        headers: { "user-agent": UA, "x-forwarded-for": "203.0.113.40", "x-afs-proxy-key": proxyKey },
+      });
+    expect((await proxied()).body).toMatchObject({ ok: true, r: `https://www.${domain}/_r/r/${RSITE}.js` });
+    const direct = await send("/e", {
+      method: "POST",
+      body: JSON.stringify({ s: site, u: `https://${domain}/` }),
+      headers: { "user-agent": UA, "cf-connecting-ip": "203.0.113.41" },
+    });
+    expect(direct.body.r).toBe(`https://replay.example.net/r/${RSITE}.js`);
+    expect((await edgeBeacon(site, domain, "203.0.113.42")).body.r).toBe(`https://edge.${domain}/_r/r/${RSITE}.js`);
+    // null clears it: back to the replay host
+    expect(
+      (await send(`/v1/sites/${site}`, { method: "PATCH", key, json: { replay_proxy_path: null } })).body.site.replay_proxy_path,
+    ).toBeNull();
+    expect((await proxied()).body.r).toBe(`https://replay.example.net/r/${RSITE}.js`);
   });
 });

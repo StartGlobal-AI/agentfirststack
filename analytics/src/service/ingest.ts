@@ -1,12 +1,12 @@
 import { ECOMMERCE_SET, MAX_ITEMS_READ, cleanItems } from "../lib/items";
-import { ApiError, accountSuspended, edgeHost, networkKey, parse, randomString, timingSafeEqual } from "@afs/shared";
+import { ApiError, accountSuspended, edgeHost, isDatacenterAsn, networkKey, parse, randomString, timingSafeEqual } from "@afs/shared";
 import { z } from "zod";
 import { type Bindings, isDev } from "../env";
 import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/channel";
 import { EMPTY_GEO, type Geo, PROXY_KEY_HEADER, geoFromFields, geoFromRequest, requestIp } from "../lib/geo";
 import { botReason, parseUserAgent } from "../lib/ua";
 import { hashRoute, parsePage, parseReferrer, primaryLanguage, queryOf, screenClass, takeDebugFlag } from "../lib/url";
-import { networkHash, proxyKey, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
+import { networkHash, proxyKey, USER_VISITOR_ID_RE, userVisitorId, VISITOR_ID_RE, visitorHash } from "../lib/visitor";
 import type { Attribution, EnrichedEvent, IngestResponse } from "../lib/types";
 import { allow, enforce, limitVars, STORAGE_FULL_HINT } from "../lib/limits";
 import { type Ctx, SITE_ID_RE, type SiteStub, loadSite, pushSettings, siteStub } from "./context";
@@ -130,6 +130,28 @@ export function refusalError(env: Bindings, reason: NonNullable<IngestResponse["
         "This service reached its daily event budget; new events are refused until 00:00 UTC.",
         `Retry after 00:00 UTC, or self-host (the code is open source, see /llms.txt).${claimHint(env)}`,
       );
+    // Server events, payments and subscription changes have their own daily budget (browser floods never use it).
+    case "server_daily_limit":
+      return new ApiError(
+        429,
+        "daily_limit",
+        "This site reached its daily limit of server events and payments; they are refused until 00:00 UTC (browser events have a budget of their own).",
+        `GET /v1/sites/:id shows usage_today and limits. Payment providers retry their deliveries, so webhook payments are recorded once it resets.${claimHint(env)}`,
+      );
+    case "account_server_daily_limit":
+      return new ApiError(
+        429,
+        "daily_limit",
+        "This account reached its daily limit of server events and payments across its sites; they are refused until 00:00 UTC.",
+        `GET /v1/usage shows the account's budgets. Payment providers retry their deliveries, so webhook payments are recorded once it resets.${claimHint(env)}`,
+      );
+    case "platform_server_daily_budget":
+      return new ApiError(
+        429,
+        "over_capacity",
+        "This service reached its daily budget of server events and payments; they are refused until 00:00 UTC.",
+        `Retry after 00:00 UTC, or self-host (the code is open source, see /llms.txt).${claimHint(env)}`,
+      );
   }
 }
 
@@ -139,6 +161,9 @@ const REFUSAL_STATUS = {
   daily_limit: 429,
   account_daily_limit: 429,
   platform_daily_budget: 429,
+  server_daily_limit: 429,
+  account_server_daily_limit: 429,
+  platform_server_daily_budget: 429,
 } as const;
 
 function attribution(pageHost: string | null, page: ReturnType<typeof parsePage>, referrerRaw: string | null | undefined): Attribution {
@@ -229,12 +254,83 @@ export const REPLAY_SITE_RE = /^rsite_[0-9a-z]{16}$/;
  * `r` for the tracker: the linked replay site's loader, which it injects once per page load. Only
  * with REPLAY_BASE_URL set. The loader makes its own sampling, bot, DNT and consent decisions, so
  * this rides on drops too. An event that came through a first-party domain (`edge`, the platform's
- * edge) gets the loader from that same hostname (/_r/*), so replay is first-party too.
+ * edge) gets the loader from that same hostname (/_r/*), so replay is first-party too; one that came
+ * through the site's own path proxy gets it from the site's replay proxy (`firstParty`: the page's
+ * origin + the site's replay_proxy_path, e.g. https://example.com/_r) when the site set one.
  */
-export function replayField(env: Bindings, replaySiteId: string | null | undefined, edge: string | null = null): { r?: string } {
+export function replayField(
+  env: Bindings,
+  replaySiteId: string | null | undefined,
+  edge: string | null = null,
+  firstParty: string | null = null,
+): { r?: string } {
   const base = env.REPLAY_BASE_URL?.trim().replace(/\/+$/, "");
   if (!base || !replaySiteId || !REPLAY_SITE_RE.test(replaySiteId)) return {};
-  return { r: edge ? `https://${edge}${EDGE_REPLAY_PATH}/r/${replaySiteId}.js` : `${base}/r/${replaySiteId}.js` };
+  if (edge) return { r: `https://${edge}${EDGE_REPLAY_PATH}/r/${replaySiteId}.js` };
+  if (firstParty) return { r: `${firstParty}/r/${replaySiteId}.js` };
+  return { r: `${base}/r/${replaySiteId}.js` };
+}
+
+/** The site's replay proxy base for a path-proxy event: the page's origin + replay_proxy_path, or null. */
+export function replayProxyBase(pageUrl: unknown, path: string | null | undefined): string | null {
+  if (!path || typeof pageUrl !== "string") return null;
+  try {
+    const u = new URL(pageUrl);
+    const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+    if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
+    return `${u.origin}${path}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Networks past their daily share on a site, as the site's Durable Object reported them (this
+ * isolate only). Their next events are dropped here, before the site's rate limiter, and counted
+ * (drop reason network_over_share): a flooding network can't use up the site's per-minute budget
+ * and get a normal visitor's event refused. Remembered for OVER_SHARE_TTL_MS, so a change of the
+ * site's protection applies within minutes; the key is the network's daily hash.
+ */
+const overShareNets = new Map<string, number>();
+const MAX_OVER_SHARE = 20_000;
+export const OVER_SHARE_TTL_MS = 10 * 60_000;
+/** Shed events per site not yet written to its drop counters: written at most every 10 s. */
+const shedPending = new Map<string, { count: number; writtenAt: number }>();
+const SHED_WRITE_EVERY_MS = 10_000;
+
+/** Tests: forget what this isolate learned. */
+export function forgetOverShare(): void {
+  overShareNets.clear();
+  shedPending.clear();
+}
+
+function isOverShare(siteId: string, net: string, now: number): boolean {
+  const k = `${siteId}|${net}`;
+  const until = overShareNets.get(k);
+  if (until === undefined) return false;
+  if (until > now) return true;
+  overShareNets.delete(k);
+  return false;
+}
+
+function rememberOverShare(siteId: string, net: string, now: number): void {
+  if (overShareNets.size >= MAX_OVER_SHARE) overShareNets.delete(overShareNets.keys().next().value!);
+  overShareNets.set(`${siteId}|${net}`, now + OVER_SHARE_TTL_MS);
+}
+
+function countShed(stub: SiteStub, siteId: string, now: number, waitUntil: (p: Promise<unknown>) => void): void {
+  let p = shedPending.get(siteId);
+  if (!p) {
+    if (shedPending.size >= 10_000) shedPending.delete(shedPending.keys().next().value!);
+    p = { count: 0, writtenAt: 0 };
+    shedPending.set(siteId, p);
+  }
+  p.count++;
+  if (now - p.writtenAt < SHED_WRITE_EVERY_MS) return;
+  const n = p.count;
+  p.count = 0;
+  p.writtenAt = now;
+  waitUntil(stub.recordDrop("network_over_share", null, n).catch(() => null));
 }
 
 /** Where a first-party domain serves replay (the site's edge: /_a analytics, /_t tags, /_r replay). */
@@ -279,8 +375,24 @@ export async function ingestBrowser(
   const ip = requestIp(req, trusted);
   // Edge rate limits before any storage: per client network (behind a keyed proxy, the visitor's),
   // then per site.
-  if (!(await allow(env.INGEST_IP_LIMITER, `ip:${networkKey(ip)}`)) || !(await allow(env.INGEST_SITE_LIMITER, `site:${siteId}`)))
-    return RATE_LIMITED;
+  if (!(await allow(env.INGEST_IP_LIMITER, `ip:${networkKey(ip)}`))) return RATE_LIMITED;
+  const now = Date.now();
+  // The network's daily share (attack protection): a hash that rotates daily, never the network.
+  const netHash = await networkHash(salt, siteId, ip, now);
+  // A network already past its daily share is shed first, before the site's limiter (counted).
+  if (isOverShare(siteId, netHash, now)) {
+    countShed(stub, siteId, now, waitUntil);
+    return { status: 202, body: { ok: false, dropped: "network_over_share" } };
+  }
+  const geo = geoFromRequest(req, { devMode: isDev(env), trustForwarded: trusted });
+  // Under pressure, data-centre traffic is refused first: it has its own share of the site's limiter,
+  // so it can never use up the budget of visitors on residential and mobile networks. (Behind a
+  // proxy that forwards no geo, the ASN is the proxy's, not the visitor's: not counted as one.)
+  const h = req.headers;
+  const forwardedGeo = !!h.get("x-afs-geo-country") || (isDev(env) && !!h.get("x-dev-geo-country"));
+  const ownAsn = trusted && !edge && !forwardedGeo ? null : geo.asn;
+  const siteKey = isDatacenterAsn(ownAsn) ? `dc:${siteId}` : `site:${siteId}`;
+  if (!(await allow(env.INGEST_SITE_LIMITER, siteKey))) return RATE_LIMITED;
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf;
   const ua = req.headers.get("user-agent");
   const bm = cf?.botManagement as { verifiedBot?: boolean } | undefined;
@@ -300,9 +412,10 @@ export async function ingestBrowser(
     waitUntil(drop);
     // Waited for only when replay loading is on: the answer names the site's replay link.
     const link = env.REPLAY_BASE_URL ? await drop : null;
-    return { status: 202, body: { ok: false, dropped: "bot", reason: bot, ...replayField(env, link?.replay_site_id, edge) } };
+    const viaProxyBot = trusted || new URL(req.url).pathname !== "/e";
+    const fp = !edge && viaProxyBot ? replayProxyBase(p.u, link?.replay_proxy_path) : null;
+    return { status: 202, body: { ok: false, dropped: "bot", reason: bot, ...replayField(env, link?.replay_site_id, edge, fp) } };
   }
-  const now = Date.now();
   // ?afsa_debug=1 in the page URL: test traffic (the tracker keeps it for the tab), never stored.
   const flagged = takeDebugFlag(clip(p.u, 2000));
   const page = parsePage(flagged.url);
@@ -311,7 +424,6 @@ export async function ingestBrowser(
     return { status: 400, body: { ok: false, error: "bad_url", hint: "u must be the page's absolute http(s) URL (location.href)." } };
   }
   const viaProxy = new URL(req.url).pathname !== "/e";
-  const geo = geoFromRequest(req, { devMode: isDev(env), trustForwarded: trusted });
   // Hash-routed SPAs (data-hash="true"): the route after # is part of the page path.
   const route = p.h === 1 ? hashRoute(flagged.url) : null;
   const pathname = route ? `${page.pathname}${route}`.slice(0, 1000) : page.pathname;
@@ -330,7 +442,7 @@ export async function ingestBrowser(
     engagement_ms: typeof p.e === "number" && p.e > 0 ? Math.round(p.e) : 0,
     leave: name === "engagement" && (p.l === 1 || p.l === true),
     visitor_hash: await visitorHash(salt, siteId, ip, ua ?? "", now),
-    client_visitor_id: typeof p.id === "string" && VISITOR_ID_RE.test(p.id) ? p.id : null,
+    client_visitor_id: typeof p.id === "string" && VISITOR_ID_RE.test(p.id) && !USER_VISITOR_ID_RE.test(p.id) ? p.id : null,
     explicit_visitor_id: null,
     dnt: p.d === 1 || p.d === true || req.headers.get("sec-gpc") === "1" || req.headers.get("dnt") === "1",
     debug: p.dbg === 1 || p.dbg === true || flagged.debug,
@@ -346,22 +458,24 @@ export async function ingestBrowser(
     edge_host: edge,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip,
-    // The network's daily share (attack protection): a hash that rotates daily, never the network.
-    net_hash: await networkHash(salt, siteId, ip, now),
+    net_hash: netHash,
     ...(name === "engagement" ? engagementMetrics(p) : {}),
     ...attribution(page.hostname, page, clip(p.r, 2000)),
     ...geo,
     ...parseUserAgent(ua),
   };
   const res = await stub.ingest([ev], { vars: limitVars(env) });
+  if (res.over_share) rememberOverShare(siteId, netHash, now);
   if (!res.known_site) {
     return {
       status: 404,
       body: { ok: false, error: "unknown_site", hint: `No site ${siteId}. Create one with POST /v1/sites and use its id in data-site.` },
     };
   }
-  // A suspended account's site gets no replay link (its loader is refused anyway).
-  const replay = res.refused === "account_suspended" ? {} : replayField(env, res.replay_site_id, edge);
+  // A suspended account's site gets no replay link (its loader is refused anyway). Path-proxy events
+  // get it on the site's replay proxy when the site set replay_proxy_path.
+  const fp = !edge && ev.via === "proxy" ? replayProxyBase(p.u, res.replay_proxy_path) : null;
+  const replay = res.refused === "account_suspended" ? {} : replayField(env, res.replay_site_id, edge, fp);
   if (res.refused) {
     const e = refusalError(env, res.refused);
     return { status: REFUSAL_STATUS[res.refused], body: { ok: false, error: e.code, hint: e.hint, ...replay } };

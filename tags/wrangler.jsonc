@@ -44,7 +44,9 @@
   //   CIRCUIT_BREAKER_MINUTES (default 60), MAX_ENVIRONMENTS_PER_CONTAINER (default 5),
   //   MAX_LOOKUPS_PER_CONTAINER (default 10), MAX_LOOKUP_ROWS (default 10000),
   //   MAX_LOOKUP_BYTES (default 1048576), MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY,
-  //   MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY (attack protection; unset = off),
+  //   MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY (attack protection; unset = off), SPIKE_MIN_NETWORKS
+  //   (default 20), MAX_SCANS_PER_ACCOUNT_PER_DAY, MAX_SCANS_PER_DAY, MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY,
+  //   MAX_DESTINATION_TESTS_PER_DAY (outbound-call budgets; unset = off), EXTRA_BLOCKED_CODE_HOSTS,
   //   MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY (consent banner records; unset = off). See README.md "Config".
   // Secrets: ENCRYPTION_KEY (required), ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared by the
   // deployment's Workers: the site's dashboard and the ANALYTICS binding use it).
@@ -90,7 +92,10 @@
   // this deployment's analytics Worker. Analytics destinations without an api_key (setup with just
   // platforms.analytics.site_id) deliver over it as the container's account; analytics refuses a
   // site of another account. `pnpm afs config` maps afs-analytics to the profile's own Worker.
-  "services": [{ "binding": "ANALYTICS", "service": "afs-analytics" }],
+  // SITE is this deployment's site Worker: a strong abuse signal pauses a capability through its
+  // internal route, which emails the project's people and the operator (unbound: the pause is
+  // written to AUTH_DB directly and the site's cron sends the emails).
+  "services": [{ "binding": "ANALYTICS", "service": "afs-analytics" }, { "binding": "SITE", "service": "afs-site" }],
 
   // One ContainerDO (SQLite) per container: visitors, event log, dedupe, live config copy.
   "durable_objects": {

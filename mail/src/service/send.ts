@@ -25,6 +25,7 @@ import {
 import { getInboxRow, ownershipNotVerified, sharedDomain } from "./inboxes";
 import { assertSendAllowed } from "./lists";
 import { getMessageRow } from "./messages";
+import { assertSendNotPaused } from "./pauses";
 import { emitEvent } from "./webhooks";
 
 export { utcDay };
@@ -40,6 +41,8 @@ export { utcDay };
  *   - At most 50 recipients (to+cc+bcc), 32 attachments, 25 MiB total (Email Service limits).
  *   - Per-account daily cap SEND_DAILY_LIMIT (UNCLAIMED_SEND_DAILY_LIMIT for unclaimed accounts),
  *     counted per recipient, UTC day. Suspended accounts cannot send.
+ *   - While mail.send is paused (high bounce/complaint rate, src/service/pauses.ts), nothing goes to
+ *     recipients outside the account (403 capability_paused).
  *   - Custom headers: X-* only (Email Service allows a fixed list; threading headers are set by us).
  *   - Nothing that becomes a header (display name, attachment filename / content type / content id)
  *     carries CR/LF or other control characters.
@@ -452,6 +455,9 @@ async function checkAndRoute(
   const own = await ownInboxRecipients(env, inbox.account_id, all, now);
   const isOwn = (a: string) => own.has(a.toLowerCase());
   const outsiders = all.filter((a) => !isOwn(a));
+  // mail.send paused (src/service/pauses.ts): nothing goes out through Email Service; mail to the
+  // account's own inboxes never leaves the Worker and still works.
+  if (outsiders.length) await assertSendNotPaused(env, inbox.account_id);
   await assertReplyOnly(env, inbox, outsiders, standing);
   await assertSendAllowed(env, inbox, all);
   return {

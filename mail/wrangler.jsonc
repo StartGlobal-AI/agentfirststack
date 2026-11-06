@@ -37,10 +37,19 @@
   // MAX_LIST_ENTRIES_PER_ACCOUNT (default 100), MAX_INBOX_CLEARS_PER_DAY, MAX_SCHEDULED_PER_ACCOUNT
   // (default 20, 5 unclaimed), MAX_ATTACHMENT_TEXT_PER_DAY (default 20, 5 unclaimed),
   // MAX_FORWARDS_PER_ACCOUNT_PER_DAY (inbox forwarding to the project's members, default 100; "0" =
-  // off), DELIVERY_EVENTS_QUEUE (turns delivery status on; see "queues" below), and UNCLAIMED_<name> of
-  // each per-account cap. Secrets:
+  // off), DELIVERY_EVENTS_QUEUE (turns delivery status on; see "queues" below), automatic pauses
+  // (SEND_PAUSE_BOUNCE_PERCENT, SEND_PAUSE_COMPLAINT_PERCENT, SEND_PAUSE_MIN_SENDS (default 10),
+  // INBOX_CREATE_BURST_PER_HOUR (default 3 x MAX_INBOX_CREATES_PER_DAY when set); unset = off), and
+  // UNCLAIMED_<name> of each per-account cap. Secrets:
   // ENCRYPTION_KEY (also keys custom-domain ownership challenges), ADMIN_TOKEN (also the
-  // x-admin-token for auto_configure), SIGNUP_TOKEN, CF_API_TOKEN.
+  // x-admin-token for auto_configure), SIGNUP_TOKEN, CF_API_TOKEN, INTERNAL_TOKEN (shared by the
+  // platform's Workers).
+
+  // The platform's site: automatic capability pauses (bounce/complaint rates, inbox-creation bursts)
+  // are posted to it so the project's people and the operator are emailed at once (if it can't be
+  // reached, the pause is written to AUTH_DB and the site's cron emails). Running only this app?
+  // Delete this binding (without the site's capability_pauses table nothing is paused).
+  "services": [{ "binding": "SITE", "service": "afs-site" }],
 
   "d1_databases": [
     {

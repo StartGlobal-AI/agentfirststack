@@ -17,7 +17,7 @@ import { type Frag, evCte, raw, sql } from "../lib/query";
 import type { PeriodParams, SiteSettings } from "../lib/types";
 import type { Filter } from "../lib/filters";
 import { DAY, type Db, all, checkGoalFilters, ctxFor, guard, identityNote, num, periodOut, rangeFor, round, unknownGoals } from "./common";
-import { SESSION_IDENT } from "./identities";
+import { conversionPerson, sessionIdent } from "./identities";
 import { targetCond } from "./people";
 
 export const MODELS = ["last_non_direct", "last_touch", "first_touch", "linear", "position_based", "time_decay"] as const;
@@ -83,47 +83,51 @@ export function attribution(db: Db, settings: SiteSettings, q: AttributionReques
     const r = rangeFor(db, settings, q, now);
     const ctx = ctxFor(db, r, q);
     const lookback = q.lookback_days * DAY;
-    const value: Frag = q.goal
-      ? sql`COALESCE(e.revenue, (SELECT g.value FROM goals g WHERE g.name = ${q.goal}), 0)`
-      : raw("COALESCE(e.revenue, 0)");
+    // A browser-sent user id (afsa('identify')) never moves a conversion's credit to someone else's sessions.
+    const trust = !!settings.trust_browser_user_id;
+    // Revenue is what was paid; a goal's value is credited apart (goal_value), never as revenue.
+    const goalValue: Frag = q.goal ? sql`COALESCE((SELECT g.value FROM goals g WHERE g.name = ${q.goal}), 0)` : raw("0");
     const rows = all(
       db,
       sql`WITH ${evCte(ctx)},
-      conv AS (SELECT e.id AS cid, e.ts, ${value} AS rev,
-                 COALESCE('user:' || e.user_id, (SELECT i.canonical FROM identities i WHERE i.ident = e.visitor_id), e.visitor_id) AS person
+      conv AS (SELECT e.id AS cid, e.ts, COALESCE(e.revenue, 0) AS rev, ${goalValue} AS gv,
+                 ${raw(conversionPerson(trust))} AS person
                FROM ev e WHERE ${targetCond(q.goal)} ORDER BY e.ts DESC LIMIT ${MAX_CONVERSIONS}),
-      sp AS (SELECT s.id, s.started_at, COALESCE(s.${raw(q.breakdown)}, '(none)') AS value, s.channel, ${raw(SESSION_IDENT)} AS person FROM sessions s
+      sp AS (SELECT s.id, s.started_at, COALESCE(s.${raw(q.breakdown)}, '(none)') AS value, s.channel, ${raw(sessionIdent(trust))} AS person FROM sessions s
              WHERE s.last_seen_at >= (SELECT MIN(ts) FROM conv) - ${lookback} AND s.started_at <= (SELECT MAX(ts) FROM conv)),
-      tp AS (SELECT c.cid, c.ts AS cts, c.rev, sp.started_at, sp.value, sp.channel,
+      tp AS (SELECT c.cid, c.ts AS cts, c.rev, c.gv, sp.started_at, sp.value, sp.channel,
                ROW_NUMBER() OVER (PARTITION BY c.cid ORDER BY sp.started_at DESC) AS rn
              FROM conv c JOIN sp ON sp.person = c.person AND sp.started_at <= c.ts AND sp.started_at >= c.ts - ${lookback})
-      SELECT c.cid, c.ts AS cts, c.rev, tp.started_at, tp.value, tp.channel FROM conv c
+      SELECT c.cid, c.ts AS cts, c.rev, c.gv, tp.started_at, tp.value, tp.channel FROM conv c
       LEFT JOIN tp ON tp.cid = c.cid AND tp.rn <= ${MAX_TOUCHPOINTS}
       ORDER BY c.cid, tp.started_at`,
     );
-    const byConv = new Map<number, { ts: number; rev: number; tps: Touchpoint[] }>();
+    const byConv = new Map<number, { ts: number; rev: number; gv: number; tps: Touchpoint[] }>();
     for (const x of rows) {
       const id = num(x.cid);
-      const c = byConv.get(id) ?? { ts: num(x.cts), rev: num(x.rev), tps: [] };
+      const c = byConv.get(id) ?? { ts: num(x.cts), rev: num(x.rev), gv: num(x.gv), tps: [] };
       if (x.started_at != null) c.tps.push({ ts: num(x.started_at), value: String(x.value), channel: String(x.channel) });
       byConv.set(id, c);
     }
-    const credit = new Map<string, { conversions: number; revenue: number }>();
-    const add = (v: string, share: number, rev: number) => {
-      const cur = credit.get(v) ?? { conversions: 0, revenue: 0 };
+    const credit = new Map<string, { conversions: number; revenue: number; goal_value: number }>();
+    const add = (v: string, share: number, rev: number, gv: number) => {
+      const cur = credit.get(v) ?? { conversions: 0, revenue: 0, goal_value: 0 };
       cur.conversions += share;
       cur.revenue += share * rev;
+      cur.goal_value += share * gv;
       credit.set(v, cur);
     };
     const seqs = new Map<string, { path: string[]; conversions: number; revenue: number; days: number[]; touches: number[] }>();
     let revenue = 0;
+    let goalTotal = 0;
     for (const c of byConv.values()) {
       revenue += c.rev;
+      goalTotal += c.gv;
       if (!c.tps.length) {
-        add(UNATTRIBUTED, 1, c.rev);
+        add(UNATTRIBUTED, 1, c.rev, c.gv);
         continue;
       }
-      credits(q.model, c.tps, c.ts).forEach((w, i) => add(c.tps[i]!.value, w, c.rev));
+      credits(q.model, c.tps, c.ts).forEach((w, i) => add(c.tps[i]!.value, w, c.rev, c.gv));
       if (q.paths) {
         const path: string[] = [];
         for (const t of c.tps) if (path[path.length - 1] !== t.value) path.push(t.value);
@@ -144,6 +148,7 @@ export function attribution(db: Db, settings: SiteSettings, q: AttributionReques
         value: v,
         conversions: round(x.conversions, 2),
         revenue: round(x.revenue, 2),
+        ...(q.goal ? { goal_value: round(x.goal_value, 2) } : {}),
         share: total ? round((x.conversions / total) * 100, 1) : 0,
       }))
       .sort((a, b) => b.conversions - a.conversions || b.revenue - a.revenue || a.value.localeCompare(b.value))
@@ -159,6 +164,7 @@ export function attribution(db: Db, settings: SiteSettings, q: AttributionReques
       breakdown: q.breakdown,
       conversions: total,
       revenue: round(revenue, 2),
+      ...(q.goal ? { goal_value: round(goalTotal, 2) } : {}),
       sampled: total >= MAX_CONVERSIONS,
       results,
       identity: {

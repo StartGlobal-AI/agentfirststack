@@ -1,4 +1,4 @@
-import { createApiKey, forgetStanding } from "@afs/shared";
+import { createApiKey, forgetPauses, forgetStanding } from "@afs/shared";
 import { SELF, createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
@@ -131,14 +131,27 @@ describe("daily budgets (finding 1)", () => {
     const over = await send(4);
     expect(over.status).toBe(429);
     expect(over.body).toMatchObject({ ok: false, error: "daily_limit" });
+    // A browser flood never refuses the owner's server events: they have a budget of their own
+    // (MAX_SERVER_EVENTS_PER_SITE_PER_DAY; unset, the same number, counted apart).
     const srv = await callWith(v, `/v1/sites/${site}/events`, { method: "POST", key, json: { events: [{ name: "a" }, { name: "b" }] } });
-    expect(srv.status).toBe(429);
-    expect(srv.body.error.code).toBe("daily_limit");
-    expect(srv.body.error.hint).toContain("usage_today");
-    const info = await callWith(v, `/v1/sites/${site}`, { key });
-    expect(info.body.limits).toMatchObject({ events_per_site_per_day: 3, account_claimed: false });
-    expect(info.body.status).toMatchObject({ daily_limit_reached: true, events_today: 3, refused_today: 3 });
-    expect(info.body.data.usage_today.events).toBe(3);
+    expect(srv.status).toBe(202);
+    expect(srv.body.results.map((r: any) => r.ok)).toEqual([true, true]);
+    const sv = { ...v, MAX_SERVER_EVENTS_PER_SITE_PER_DAY: "2" };
+    const srvOver = await callWith(sv, `/v1/sites/${site}/events`, { method: "POST", key, json: { events: [{ name: "c" }] } });
+    expect(srvOver.status).toBe(429);
+    expect(srvOver.body.error.code).toBe("daily_limit");
+    expect(srvOver.body.error.message).toContain("server events");
+    expect(srvOver.body.error.hint).toContain("usage_today");
+    const info = await callWith(sv, `/v1/sites/${site}`, { key });
+    expect(info.body.limits).toMatchObject({ events_per_site_per_day: 3, server_events_per_site_per_day: 2, account_claimed: false });
+    expect(info.body.status).toMatchObject({
+      daily_limit_reached: true,
+      server_daily_limit_reached: true,
+      events_today: 3,
+      server_events_today: 2,
+      refused_today: 2,
+    });
+    expect(info.body.data.usage_today).toMatchObject({ events: 3, server_events: 2 });
     // a partial batch: what fits is stored, the rest says why
     const p = await newSite("partial.test");
     const part = await callWith(v, `/v1/sites/${p.site}/events`, {
@@ -151,7 +164,7 @@ describe("daily budgets (finding 1)", () => {
       "ok",
       "ok",
       "ok",
-      "daily_limit",
+      "server_daily_limit",
       "timestamp is more than 31 days old",
     ]);
     // test accounts are unclaimed: UNCLAIMED_ wins over the plain var
@@ -448,6 +461,43 @@ describe("share pages need a proven domain (finding: share pages)", () => {
     expect((await call(`/share/${token}/data`)).body.site).toMatchObject({ domain: null, name: null, verified: false });
     expect((await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} })).status).toBe(403);
   });
+
+  it("share pages carry a visible Report abuse link, and go dark while analytics.share_links is paused", async () => {
+    const key = await newAccount();
+    const { site } = await newSite("report.test", {}, key);
+    await markVerified(site);
+    const token = (await call(`/v1/sites/${site}/share`, { method: "POST", key, json: {} })).body.token as string;
+    const page = await call(`/share/${token}`);
+    const report = `https://agentfirststack.com/report-abuse?url=${encodeURIComponent(`${B}/share/${token}`)}`;
+    expect(page.body).toContain(`href="${report.replaceAll("&", "&amp;")}"`);
+    expect(page.body).toContain(">Report abuse</a>");
+    // the deployment's own form (ABUSE_REPORT_URL), also on the password page
+    const pw = (await call(`/v1/sites/${site}/share`, { method: "POST", key, json: { password: "correct horse", label: "pw" } })).body;
+    const locked = await callWith({ ABUSE_REPORT_URL: "https://abuse.example.org/form" }, `/share/${pw.token}`);
+    expect(locked.body).toContain("https://abuse.example.org/form?url=");
+    expect(locked.body).toContain(">Report abuse</a>");
+
+    // The operator (or a service, through the site) pauses the account's share links.
+    const accountId = (await call("/v1/me", { key })).body.account.id as string;
+    await (env.AUTH_DB ?? env.DB)
+      .prepare(
+        "INSERT INTO capability_pauses (account_id, capability, reason, paused_at, paused_by) VALUES (?, 'analytics.share_links', 'a phishing report', ?, 'operator')",
+      )
+      .bind(accountId, Date.now())
+      .run();
+    forgetPauses(accountId);
+    for (const path of [`/share/${token}`, `/share/${token}/data`]) {
+      const r = await call(path);
+      expect(r.status, path).toBe(403);
+      expect(r.body.error.code, path).toBe("capability_paused");
+      expect(r.body.error.hint, path).toContain("a phishing report");
+    }
+    const made = await call(`/v1/sites/${site}/share`, { method: "POST", key, json: { new: true } });
+    expect(made.status).toBe(403);
+    expect(made.body.error.code).toBe("capability_paused");
+    // Everything else keeps working.
+    expect((await call(`/v1/sites/${site}/stats?period=today`, { key })).status).toBe(200);
+  });
 });
 
 describe("OAuth access tokens can't leave durable access behind (finding: temporary credentials)", () => {
@@ -483,7 +533,7 @@ describe("OAuth access tokens can't leave durable access behind (finding: tempor
   });
 });
 
-describe("payments count against the daily budgets, signed or not (finding: self-signed webhooks)", () => {
+describe("payments count against the server budget, signed or not (finding: self-signed webhooks); browser floods never refuse them", () => {
   const SECRET = "whsec_fair_use_budget_secret_0123";
   let n = 0;
   const event = (type = "checkout.session.completed") => {
@@ -516,29 +566,38 @@ describe("payments count against the daily budgets, signed or not (finding: self
   }
   const payments = async (key: string, site: string) => (await call(`/v1/sites/${site}/payments?period=24h`, { key })).body.payments.length;
 
-  it("per site: a signed delivery past the cap gets 429 (Stripe retries) and records nothing", async () => {
+  it("per site: a browser flood past its cap doesn't refuse payments; a signed delivery past the server cap gets 429 (Stripe retries)", async () => {
     const key = await newAccount();
-    const { site } = await stripeSite("paysite.test", key);
-    const v = { MAX_EVENTS_PER_SITE_PER_DAY: "1" };
+    const { site, proxyKey } = await stripeSite("paysite.test", key);
+    const v = { MAX_EVENTS_PER_SITE_PER_DAY: "1", MAX_SERVER_EVENTS_PER_SITE_PER_DAY: "1" };
+    expect((await beacon(v, proxyKey, { s: site, u: "https://paysite.test/a" }, "10.7.0.1")).body.ok).toBe(true);
+    expect((await beacon(v, proxyKey, { s: site, u: "https://paysite.test/b" }, "10.7.0.2")).status).toBe(429);
     expect((await deliver(v, site)).status).toBe(200);
     const over = await deliver(v, site);
     expect(over.status).toBe(429);
-    expect(over.body.error).toMatchObject({ code: "daily_limit", message: expect.stringContaining("daily event limit") });
+    expect(over.body.error).toMatchObject({ code: "daily_limit", message: expect.stringContaining("server events and payments") });
     expect(await payments(key, site)).toBe(1);
     // the refusal shows in the delivery status
     expireStatusThrottle();
     await deliver(v, site);
     const status = (await call(`/v1/sites/${site}/integrations/stripe`, { key })).body.integration;
-    expect(status.last_result).toContain("refused: daily_limit");
+    expect(status.last_result).toContain("refused: server_daily_limit");
   });
 
-  it("per account (other sites' events count) and for the deployment, webhook and API alike", async () => {
+  it("per account (other sites' server events count) and for the deployment, webhook and API alike", async () => {
     const key = await newAccount();
     const a = await newSite("payacct-a.test", {}, key);
     const b = await stripeSite("payacct-b.test", key);
-    const av = { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "3" };
-    for (let i = 1; i <= 3; i++)
-      expect((await beacon(av, a.proxyKey, { s: a.site, u: `https://payacct-a.test/p${i}` }, `10.8.0.${i}`)).body.ok).toBe(true);
+    const av = { MAX_EVENTS_PER_ACCOUNT_PER_DAY: "1", MAX_SERVER_EVENTS_PER_ACCOUNT_PER_DAY: "3" };
+    // the account's browser budget is used up: no effect on server events and payments
+    expect((await beacon(av, a.proxyKey, { s: a.site, u: "https://payacct-a.test/p1" }, "10.8.0.1")).body.ok).toBe(true);
+    expect((await beacon(av, a.proxyKey, { s: a.site, u: "https://payacct-a.test/p2" }, "10.8.0.2")).status).toBe(429);
+    const srv = await callWith(av, `/v1/sites/${a.site}/events`, {
+      method: "POST",
+      key,
+      json: { events: [{ name: "x" }, { name: "y" }, { name: "z" }] },
+    });
+    expect(srv.body.results.map((r: any) => r.ok)).toEqual([true, true, true]);
     const hook = await deliver(av, b.site);
     expect(hook.status).toBe(429);
     expect(hook.body.error).toMatchObject({ code: "daily_limit", message: expect.stringContaining("account") });
@@ -552,10 +611,10 @@ describe("payments count against the daily budgets, signed or not (finding: self
     expect(await payments(key, b.site)).toBe(0);
 
     // the deployment-wide budget
-    const g = await env.DB.prepare("SELECT COALESCE(MAX(events), 0) AS n FROM usage_global WHERE day = ?")
+    const g = await env.DB.prepare("SELECT COALESCE(MAX(server_events), 0) AS n FROM usage_global WHERE day = ?")
       .bind(today())
       .first<{ n: number }>();
-    const pv = { DAILY_EVENT_BUDGET: String((g?.n ?? 0) + 1) };
+    const pv = { DAILY_SERVER_EVENT_BUDGET: String((g?.n ?? 0) + 1) };
     const d = await stripeSite("payplatform.test", key);
     expect((await deliver(pv, d.site)).status).toBe(200);
     const full = await deliver(pv, d.site);
@@ -573,16 +632,48 @@ describe("payments count against the daily budgets, signed or not (finding: self
   it("API batches: what fits is recorded, the rest says why; retries of stored payments are free once room returns", async () => {
     const key = await newAccount();
     const { site } = await newSite("paybatch.test", {}, key);
-    const v = { MAX_EVENTS_PER_SITE_PER_DAY: "2" };
+    const v = { MAX_SERVER_EVENTS_PER_SITE_PER_DAY: "2" };
     const batch = [1, 2, 3].map((i) => ({ id: `b${i}`, amount: 10, currency: "USD" }));
     const r = await callWith(v, `/v1/sites/${site}/payments`, { method: "POST", key, json: { payments: batch } });
     expect(r.status).toBe(202);
-    expect(r.body.results.map((x: { ok: boolean; reason?: string }) => (x.ok ? "ok" : x.reason))).toEqual(["ok", "ok", "daily_limit"]);
+    expect(r.body.results.map((x: { ok: boolean; reason?: string }) => (x.ok ? "ok" : x.reason))).toEqual([
+      "ok",
+      "ok",
+      "server_daily_limit",
+    ]);
     expect(r.body).toMatchObject({ accepted: 2, rejected: 1 });
     const again = await callWith(v, `/v1/sites/${site}/payments`, { method: "POST", key, json: { id: "b3", amount: 10, currency: "USD" } });
     expect(again.status).toBe(429);
     expect((await callWith(v, `/v1/sites/${site}`, { key })).body.status.refused_today).toBeGreaterThanOrEqual(2);
     expect(await payments(key, site)).toBe(2);
+  });
+
+  it("the webhook limiter only limits bad signatures (per network and endpoint): a correctly signed delivery always passes", async () => {
+    const key = await newAccount();
+    const { site } = await stripeSite("paylimit.test", key);
+    const keys: string[] = [];
+    const recordDeny = {
+      limit: async ({ key: k }: { key: string }) => {
+        keys.push(k);
+        return { success: false };
+      },
+    };
+    expect((await deliver({ WEBHOOK_LIMITER: recordDeny }, site)).status).toBe(200);
+    expect(keys).toEqual([]);
+    const badInit = { method: "POST", body: "{}", headers: { "stripe-signature": "t=1,v1=00", "cf-connecting-ip": "198.51.100.77" } };
+    const bad = await callWith({ WEBHOOK_LIMITER: recordDeny }, `/webhooks/stripe/${site}`, badInit);
+    expect([bad.status, bad.body.error.code]).toEqual([429, "rate_limited"]);
+    expect(bad.body.error.hint).toContain("correctly signed deliveries are still accepted");
+    expect(keys[0]).toBe("bad:ip:198.51.100.77");
+    // under the limits a bad signature gets the same 400 as ever
+    expect((await call(`/webhooks/stripe/${site}`, badInit)).body.error.code).toBe("webhook_rejected");
+    // Polar, Paddle, LemonSqueezy alike
+    const lemon = await callWith({ WEBHOOK_LIMITER: recordDeny }, `/webhooks/lemonsqueezy/${site}`, {
+      method: "POST",
+      body: "{}",
+      headers: { "x-signature": "00" },
+    });
+    expect(lemon.status).toBe(429);
   });
 
   it("delivery status is written at most every few seconds per site; the deliveries in between are counted by the next write", async () => {
@@ -598,6 +689,50 @@ describe("payments count against the daily budgets, signed or not (finding: self
     expireStatusThrottle(); // as if STATUS_EVERY_MS had passed
     await deliver({}, site, event("charge.dispute.created"));
     expect(await row()).toMatchObject({ events_received: 7, last_event_type: "charge.dispute.created" });
+  });
+});
+
+describe("per-account budgets for shared expensive work (SQL time, exports)", () => {
+  it("SQL and export stop at the account's daily budget over all its sites; UNCLAIMED_ forms apply", async () => {
+    const key = await newAccount();
+    const a = await newSite("budget-a.test", {}, key);
+    const b = await newSite("budget-b.test", {}, key);
+    for (const s of [a, b])
+      expect(
+        (await call(`/v1/sites/${s.site}/events`, { method: "POST", key, json: { events: [1, 2, 3].map((i) => ({ name: `e${i}` })) } }))
+          .status,
+      ).toBe(202);
+    // Exports: 4 rows a day for the whole (unclaimed) account.
+    const ev = { MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY: "100", UNCLAIMED_MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY: "4" };
+    const day = today();
+    const first = await callWith(ev, `/v1/sites/${a.site}/export?from=${day}&format=json`, { key });
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ account_used_today: 3, account_daily_budget: 4 });
+    expect(first.body.rows).toHaveLength(3);
+    const second = await callWith(ev, `/v1/sites/${b.site}/export?from=${day}&format=json`, { key });
+    expect(second.body.rows).toHaveLength(1); // only what the account has left
+    expect(second.body.next_cursor).toBeTruthy();
+    const third = await callWith(ev, `/v1/sites/${b.site}/export?from=${day}&format=json&cursor=${second.body.next_cursor}`, { key });
+    expect(third.status).toBe(429);
+    expect(third.body.error).toMatchObject({ code: "daily_limit", details: { var: "MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY", limit: 4 } });
+    // SQL: time charged per account; a used-up budget refuses the next query on any site.
+    await env.DB.prepare(
+      "INSERT INTO account_usage_daily (account_id, day, kind, amount, updated_at) SELECT account_id, ?, 'sql_ms', 5000, ? FROM sites WHERE id = ?",
+    )
+      .bind(day, Date.now(), a.site)
+      .run();
+    const sv = { UNCLAIMED_MAX_SQL_MS_PER_ACCOUNT_PER_DAY: "5000" };
+    const q = await callWith(sv, `/v1/sites/${b.site}/sql?q=${encodeURIComponent("SELECT 1")}`, { key });
+    expect(q.status).toBe(429);
+    expect(q.body.error.code).toBe("sql_budget_exhausted");
+    expect(q.body.error.message).toContain("This account used its 5 s of SQL time");
+    expect(
+      (await callWith({ UNCLAIMED_MAX_SQL_MS_PER_ACCOUNT_PER_DAY: "60000" }, `/v1/sites/${b.site}/sql?q=SELECT%201`, { key })).status,
+    ).toBe(200);
+    // GET /v1/usage shows both.
+    const u = (await callWith({ ...ev, ...sv }, "/v1/usage", { key })).body.limits;
+    expect(u.export_rows_per_account_per_day).toMatchObject({ used: 4, limit: 4, remaining: 0 });
+    expect(u.sql_ms_per_account_per_day).toMatchObject({ used: 5000, limit: 5000 });
   });
 });
 

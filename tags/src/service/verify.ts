@@ -1,6 +1,17 @@
-import { ApiError, hmacSha256Hex, type Standing } from "@afs/shared";
+import {
+  type AuthBindings,
+  ApiError,
+  accountStanding,
+  type CapabilityPause,
+  capabilityPaused,
+  capabilityPausedError,
+  hmacSha256Hex,
+  requestCapabilityPause,
+  type Standing,
+} from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import { readTextBounded } from "../lib/http";
+import { type CodeFinding, describeFindings, type ScanContext, scanConfig } from "./code-scan";
 import { limits, standingFlag } from "./limits";
 import { fetchPage, hasSnippet, homepageProof, isHomepage } from "./scan";
 
@@ -16,8 +27,12 @@ export { hasSnippet };
  *     from GET /v1/containers/:id (checked over DNS-over-HTTPS), or this container's snippet in a
  *     real <script src> on https://<domain>/ itself (or www.; no query string, answered 2xx; found
  *     by scan or verify);
- *   - its size is within MAX_CUSTOM_CODE_BYTES (when set).
- * Preview links of an unverified draft are served without the custom code.
+ *   - its size is within MAX_CUSTOM_CODE_BYTES (when set);
+ *   - it passes the known-bad pattern check (code-scan.ts: miners, skimmers, obfuscated eval chains,
+ *     malicious hosts); a strong match at publish also pauses tags.custom_code for the account;
+ *   - tags.custom_code isn't paused for the account (a pause also strips custom code from the live
+ *     script until the operator lifts it).
+ * Preview links and environment builds that fail any of these are served without the custom code.
  */
 
 export interface CustomCode {
@@ -58,6 +73,18 @@ export function customCodeIn(config: ContainerConfig | null | undefined, env: { 
   return out;
 }
 
+/** Whether a config has custom code at all (cheaper than customCodeIn: nothing is measured). */
+export function hasCustomCode(config: ContainerConfig | null | undefined, env: { ANALYTICS_BASE_URL?: string }): boolean {
+  return (
+    (config?.tags ?? []).some(
+      (t) =>
+        t.type === "custom_html" ||
+        t.type === "custom_js" ||
+        (t.type === "analytics" && !!t.params.base_url && hostOf(t.params.base_url) !== hostOf(env.ANALYTICS_BASE_URL)),
+    ) || (config?.variables ?? []).some((v) => v.type === "custom_js")
+  );
+}
+
 /** The config without its custom code (for preview links of a container that may not run it). */
 export function stripCustomCode(config: ContainerConfig, env: { ANALYTICS_BASE_URL?: string }): ContainerConfig {
   const paths = customCodeIn(config, env).paths;
@@ -74,20 +101,57 @@ export function stripCustomCode(config: ContainerConfig, env: { ANALYTICS_BASE_U
 
 export interface CustomCodeIssue {
   path: string;
-  code: "custom_code_not_allowed" | "domain_not_verified" | "custom_code_too_large";
+  code: "custom_code_not_allowed" | "domain_not_verified" | "custom_code_too_large" | "custom_code_blocked" | "capability_paused";
   message: string;
   hint: string;
+  /** custom_code_blocked: every match. */
+  findings?: CodeFinding[];
+}
+
+type CodeEnv = object & Omit<ScanContext, "domain"> & { AUTH_ISSUER?: string };
+
+const scanContext = (env: CodeEnv, domain: string): ScanContext => ({
+  domain,
+  ANALYTICS_BASE_URL: env.ANALYTICS_BASE_URL,
+  PUBLIC_BASE_URL: env.PUBLIC_BASE_URL,
+  EXTRA_BLOCKED_CODE_HOSTS: env.EXTRA_BLOCKED_CODE_HOSTS,
+});
+
+const CHECKED =
+  'Checked at publish: crypto miners, code that reads password or card fields and sends them out, eval of decoded or obfuscated code, and known malicious hosts (GET /llms.txt, "Custom code checks").';
+
+function blockedIssue(findings: CodeFinding[]): CustomCodeIssue {
+  return {
+    path: findings[0]!.path,
+    code: "custom_code_blocked",
+    message: `The custom code matches a known-bad pattern: ${describeFindings(findings)}.`,
+    hint: `Remove it (findings has each match and its path); publishing is refused while it's there. ${CHECKED}`,
+    findings,
+  };
+}
+
+/** The account's standing and whether tags.custom_code is paused (both cached per isolate for a minute). */
+export async function codeGate(env: AuthBindings, accountId: string): Promise<{ standing: Standing; pause: CapabilityPause | null }> {
+  const [standing, pause] = await Promise.all([accountStanding(env, accountId), capabilityPaused(env, accountId, "tags.custom_code")]);
+  return { standing, pause };
 }
 
 export function customCodeProblem(
-  env: object & { ANALYTICS_BASE_URL?: string },
+  env: CodeEnv,
   row: { id: string; domain: string; verified_at?: number | null },
   config: ContainerConfig | null | undefined,
   standing: Standing,
+  pause?: CapabilityPause | null,
 ): CustomCodeIssue | null {
   const cc = customCodeIn(config, env);
-  if (!cc.paths.length) return null;
-  const path = cc.paths[0]!;
+  const findings = scanConfig(config, scanContext(env, row.domain));
+  if (!cc.paths.length && !findings.length) return null;
+  const path = cc.paths[0] ?? findings[0]!.path;
+  if (pause && cc.paths.length) {
+    const e = capabilityPausedError(pause);
+    return { path, code: "capability_paused", message: e.message, hint: e.hint ?? "" };
+  }
+  if (findings.length) return blockedIssue(findings);
   if (!standingFlag(env, standing, "ALLOW_CUSTOM_CODE", true, false)) {
     return standing.claimed
       ? {
@@ -125,8 +189,52 @@ export function customCodeProblem(
   return null;
 }
 
+/**
+ * Before a config goes live (publish, publishing a saved version, pinning an environment to one):
+ * custom code while tags.custom_code is paused is refused (403 capability_paused); custom code that
+ * matches a known-bad pattern is refused (422 custom_code_blocked), and a strong match pauses
+ * tags.custom_code for the account first (the site emails the project's people and the operator).
+ * Nothing else is checked here; customCodeProblem() does the rest.
+ */
+export async function assertCodeSafe(
+  env: CodeEnv & AuthBindings & { SITE?: Fetcher },
+  row: { id: string; domain: string; account_id: string },
+  config: ContainerConfig | null | undefined,
+  what = "nothing was published",
+): Promise<void> {
+  if (hasCustomCode(config, env)) {
+    const pause = await capabilityPaused(env, row.account_id, "tags.custom_code");
+    if (pause) throw capabilityPausedError(pause);
+  }
+  const findings = scanConfig(config, scanContext(env, row.domain));
+  if (!findings.length) return;
+  const strong = findings.filter((f) => f.strong);
+  let paused = false;
+  if (strong.length) {
+    const r = await requestCapabilityPause(env, {
+      accountId: row.account_id,
+      capability: "tags.custom_code",
+      reason: `container ${row.id} (${row.domain}) tried to publish ${describeFindings(strong)}`,
+      by: "tags",
+      details: { container_id: row.id, domain: row.domain, findings: strong },
+    });
+    paused = r.paused;
+    console.log(JSON.stringify({ event: "tags.custom_code_blocked", container_id: row.id, rules: strong.map((f) => f.rule), paused }));
+  }
+  const issue = blockedIssue(findings);
+  throw new ApiError(
+    422,
+    "custom_code_blocked",
+    `${issue.message.replace(/\.$/, "")}; ${what}.`,
+    paused
+      ? `${issue.hint} This is a strong match, so custom code is now paused for this project (the live script runs without it); the project's people and the operator were emailed. If it's a mistake, reply to that email or write to the platform's support address with the account id.`
+      : issue.hint,
+    findings,
+  );
+}
+
 /** Drafts with more custom code than MAX_CUSTOM_CODE_BYTES are refused when saved (413). */
-export function assertCustomCodeSize(env: object & { ANALYTICS_BASE_URL?: string }, config: ContainerConfig, standing: Standing) {
+export function assertCustomCodeSize(env: CodeEnv, config: ContainerConfig, standing: Standing) {
   const max = limits(env, standing).maxCustomCodeBytes;
   if (!Number.isFinite(max)) return;
   const { bytes } = customCodeIn(config, env);

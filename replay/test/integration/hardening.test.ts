@@ -299,7 +299,8 @@ describe("C2: cost is bounded per session, site, account and deployment", () => 
   });
 
   it("an account's daily budget holds across its sites", async () => {
-    const env = hosted({ MAX_SESSIONS_PER_ACCOUNT_PER_DAY: "2" });
+    // the site's own cap defaults to half the account's: set it so one site can reach the account's
+    const env = hosted({ MAX_SESSIONS_PER_ACCOUNT_PER_DAY: "2", MAX_SESSIONS_PER_SITE_PER_DAY: "2" });
     const { key, account, site: a } = await newSite("acct-a.test");
     const b = (await call("POST", "/v1/sites", { key, body: { domain: "acct-b.test" } })).json.site.id as string;
     await markVerified(b);

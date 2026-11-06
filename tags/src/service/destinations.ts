@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getConnector, DESTINATION_TYPES } from "../destinations";
 import type { Connector, DeliveryResult, DispatchEvent } from "../destinations/types";
 import type { Bindings } from "../env";
+import { reserveOutbound } from "./budget";
 import { getContainerRow, syncToDO } from "./containers";
 import { limits } from "./limits";
 import { assertRate } from "./ratelimit";
@@ -392,6 +393,8 @@ export async function testDestination(
       `Testing ${row.type} without a test code would record a real event; nothing was sent.`,
       `${gap} Or pass { "test_event_code": "..." } in this request.`,
     );
+  // Only a test that will really be sent counts against the daily budget.
+  await reserveOutbound(env, accountId, await accountStanding(env, accountId), "tests");
   const sample = sampleEvent(opts.event_name ?? "purchase", containerId, container.domain);
   if (opts.send_to) Object.assign(sample.send_to, opts.send_to);
   // The destination's own transformations apply to the test too (its request shows them).

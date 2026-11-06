@@ -4,6 +4,8 @@ import { utcDay } from "./format";
 
 /** Kinds of per-account daily budget kept in `account_daily`. */
 export type DailyKind = "inbox_create" | "inbox_delete" | "inbox_clear" | "webhook_test" | "event" | "attachment_text" | "forward";
+// Also in account_daily: "inbox_create_try", inbox-creation attempts per UTC hour (day = "2026-11-06T10";
+// src/service/pauses.ts). Pruned with the daily rows.
 
 /** Seconds from `now` to the next 00:00 UTC, when every daily budget resets (at least 1). */
 export function secondsToUtcMidnight(now = Date.now()): number {

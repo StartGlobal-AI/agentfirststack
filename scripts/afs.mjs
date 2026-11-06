@@ -8,6 +8,8 @@
 //   pnpm afs check <profile>               end-to-end check of a live deployment (cleans up after itself)
 //   pnpm afs suspend <profile> <acct_id> --reason "..."   stop an abusive account: every key, every service
 //   pnpm afs unsuspend <profile> <acct_id>                undo a suspension
+//   pnpm afs pause <profile> <acct_id> <capability> --reason "..."   pause one capability (mail.send, ...)
+//   pnpm afs unpause <profile> <acct_id> <capability>     lift a capability pause (automatic or by hand)
 //   pnpm afs restore <profile> <acct_id>                  undo a project deletion (before its purge, 7 days)
 //   pnpm afs email-test <profile> <address>               send the welcome email to someone who signed in
 //   pnpm afs digest <profile>                             send the operator's daily summary now (OPERATOR_EMAIL) and print it
@@ -571,6 +573,58 @@ async function cmdSuspend(name, accountId, opts, suspend) {
   for (const step of out.next_steps ?? []) log(`  - ${step}`);
 }
 
+// ---------- operator: capability pauses ----------
+
+const CAPABILITIES = ["mail.send", "mail.inbox_create", "tags.custom_code", "replay.share_links", "analytics.share_links"];
+
+/**
+ * POST /v1/admin/accounts/:id/pauses (pause) or DELETE .../pauses/:capability (lift) on the site,
+ * with the ADMIN_TOKEN as Bearer. Returns the API's JSON body; throws with its message and hint.
+ */
+export async function setPause({ base, token, accountId, capability, pause, reason }) {
+  if (!ACCOUNT_ID.test(accountId ?? "")) throw new Error("Give the account id (acct_...). GET /v1/me shows it for a key.");
+  if (!CAPABILITIES.includes(capability)) throw new Error(`Give the capability: one of ${CAPABILITIES.join(", ")}.`);
+  if (pause && !reason?.trim()) throw new Error('Say why with --reason "..." (the project\'s people read it).');
+  const url = `${base.replace(/\/+$/, "")}/v1/admin/accounts/${accountId}/pauses${pause ? "" : `/${capability}`}`;
+  const res = await fetch(url, {
+    method: pause ? "POST" : "DELETE",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: pause ? JSON.stringify({ capability, reason: reason.trim() }) : undefined,
+  });
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  if (!res.ok) {
+    const e = json?.error;
+    throw new Error(e ? `${res.status} ${e.code}: ${e.message}${e.hint ? ` ${e.hint}` : ""}` : `HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return json;
+}
+
+async function cmdPause(name, accountId, capability, opts, pause) {
+  const profile = loadProfile(name);
+  const token = loadSecrets(name)?.ADMIN_TOKEN;
+  if (!token) die(`deploy/${name}.secrets.json has no ADMIN_TOKEN. \`pnpm afs init ${name}\` adds one; deploy before using it.`);
+  let out;
+  try {
+    out = await setPause({
+      base: `https://${profile.domain}`,
+      token,
+      accountId,
+      capability,
+      pause,
+      reason: typeof opts.reason === "string" ? opts.reason : "",
+    });
+  } catch (e) {
+    die(e.message);
+  }
+  if (pause) log(`${out.existing ? "Already paused" : "Paused"}: ${capability} for ${accountId} (${out.pause?.reason ?? ""}).`);
+  else log(`${out.lifted ? "Lifted" : "Wasn't paused"}: ${capability} for ${accountId}.`);
+  for (const step of out.next_steps ?? []) log(`  - ${step}`);
+}
+
 /** POST /v1/admin/accounts/:id/restore: undo a project deletion before the purge erases it. */
 async function cmdRestore(name, accountId) {
   if (!ACCOUNT_ID.test(accountId ?? "")) die("Give the project id (acct_...).");
@@ -722,7 +776,7 @@ if (isMain) {
     log(
       readFileSync(fileURLToPath(import.meta.url), "utf8")
         .split("\n")
-        .slice(1, 16)
+        .slice(1, 18)
         .join("\n")
         .replace(/^\/\/ ?/gm, ""),
     );
@@ -745,6 +799,10 @@ if (isMain) {
     case "suspend":
     case "unsuspend":
       await cmdSuspend(name, rest[0], opts, cmd === "suspend");
+      break;
+    case "pause":
+    case "unpause":
+      await cmdPause(name, rest[0], rest[1], opts, cmd === "pause");
       break;
     case "restore":
       await cmdRestore(name, rest[0]);

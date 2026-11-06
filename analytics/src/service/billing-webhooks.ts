@@ -20,13 +20,13 @@ import {
   verifyBilling,
 } from "../lib/billing";
 import { hashCustomer } from "../lib/customer";
-import { allow, limitVars } from "../lib/limits";
+import { limitVars } from "../lib/limits";
 import type { PaymentInput } from "../lib/types";
 import type { SubscriptionRecord } from "../do/subscriptions";
 import { type Ctx, type SiteRow, SITE_ID_RE, callSite, loadSite } from "./context";
 import { convertRecords } from "./fx";
 import { refusalError } from "./ingest";
-import { MAX_WEBHOOK_BYTES, takeStatusWrite } from "./payments";
+import { MAX_WEBHOOK_BYTES, rejectedDelivery, takeStatusWrite } from "./payments";
 import { ingestSubscriptionStates } from "./subscriptions";
 
 export const providerParam = z.enum(BILLING_PROVIDERS);
@@ -333,20 +333,20 @@ export async function billingWebhook(
   req: Request,
   waitUntil: (p: Promise<unknown>) => void,
 ): Promise<BillingWebhookResult> {
+  const reject = (endpoint: string) => rejectedDelivery(env, endpoint, req, REJECTED);
   const p = providerParam.safeParse(provider);
-  if (!p.success) return REJECTED;
+  if (!p.success) return reject(`other:${siteId.slice(0, 40)}`);
   const prov = p.data;
   if (!env.ENCRYPTION_KEY) return fail(503, "not_configured", "The deployment's ENCRYPTION_KEY is missing; the operator must set it.");
-  if (!(await allow(env.WEBHOOK_LIMITER, `${prov}:${siteId}`)))
-    return fail(429, "rate_limited", "Too many deliveries for this endpoint; the provider retries later.");
   if (Number(req.headers.get("content-length")) > MAX_WEBHOOK_BYTES)
     return fail(413, "payload_too_large", "Webhook bodies are capped at 1 MB.");
   const { text, truncated } = await readTextCapped(req.body, MAX_WEBHOOK_BYTES);
   if (truncated) return fail(413, "payload_too_large", "Webhook bodies are capped at 1 MB.");
-  if (!SITE_ID_RE.test(siteId)) return REJECTED;
+  const endpoint = `${prov}:${siteId.slice(0, 40)}`;
+  if (!SITE_ID_RE.test(siteId)) return reject(endpoint);
   const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<SiteRow>();
   const row = site ? await rowOf(env, site.id, prov) : null;
-  if (!site || !row) return REJECTED;
+  if (!site || !row) return reject(endpoint);
   const now = Date.now();
   const win = Math.floor(now / FAIL_WINDOW_MS);
   const write = (sql: string, ...args: (string | number | null)[]) =>
@@ -362,13 +362,16 @@ export async function billingWebhook(
   } catch {
     if (row.last_error !== "secret_unreadable")
       write("UPDATE integrations SET last_error = ?, last_error_at = ? WHERE id = ?", "secret_unreadable", now);
-    return REJECTED;
+    return reject(endpoint);
   }
   // A correctly signed delivery always goes through, so junk deliveries can't hold up real ones.
-  // Bad signatures are counted per site and provider; past the limit they get a 429 instead of a 400.
+  // Bad signatures are limited per client network and per endpoint (rejectedDelivery), and counted
+  // per site and provider; past either limit they get a 429 instead of a 400.
   // (The secrets are long enough that guessing them is not practical: the count slows noise.)
   const sig = await verifyBilling(prov, text, req.headers, secret, now);
   if (!sig.ok) {
+    const limited = await reject(endpoint);
+    if (limited.status === 429) return limited;
     const failures = row.sig_fail_window === win ? (row.sig_fail_count ?? 0) + 1 : 1;
     await env.DB.prepare(
       "UPDATE integrations SET sig_fail_count = CASE WHEN sig_fail_window = ? THEN sig_fail_count + 1 ELSE 1 END, sig_fail_window = ? WHERE id = ?",

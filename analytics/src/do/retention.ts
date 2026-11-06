@@ -13,7 +13,7 @@ import { type Frag, bucketKey, join, raw, sql, valueCond } from "../lib/query";
 import { type Interval, addDays, addMonths, buckets, localDay, offsetSegments, ymdString, zonedToUtc } from "../lib/time";
 import type { SiteSettings } from "../lib/types";
 import { type Db, all, err, guard, identityNote, num, round } from "./common";
-import { SESSION_IDENT } from "./identities";
+import { sessionIdent } from "./identities";
 
 export const RETENTION_INTERVALS = ["day", "week", "month"] as const;
 export type RetentionInterval = (typeof RETENTION_INTERVALS)[number];
@@ -71,7 +71,7 @@ export function retention(db: Db, settings: SiteSettings, q: RetentionRequest, n
     if (!persistent) conds.push(raw("i.ident LIKE 'user:%'"));
     for (const f of q.filters) conds.push(valueCond(raw(`i.${DIM_COL[f.key as FirstTouchDim]}`), f.op, f.values));
     const coh = sql`coh AS (SELECT i.ident, ${cb} AS cb, ${dim} AS dim FROM identities i WHERE ${join(conds, " AND ")})`;
-    const act = sql`act AS (SELECT DISTINCT ${raw(SESSION_IDENT)} AS ident, ${ab} AS b FROM sessions s WHERE s.last_seen_at >= ${start} AND s.started_at <= ${now})`;
+    const act = sql`act AS (SELECT DISTINCT ${raw(sessionIdent(!!settings.trust_browser_user_id))} AS ident, ${ab} AS b FROM sessions s WHERE s.last_seen_at >= ${start} AND s.started_at <= ${now})`;
     const sizes = all(db, sql`WITH ${coh} SELECT cb, dim, COUNT(*) AS n FROM coh GROUP BY cb, dim ORDER BY cb, n DESC`);
     const back = all(
       db,

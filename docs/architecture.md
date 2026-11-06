@@ -226,7 +226,9 @@ The apex serves what agents and crawlers look for, from `site/public/`:
   daily, never the address) and watches 15-minute windows for spikes (`src/do/protection.ts`). Past a
   network's share, or from a data-centre network while the site is under attack, events are stored
   quarantined (`debug = 2`): out of reports and the budget, kept 7 days for review (`/quarantine`,
-  release or purge). Tags does the same per container and holds browser conversions during an attack.
+  release or purge). Tags does the same per container: conversions from quarantined traffic never
+  reach ad platforms, others keep flowing during an attack (protection `strict` holds every browser
+  conversion while it lasts).
   The site's hourly check emails the people from `attacks` in each service's usage answer.
 - **Live.** The same DO holds the site's live streams (`GET /v1/sites/:id/realtime/stream`, and
   the dashboard's `/dashboard/projects/:id/live/analytics/:site`, which the site Worker checks and

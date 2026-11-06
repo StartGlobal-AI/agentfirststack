@@ -1,11 +1,11 @@
-import { ApiError, randomString } from "@afs/shared";
-import { Hono } from "hono";
+import { ApiError, publicBaseUrl, randomString } from "@afs/shared";
+import { type Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "../env";
 import { readTextCapped } from "../lib/body";
 import { linkForToken, shareData, shareUnlocked, unlockShare } from "../service/share";
 import { isVerified } from "../service/context";
-import { sharePage, sharePageCsp, sharePasswordPage } from "../share-page";
+import { reportAbuseUrl, sharePage, sharePageCsp, sharePasswordPage } from "../share-page";
 
 /** Public, token-scoped, aggregate-only dashboard. */
 export const shareRoutes = new Hono<AppEnv>();
@@ -21,14 +21,17 @@ const pageHeaders = (nonce: string, formAction = false) => ({
   "x-content-type-options": "nosniff",
 });
 
+/** The "Report abuse" link of a share page: the platform's report form, this link's URL filled in. */
+const reportFor = (c: Context<AppEnv>, token: string) => reportAbuseUrl(c.env, `${publicBaseUrl(c)}/share/${token}`);
+
 shareRoutes.get("/share/:token", async (c) => {
   const token = c.req.param("token");
   const { site, link } = await linkForToken(c.env, token);
   const domain = isVerified(site) ? site.domain : null;
   const nonce = randomString(24);
   if (!(await shareUnlocked(c.env, link, getCookie(c, COOKIE), undefined)))
-    return c.html(sharePasswordPage(token, domain, nonce, false), 200, pageHeaders(nonce, true));
-  return c.html(sharePage(token, domain, nonce), 200, pageHeaders(nonce));
+    return c.html(sharePasswordPage(token, domain, nonce, false, undefined, reportFor(c, token)), 200, pageHeaders(nonce, true));
+  return c.html(sharePage(token, domain, nonce, reportFor(c, token)), 200, pageHeaders(nonce));
 });
 
 /** The password form is a few hundred bytes: read at most this much of the body. */
@@ -51,14 +54,18 @@ shareRoutes.post("/share/:token/unlock", async (c) => {
     if (!(e instanceof ApiError) || e.code !== "too_many_attempts") throw e;
     const retry = (e.details as { retry_after?: number } | undefined)?.retry_after ?? 60;
     const { site } = await linkForToken(c.env, token);
-    return c.html(sharePasswordPage(token, isVerified(site) ? site.domain : null, nonce, true, retry), 429, {
+    return c.html(sharePasswordPage(token, isVerified(site) ? site.domain : null, nonce, true, retry, reportFor(c, token)), 429, {
       ...pageHeaders(nonce, true),
       "retry-after": String(retry),
     });
   }
   if (!cookie) {
     const { site } = await linkForToken(c.env, token);
-    return c.html(sharePasswordPage(token, isVerified(site) ? site.domain : null, nonce, true), 401, pageHeaders(nonce, true));
+    return c.html(
+      sharePasswordPage(token, isVerified(site) ? site.domain : null, nonce, true, undefined, reportFor(c, token)),
+      401,
+      pageHeaders(nonce, true),
+    );
   }
   // Lax: a link opened from Slack or email (a top-level GET from another site) keeps the unlock;
   // the cookie only unlocks read-only GETs of this link.

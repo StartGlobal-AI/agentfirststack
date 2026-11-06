@@ -1,7 +1,9 @@
 import {
   accountStanding,
   ApiError,
+  assertCapability,
   assertPermanentKey,
+  capabilityPaused,
   badRequest,
   newId,
   notFound,
@@ -22,7 +24,10 @@ import { createLinkInput } from "./schemas";
 /**
  * Expiring share links to the human player. The token (rpt_ + 32 random characters) is shown
  * once; only its SHA-256 is stored. Anyone with the URL can watch that one session until it
- * expires or is revoked; nothing else is reachable with it.
+ * expires (a day by default) or is revoked; nothing else is reachable with it. The player is
+ * noindex and carries a "Report abuse" link to the platform. While the account's
+ * `replay.share_links` capability is paused (@afs/shared capabilityPaused), no link can be made
+ * and existing ones show a "paused" page instead of the recording.
  */
 
 interface LinkRow {
@@ -64,6 +69,7 @@ const windowOf = (l: LinkRow, startedAt: number) =>
 export async function createLink(ctx: Ctx, siteId: string, raw: unknown) {
   // A link works for up to 30 days; a connected app's 8-hour token must not leave one behind.
   assertPermanentKey(ctx.auth, "create share links");
+  await assertCapability(ctx.env, ctx.accountId, "replay.share_links");
   const q = parse(createLinkInput, raw);
   const site = await loadSite(ctx, siteId);
   if (!SESSION_ID_RE.test(q.session_id)) throw badRequest("session_id must be an rs_... id.", "Take it from search_sessions.");
@@ -167,8 +173,11 @@ export interface ResolvedLink {
   standing: Standing;
 }
 
-/** The link behind a token, if it is active, its site exists and its account isn't suspended. */
-export async function resolveToken(env: Bindings, token: string): Promise<ResolvedLink | null> {
+/**
+ * The link behind a token, if it is active, its site exists and its account isn't suspended;
+ * "paused" while the account's share links are paused (nothing of the recording is served).
+ */
+export async function resolveToken(env: Bindings, token: string): Promise<ResolvedLink | "paused" | null> {
   if (!/^rpt_[0-9a-z]{32}$/.test(token)) return null;
   const link = await env.DB.prepare("SELECT * FROM replay_links WHERE token_hash = ?")
     .bind(await sha256Hex(token))
@@ -179,7 +188,9 @@ export async function resolveToken(env: Bindings, token: string): Promise<Resolv
     .first<SiteRow>();
   if (!site) return null;
   const standing = await accountStanding(env, site.account_id);
-  return standing.suspended ? null : { link, site, standing };
+  if (standing.suspended) return null;
+  if (await capabilityPaused(env, site.account_id, "replay.share_links")) return "paused";
+  return { link, site, standing };
 }
 
 /** CSP host sources for the player: the recorded site's domain, its subdomains and allowed_hostnames. */

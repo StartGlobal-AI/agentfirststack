@@ -1,5 +1,5 @@
 import { ApiError, type Standing } from "@afs/shared";
-import { deliveryBudgets, utcDay } from "./limits";
+import { deliveryBudgets, type OutboundKind, outboundBudgets, utcDay } from "./limits";
 
 /**
  * Daily delivery budgets across containers: per account (MAX_DELIVERIES_PER_ACCOUNT_PER_DAY) and
@@ -60,6 +60,80 @@ export async function reserveDeliveries(
     return { granted: requested };
   }
 }
+
+// ------------------------------------------------------------------ outbound-call budgets
+
+const OUTBOUND = {
+  scans: {
+    what: "scans and domain verifications",
+    vars: "MAX_SCANS_PER_ACCOUNT_PER_DAY",
+    tip: "Scan several pages in one call (paths), and verify with the DNS record (method: dns) rather than repeating scans.",
+  },
+  tests: {
+    what: "destination tests",
+    vars: "MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY",
+    tip: "Check a destination's real deliveries in GET /v1/containers/:id/events (and preview links) instead of testing again.",
+  },
+} as const;
+
+/**
+ * Count one scan / verification or one destination test against the daily budgets (per account,
+ * and the deployment's on one counter; outboundBudgets in limits.ts), or refuse it with 429
+ * quota_exceeded. Counted in D1 delivery_usage under "<kind>:account:<id>" and "<kind>:platform";
+ * refused calls count too. No budget set = no D1 call; a D1 failure lets the call through (the
+ * per-minute rate limiter still applies).
+ */
+export async function reserveOutbound(
+  env: { DB: D1Database; AUTH_ISSUER?: string } & object,
+  accountId: string,
+  standing: Standing,
+  kind: OutboundKind,
+  now = Date.now(),
+): Promise<void> {
+  const caps = outboundBudgets(env, standing)[kind];
+  const scopes: { scope: string; platform: boolean; cap: number }[] = [];
+  if (Number.isFinite(caps.perAccount)) scopes.push({ scope: `${kind}:account:${accountId}`, platform: false, cap: caps.perAccount });
+  if (Number.isFinite(caps.platform)) scopes.push({ scope: `${kind}:platform`, platform: true, cap: caps.platform });
+  if (!scopes.length) return;
+  const day = utcDay(now);
+  let res: D1Result<{ n: number }>[];
+  try {
+    res = await env.DB.batch<{ n: number }>(
+      scopes.map((s) =>
+        env.DB.prepare(
+          "INSERT INTO delivery_usage (scope, day, n) VALUES (?1, ?2, 1) ON CONFLICT(scope, day) DO UPDATE SET n = n + 1 RETURNING n",
+        ).bind(s.scope, day),
+      ),
+    );
+  } catch (e) {
+    console.error("outbound budget check failed", e);
+    return;
+  }
+  const o = OUTBOUND[kind];
+  const claim = env.AUTH_ISSUER
+    ? ` Accounts a person has claimed (POST ${env.AUTH_ISSUER.replace(/\/$/, "")}/v1/claim-link) get a higher limit.`
+    : "";
+  scopes.forEach((s, i) => {
+    const n = Number(res[i]?.results[0]?.n ?? 0);
+    if (n <= s.cap) return;
+    throw s.platform
+      ? new ApiError(
+          429,
+          "quota_exceeded",
+          `This service's daily budget of ${o.what} is used up; more at 00:00 UTC.`,
+          `Retry after 00:00 UTC. ${o.tip}${claim}`,
+        )
+      : new ApiError(
+          429,
+          "quota_exceeded",
+          `This account used its ${s.cap} ${o.what} for today (${o.vars}); more at 00:00 UTC.`,
+          `GET /v1/usage shows ${kind === "scans" ? "scans_per_day" : "destination_tests_per_day"}. ${o.tip}${claim}`,
+        );
+  });
+}
+
+/** Today's count for one outbound budget of an account (for GET /v1/usage). */
+export const outboundScope = (kind: OutboundKind, accountId: string) => `${kind}:account:${accountId}`;
 
 // ------------------------------------------------------------------ daily event budgets
 

@@ -3,7 +3,8 @@
  * Reads GET /share/:token/data. Every data value is written with textContent (page paths and
  * referrers are visitor-controlled), and the inline SVG chart is built with createElementNS.
  * Its inline style and script carry a per-response nonce; routes/share.ts sends the matching CSP
- * (sharePageCsp), which also forbids framing.
+ * (sharePageCsp), which also forbids framing. Both pages are noindex and carry a visible "Report
+ * abuse" link to the platform's report form (ABUSE_REPORT_URL) with the page's URL filled in.
  */
 
 /** The share page's Content-Security-Policy: only its own nonce'd code, reads from its own origin, never framed. */
@@ -20,8 +21,34 @@ export const sharePageCsp = (nonce: string, formAction = false) =>
     "frame-ancestors 'none'",
   ].join("; ");
 
+/** The platform's abuse report form (the site app's /report-abuse) when ABUSE_REPORT_URL is unset. */
+export const DEFAULT_ABUSE_REPORT_URL = "https://agentfirststack.com/report-abuse";
+
+/** The "Report abuse" link of a public page: the report form with the page's URL filled in (?url=). */
+export function reportAbuseUrl(env: { ABUSE_REPORT_URL?: string }, pageUrl: string): string {
+  let u: URL;
+  try {
+    u = new URL(env.ABUSE_REPORT_URL?.trim() || DEFAULT_ABUSE_REPORT_URL);
+    if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("not http");
+  } catch {
+    u = new URL(DEFAULT_ABUSE_REPORT_URL);
+  }
+  u.searchParams.set("url", pageUrl);
+  return u.toString();
+}
+
+const reportLink = (url: string) =>
+  `<a class="report" href="${esc(url)}" rel="nofollow noopener noreferrer" target="_blank">Report abuse</a>`;
+
 /** The password form of a protected share link (no data on it). */
-export function sharePasswordPage(token: string, domain: string | null, nonce: string, wrong: boolean, retryAfterS?: number): string {
+export function sharePasswordPage(
+  token: string,
+  domain: string | null,
+  nonce: string,
+  wrong: boolean,
+  retryAfterS?: number,
+  reportUrl = DEFAULT_ABUSE_REPORT_URL,
+): string {
   const heading = domain ? esc(domain) : "Shared analytics";
   return `<!DOCTYPE html>
 <html lang="en">
@@ -38,6 +65,7 @@ h1{font-size:18px;margin:0}
 input{font:inherit;padding:8px 10px;border:1px solid #d6d5d0;border-radius:8px}
 button{font:inherit;padding:8px 10px;border:0;border-radius:8px;background:#2a78d6;color:#fff;cursor:pointer}
 .err{color:#b42318;font-size:13px}
+.report{color:inherit;opacity:.7;font-size:12px}
 </style>
 </head>
 <body>
@@ -53,6 +81,7 @@ ${
       : ""
 }
 <button type="submit">View dashboard</button>
+${reportLink(reportUrl)}
 </form>
 </body>
 </html>`;
@@ -65,7 +94,7 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
  * site's free-form name is never shown: anyone can call a site "Stripe", only the owner of a
  * domain can verify it.
  */
-export function sharePage(token: string, domain: string | null, nonce: string): string {
+export function sharePage(token: string, domain: string | null, nonce: string, reportUrl = DEFAULT_ABUSE_REPORT_URL): string {
   const heading = domain ? esc(domain) : "Unverified site";
   const title = domain ? `${esc(domain)} · analytics` : "Shared analytics (unverified site)";
   const source = domain
@@ -112,6 +141,7 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;color:var(--text-seconda
 .empty{color:var(--text-muted);font-size:13px;padding:8px 0}
 footer{margin-top:20px;color:var(--text-muted);font-size:12px}
 details{margin-top:8px;color:var(--text-secondary);font-size:12px}
+.report{color:var(--text-secondary)}
 </style>
 </head>
 <body>
@@ -136,7 +166,7 @@ details{margin-top:8px;color:var(--text-secondary);font-size:12px}
   <div class="card"><h2>Devices</h2><table id="t-devices"></table></div>
   <div class="card"><h2>Goals</h2><table id="t-goals"></table></div>
 </section>
-<footer>${source} Cookieless analytics; aggregate numbers only.</footer>
+<footer>${source} Cookieless analytics; aggregate numbers only. ${reportLink(reportUrl)}</footer>
 </div></div>
 <script nonce="${nonce}">
 (function(){

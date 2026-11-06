@@ -18,6 +18,7 @@ export const METRICS = [
   "conversions",
   "conversion_rate",
   "revenue",
+  "goal_value",
   "revenue_per_visitor",
   "new_revenue",
   "renewal_revenue",
@@ -86,6 +87,7 @@ export const SORTABLE_METRICS: readonly Metric[] = [
   "conversions",
   "conversion_rate",
   "revenue",
+  "goal_value",
   "revenue_per_visitor",
   "new_revenue",
   "renewal_revenue",
@@ -157,8 +159,12 @@ export const FIRST_TOUCH_DIMS = [
   "first_entry_page",
 ] as const;
 
-/** An event's identity row (user:<id> when identified, else its visitor id), one column of it. */
-const firstTouch = (col: string) => `(SELECT i.${col} FROM identities i WHERE i.ident = COALESCE('user:' || e.user_id, e.visitor_id))`;
+/**
+ * An event's identity row, one column of it: its user's (user:<id>) when that user has one (a
+ * server, or a trusted browser, identified them), else its visitor id's.
+ */
+const firstTouch = (col: string) =>
+  `(SELECT i.${col} FROM identities i WHERE i.ident = COALESCE((SELECT u.ident FROM identities u WHERE u.ident = 'user:' || e.user_id), e.visitor_id))`;
 export type Breakdown = (typeof BREAKDOWNS)[number] | `prop:${string}` | `user:${string}`;
 
 /** Dimension -> SQL over `events e` (and `sessions s` for entry/exit page). Never user input. */

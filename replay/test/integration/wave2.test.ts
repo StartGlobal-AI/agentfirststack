@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ReplaySiteDO } from "../../src/do/site-do";
 import type { Bindings } from "../../src/env";
 import { click, custom, error, meta, mousemove, page, snapshot } from "../fixtures/rrweb";
-import { call, E, hosted, newSid, newSite, postF, sendChunk, signup, tool } from "./helpers";
+import { call, claim, E, hosted, newSid, newSite, postF, sendChunk, signup, tool } from "./helpers";
 
 const stubOf = (site: string) => E.SITE.get(E.SITE.idFromName(site));
 const maintainNow = (site: string) =>
@@ -304,8 +304,11 @@ describe("wave 2, 3: replay signals to a tags container", () => {
 
 describe("wave 2, 4: heatmap images", () => {
   const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]); // the PNG signature: enough for a fake
-  /** A stand-in for the Browser Rendering binding: records each screenshot request. */
-  function browserStub(status = 200) {
+  /**
+   * A stand-in for the Browser Rendering binding: records each screenshot request. Test accounts
+   * are unclaimed, and images are claimed-only by default: the env lets unclaimed accounts render.
+   */
+  function browserStub(status = 200, vars: Record<string, string> = { UNCLAIMED_MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY: "30" }) {
     const calls: { action: string; opts: Record<string, any> }[] = [];
     const BROWSER = {
       quickAction: async (action: string, opts: Record<string, any>) => {
@@ -315,7 +318,7 @@ describe("wave 2, 4: heatmap images", () => {
           : Response.json({ success: false, errors: [{ message: "busy" }] }, { status, headers: { "x-browser-ms-used": "10" } });
       },
     } as unknown as BrowserRun;
-    return { env: hosted({ BROWSER }), calls };
+    return { env: hosted({ BROWSER, ...vars } as Partial<Bindings>), calls };
   }
   const doc = {
     type: 0,
@@ -433,6 +436,24 @@ describe("wave 2, 4: heatmap images", () => {
     const r = await call("GET", `/v1/sites/${other.site}/heatmap/image?page=/pricing`, { key: other.key, env: busy.env });
     expect(r.status).toBe(503);
     expect(r.json.error.code).toBe("browser_busy");
+  });
+
+  it("claimed projects only by default (the browser is shared): 403 claim_required until a person claims it", async () => {
+    const { key, site, account } = await newSite("shop.test");
+    await record(site);
+    const b = browserStub(200, {});
+    const r = await call("GET", `/v1/sites/${site}/heatmap/image?page=/pricing`, { key, env: b.env });
+    expect(r.status).toBe(403);
+    expect(r.json.error.code).toBe("claim_required");
+    expect(r.json.error.hint).toContain("claim-link");
+    expect(r.json.error.hint).toContain(`/v1/sites/${site}/heatmap`);
+    expect(b.calls).toHaveLength(0);
+    // the claimed value never applies to an unclaimed account
+    const claimedVar = hosted({ ...b.env, MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY: "100" });
+    expect((await call("GET", `/v1/sites/${site}/heatmap/image?page=/pricing`, { key, env: claimedVar })).status).toBe(403);
+    await claim(account);
+    expect((await call("GET", `/v1/sites/${site}/heatmap/image?page=/pricing`, { key, env: b.env })).status).toBe(200);
+    expect(b.calls).toHaveLength(1);
   });
 });
 

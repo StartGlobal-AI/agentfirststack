@@ -480,8 +480,16 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
     checks.push({
       id: "daily_limit",
       ok: false,
-      detail: `This site reached its daily limit of ${limits.events_per_site_per_day} events; ${status.refused_today} were refused today. It resets at 00:00 UTC.`,
+      detail: `This site reached its daily limit of ${limits.events_per_site_per_day} browser events; ${status.refused_today} were refused today. It resets at 00:00 UTC. Server events and payments have their own budget and still go through.`,
       fix: "If the traffic isn't yours, set allowed_hostnames or exclusions. Accounts a person has claimed may get higher limits.",
+    });
+  }
+  if (status?.server_daily_limit_reached) {
+    checks.push({
+      id: "server_daily_limit",
+      ok: false,
+      detail: `This site reached its daily limit of ${limits.server_events_per_site_per_day} server events and payments; more are refused until 00:00 UTC (payment providers retry their deliveries).`,
+      fix: "Send fewer server events (batch what you can, skip ones you don't report on). Accounts a person has claimed may get higher limits.",
     });
   }
   const excluded = EXCLUSION_REASONS.map((r) => [r, drops[r]] as const).filter(([, v]) => !!v);

@@ -1,4 +1,4 @@
-import { createApiKey } from "@afs/shared";
+import { createApiKey, leadingZeroBits } from "@afs/shared";
 import { describe, expect, it } from "vitest";
 import { createClaimLink } from "../src/claims";
 import { purgeExpired } from "../src/cleanup";
@@ -424,14 +424,27 @@ describe("8. signup abuse", () => {
     expect((await su(daily, ip)).json.error.hint).toMatch(/per day/);
   });
 
-  it("trips the deployment-wide breaker with a hint, and the cron prunes the counters", async () => {
+  it("answers the tripped deployment-wide breaker with a proof of work, and the cron prunes the counters", async () => {
     await E.DB.prepare("DELETE FROM signup_log").run();
-    const env = testEnv({ SIGNUP_GLOBAL_HOURLY_LIMIT: "2" });
+    const env = testEnv({ SIGNUP_GLOBAL_HOURLY_LIMIT: "2", SIGNUP_POW_DIFFICULTY: "6" });
     expect((await su(env, nextIp())).status).toBe(201);
     expect((await su(env, nextIp())).status).toBe(201);
     const paused = await su(env, nextIp());
     expect(paused.status).toBe(429);
-    expect(paused.json.error).toMatchObject({ code: "signups_paused", hint: expect.stringMatching(/retry/) });
+    expect(paused.json.error).toMatchObject({ code: "proof_of_work_required", hint: expect.stringMatching(/Existing keys keep working/) });
+    const { challenge, difficulty } = paused.json as { challenge: string; difficulty: number };
+    expect(difficulty).toBe(6);
+    let solution = 0;
+    for (; ; solution++) {
+      const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${challenge}:${solution}`)));
+      if (leadingZeroBits(h) >= difficulty) break;
+    }
+    const solved = await call("POST", "/v1/signup", { env, ip: nextIp(), json: { challenge, solution: String(solution) } });
+    expect(solved.status).toBe(201);
+    expect(solved.json.api_key).toMatch(/^afs_/);
+    // The breaker counted it; the challenge was used once.
+    expect(await E.DB.prepare("SELECT count(*) AS n FROM signup_log").first("n")).toBe(4);
+    await E.DB.prepare("DELETE FROM signup_log WHERE rowid IN (SELECT rowid FROM signup_log ORDER BY rowid DESC LIMIT 2)").run();
 
     const now = Date.now();
     await E.DB.prepare("INSERT INTO signup_log (ip_hash, created_at) VALUES ('stale', ?)")

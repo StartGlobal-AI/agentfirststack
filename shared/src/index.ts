@@ -9,3 +9,5 @@ export * from "./resource";
 export * from "./standing";
 export * from "./text";
 export * from "./protection";
+export * from "./pauses";
+export * from "./signup-challenge";

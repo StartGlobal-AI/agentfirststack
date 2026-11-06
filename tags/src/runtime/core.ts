@@ -343,7 +343,7 @@ export class Runtime implements VendorHost {
     }
   }
 
-  loadScript(src: string, attrs?: Record<string, string>) {
+  loadScript(src: string, attrs?: Record<string, string>, done?: (ok: boolean) => void) {
     if (this.scripts[src]) return;
     this.scripts[src] = "pending";
     const s = this.d.createElement("script");
@@ -354,10 +354,12 @@ export class Runtime implements VendorHost {
       this.scripts[src] = "loaded";
       const uet = attrs?.["data-afst-uet"];
       if (uet) uetOnLoad(this, uet);
+      done && done(true);
     };
     s.onerror = () => {
       this.scripts[src] = "error";
       this.log("warn", `failed to load ${src} (ad blocker?)`);
+      done && done(false);
     };
     const first = this.d.getElementsByTagName("script")[0];
     if (first && first.parentNode) first.parentNode.insertBefore(s, first);

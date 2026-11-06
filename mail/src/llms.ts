@@ -7,6 +7,7 @@ import { DEFAULT_MAX_SCHEDULED, DEFAULT_SEND_DAILY_LIMIT, DEFAULT_UNCLAIMED_MAX_
 import { DEFAULT_MAX_CONCURRENT_WAITS, DEFAULT_MAX_CONCURRENT_WAITS_PER_INBOX } from "./service/wait";
 import { DEFAULT_MAX_WEBHOOKS } from "./service/webhooks";
 import { DEFAULT_UNCLAIMED_MAX_MESSAGE_BYTES, MAX_MESSAGE_BYTES, maxInboundMessageBytes } from "./service/ingest";
+import { inboxCreateBurstLimit, sendPauseThresholds } from "./service/pauses";
 
 const bytes = (n: number) =>
   n >= 1024 ** 3 ? `${Math.round((n / 1024 ** 3) * 10) / 10} GiB` : n >= 1024 ** 2 ? `${Math.round(n / 1024 ** 2)} MiB` : `${n} bytes`;
@@ -76,9 +77,27 @@ export function limitsTable(env: AppEnv | undefined): string {
     "|---|---|---|---|",
     ...lines,
     "",
+    pausesLine(env, claimed, unclaimed),
     `Shared-domain send policy: ${env.SHARED_SEND_POLICY === "reply_only" ? "reply_only (see Sending)" : "open"}. Shared-domain mail retention: ${retention > 0 ? `${retention} days` : "kept until deleted"}. Delivery tracking: ${env.DELIVERY_EVENTS_QUEUE ? "on" : "off"}. Attachment text: ${env.AI ? "on" : "off"}.`,
     "GET /v1/usage (MCP get_usage) gives your account's own used / limit / resets_at for each of these.",
   ].join("\n");
+}
+
+/** This deployment's automatic-pause thresholds (claimed / unclaimed), one line. */
+function pausesLine(env: AppEnv, claimed: { suspended: boolean; claimed: boolean }, unclaimed: { suspended: boolean; claimed: boolean }) {
+  const send = (st: typeof claimed) => {
+    const t = sendPauseThresholds(env, st);
+    const parts = [
+      Number.isFinite(t.bounce_percent) ? `bounces > ${t.bounce_percent}%` : null,
+      Number.isFinite(t.complaint_percent) ? `complaints > ${t.complaint_percent}%` : null,
+    ].filter(Boolean);
+    return parts.length ? `paused on ${parts.join(" or ")} of the last hour's recipients (at least ${t.min_sends})` : "never paused";
+  };
+  const burst = (st: typeof claimed) => {
+    const n = inboxCreateBurstLimit(env, st);
+    return Number.isFinite(n) ? `paused past ${n} creation attempts in an hour` : "never paused";
+  };
+  return `Automatic pauses (see "Automatic pauses"): sending is ${send(claimed)} (unclaimed: ${send(unclaimed)}); inbox creation is ${burst(claimed)} (unclaimed: ${burst(unclaimed)}).`;
 }
 
 /** GET /llms.txt: the manual. Every route and MCP tool is listed here. */
@@ -312,6 +331,8 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me)
   refuses its mail at once and erases its inboxes 7 days later; their addresses stay reserved for good.
   Inbox creations per UTC day may be capped (429 \`daily_limit\`; reusing an address you own is not a creation).
+  Hammering create far past that cap within an hour pauses inbox creation for the project (403 \`capability_paused\`,
+  see "Automatic pauses"); creating an address you already own still returns it.
   A custom \`domain\` must be yours with ownership verified (else 403 \`ownership_not_verified\`; see Domains).
   \`ttl_days\`: inbox and its mail are deleted after that many days. \`display_name\`: line breaks and other
   control characters are replaced by spaces.
@@ -382,6 +403,8 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   who claimed the account (its members). An unclaimed account has no members: \`POST /v1/claim-link\` (platform site) gives
   your person a link to claim it, then you can write to them.
   Your own verified domain has no such rule. Suspended accounts cannot send (403 \`account_suspended\`).
+  While sending is paused for the project (403 \`capability_paused\`: too many bounces or spam complaints, see
+  "Automatic pauses") nothing goes to outside recipients, scheduled sends included; mail to your own inboxes still works.
   Recipients that are this account's own inboxes are delivered internally, instantly, without Email Service (\`internal:
   [{ recipient, inbox_id, status: delivered|rejected, message_id?, reason? }]\`; the receiving inbox's limits apply and the
   message is authenticated, \`auth_verdict: "pass"\`). Outside recipients do not see them in To/Cc. Every recipient counts
@@ -519,6 +542,22 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
   (\`used\` on the item is the fullest one).
 - Every 429 (daily limits, rate limits, too_many_waits, Email Service throttling) has a \`Retry-After\` header (seconds) and
   \`error.details.retry_after_s\`: to 00:00 UTC for daily limits, the window for rate limits.
+- \`paused\`: the capabilities paused for this project now (\`[{ capability, reason, paused_at, paused_by, until }]\`, see
+  "Automatic pauses"). \`send_health\`: \`{ window_s: 3600, sent, bounced, complained, bounce_percent, complaint_percent,
+  auto_pause: { bounce_percent_above, complaint_percent_above, min_sends } | null }\`: the last hour of your sends next to
+  the rates that pause sending (null = off here).
+
+### Automatic pauses
+On a strong abuse signal the platform pauses one capability of the project, emails the project's people and the
+operator, and answers 403 \`capability_paused\` where it is used (\`error.details: { capability, paused_at, paused_by,
+until }\`; the hint has the reason and how to appeal). Everything else keeps working. Only the operator lifts a pause:
+don't retry or work around it (the platform's Acceptable Use Policy). Mail has two:
+- \`mail.send\`: more than a set share of the external recipients you emailed in the last hour bounced or reported
+  you as spam (once there are enough of them). Keep lists clean: send only to people who asked, check
+  \`GET /v1/messages/:id/delivery\`, and stop writing to addresses that bounced.
+- \`mail.inbox_create\`: creating new inboxes far past the daily cap within one hour (refused attempts and taken addresses
+  count). Reuse inboxes: one inbox receives from any number of services (plus addresses, from/subject filters).
+This deployment's thresholds are under "Limits on this deployment".
 
 ### Other
 - \`GET /llms.txt\` this manual. \`GET /ui\` a small human inbox viewer (paste an API key). \`GET /\` service info.
@@ -623,6 +662,10 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | MAX_SCHEDULED_PER_ACCOUNT | var | scheduled sends waiting per account |
 | MAX_ATTACHMENT_TEXT_PER_DAY | var | attachment-to-text conversions per account per UTC day |
 | DELIVERY_EVENTS_QUEUE | var | optional; the queue Email Sending event subscriptions publish to (this Worker consumes it); set = delivery tracking on |
+| SEND_PAUSE_BOUNCE_PERCENT, SEND_PAUSE_COMPLAINT_PERCENT | var | optional; pause \`mail.send\` when more than this percent of the external recipients an account emailed in the last hour bounced / complained (needs delivery tracking; fractions allowed; unset or "0" = off) |
+| SEND_PAUSE_MIN_SENDS | var | optional; recipients the last hour must have before those rates count (default 10) |
+| INBOX_CREATE_BURST_PER_HOUR | var | optional; pause \`mail.inbox_create\` past this many new-inbox attempts per account per UTC hour (default 3 x MAX_INBOX_CREATES_PER_DAY when that is set, else off; "0" = off) |
+| SITE | binding | optional service binding to the platform's site: pauses are posted to it (it emails the people and the operator); without it they are written to AUTH_DB. \`GET /v1/admin/delivery-health?hours=\` (the site's internal auth, or any key plus \`x-admin-token\`) gives the deployment's bounce and complaint rates |
 | AI | binding | optional Workers AI binding; enables attachment text |
 | WAIT_LIMITER, SEARCH_LIMITER, WEBHOOK_TEST_LIMITER | bindings | optional Workers rate limits per account (wait, search, webhook test) |
 

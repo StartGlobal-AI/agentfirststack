@@ -30,6 +30,8 @@ export interface Opts {
   forward?: boolean;
   tags?: IngestRequest["tags"];
   net?: string;
+  /** the client network is a data centre */
+  dc?: boolean;
   usage?: UsageSnapshot;
 }
 
@@ -50,6 +52,7 @@ export function feed(db: Db, sid: string, seq: number, ev: unknown[], o: Opts = 
     forward: !!o.forward,
     tags: o.tags ?? null,
     net: o.net ?? null,
+    dc: !!o.dc,
     usage: o.usage ?? null,
   });
 }

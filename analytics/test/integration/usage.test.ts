@@ -50,9 +50,17 @@ async function tool(key: string, name: string, args: Record<string, unknown> = {
   return { isError: !!r.body.result.isError, data: JSON.parse(r.body.result.content[0].text) };
 }
 
-const ACCOUNT_CAPS = ["events_per_account_per_day", "crawl_hits_per_account_per_day", "sites_per_account"];
+const ACCOUNT_CAPS = [
+  "events_per_account_per_day",
+  "server_events_per_account_per_day",
+  "crawl_hits_per_account_per_day",
+  "sites_per_account",
+  "export_rows_per_account_per_day",
+  "sql_ms_per_account_per_day",
+];
 const SITE_CAPS = [
   "events_per_site_per_day",
+  "server_events_per_site_per_day",
   "storage_bytes",
   "goals_per_site",
   "funnels_per_site",
@@ -77,6 +85,8 @@ const SITE_CAPS = [
 const DROPS_DATA = [
   "events_per_site_per_day",
   "events_per_account_per_day",
+  "server_events_per_site_per_day",
+  "server_events_per_account_per_day",
   "storage_bytes",
   "user_prop_keys_per_site",
   "browser_user_prop_keys_per_site",
@@ -129,13 +139,18 @@ describe("GET /v1/usage and get_usage", () => {
     expect(JSON.stringify(u)).not.toContain('MAX_CRAWL_HITS_PER_DAY"');
 
     const L = u.limits;
-    // The test env neutralises the event and storage caps (limit null); code defaults show.
-    expect(L.events_per_site_per_day).toMatchObject({ used: 3, limit: null, remaining: null, var: "MAX_EVENTS_PER_SITE_PER_DAY" });
-    expect(L.events_per_site_per_day.per).toEqual([
+    // The test env neutralises the event and storage caps (limit null); code defaults show. Server
+    // events have their own budget: the browser one is untouched.
+    expect(L.events_per_site_per_day).toMatchObject({ used: 0, limit: null, remaining: null, var: "MAX_EVENTS_PER_SITE_PER_DAY" });
+    expect(L.server_events_per_site_per_day).toMatchObject({ used: 3, limit: null, var: "MAX_SERVER_EVENTS_PER_SITE_PER_DAY" });
+    expect(L.server_events_per_site_per_day.per).toEqual([
       { id: a, label: "usage-a.test", used: 3, remaining: null },
       { id: b, label: "usage-b.test", used: 1, remaining: null },
     ]);
-    expect(L.events_per_account_per_day).toMatchObject({ used: 4, limit: null });
+    expect(L.events_per_account_per_day).toMatchObject({ used: 0, limit: null });
+    expect(L.server_events_per_account_per_day).toMatchObject({ used: 4, limit: null });
+    expect(L.sql_ms_per_account_per_day).toMatchObject({ used: 0, limit: null, var: "MAX_SQL_MS_PER_ACCOUNT_PER_DAY" });
+    expect(L.export_rows_per_account_per_day).toMatchObject({ used: 0, limit: null, var: "MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY" });
     expect(L.storage_bytes.used).toBeGreaterThan(0);
     expect(L.storage_bytes.var).toBe("MAX_SITE_STORAGE_MB");
     expect(L.goals_per_site).toMatchObject({ used: 1, limit: 100, remaining: 99 });
@@ -157,12 +172,14 @@ describe("GET /v1/usage and get_usage", () => {
     };
     await track(caps, key, b, [{ name: "c" }, { name: "d" }, { name: "e" }]);
     const capped = (await callWith(caps, "/v1/usage", { key })).body.limits;
-    expect(capped.events_per_site_per_day).toMatchObject({ used: 4, limit: 10, remaining: 6 });
-    expect(capped.events_per_site_per_day.per).toEqual([
+    // Unset, the server budget is the same number as the browser one (counted apart).
+    expect(capped.events_per_site_per_day).toMatchObject({ used: 0, limit: 10, remaining: 10 });
+    expect(capped.server_events_per_site_per_day).toMatchObject({ used: 4, limit: 10, remaining: 6 });
+    expect(capped.server_events_per_site_per_day.per).toEqual([
       { id: b, label: "usage-b.test", used: 4, remaining: 6 },
       { id: a, label: "usage-a.test", used: 3, remaining: 7 },
     ]);
-    expect(capped.events_per_account_per_day).toMatchObject({ used: 7, limit: 50, remaining: 43 });
+    expect(capped.server_events_per_account_per_day).toMatchObject({ used: 7, limit: 50, remaining: 43 });
     expect(capped.storage_bytes.limit).toBe(64 * 1024 * 1024);
     expect(capped.storage_bytes.per.every((p: any) => p.remaining === 64 * 1024 * 1024 - p.used)).toBe(true);
     expect(capped.sites_per_account).toMatchObject({ used: 2, limit: 5, remaining: 3 });
@@ -172,7 +189,7 @@ describe("GET /v1/usage and get_usage", () => {
     const m = await tool(key, "get_usage");
     expect(m.isError).toBe(false);
     expect(Object.keys(m.data.limits).sort()).toEqual(Object.keys(u.limits).sort());
-    expect(m.data.limits.events_per_site_per_day.per[0]).toMatchObject({ id: b, used: 4 });
+    expect(m.data.limits.server_events_per_site_per_day.per[0]).toMatchObject({ id: b, used: 4 });
   });
 
   it("works with a read key (REST and MCP) and over internal auth, the way the platform site calls it", async () => {
@@ -182,7 +199,10 @@ describe("GET /v1/usage and get_usage", () => {
     const ro = (await call("/v1/keys", { method: "POST", key, json: { name: "ro", scope: "read" } })).body.api_key as string;
     const rest = await call("/v1/usage", { key: ro });
     expect(rest.status).toBe(200);
-    expect(rest.body.limits.events_per_site_per_day).toMatchObject({ used: 2, per: [{ id: site, label: "usage-ro.test", used: 2 }] });
+    expect(rest.body.limits.server_events_per_site_per_day).toMatchObject({
+      used: 2,
+      per: [{ id: site, label: "usage-ro.test", used: 2 }],
+    });
     const listed = await call("/mcp", {
       method: "POST",
       key: ro,
@@ -190,7 +210,7 @@ describe("GET /v1/usage and get_usage", () => {
       json: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
     });
     expect((listed.body.result.tools as { name: string }[]).map((t) => t.name)).toContain("get_usage");
-    expect((await tool(ro, "get_usage")).data.limits.events_per_account_per_day.used).toBe(2);
+    expect((await tool(ro, "get_usage")).data.limits.server_events_per_account_per_day.used).toBe(2);
     const me = (await call("/v1/me", { key })).body;
     const internal = await callWith(
       { INTERNAL_TOKEN: INTERNAL },
@@ -199,7 +219,7 @@ describe("GET /v1/usage and get_usage", () => {
       "https://analytics.internal",
     );
     expect(internal.status, JSON.stringify(internal.body)).toBe(200);
-    expect(internal.body.limits.events_per_site_per_day.used).toBe(2);
+    expect(internal.body.limits.server_events_per_site_per_day.used).toBe(2);
     // An account with no sites: zeros, empty per lists.
     const empty = (await call("/v1/usage", { key: await newAccount() })).body;
     expect(empty.sites).toBe(0);

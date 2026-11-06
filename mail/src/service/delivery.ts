@@ -5,6 +5,7 @@ import { assertActive, rateLimit } from "./budgets";
 import { type Addr, type MessageRow, iso } from "./format";
 import { getInboxRow } from "./inboxes";
 import { getMessageRow } from "./messages";
+import { checkSendHealth } from "./pauses";
 import { acquireWaitSlot, clampTimeout, releaseWaitSlot } from "./wait";
 import { emitEvent } from "./webhooks";
 
@@ -27,7 +28,8 @@ import { emitEvent } from "./webhooks";
  * report after delivery) always wins. Each change to a terminal status emits message.delivered,
  * message.bounced, message.complained or message.failed (failed and rejected) to webhooks and the
  * event feed, and wakes GET /v1/messages/:id/delivery waits. Recipients that are the account's own
- * inboxes are "delivered" (internal: true) at send time.
+ * inboxes are "delivered" (internal: true) at send time. A bounce or complaint also checks the
+ * account's last hour against the auto-pause thresholds (src/service/pauses.ts).
  */
 
 export const DELIVERY_STATUSES = ["sent", "delivered", "deferred", "bounced", "failed", "rejected", "complained"] as const;
@@ -208,6 +210,8 @@ export async function handleDeliveryEvent(env: AppEnv, ev: EmailSendingEvent): P
       console.error("delivery event emit failed", err);
     }
   }
+  // A bounce or complaint may push the account's last hour over the auto-pause thresholds.
+  if (e.status === "bounced" || e.status === "complained") await checkSendHealth(env, msg.account_id, e.at);
   return "applied";
 }
 

@@ -39,7 +39,7 @@ import { hostAllowed, originHost } from "../service/origin";
 import { eventForLog, LOG_IDENTITY } from "../service/privacy";
 import {
   effectiveProtection,
-  heldReason,
+  HELD_STRICT,
   isActive,
   measuresOn,
   type ProtectionView,
@@ -48,6 +48,7 @@ import {
   type QuarantineReason,
   type StoredProtection,
   spikeMin,
+  spikeMinNetworks,
   spikeThreshold,
 } from "../service/protection";
 
@@ -231,8 +232,11 @@ export class ContainerDO extends DurableObject<Bindings> {
   /** Attack protection: the episode (meta "protection", loaded lazily, saved on change or every 30 s). */
   private prot: StoredProtection | null | undefined = undefined;
   private protSavedAt = 0;
-  /** Browser hits in the current 15-minute window (in memory only), and the usual rate per window for a day. */
-  private win = { start: 0, n: 0 };
+  /**
+   * Browser hits in the current 15-minute window and the distinct networks they came from (at most
+   * SPIKE_MIN_NETWORKS kept; in memory only), and the usual rate per window for a day.
+   */
+  private win = { start: 0, n: 0, nets: new Set<string>() };
   private usual = { day: "", perWindow: 0 };
   /** The day net_daily was last pruned for, and the most hits one network sent that day (-1: not read yet). */
   private netDay = "";
@@ -402,7 +406,7 @@ export class ContainerDO extends DurableObject<Bindings> {
     this.visitorCount = null;
     this.agg = { day: "", at: 0, flushed: NO_EVENTS, account: NO_EVENTS, platform: NO_EVENTS };
     this.prot = undefined;
-    this.win = { start: 0, n: 0 };
+    this.win = { start: 0, n: 0, nets: new Set() };
     this.usual = { day: "", perWindow: 0 };
     this.netDay = "";
     this.netMax = { day: "", n: -1 };
@@ -1005,13 +1009,14 @@ export class ContainerDO extends DurableObject<Bindings> {
   }
 
   /**
-   * A trigger: a spike (under_attack) or a network past its share (contained). Opens an episode when
-   * none is active, upgrades contained to under_attack, and refreshes last_seen_at (the cooldown
-   * counts from it). `detail` replaces the reason's text when given.
+   * A trigger: a spike from many networks (under_attack), or a network past its share or a spike
+   * from few networks (contained). Opens an episode when none is active, upgrades contained to
+   * under_attack, and refreshes last_seen_at (the cooldown counts from it). `detail` replaces the
+   * reason's text when given.
    */
-  private trigger(kind: "spike" | "network_share", now: number, day: string, detail?: string) {
+  private trigger(kind: "spike" | "network_share", now: number, day: string, detail?: string, attack = kind === "spike") {
     const cur = effectiveProtection(this.loadProt(), now);
-    const next = kind === "spike" ? "under_attack" : "contained";
+    const next = attack ? "under_attack" : "contained";
     let changed = false;
     let ep: StoredProtection;
     if (!cur || !isActive(cur.state)) {
@@ -1087,27 +1092,39 @@ export class ContainerDO extends DurableObject<Bindings> {
     return perWindow;
   }
 
-  /** Count a hit in the current window; past max(SPIKE_FACTOR x usual, SPIKE_MIN) it's a spike. In memory only. */
-  private countWindow(state: ContainerState, day: string, now: number) {
+  /**
+   * Count a hit in the current window; past max(SPIKE_FACTOR x usual, SPIKE_MIN) it's a spike. A
+   * spike from at least SPIKE_MIN_NETWORKS distinct networks is an attack; from fewer, it's a flood
+   * each network's daily share already bounds, so the container is only contained. In memory only.
+   */
+  private countWindow(state: ContainerState, day: string, now: number, net: string | undefined) {
     const start = now - (now % SPIKE_WINDOW_MS);
-    if (this.win.start !== start) this.win = { start, n: 0 };
+    if (this.win.start !== start) this.win = { start, n: 0, nets: new Set() };
     const n = ++this.win.n;
+    const minNets = spikeMinNetworks(this.env);
+    if (net && this.win.nets.size < minNets) this.win.nets.add(net);
     const min = spikeMin(this.env);
     if (n < min) return; // the usual rate is read only past the floor
     const usual = this.usualPerWindow(state, day);
-    if (n >= spikeThreshold(usual, min))
+    if (n < spikeThreshold(usual, min)) return;
+    const nets = this.win.nets.size;
+    const spike = `${n} browser hits in 15 minutes; usually about ${Math.round(usual)} (a spike is ${SPIKE_FACTOR}x that, and at least ${min})`;
+    // The set stops growing at minNets, so "at least".
+    if (nets >= minNets) this.trigger("spike", now, day, minNets > 0 ? `${spike}, from at least ${nets} networks.` : `${spike}.`);
+    else
       this.trigger(
         "spike",
         now,
         day,
-        `${n} browser hits in 15 minutes; usually about ${Math.round(usual)} (a spike is ${SPIKE_FACTOR}x that, and at least ${min}).`,
+        `${spike}, but from only ${nets} network${nets === 1 ? "" : "s"} (an attack needs ${minNets}): contained, each network is held to its daily share.`,
+        false,
       );
   }
 
   /**
    * Attack protection for one live browser hit (preview links carry a valid token and are exempt):
-   * count its network and the window, then decide whether it's quarantined and whether browser
-   * conversions are held. With protection "off" detection still runs but nothing is set aside.
+   * count its network and the window, then decide whether it's quarantined and whether its
+   * conversion is held (strict only). With protection "off" detection still runs but nothing is set aside.
    */
   private guard(hit: CollectHit, state: ContainerState, standing: Standing, day: string, now: number) {
     const mode = parseMode(state.protection);
@@ -1127,14 +1144,16 @@ export class ContainerDO extends DurableObject<Bindings> {
       }
     }
     // A network over its share is already contained: it doesn't count towards a spike.
-    if (!overShare) this.countWindow(state, day, now);
+    if (!overShare) this.countWindow(state, day, now, hit.enrich.net_hash);
     const on = measuresOn(mode, effectiveProtection(this.loadProt(), now)?.state ?? "none");
     let quarantine: QuarantineReason | null = null;
     if (mode !== "off") {
       if (overShare) quarantine = "network_share";
       else if (on && isDatacenterAsn(hit.enrich.asn)) quarantine = "datacenter";
     }
-    return { mode, caps, quarantine, hold: on };
+    // Only strict (the owner's choice) holds every browser conversion; under attack the
+    // quarantine above already sets aside the conversions of the networks it covers.
+    return { mode, caps, quarantine, hold: mode === "strict" };
   }
 
   /** Today's quarantine counters: by reason, and the hits past MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY that weren't logged. */
@@ -1160,6 +1179,7 @@ export class ContainerDO extends DurableObject<Bindings> {
     const p = hit.payload;
     const before = Number.isFinite(cap) ? this.quarantineCounts(day) : null;
     this.bump(day, `q:${reason}`, 1);
+    if (p.type === "conversion") this.bump(day, "held_conversions", 1);
     const ep = effectiveProtection(this.loadProt(), now);
     if (ep && isActive(ep.state)) {
       if (ep.q_day !== day) [ep.q_day, ep.quarantined] = [day, 0];
@@ -1204,12 +1224,11 @@ export class ContainerDO extends DurableObject<Bindings> {
     return { ok: true, event_id: eventId };
   }
 
-  /** Attack measures on: a browser conversion's server-side deliveries are skipped (held) with the reason. */
-  private hold(targets: PlannedTarget[], mode: ProtectionMode, day: string): PlannedTarget[] {
+  /** Protection strict: a browser conversion's server-side deliveries are skipped (held) with the reason. */
+  private hold(targets: PlannedTarget[], day: string): PlannedTarget[] {
     if (!targets.some((t) => t.status === "queued")) return targets;
     this.bump(day, "held_conversions", 1);
-    const reason = heldReason(mode);
-    return targets.map((t) => (t.status === "queued" ? { ...t, status: "skipped" as const, reason } : t));
+    return targets.map((t) => (t.status === "queued" ? { ...t, status: "skipped" as const, reason: HELD_STRICT } : t));
   }
 
   /** The container's protection as of `now` (next_steps are added by the Worker, which knows the public URL). */
@@ -1233,7 +1252,7 @@ export class ContainerDO extends DurableObject<Bindings> {
       measures: {
         network_share_limit: mode !== "off" && Number.isFinite(cap) ? cap : null,
         datacenter_quarantine: on,
-        browser_conversions_held: on,
+        browser_conversions_held: mode === "strict",
       },
     };
   }
@@ -1385,14 +1404,12 @@ export class ContainerDO extends DurableObject<Bindings> {
         note = `The backend already sent this conversion server-side (event ${server.event_id}); the browser copy is logged only.`;
       else {
         let plan = planDispatch(event, this.getMeta<DestinationInfo[]>("destinations") ?? [], { matched: true, now });
-        // Under attack (or protection strict): browser conversions aren't forwarded to ad platforms.
+        // Protection strict: browser conversions aren't forwarded to ad platforms.
         if (guard?.hold) {
-          const held = this.hold(plan, guard.mode, day);
+          const held = this.hold(plan, day);
           if (held !== plan)
             note =
-              guard.mode === "strict"
-                ? "Held: protection is strict, so browser conversions aren't forwarded server-side. Send this conversion from your backend (POST /v1/containers/:id/events)."
-                : "Held: the container is under attack, so browser conversions aren't forwarded to ad platforms until it ends. Your backend's conversions (POST /v1/containers/:id/events) are still delivered.";
+              "Held: protection is strict, so browser conversions aren't forwarded server-side. Send this conversion from your backend (POST /v1/containers/:id/events).";
           plan = held;
         }
         targets = this.containerBudget(plan, caps.deliveriesPerDay, day);

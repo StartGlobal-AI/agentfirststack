@@ -22,6 +22,17 @@ export type Bindings = Env & {
   /** "false" stops claimed accounts publishing custom code; UNCLAIMED_ALLOW_CUSTOM_CODE ("true" to allow) for unclaimed ones (default not allowed). */
   ALLOW_CUSTOM_CODE?: string;
   UNCLAIMED_ALLOW_CUSTOM_CODE?: string;
+  /** Hosts custom code may not load from or talk to, on top of the built-in list (comma or space separated); a match pauses custom code (src/service/code-scan.ts). */
+  EXTRA_BLOCKED_CODE_HOSTS?: string;
+  /**
+   * Daily budgets of the calls that cost this platform outbound requests (UTC day; refused calls
+   * count too): scans + domain verifications, and destination tests, per account and for the whole
+   * deployment (unclaimed accounts stop at UNCLAIMED_<NAME> on the same counter). Unset = off.
+   */
+  MAX_SCANS_PER_ACCOUNT_PER_DAY?: string;
+  MAX_SCANS_PER_DAY?: string;
+  MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY?: string;
+  MAX_DESTINATION_TESTS_PER_DAY?: string;
   /** Daily delivery budgets (UTC day): per container, per account, platform-wide. Unset = off. */
   MAX_DELIVERIES_PER_CONTAINER_PER_DAY?: string;
   MAX_DELIVERIES_PER_ACCOUNT_PER_DAY?: string;
@@ -38,11 +49,13 @@ export type Bindings = Env & {
    * Attack protection (src/service/protection.ts): browser hits one client network may send a
    * container per UTC day before the rest are quarantined, and quarantined hits logged per container
    * per day (past it they're counted only). Unset = off. SPIKE_MIN_EVENTS: the fewest hits in 15
-   * minutes that count as a spike (default 1000; for tests).
+   * minutes that count as a spike (default 1000; for tests). SPIKE_MIN_NETWORKS: the fewest distinct
+   * networks in that window for the spike to be an attack (default 20; fewer = contained).
    */
   MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY?: string;
   MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY?: string;
   SPIKE_MIN_EVENTS?: string;
+  SPIKE_MIN_NETWORKS?: string;
   /** Consent banner choices recorded (proof of consent) per container per UTC day; past it choices still apply but aren't kept. Unset = off. */
   MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY?: string;
   /** Visitor rows kept per container (least recently seen evicted). Default 250000. */
@@ -70,6 +83,15 @@ export type Bindings = Env & {
    * auth as the container's account (analytics refuses a site of another account).
    */
   ANALYTICS?: Fetcher;
+  /**
+   * Optional service binding to this deployment's site Worker: a strong abuse signal (known-bad
+   * custom code at publish) pauses tags.custom_code through it (POST https://site.internal/v1/internal/pauses),
+   * and the site emails the project's people and the operator. Unbound: the pause is written to the
+   * identity DB directly and the site's hourly cron sends the emails.
+   */
+  SITE?: Fetcher;
+  /** Hours after the operator lifts a pause during which an automatic re-pause is skipped (default 24). */
+  PAUSE_LIFT_GRACE_HOURS?: string;
   /** Shared by the Workers of one deployment (x-afs-internal); see @afs/shared internalAuth. */
   INTERNAL_TOKEN?: string;
   /** Workers rate-limit bindings (wrangler.jsonc `ratelimits`); each is skipped when not bound. */

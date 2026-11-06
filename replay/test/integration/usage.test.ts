@@ -52,6 +52,9 @@ const DROPS = [
   "daily_recorded_bytes",
   "derived_per_day",
   "sessions_per_site_per_day",
+  "chunks_per_site_per_day",
+  "recorded_bytes_per_site_per_day",
+  "derived_per_site_per_day",
   "unverified_sessions_per_site_per_day",
   "upgraded_sessions_per_site_per_day",
   "forwarded_events_per_site_per_day",
@@ -206,7 +209,8 @@ describe("GET /v1/usage", () => {
     u = await usage(key, hosted({ ...env, BROWSER: {} as BrowserRun }));
     expect(u.limits.segments_per_site).toMatchObject({ used: 1, limit: 4, remaining: 3 });
     expect(u.limits.segments_per_site.per).toEqual([{ id: site, label: "usage-claim.test", used: 1, remaining: 3 }]);
-    expect(u.limits.heatmap_images_per_day).toMatchObject({ used: 2, limit: 30 });
+    // heatmap images are claimed-only by default: an unclaimed account's limit is 0 (UNCLAIMED_ can allow some)
+    expect(u.limits.heatmap_images_per_day).toMatchObject({ used: 2, limit: 0 });
     expect(u.limits.heatmap_images_per_site_per_day).toMatchObject({ used: 2, limit: 10 });
     expect(u.limits.heatmap_images_per_site_per_day.drops_data).toBeUndefined();
     // without Browser Rendering the feature is off here: limit 0 and a note
@@ -229,6 +233,7 @@ describe("GET /v1/usage", () => {
     u = await usage(key, env);
     expect(u.claimed).toBe(true);
     expect(u.limits.sites).toMatchObject({ used: 1, limit: 10 });
+    expect((await usage(key, hosted({ ...env, BROWSER: {} as BrowserRun }))).limits.heatmap_images_per_day).toMatchObject({ limit: 30 });
     expect(u.limits.segments_per_site.limit).toBe(50);
     expect(u.next_steps.join(" ")).not.toContain("claim");
   });

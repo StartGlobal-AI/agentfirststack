@@ -289,6 +289,32 @@ per-isolate `accountStanding()` cache). Suspending twice keeps the first time an
 (`"existing": true`). `pnpm afs suspend <profile> <acct_id> --reason "..."` and `pnpm afs
 unsuspend <profile> <acct_id>` call them (see [operations.md](operations.md)).
 
+### 8a. Capability pauses and abuse reports
+
+A strong abuse signal pauses one capability of an account, not the account: `mail.send`,
+`mail.inbox_create`, `tags.custom_code`, `replay.share_links`, `analytics.share_links`. The table
+`capability_pauses` (migration `0012_abuse.sql`, one row per account and capability) is read by
+every service with `capabilityPaused(env, accountId, capability)` from `@afs/shared` (cached a
+minute per isolate; nothing paused without the table; fails open on a D1 error), which answers
+`capabilityPausedError(pause)`: `403 capability_paused` with the reason and an appeal address.
+
+- **Pausing.** A service calls `requestCapabilityPause(env, {accountId, capability, reason, by,
+  until?, details?})`: over its `SITE` service binding that is `POST
+  https://site.internal/v1/internal/pauses` (`x-afs-internal: INTERNAL_TOKEN`, `x-afs-account` or
+  `account_id`; only over a binding, constant-time), which records it and emails the project's
+  people (`capability_paused`, account email) and `OPERATOR_EMAIL` (`operator_pause`) at once.
+  Without the binding, or when the site can't be reached, it writes the row itself
+  (`notified_at` NULL) and the site's hourly cron sends the emails. Retries are safe: an active
+  pause stays as it was (`existing: true`).
+- **Lifting** is the operator's: `DELETE /v1/admin/accounts/:id/pauses/:capability`
+  (`pnpm afs unpause <profile> <acct_id> <capability>`); the row keeps `lifted_at`, the people get
+  `capability_lifted`, and automatic re-pauses of it are skipped (`skipped: "recently_lifted"`) for
+  `PAUSE_LIFT_GRACE_HOURS` (default 24). `POST /v1/admin/accounts/:id/pauses {capability, reason,
+  until?}` (`pnpm afs pause`) pauses by hand; `GET /v1/admin/pauses` lists those in force.
+- **Abuse reports**: `POST /v1/abuse-reports` and the form at `/report-abuse` (no auth, per-network
+  limit), MCP `afs_report_abuse`; table `abuse_reports`; `GET /v1/admin/abuse-reports`, `PATCH
+  /v1/admin/abuse-reports/:id {status}`. See [operations.md](operations.md), "Abuse handling".
+
 ### 9. Emails to people
 
 `src/email.ts` (how) and `src/email-messages.ts` (what), migration `0008_email.sql`. The site
@@ -307,7 +333,9 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `purge_soon` | it is erased within a day (hourly cron) | the owner |
 | `project_purged` | the purge erased it | the owner |
 | `project_suspended`, `project_unsuspended` | the operator suspended or resumed it (never the reason) | the owner |
+| `capability_paused`, `capability_lifted` | one capability (sending, inbox creation, custom code, share links) was paused after an abuse signal, with the reason and how to appeal; the operator lifted it | the owner and members |
 | `account_deleted` | they deleted their account | them |
+| `operator_pause`, `operator_abuse_report` | a capability was paused by a service (with its numbers and the unpause command); a phishing or malware report came in | `OPERATOR_EMAIL` |
 | `setup_notice` (updates) | the daily notices found new setup items for a project whose agent ran the check before | the owner |
 | `setup_reminder` (updates) | 3 to 14 days after the claim, the last setup check wasn't ready (`setup_state.ready`, migration `0009`) or never ran | the owner, once |
 | `site_quiet` (alerts) | daily: an analytics site with steady page views (50+ in a week, on 4+ days) has had none for two whole days, and has no enabled `no_data` alert of its own | the owner and members, once per outage |
@@ -348,6 +376,9 @@ emails signed-in people at their Google address, never an address an agent suppl
 | `GET /v1/usage` | any API key | every service's fair-use caps for the project (each service's own `GET /v1/usage`) and `close_to_limits`, the caps at 80% or more (MCP gateway tool `afs_get_usage`; `src/project-health.ts`) |
 | `GET /v1/admin/accounts/:id`, `POST .../suspend`, `POST .../unsuspend` | `ADMIN_TOKEN` | operator suspension |
 | `POST /v1/admin/accounts/:id/restore` | `ADMIN_TOKEN` | undo a project deletion before its purge |
+| `GET /v1/admin/pauses`, `POST /v1/admin/accounts/:id/pauses`, `DELETE /v1/admin/accounts/:id/pauses/:capability` | `ADMIN_TOKEN` | capability pauses in force, pause by hand, lift (`pnpm afs pause`, `unpause`) |
+| `POST /v1/internal/pauses {account_id, capability, reason, paused_by, until?, details?}` | `INTERNAL_TOKEN` over a service binding | a service pauses a capability (`requestCapabilityPause()` in `@afs/shared`) |
+| `POST /v1/abuse-reports {url_or_resource, kind, details, contact?}`, `GET`, `POST /report-abuse` | none (per-network limit) | abuse reports (MCP `afs_report_abuse`); `GET /v1/admin/abuse-reports`, `PATCH /v1/admin/abuse-reports/:id` with `ADMIN_TOKEN` |
 | `POST /v1/admin/emails/test {email}` | `ADMIN_TOKEN` | send the welcome email to someone who signed in, now (`pnpm afs email-test`) |
 | `GET`, `POST /email/unsubscribe?u=&s=[&c=alerts]` | the signed link | turn off "updates" or "alerts" emails (GET asks, POST does it; mail apps' one-click POST too) |
 | `POST /dashboard/account/emails {updates, alerts}` | session + CSRF | turn updates and alerts emails on or off |
@@ -378,7 +409,8 @@ standalone mode. Then `0005_account_standing.sql` (suspension), `0006_project_no
 (`setup_state`, `project_notices`), `0007_project_deletion.sql`, `0008_email.sql`
 (`email_outbox`, `users.email_updates`), `0009_setup_ready.sql` (`setup_state.ready`, `todo`) and
 `0010_alerts.sql` (`users.email_alerts`, the `alerts` outbox category, `project_health`,
-`limit_warnings`).
+`limit_warnings`), `0011_first_party_domains.sql` and `0012_abuse.sql` (`capability_pauses`,
+`abuse_reports`).
 
 ## Operator setup
 

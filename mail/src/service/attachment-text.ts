@@ -11,7 +11,9 @@ import { getAttachment } from "./messages";
  *
  *   - At most 10 MB in and MAX_TEXT_CHARS out; images are not converted (no vision models, so the
  *     cost per call stays the document conversion's), and embedded images are skipped.
- *   - MAX_ATTACHMENT_TEXT_PER_DAY conversions per account per UTC day (default 20, 5 unclaimed).
+ *   - MAX_ATTACHMENT_TEXT_PER_DAY conversions per account per UTC day (default 20, 5 unclaimed), so
+ *     one account can't use up the deployment's Workers AI. A conversion that fails or throws still
+ *     counts (it used the AI); only a file that could not be read is refunded.
  *   - Not cached: each call converts again and counts once.
  * The text is the sender's: REST marks it untrusted, MCP fences it.
  */
@@ -85,9 +87,13 @@ export async function getAttachmentText(env: AppEnv, accountId: string, messageI
       limit,
       "Download attachments and read them locally, or wait.",
     );
+  // Refunded only when Workers AI was never asked (the file could not be read): a conversion that
+  // fails or throws still used the platform's AI, so it counts.
+  let asked = false;
   try {
     const bytes = new Uint8Array(await new Response(await open()).arrayBuffer());
     const name = (meta.filename ?? `attachment.${kind}`).replace(/[\\/]/g, "_");
+    asked = true;
     const res = await env.AI.toMarkdown(
       {
         name: name.toLowerCase().endsWith(`.${kind}`) ? name : `${name}.${kind}`,
@@ -118,7 +124,7 @@ export async function getAttachmentText(env: AppEnv, accountId: string, messageI
       daily: { used: budget.used, limit: Number.isFinite(limit) ? limit : null },
     };
   } catch (e) {
-    if (!(e instanceof ApiError && e.code === "conversion_failed")) await refundDaily(env, accountId, "attachment_text", budget.day);
+    if (!asked) await refundDaily(env, accountId, "attachment_text", budget.day);
     throw e;
   }
 }

@@ -5,6 +5,7 @@ import { ApiError, accountSuspended, badRequest, forbidden, notFound, projectDel
 import { clientAsn, clientNetwork, publicBaseUrl, readJson } from "./http";
 import { newId, randomString } from "./ids";
 import { noticeAttacher } from "./notices";
+import { baseDifficulty, difficultyFor, issueChallenge, SignupChallengeError, type Verdict, verifySolution } from "./signup-challenge";
 import { accountStanding, capFor } from "./standing";
 import { cleanName } from "./text";
 
@@ -46,8 +47,14 @@ export interface AuthBindings {
   SIGNUP_DAILY_LIMIT?: string;
   /** Max signups per network operator (request.cf.asn) per rolling day (needs signup_log). */
   SIGNUP_ASN_DAILY_LIMIT?: string;
-  /** Max signups on the whole deployment per rolling hour: a circuit breaker (needs signup_log). */
+  /**
+   * Max signups on the whole deployment per rolling hour: a circuit breaker (needs signup_log). Past
+   * it, a signup needs a proof of work (signup-challenge.ts; signed with INTERNAL_TOKEN, else
+   * ADMIN_TOKEN; with neither, 429 signups_paused as before).
+   */
   SIGNUP_GLOBAL_HOURLY_LIMIT?: string;
+  /** The proof of work's base difficulty in bits (default 20, about a second); it rises past the breaker. */
+  SIGNUP_POW_DIFFICULTY?: string;
   /** Active API keys per account (default 50). UNCLAIMED_MAX_KEYS_PER_ACCOUNT for agent-only accounts. */
   MAX_KEYS_PER_ACCOUNT?: string;
   UNCLAIMED_MAX_KEYS_PER_ACCOUNT?: string;
@@ -492,13 +499,28 @@ interface SignupLimit {
   key: string;
   windowMs: number;
   max: number;
-  error: () => ApiError;
+  /** The refusal, given this limit's count (our own row included). */
+  error: (count: number) => ApiError | Promise<ApiError>;
+  /** false: counted but never refused (the breaker for a solved proof of work, or a signed-in person). */
+  enforce?: boolean;
+}
+
+/** The secret that signs signup challenges: shared by every Worker of a deployment. */
+const powSecret = (env: AuthBindings) => env.INTERNAL_TOKEN || env.ADMIN_TOKEN || null;
+
+/** How a signup meets the deployment-wide breaker: the verdict on a challenge it carried, or exempt from it. */
+interface Breaker {
+  /** The verdict on a challenge the signup carried (undefined: it carried none). */
+  verdict?: Verdict;
+  challenge?: string;
+  /** The breaker doesn't apply (a signed-in person creating a project: they have their own daily cap). */
+  exempt?: boolean;
 }
 
 const signupKey = async (s: string) => (await sha256Hex(s)).slice(0, 32);
 
 /** The signup limits that are on, each counted in signup_log under its own key. */
-async function signupLimits(env: AuthBindings, req: Request): Promise<SignupLimit[]> {
+async function signupLimits(env: AuthBindings, req: Request, breaker: Breaker = {}): Promise<SignupLimit[]> {
   const prefix = env.KEY_PREFIX ?? "";
   const out: SignupLimit[] = [];
   const hourly = limitOf(env.SIGNUP_HOURLY_LIMIT);
@@ -540,18 +562,39 @@ async function signupLimits(env: AuthBindings, req: Request): Promise<SignupLimi
   }
   const global = limitOf(env.SIGNUP_GLOBAL_HOURLY_LIMIT);
   if (global) {
+    const secret = powSecret(env);
+    const base = baseDifficulty(env.SIGNUP_POW_DIFFICULTY);
+    const solved = breaker.verdict?.ok === true;
+    // A fresh challenge, harder the further the breaker is exceeded.
+    const challenge = async (count: number, retry?: ConstructorParameters<typeof SignupChallengeError>[3]) => {
+      const difficulty = difficultyFor(base, count, global);
+      const { challenge, expiresAt } = await issueChallenge(secret as string, difficulty);
+      return new SignupChallengeError(challenge, difficulty, expiresAt, retry);
+    };
     out.push({
       key: await signupKey(`signup-global|${prefix}`),
       windowMs: HOUR_MS,
       max: global,
-      error: () =>
-        new ApiError(
-          429,
-          "signups_paused",
-          "New signups are paused for a while: this deployment is getting unusually many.",
-          "Existing keys keep working. Reuse yours if you have one, or retry in 15 minutes.",
-        ),
+      // Still counted when not enforced, so the breaker (and the difficulty) see every new account.
+      enforce: !breaker.exempt && !solved,
+      error: (count) =>
+        secret
+          ? challenge(count, breaker.verdict && !breaker.verdict.ok ? breaker.verdict.why : undefined)
+          : new ApiError(
+              429,
+              "signups_paused",
+              "New signups are paused for a while: this deployment is getting unusually many.",
+              "Existing keys keep working. Reuse yours if you have one, or retry in 15 minutes.",
+            ),
     });
+    // One signup per solved challenge.
+    if (solved && breaker.challenge)
+      out.push({
+        key: await signupKey(`signup-pow|${breaker.challenge}`),
+        windowMs: HOUR_MS,
+        max: 1,
+        error: () => challenge(global, "used"),
+      });
   }
   return out;
 }
@@ -584,10 +627,10 @@ async function takeSignupSlot(db: D1Database, limits: SignupLimit[]): Promise<()
     .bind(...limits.flatMap((l) => [l.key, now - l.windowMs]), ...keys, oldest)
     .first<Record<string, number>>();
   // Our own row is in each count, so a limit of N allows N.
-  const over = limits.find((l, i) => Number(counts?.[`n${i}`] ?? 0) > l.max);
-  if (over) {
+  const over = limits.findIndex((l, i) => l.enforce !== false && Number(counts?.[`n${i}`] ?? 0) > l.max);
+  if (over >= 0) {
     await release();
-    throw over.error();
+    throw await (limits[over] as SignupLimit).error(Number(counts?.[`n${over}`] ?? 0));
   }
   return release;
 }
@@ -606,8 +649,9 @@ export async function reserveNewAccount(env: AuthBindings, req: Request, userId:
   const mode = (env.SIGNUP_MODE || "open").toLowerCase();
   if (mode !== "open")
     throw forbidden("New projects can't be created on this deployment.", "Connect an existing project, or ask the operator for one.");
-  // No SIGNUP_LIMITER burst check here: a signed-in person is already capped per day below.
-  const limits = await signupLimits(env, req);
+  // No SIGNUP_LIMITER burst check here: a signed-in person is already capped per day below, and
+  // isn't held back by the deployment-wide breaker (counted, never refused) or its proof of work.
+  const limits = await signupLimits(env, req, { exempt: true });
   const raw = (env as unknown as Record<string, unknown>).PROJECTS_PER_USER_DAILY_LIMIT;
   const perUser = raw === undefined || raw === "" ? DEFAULT_PROJECTS_PER_USER_DAILY : limitOf(String(raw));
   if (perUser) {
@@ -653,6 +697,9 @@ const signupBody = z.object({
   name: z.string().max(200).optional(),
   email: z.string().max(320).optional(),
   signup_token: z.string().optional(),
+  /** A proof of work, when the deployment's breaker asked for one (signup-challenge.ts). */
+  challenge: z.string().max(200).optional(),
+  solution: z.string().max(64).optional(),
 });
 
 const createKeyBody = z.object({
@@ -721,8 +768,14 @@ export function accountRoutes<B extends AuthBindings>(opts: AccountRoutesOptions
         if (!success) throw tooManyRequests();
       }
       // One shared count per network, provider and deployment, in the identity DB (every app's
-      // signup counts against the same rows).
-      release = await takeSignupSlot(idb, await signupLimits(env, c.req.raw));
+      // signup counts against the same rows). A solved proof of work gets past the deployment-wide
+      // breaker, never past the per-network limits.
+      const secret = powSecret(env);
+      const breaker: Breaker =
+        secret && body.challenge !== undefined
+          ? { verdict: await verifySolution(secret, body.challenge, body.solution ?? ""), challenge: body.challenge }
+          : {};
+      release = await takeSignupSlot(idb, await signupLimits(env, c.req.raw, breaker));
     }
 
     let created: Awaited<ReturnType<typeof createAccount>>;

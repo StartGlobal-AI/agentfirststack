@@ -154,8 +154,8 @@ describe("server events with visit: false", () => {
     ) as any;
     expect(a.conversions).toBe(4);
     expect(a.results).toEqual([
-      { value: "(no session)", conversions: 3, revenue: 20, share: 75 },
-      { value: "Organic Search", conversions: 1, revenue: 0, share: 25 },
+      { value: "(no session)", conversions: 3, revenue: 20, goal_value: 0, share: 75 },
+      { value: "Organic Search", conversions: 1, revenue: 0, goal_value: 0, share: 25 },
     ]);
   });
 

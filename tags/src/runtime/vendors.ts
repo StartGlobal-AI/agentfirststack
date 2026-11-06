@@ -18,7 +18,8 @@ export interface VendorHost {
   debug: boolean;
   /** Test traffic (preview, ?afsa_debug=1, afst('test', true)): the analytics tag marks it as analytics test traffic. */
   readonly test: boolean;
-  loadScript(src: string, attrs?: Record<string, string>): void;
+  /** `done(ok)` runs when the script loaded (true) or failed (false). */
+  loadScript(src: string, attrs?: Record<string, string>, done?: (ok: boolean) => void): void;
   scriptStatus(src: string): "pending" | "loaded" | "error" | undefined;
   gtag(...args: unknown[]): void;
   interpolate(v: unknown, ctx: EventCtx): unknown;
@@ -271,9 +272,14 @@ function ensureReddit(h: VendorHost, pixelId: string) {
 /**
  * The analytics app's tracker (window.afsa). Same queue stub as its snippet:
  * window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}
+ * The page may load the tracker itself (first-party /_a/s.js): then nothing is injected. Otherwise
+ * it's loaded from the first-party base this runtime came from (<origin>/_t -> <origin>/_a: the path
+ * proxy or a first-party domain), falling back to the direct host when that doesn't answer.
  */
 function ensureAnalytics(h: VendorHost, siteId: string, base?: string) {
   const w = h.w;
+  const real = () => !!(w.afsa as { visitorId?: unknown } | undefined)?.visitorId;
+  const own = !real() && !h.d.querySelector('script[data-site][src*="s.js"]');
   if (typeof w.afsa !== "function") {
     const f = function () {
       const self = f as unknown as { q: unknown[] };
@@ -282,7 +288,8 @@ function ensureAnalytics(h: VendorHost, siteId: string, base?: string) {
     } as unknown as AnyFn & { q: unknown[] };
     w.afsa = f;
   }
-  const b = (base || h.analyticsBase || "").replace(/\/$/, "");
+  const ab = (h.analyticsBase || "").replace(/\/$/, "");
+  const b = (base || ab).replace(/\/$/, "");
   const key = `analytics:${siteId}`;
   if (!h.state.inited[key]) {
     h.state.inited[key] = true;
@@ -290,7 +297,11 @@ function ensureAnalytics(h: VendorHost, siteId: string, base?: string) {
     // of reports): afsa('debug') before anything is sent, and data-debug for the tracker's own first pageview.
     const test = h.test;
     if (test) (w.afsa as AnyFn)("debug");
-    if (b) h.loadScript(`${b}/s.js`, { "data-site": siteId, defer: "", ...(test ? { "data-debug": "true" } : {}) });
+    const attrs = { "data-site": siteId, defer: "", ...(test ? { "data-debug": "true" } : {}) };
+    const fp = b === ab && /\/_t$/.test(h.base) ? `${h.base.slice(0, -1)}a` : "";
+    if (!own) h.log("info", "analytics tag: the page loads the tracker itself; not loaded twice");
+    else if (fp) h.loadScript(`${fp}/s.js`, attrs, () => real() || !b || h.loadScript(`${b}/s.js`, attrs));
+    else if (b) h.loadScript(`${b}/s.js`, attrs);
     else h.log("error", "analytics tag: no base_url and no ANALYTICS_BASE_URL configured");
   }
   return w.afsa as AnyFn;

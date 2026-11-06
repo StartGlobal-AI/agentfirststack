@@ -1,4 +1,4 @@
-import { accountStanding, ApiError, badRequest, newId, parse } from "@afs/shared";
+import { accountStanding, ApiError, badRequest, canWrite, newId, parse } from "@afs/shared";
 import { z } from "zod";
 import { type Bindings, isDev } from "../env";
 import {
@@ -27,11 +27,13 @@ import {
   unlinkAnalyticsSite,
 } from "./analytics";
 import { type Ctx, forgetSite, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
+import { proxyKey } from "./proxy";
 import {
   type AnalyticsSuggestion,
   analyticsInstallNote,
   type Framework,
   installInstructions,
+  type ProxyKeyView,
   loadsWithAnalytics,
   platformBase,
   scriptSnippet,
@@ -531,7 +533,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
           }
         : {}),
       ...(notes.length ? { notes } : {}),
-      install: installInstructions(s, ctx.baseUrl, "html", suggestion, platformBase(ctx.env)),
+      install: installInstructions(s, ctx.baseUrl, "html", suggestion, platformBase(ctx.env), await proxyKeyView(ctx, s.id)),
       next_steps: nextSteps(ctx, s, suggestion),
     };
   };
@@ -629,8 +631,10 @@ export async function getSite(ctx: Ctx, siteId: string) {
       sessions_per_day: caps.daily_sessions,
       forced_sessions_per_day: caps.forced_daily,
       sessions_per_network_per_day: caps.net_daily,
+      bytes_per_network_per_day: caps.net_bytes,
       forwarded_events_per_day: caps.forward_daily,
       tags_events_per_day: caps.tags_daily,
+      site_per_day: caps.site,
       account_per_day: caps.account,
     },
     untrusted: {
@@ -744,7 +748,21 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
 
 export async function getInstall(ctx: Ctx, siteId: string, framework?: Framework) {
   const s = await loadSite(ctx, siteId);
-  return installInstructions(s, ctx.baseUrl, framework ?? "html", await suggestionFor(ctx, s), platformBase(ctx.env));
+  return installInstructions(
+    s,
+    ctx.baseUrl,
+    framework ?? "html",
+    await suggestionFor(ctx, s),
+    platformBase(ctx.env),
+    await proxyKeyView(ctx, s.id),
+  );
+}
+
+/** The site's path-proxy key for the install answer: full-access keys only (it lets a request set the visitor's IP). */
+async function proxyKeyView(ctx: Ctx, siteId: string): Promise<ProxyKeyView> {
+  if (!canWrite(ctx.auth)) return { key: null, missing: "read_only" };
+  const key = await proxyKey(ctx.env, siteId);
+  return key ? { key } : { key: null, missing: "unavailable" };
 }
 
 /** The IAB TCF v2 purposes recording needs consent for (consent_source tcf); default 1 and 8. */

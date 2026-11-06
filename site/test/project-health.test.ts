@@ -323,7 +323,9 @@ describe("health: attacks, the rules", () => {
       "9,800 events in 15 minutes, about 40 times the usual. 4,200 events set aside so far, none of them sent anywhere;",
     );
     expect(attackLine(spike)).toContain("traffic from data-centre networks is set aside too");
-    expect(attackLine(spike)).toContain("aren't sent to your ad platforms");
+    expect(attackLine(spike)).toContain("Conversions from data-centre traffic and anything set aside aren't sent to your ad platforms");
+    expect(attackLine(spike)).toContain("conversions from other visitors' browsers");
+    expect(attackLine({ ...spike, mode: "strict" })).toContain("With protection strict, conversions from visitors' browsers aren't sent");
     expect(attackLine(contained)).toContain("One network sent more than its daily share. 4,200 events set aside so far.");
     expect(attackLine(contained)).not.toContain("data-centre");
     expect(attackLine(ended)).toContain("It ended at ");

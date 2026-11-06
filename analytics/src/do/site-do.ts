@@ -83,7 +83,37 @@ const AGGREGATE_EVERY_MS = 60_000;
 /** ...or after 1% of the smaller cap in new events (at most 1,000), whichever comes first. */
 const AGGREGATE_EVERY_EVENTS = 1_000;
 const aggregateEvery = (c: IngestCaps) =>
-  Math.max(1, Math.min(AGGREGATE_EVERY_EVENTS, Math.floor(Math.min(c.accountDaily, c.platformDaily) / 100)));
+  Math.max(
+    1,
+    Math.min(
+      AGGREGATE_EVERY_EVENTS,
+      Math.floor(Math.min(c.accountDaily, c.platformDaily, c.serverAccountDaily, c.serverPlatformDaily) / 100),
+    ),
+  );
+
+/** What the D1 aggregate last said, and what this site had reported then (browser and server counts apart). */
+interface Aggregate {
+  day: string;
+  at: number;
+  flushed: number;
+  account: number;
+  platform: number;
+  serverFlushed: number;
+  serverAccount: number;
+  serverPlatform: number;
+}
+const freshAgg = (day: string, u?: { flushed: number; server_flushed: number }): Aggregate => ({
+  day,
+  at: 0,
+  flushed: u?.flushed ?? 0,
+  account: 0,
+  platform: 0,
+  serverFlushed: u?.server_flushed ?? 0,
+  serverAccount: 0,
+  serverPlatform: 0,
+});
+type Others = { account: number; platform: number; serverAccount: number; serverPlatform: number };
+const NO_OTHERS: Others = { account: 0, platform: 0, serverAccount: 0, serverPlatform: 0 };
 /**
  * Drop counters are written at most this often (a flood of junk costs one write per reason per 10 s;
  * counts still in memory when the object is evicted are lost, which only makes them approximate).
@@ -104,6 +134,16 @@ export interface IngestPolicy {
 
 const CLAIMED: Standing = { suspended: false, claimed: true };
 
+/** The daily caps the engine checks, browser and server budgets. */
+const dailyCaps = (c: IngestCaps): engine.DailyCaps => ({
+  siteDaily: c.siteDaily,
+  accountDaily: c.accountDaily,
+  platformDaily: c.platformDaily,
+  serverSiteDaily: c.serverSiteDaily,
+  serverAccountDaily: c.serverAccountDaily,
+  serverPlatformDaily: c.serverPlatformDaily,
+});
+
 /**
  * One SQLite-backed Durable Object per site (idFromName(site_id)). Holds the site's events,
  * sessions, a settings + goals copy (so ingest never reads D1), and runs every query. A daily
@@ -121,7 +161,7 @@ export class SiteDO extends DurableObject<Bindings> {
   private ready: boolean;
   /** account id looked up for a settings copy that predates account ids (undefined = not yet) */
   private lookedUpAccount: string | null | undefined;
-  private agg = { day: "", at: 0, flushed: 0, account: 0, platform: 0 };
+  private agg: Aggregate = freshAgg("");
   private aggInflight: Promise<void> | null = null;
   private pendingDrops = new Map<string, { count: number; last_at: number; sample: string | null }>();
   private pendingRefused = 0;
@@ -307,11 +347,17 @@ export class SiteDO extends DurableObject<Bindings> {
    * Today's events on the account's other sites and everywhere else, from the last report to the
    * D1 aggregate (made now if this instance hasn't reported today yet).
    */
-  private async othersToday(siteId: string, accountId: string): Promise<{ account: number; platform: number }> {
+  private async othersToday(siteId: string, accountId: string): Promise<Others> {
     const day = utcDay(Date.now());
-    if (this.agg.day !== day) this.agg = { day, at: 0, flushed: engine.usageOn(this.db, day).flushed, account: 0, platform: 0 };
+    if (this.agg.day !== day) this.agg = freshAgg(day, engine.usageOn(this.db, day));
     if (this.agg.at === 0) await this.reportOnce(siteId, accountId, day);
-    return { account: Math.max(0, this.agg.account - this.agg.flushed), platform: Math.max(0, this.agg.platform - this.agg.flushed) };
+    const a = this.agg;
+    return {
+      account: Math.max(0, a.account - a.flushed),
+      platform: Math.max(0, a.platform - a.flushed),
+      serverAccount: Math.max(0, a.serverAccount - a.serverFlushed),
+      serverPlatform: Math.max(0, a.serverPlatform - a.serverFlushed),
+    };
   }
 
   /** After an ingest: report this site's count when it's due (a minute passed, or enough new events). */
@@ -319,14 +365,14 @@ export class SiteDO extends DurableObject<Bindings> {
     const now = Date.now();
     const day = utcDay(now);
     if (this.agg.day !== day) return;
-    const local = engine.usageOn(this.db, day).events;
-    const fresh = local - this.agg.flushed;
+    const u = engine.usageOn(this.db, day);
+    const fresh = u.events - this.agg.flushed + (u.server_events - this.agg.serverFlushed);
     if (fresh >= aggregateEvery(caps) || (fresh > 0 && now - this.agg.at >= AGGREGATE_EVERY_MS))
       await this.reportOnce(siteId, accountId, day);
   }
 
   private reportOnce(siteId: string, accountId: string, day: string): Promise<void> {
-    this.aggInflight ??= this.report(siteId, accountId, day, engine.usageOn(this.db, day).events).finally(() => {
+    this.aggInflight ??= this.report(siteId, accountId, day, engine.usageOn(this.db, day)).finally(() => {
       this.aggInflight = null;
     });
     return this.aggInflight;
@@ -336,26 +382,35 @@ export class SiteDO extends DurableObject<Bindings> {
    * Report this site's count (idempotent: an absolute, non-decreasing value) and read back the
    * account's and the platform's totals; the platform total grows by the delta since the last report.
    */
-  private async report(siteId: string, accountId: string, day: string, local: number): Promise<void> {
+  private async report(siteId: string, accountId: string, day: string, u: { events: number; server_events: number }): Promise<void> {
     const now = Date.now();
+    const local = u.events;
+    const server = u.server_events;
     const delta = Math.max(0, local - this.agg.flushed);
+    const serverDelta = Math.max(0, server - this.agg.serverFlushed);
     const db = this.env.DB;
     try {
-      const res = await db.batch<{ n: number }>([
+      const res = await db.batch<{ n: number; s: number }>([
         db
           .prepare(
-            `INSERT INTO usage_daily (site_id, account_id, day, events, updated_at) VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(site_id, day) DO UPDATE SET events = MAX(events, excluded.events), updated_at = excluded.updated_at`,
+            `INSERT INTO usage_daily (site_id, account_id, day, events, server_events, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(site_id, day) DO UPDATE SET events = MAX(events, excluded.events),
+               server_events = MAX(server_events, excluded.server_events), updated_at = excluded.updated_at`,
           )
-          .bind(siteId, accountId, day, local, now),
+          .bind(siteId, accountId, day, local, server, now),
         db
           .prepare(
-            `INSERT INTO usage_global (day, events, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, updated_at = excluded.updated_at`,
+            `INSERT INTO usage_global (day, events, server_events, updated_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, server_events = server_events + excluded.server_events,
+               updated_at = excluded.updated_at`,
           )
-          .bind(day, delta, now),
-        db.prepare("SELECT COALESCE(SUM(events), 0) AS n FROM usage_daily WHERE account_id = ? AND day = ?").bind(accountId, day),
-        db.prepare("SELECT COALESCE(MAX(events), 0) AS n FROM usage_global WHERE day = ?").bind(day),
+          .bind(day, delta, serverDelta, now),
+        db
+          .prepare(
+            "SELECT COALESCE(SUM(events), 0) AS n, COALESCE(SUM(server_events), 0) AS s FROM usage_daily WHERE account_id = ? AND day = ?",
+          )
+          .bind(accountId, day),
+        db.prepare("SELECT COALESCE(MAX(events), 0) AS n, COALESCE(MAX(server_events), 0) AS s FROM usage_global WHERE day = ?").bind(day),
       ]);
       this.agg = {
         day,
@@ -363,8 +418,11 @@ export class SiteDO extends DurableObject<Bindings> {
         flushed: local,
         account: Number(res[2]?.results[0]?.n ?? 0),
         platform: Number(res[3]?.results[0]?.n ?? 0),
+        serverFlushed: server,
+        serverAccount: Number(res[2]?.results[0]?.s ?? 0),
+        serverPlatform: Number(res[3]?.results[0]?.s ?? 0),
       };
-      engine.setUsageFlushed(this.db, day, local);
+      engine.setUsageFlushed(this.db, day, local, server);
     } catch (e) {
       // D1 unavailable (or not migrated yet): keep the last totals, try again in a minute.
       console.error("usage aggregate failed", e);
@@ -372,13 +430,13 @@ export class SiteDO extends DurableObject<Bindings> {
     }
   }
 
-  private queueDrop(reason: string, sample: string | null): void {
+  private queueDrop(reason: string, sample: string | null, count = 1): void {
     const cur = this.pendingDrops.get(reason);
     if (cur) {
-      cur.count++;
+      cur.count += count;
       cur.last_at = Date.now();
       cur.sample = sample ?? cur.sample;
-    } else this.pendingDrops.set(reason, { count: 1, last_at: Date.now(), sample });
+    } else this.pendingDrops.set(reason, { count, last_at: Date.now(), sample });
   }
 
   /** Write coalesced drop / warning / refusal counts: when due, or always (`force`, before a summary). */
@@ -430,14 +488,16 @@ export class SiteDO extends DurableObject<Bindings> {
     const vars = policy.vars ?? limitVars(this.env);
     const caps = ingestCaps(vars, standing);
     const aggregate = needsAggregate(caps) && !!accountId;
-    const others = aggregate ? await this.othersToday(s.id, accountId!) : { account: 0, platform: 0 };
+    const others = aggregate ? await this.othersToday(s.id, accountId!) : NO_OTHERS;
     const now = Date.now();
     const mode = s.protection ?? "auto";
     const res = engine.ingest(this.db, events, now, {
       dev: vars.DEV_MODE === "true",
-      caps: { siteDaily: caps.siteDaily, accountDaily: caps.accountDaily, platformDaily: caps.platformDaily },
+      caps: dailyCaps(caps),
       accountOthers: others.account,
       platformOthers: others.platform,
+      serverAccountOthers: others.serverAccount,
+      serverPlatformOthers: others.serverPlatform,
       storageFull: this.storageFull(caps),
       // Warnings belong to stored events (already within the event budget): written with them.
       // Drops cost nothing else, so under a flood they are coalesced.
@@ -451,23 +511,34 @@ export class SiteDO extends DurableObject<Bindings> {
       quarantine: policy.dryRun ? undefined : (ev) => this.guard.classify(ev, { mode, share: caps.networkShare, now }),
       quarantineDaily: caps.quarantineDaily,
     });
-    if (policy.dryRun) return { ...res, replay_site_id: s.replay_site_id ?? null };
+    if (policy.dryRun) return { ...res, replay_site_id: s.replay_site_id ?? null, replay_proxy_path: s.replay_proxy_path ?? null };
     this.guard.afterIngest(events, res.results, { mode, spikeMin: caps.spikeMin, createdAt: s.created_at, now });
+    // A network past its daily share (protection on): the Worker drops its next events before they
+    // reach the site's rate limiter, so it can't crowd out other visitors (service/ingest.ts).
+    const overShare = mode !== "off" && events.some((e) => e.origin === "browser" && !!e.net_hash && this.guard.overShare(e.net_hash, now));
     this.pendingRefused += res.results.filter((r) => (engine.BUDGET_REASONS as readonly string[]).includes(r.reason ?? "")).length;
     this.writeDrops();
     this.liveAfterIngest(events, res.results);
     if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
     // From the settings copy already in hand: the Worker turns it into the tracker's replay loader URL.
-    return { ...res, replay_site_id: s.replay_site_id ?? null };
+    return {
+      ...res,
+      replay_site_id: s.replay_site_id ?? null,
+      replay_proxy_path: s.replay_proxy_path ?? null,
+      ...(overShare ? { over_share: true } : {}),
+    };
   }
 
-  /** A drop decided in the Worker (bots). Returns the site's replay link, or null for an unknown site. */
-  recordDrop(reason: string, sample: string | null): { replay_site_id: string | null } | null {
+  /**
+   * A drop decided in the Worker (bots; `count` networks over their share shed before the site's
+   * limiter, coalesced). Returns the site's replay link, or null for an unknown site.
+   */
+  recordDrop(reason: string, sample: string | null, count = 1): { replay_site_id: string | null; replay_proxy_path: string | null } | null {
     const s = this.settingsOrNull();
     if (!s) return null; // unknown site: don't create storage for it
-    this.queueDrop(reason, sample);
+    this.queueDrop(reason, sample, Math.max(1, Math.min(1_000_000, Math.floor(count) || 1)));
     this.writeDrops();
-    return { replay_site_id: s.replay_site_id ?? null };
+    return { replay_site_id: s.replay_site_id ?? null, replay_proxy_path: s.replay_proxy_path ?? null };
   }
 
   stats(q: StatsRequest) {
@@ -674,28 +745,36 @@ export class SiteDO extends DurableObject<Bindings> {
         "Lower retention_days or delete data.",
       );
     const aggregate = needsAggregate(caps) && !!accountId;
-    const others = aggregate ? await this.othersToday(s.id, accountId!) : { account: 0, platform: 0 };
+    const others = aggregate ? await this.othersToday(s.id, accountId!) : NO_OTHERS;
     const now = Date.now();
     const day = utcDay(now);
-    const used = engine.usageOn(this.db, day).events;
+    // Payments and subscriptions use the server budget: a browser flood can't refuse them.
+    const used = engine.usageOn(this.db, day).server_events;
     // Each record writes at most one row: take as many as the tightest cap leaves room for.
     const room = Math.max(
       0,
-      Math.min(caps.siteDaily - used, caps.accountDaily - others.account - used, caps.platformDaily - others.platform - used),
+      Math.min(
+        caps.serverSiteDaily - used,
+        caps.serverAccountDaily - others.serverAccount - used,
+        caps.serverPlatformDaily - others.serverPlatform - used,
+      ),
     );
     const fit = room >= records.length ? records : records.slice(0, room);
     const reason =
       fit.length < records.length
-        ? engine.capRefusal({ caps, accountOthers: others.account, platformOthers: others.platform }, used + fit.length)
+        ? engine.serverCapRefusal(
+            { caps: dailyCaps(caps), serverAccountOthers: others.serverAccount, serverPlatformOthers: others.serverPlatform },
+            used + fit.length,
+          )
         : null;
     const results: R[] = fit.length ? apply(s, fit, now) : [];
-    for (let i = fit.length; i < records.length; i++) results.push({ ok: false, reason: reason ?? "daily_limit" } as R);
+    for (let i = fit.length; i < records.length; i++) results.push({ ok: false, reason: reason ?? "server_daily_limit" } as R);
     const added = results.filter((r) => r.ok && (r.existing === false || r.changed === true)).length;
-    engine.addUsage(this.db, day, { events: added, bytes: added * PAYMENT_BYTES });
+    engine.addUsage(this.db, day, { server_events: added, bytes: added * PAYMENT_BYTES });
     this.pendingRefused += records.length - fit.length;
     this.writeDrops();
     if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
-    return fit.length ? { results } : { results, refused: reason ?? "daily_limit" };
+    return fit.length ? { results } : { results, refused: reason ?? "server_daily_limit" };
   }
 
   listSubscriptions(q: subscriptions.SubscriptionsQuery) {
@@ -849,9 +928,9 @@ export class SiteDO extends DurableObject<Bindings> {
       const u = engine.usageOn(this.db, day);
       const accountId = await this.accountIdOf(s);
       // Deleting and re-creating a site must not reset the account's daily total.
-      if (accountId && u.flushed > 0 && u.events > u.flushed) {
-        if (this.agg.day !== day) this.agg = { day, at: 0, flushed: u.flushed, account: 0, platform: 0 };
-        await this.report(s.id, accountId, day, u.events);
+      if (accountId && (u.flushed > 0 || u.server_flushed > 0) && (u.events > u.flushed || u.server_events > u.server_flushed)) {
+        if (this.agg.day !== day) this.agg = freshAgg(day, u);
+        await this.report(s.id, accountId, day, u);
       }
     }
     await this.ctx.storage.deleteAlarm();
@@ -879,7 +958,8 @@ export class SiteDO extends DurableObject<Bindings> {
       // Never let spike detection stop the retention schedule.
       console.error("spike evaluation failed", e);
     }
-    if (engine.usageOn(this.db, utcDay(Date.now() - DAY)).flushed > 0) {
+    const yesterday = engine.usageOn(this.db, utcDay(Date.now() - DAY));
+    if (yesterday.flushed > 0 || yesterday.server_flushed > 0) {
       await this.env.DB.prepare("DELETE FROM usage_daily WHERE site_id = ? AND day < ?")
         .bind(s.id, utcDay(Date.now() - 40 * DAY))
         .run()

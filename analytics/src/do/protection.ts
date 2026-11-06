@@ -94,6 +94,8 @@ export class Guard {
   private window = { start: 0, count: 0 };
   private baseline = { day: "", perWindow: 0 };
   private prunedDay = "";
+  /** today's networks past their share (net hashes; the hash itself changes every day) */
+  private over = { day: "", nets: new Set<string>() };
 
   constructor(private readonly db: Db) {}
 
@@ -201,6 +203,8 @@ export class Guard {
       }
       if (n > c.share) {
         if (n - 1 <= c.share) net.over++;
+        if (this.over.day !== day) this.over = { day, nets: new Set() };
+        this.over.nets.add(ev.net_hash);
         const off = c.mode === "off" ? " (protection is off: not quarantined)" : "; their further events today are quarantined";
         this.trigger(
           "network_share",
@@ -227,6 +231,11 @@ export class Guard {
       }
     }
     return reason;
+  }
+
+  /** Is this network (its hash for today) past its daily share on this site? Memory only (lost on eviction, which only means it is learned again). */
+  overShare(netHash: string, now: number): boolean {
+    return this.over.day === utcDay(now) && this.over.nets.has(netHash);
   }
 
   /** After an ingest: count the episode's quarantined events, and the window for spike detection. */

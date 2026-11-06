@@ -1,4 +1,5 @@
 import type { SiteRow } from "./context";
+import { PROXY_KEY_HEADER, PROXY_PATH } from "./proxy";
 
 export const FRAMEWORKS = [
   "html",
@@ -169,14 +170,188 @@ export function firstPartyBlock(base: string, site: SiteRow, siteBase: string | 
     },
     path_proxy: {
       rank: 2,
-      what: `Forward /_r/* on the site's own server to ${base}/_r/* unchanged (the loader, recorder and uploads are served under any path prefix and derive their base from the loader's src).`,
+      what: `Forward ${PROXY_PATH}/* on the site's own server, edge or framework to ${base}${PROXY_PATH}/* unchanged, with the site's proxy key (x-afs-proxy-key) and the visitor's IP and geo. Ready code for a Cloudflare Worker, Next.js, Vercel, a Netlify Edge Function and nginx: first_party_proxy. One proxy for all three: the same code forwards analytics' /_a/* and tags' /_t/* with their own keys.`,
       when: "DNS can't be changed, but the site's server or host can forward a path.",
-      snippet: `<script defer src="/_r/r/${site.id}.js"></script>`,
+      snippet: `<script defer src="${PROXY_PATH}/r/${site.id}.js"></script>`,
+      configs: "first_party_proxy",
+      with_analytics: `With the linked analytics tracker loading the recorder (nothing pasted), set replay_proxy_path: "${PROXY_PATH}" on the analytics site so the tracker loads it through this proxy instead of from ${base}.`,
     },
     direct: {
       rank: 3,
       what: "The plain snippet (or the analytics tracker loading the recorder from this service's host). Last resort: ad blockers block it.",
       snippet: scriptSnippet(base, site.id),
+    },
+  };
+}
+
+/** The proxy key to embed, or why it isn't there. */
+export interface ProxyKeyView {
+  /** the site's x-afs-proxy-key; null when hidden (read-only key) or unavailable (no ENCRYPTION_KEY) */
+  key: string | null;
+  /** "read_only": the caller's key can't see it; "unavailable": the deployment can't derive it */
+  missing?: "read_only" | "unavailable";
+}
+
+const keyText = (p: ProxyKeyView) =>
+  p.key ??
+  (p.missing === "read_only"
+    ? "<hidden: GET this install answer with a full-access key>"
+    : "<unavailable: ENCRYPTION_KEY is not set on this deployment>");
+
+/**
+ * Path-proxy configs for /_r/* (first_party_proxy). Each forwards the path unchanged with the
+ * site's proxy key, the visitor's IP (X-Forwarded-For, set, not appended to) and geo (x-afs-geo-*:
+ * country, region, city and, from a Cloudflare Worker, the network operator), drops cookies and
+ * any x-afs-* header the visitor sent. The Worker, Next.js and Netlify code take a table of
+ * prefixes, so one proxy serves /_a (analytics) and /_t (tags) too with their own keys.
+ */
+export function proxyInstructions(base: string, site: Pick<SiteRow, "id">, proxy: ProxyKeyView) {
+  const key = keyText(proxy);
+  const host = new URL(base).host;
+  const routes = `const ROUTES = {
+  "${PROXY_PATH}/": ["${base}", "${key}"], // replay: this site's proxy key (a secret: keep it server-side)
+  // One proxy for all three: add analytics and tags with their own proxy keys, from their install answers
+  // (analytics GET /v1/sites/:id/install first_party_proxy, tags GET /v1/containers/:id/install?proxy=1):
+  // "/_a/": ["https://<analytics host>", "<analytics proxy_key>"],
+  // "/_t/": ["https://<tags host>", "<tags proxy_key>"],
+};`;
+  return {
+    why: "Serving the loader, the recorder and the uploads from the site's own domain makes them first-party: ad blockers don't block them. The loader posts to the origin and path prefix it was loaded from, so only the snippet's src changes.",
+    path_prefix: PROXY_PATH,
+    snippet: `<script defer src="${PROXY_PATH}/r/${site.id}.js"></script>`,
+    proxy_key: proxy.key,
+    proxy_key_header: PROXY_KEY_HEADER,
+    ...(proxy.missing === "read_only"
+      ? {
+          proxy_key_note:
+            "Hidden from read-only keys: GET /v1/sites/:id/install with a full-access key returns the configs with the key filled in.",
+        }
+      : proxy.missing === "unavailable"
+        ? {
+            proxy_key_note:
+              "This deployment has no ENCRYPTION_KEY, so it can't derive proxy keys: the operator sets it (wrangler secret put ENCRYPTION_KEY).",
+          }
+        : {}),
+    warning:
+      "proxy_key is a secret: it lets a request tell replay the visitor's IP and geo. Put it only in the proxy config or a server env var; don't print it, commit it or put it in page HTML.",
+    visitor_ip_and_geo: `Replay trusts the visitor's IP (first X-Forwarded-For hop) and geo (x-afs-geo-* headers, or Vercel's x-vercel-ip-*) only from requests carrying ${PROXY_KEY_HEADER} with this site's key. Every config below sends it. Without it (or with a wrong one) the IP is the proxy's, so the per-network caps (sessions and bytes per network per site and day) count every visitor as one network, and the country is unknown ("eea" consent then applies to everyone); verify reports proxy_key. A first-party domain (first_party.first_party_domain) needs none of this: the platform's edge sends the visitor's IP and geo itself.`,
+    cloudflare_worker: {
+      route: `<your-domain>${PROXY_PATH}/* (and /_a/*, /_t/* for the other entries)`,
+      file: "src/index.js",
+      code: `// Worker on your zone: forwards each prefix unchanged with its proxy key and the visitor's IP and geo
+${routes}
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const prefix = Object.keys(ROUTES).find((p) => url.pathname.startsWith(p));
+    if (!prefix) return new Response("Not found", { status: 404 });
+    const [origin, key] = ROUTES[prefix];
+    const headers = new Headers(request.headers);
+    for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+    headers.delete("cookie");
+    headers.set("${PROXY_KEY_HEADER}", key);
+    headers.set("x-forwarded-for", request.headers.get("cf-connecting-ip") || "");
+    const cf = request.cf || {};
+    const geo = { country: cf.country, region: cf.region, "region-code": cf.regionCode, city: cf.city, asn: cf.asn };
+    for (const [k, v] of Object.entries(geo)) if (v != null && v !== "") headers.set("x-afs-geo-" + k, encodeURIComponent(String(v)));
+    return fetch(origin + url.pathname + url.search, {
+      method: request.method,
+      headers,
+      body: request.method === "POST" ? request.body : undefined,
+    });
+  },
+};`,
+    },
+    nextjs: {
+      file: "proxy.ts (Next.js 16+; on Next.js 13-15 name it middleware.ts and the function middleware)",
+      code: `import { NextResponse, type NextRequest } from "next/server";
+
+${routes.replace("const ROUTES = {", "const ROUTES: Record<string, [string, string]> = {")}
+
+// Vercel's geo headers -> x-afs-geo-* (other hosts: leave out or map your host's own)
+const GEO: Record<string, string> = { country: "x-vercel-ip-country", "region-code": "x-vercel-ip-country-region", city: "x-vercel-ip-city" };
+
+export function proxy(request: NextRequest) {
+  const prefix = Object.keys(ROUTES).find((p) => request.nextUrl.pathname.startsWith(p));
+  if (!prefix) return NextResponse.next();
+  const [origin, key] = ROUTES[prefix];
+  const headers = new Headers(request.headers);
+  for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+  headers.delete("cookie");
+  headers.set("${PROXY_KEY_HEADER}", key);
+  headers.set("x-forwarded-for", (request.headers.get("x-forwarded-for") || "").split(",")[0].trim());
+  for (const [k, h] of Object.entries(GEO)) {
+    const v = request.headers.get(h);
+    if (v) headers.set("x-afs-geo-" + k, v);
+  }
+  return NextResponse.rewrite(new URL(request.nextUrl.pathname + request.nextUrl.search, origin), { request: { headers } });
+}
+
+export const config = { matcher: ["${PROXY_PATH}/:path*"] }; // add "/_a/:path*", "/_t/:path*" with their ROUTES entries`,
+    },
+    vercel: {
+      file: "vercel.json (any framework): a route with a request-header transform adds the key; Vercel forwards the visitor's IP (x-forwarded-for) and geo (x-vercel-ip-*) to the destination. Analytics and tags are routes of their own next to it.",
+      code: JSON.stringify(
+        {
+          routes: [
+            {
+              src: `${PROXY_PATH}/(.*)`,
+              dest: `${base}${PROXY_PATH}/$1`,
+              transforms: [{ type: "request.headers", op: "set", target: { key: PROXY_KEY_HEADER }, args: key }],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    },
+    netlify: {
+      file: "netlify/edge-functions/afs-proxy.ts (a Netlify Edge Function: it sends the visitor's IP and geo, which a netlify.toml proxy redirect doesn't)",
+      code: `import type { Config, Context } from "@netlify/edge-functions";
+
+${routes.replace("const ROUTES = {", "const ROUTES: Record<string, [string, string]> = {")}
+
+export default async (request: Request, context: Context) => {
+  const url = new URL(request.url);
+  const prefix = Object.keys(ROUTES).find((p) => url.pathname.startsWith(p));
+  if (!prefix) return;
+  const [origin, key] = ROUTES[prefix];
+  const headers = new Headers(request.headers);
+  for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+  headers.delete("cookie");
+  headers.set("${PROXY_KEY_HEADER}", key);
+  headers.set("x-forwarded-for", context.ip);
+  const g = context.geo;
+  const geo = { country: g?.country?.code, "region-code": g?.subdivision?.code, region: g?.subdivision?.name, city: g?.city };
+  for (const [k, v] of Object.entries(geo)) if (v != null && v !== "") headers.set("x-afs-geo-" + k, encodeURIComponent(String(v)));
+  return fetch(origin + url.pathname + url.search, {
+    method: request.method,
+    headers,
+    body: request.method === "POST" ? request.body : undefined,
+  });
+};
+
+export const config: Config = { path: ["${PROXY_PATH}/*"] }; // add "/_a/*", "/_t/*" with their ROUTES entries`,
+    },
+    nginx: {
+      file: "nginx server block (a location per prefix: analytics' /_a/ and tags' /_t/ look the same with their own keys)",
+      code: `location ${PROXY_PATH}/ {
+    proxy_pass ${base}${PROXY_PATH}/;
+    proxy_set_header Host ${host};
+    proxy_ssl_server_name on;
+    # this site's secret: replay trusts the IP and geo below only with it
+    proxy_set_header X-Afs-Proxy-Key "${key}";
+    # visitor IP (behind Cloudflare use $http_cf_connecting_ip instead of $remote_addr)
+    proxy_set_header X-Forwarded-For $remote_addr;
+    # behind Cloudflare, pass its country on (empty headers are not sent)
+    proxy_set_header X-Afs-Geo-Country $http_cf_ipcountry;
+    # don't pass on geo headers a visitor sent
+    proxy_set_header X-Afs-Geo-Region "";
+    proxy_set_header X-Afs-Geo-City "";
+    proxy_set_header X-Afs-Geo-Asn "";
+    proxy_set_header Cookie "";
+}`,
     },
   };
 }
@@ -187,11 +362,13 @@ export function installInstructions(
   framework: Framework = "html",
   suggestion: AnalyticsSuggestion = null,
   siteBase: string | null = null,
+  proxy: ProxyKeyView = { key: null, missing: "read_only" },
 ) {
   const all = code(base, site.id);
   const note = analyticsInstallNote(site, suggestion);
   return {
     first_party: firstPartyBlock(base, site, siteBase),
+    first_party_proxy: proxyInstructions(base, site, proxy),
     site_id: site.id,
     framework,
     loads_with_analytics: loadsWithAnalytics(site),

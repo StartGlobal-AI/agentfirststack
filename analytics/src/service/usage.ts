@@ -13,6 +13,7 @@ import { DEFAULT_MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY, DEFAULT_MAX_ALERT_EMAILS
 import { DEFAULT_MAX_REPORTS_PER_SITE } from "./reports";
 import { DEFAULT_MAX_SEGMENTS_PER_SITE } from "./segments";
 import { attackItem } from "./quarantine";
+import { accountBudget } from "./account-budgets";
 
 /**
  * GET /v1/usage: every fair-use cap this service holds an account to, with what it uses now, the
@@ -117,7 +118,7 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
   const vars = env as unknown as Record<string, unknown>;
   const db = env.DB;
   // Every count is an index lookup by site id (or account id and day).
-  const [sitesRes, eventsRes, crawlRes] = await db.batch<Record<string, unknown>>([
+  const [sitesRes, eventsRes, crawlRes, serverRes] = await db.batch<Record<string, unknown>>([
     db
       .prepare(
         `SELECT s.id, s.domain,
@@ -136,11 +137,13 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
     // Today's reported counts, deleted sites included (deleting a site doesn't reset the account's day).
     db.prepare("SELECT site_id, events AS n FROM usage_daily WHERE account_id = ? AND day = ?").bind(accountId, day),
     db.prepare("SELECT site_id, hits AS n FROM crawl_usage_daily WHERE account_id = ? AND day = ?").bind(accountId, day),
+    db.prepare("SELECT site_id, server_events AS n FROM usage_daily WHERE account_id = ? AND day = ?").bind(accountId, day),
   ]);
   const sites = (sitesRes?.results ?? []) as unknown as SiteCounts[];
   const reported = (r: typeof eventsRes) => new Map((r?.results ?? []).map((x) => [String(x.site_id), Number(x.n ?? 0)]));
   const eventsD1 = reported(eventsRes);
   const crawlD1 = reported(crawlRes);
+  const serverD1 = reported(serverRes);
 
   // Each site's Durable Object: today's counters and storage (the busiest sites first, if there are many).
   const asked = [...sites].sort((a, b) => (eventsD1.get(b.id) ?? 0) - (eventsD1.get(a.id) ?? 0)).slice(0, MAX_USAGE_SITES);
@@ -159,13 +162,14 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
     );
 
   /** Today's count of a site: the live counter, or what it last reported to D1 (null = unknown). */
-  const today = (id: string, d1: Map<string, number>, key: "events_today" | "crawl_hits_today") => {
+  type DailyKey = "events_today" | "server_events_today" | "crawl_hits_today";
+  const today = (id: string, d1: Map<string, number>, key: DailyKey) => {
     const l = live.get(id)?.[key];
     const d = d1.get(id);
     return l === undefined ? (d ?? null) : Math.max(l, d ?? 0);
   };
   /** The account's total today: every site D1 knows of (deleted ones too) plus the live ones. */
-  const accountTotal = (d1: Map<string, number>, key: "events_today" | "crawl_hits_today") => {
+  const accountTotal = (d1: Map<string, number>, key: DailyKey) => {
     const ids = new Set([...d1.keys(), ...sites.map((s) => s.id)]);
     let n = 0;
     for (const id of ids) n += today(id, d1, key) ?? 0;
@@ -197,6 +201,10 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
   };
 
   const caps = ingestCaps(vars as Record<string, string | undefined>, standing);
+  const [exportAcct, sqlAcct] = await Promise.all([
+    accountBudget(env, accountId, "export_rows", now),
+    accountBudget(env, accountId, "sql_ms", now),
+  ]);
   const userPropKeys = Math.max(0, capFor(vars, standing, "MAX_USER_PROP_KEYS_PER_SITE", DEFAULT_MAX_USER_PROP_KEYS));
   const browserKeys = Math.max(0, capFor(vars, standing, "MAX_BROWSER_USER_PROP_KEYS_PER_SITE", DEFAULT_MAX_BROWSER_USER_PROP_KEYS));
   const sc = (name: string, fallback: number) => siteCap(env, standing, name, fallback);
@@ -204,25 +212,49 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
 
   const limits: Record<string, UsageItem> = {
     events_per_site_per_day: perSite(
-      "Events a day on one site",
+      "Browser events a day on one site",
       (s) => today(s.id, eventsD1, "events_today"),
       caps.siteDaily,
-      "accepted events, engagement beacons and payments on one site (used = the busiest site today)",
+      "accepted browser events and engagement beacons on one site (used = the busiest site today)",
       "MAX_EVENTS_PER_SITE_PER_DAY",
       resets,
-      { note: `Beyond it the site's browser and server events and payments are refused ${refusedUntilMidnight}.`, drops_data: true },
+      {
+        note: `Beyond it the site's browser events are refused ${refusedUntilMidnight}. Server events and payments have their own budget.`,
+        drops_data: true,
+      },
     ),
     events_per_account_per_day: item(
-      "Events a day across all sites",
+      "Browser events a day across all sites",
       accountTotal(eventsD1, "events_today"),
       caps.accountDaily,
-      "accepted events, engagement beacons and payments, summed over the account's sites (a site deleted today still counts)",
+      "accepted browser events and engagement beacons, summed over the account's sites (a site deleted today still counts)",
       "MAX_EVENTS_PER_ACCOUNT_PER_DAY",
       resets,
       {
-        note: `Beyond it every site's events are refused ${refusedUntilMidnight}. Sites report to the total about once a minute, so it can run a little behind.`,
+        note: `Beyond it every site's browser events are refused ${refusedUntilMidnight}. Sites report to the total about once a minute, so it can run a little behind.`,
         drops_data: true,
       },
+    ),
+    server_events_per_site_per_day: perSite(
+      "Server events and payments a day on one site",
+      (s) => today(s.id, serverD1, "server_events_today"),
+      caps.serverSiteDaily,
+      "accepted server events, payments and subscription changes on one site (used = the busiest site today)",
+      "MAX_SERVER_EVENTS_PER_SITE_PER_DAY",
+      resets,
+      {
+        note: `A budget of its own, so a flood of browser events never refuses them. Beyond it they are refused ${refusedUntilMidnight} (payment providers retry their deliveries). Unset, it is the same number as the browser cap.`,
+        drops_data: true,
+      },
+    ),
+    server_events_per_account_per_day: item(
+      "Server events and payments a day across all sites",
+      accountTotal(serverD1, "server_events_today"),
+      caps.serverAccountDaily,
+      "accepted server events, payments and subscription changes, summed over the account's sites",
+      "MAX_SERVER_EVENTS_PER_ACCOUNT_PER_DAY",
+      resets,
+      { note: `Beyond it every site's server events and payments are refused ${refusedUntilMidnight}.`, drops_data: true },
     ),
     storage_bytes: perSite(
       "Storage of one site",
@@ -425,6 +457,24 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
       resets,
       { note: "Beyond it export answers 429 daily_limit until 00:00 UTC." },
     ),
+    export_rows_per_account_per_day: item(
+      "Exported events a day across all sites",
+      exportAcct.used,
+      exportAcct.limit,
+      "raw events exported from all the account's sites in a UTC day",
+      "MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY",
+      resets,
+      { note: "Beyond it export answers 429 daily_limit until 00:00 UTC, whatever each site has left." },
+    ),
+    sql_ms_per_account_per_day: item(
+      "SQL time a day across all sites",
+      sqlAcct.used,
+      sqlAcct.limit,
+      "milliseconds of SQL wall time (query_sql) over all the account's sites in a UTC day",
+      "MAX_SQL_MS_PER_ACCOUNT_PER_DAY",
+      resets,
+      { note: "Beyond it SQL answers 429 sql_budget_exhausted until 00:00 UTC; stats, breakdowns and timeseries don't count." },
+    ),
   };
 
   const unmeasured = sites.length - live.size;
@@ -460,6 +510,7 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
 const EMPTY_USAGE: SiteUsage = {
   day: "",
   events_today: 0,
+  server_events_today: 0,
   quarantined_today: 0,
   crawl_hits_today: 0,
   export_rows_today: 0,

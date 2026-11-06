@@ -33,7 +33,7 @@ import { MAX_PATH_RULES, normalizePathRules } from "../lib/pathrules";
 import { type Ctx, type SiteRow, isVerified, jsonList, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
 import { REPLAY_SITE_RE, proxyKeyFor } from "./ingest";
 import { protectionField, protectionJson } from "./quarantine";
-import { type Framework, PROXY_PATH, installInstructions, platformBase, scriptSnippet } from "./install";
+import { type Framework, PROXY_PATH, REPLAY_PROXY_PATH_RE, installInstructions, platformBase, scriptSnippet } from "./install";
 
 const hostnamePattern = z
   .string()
@@ -92,7 +92,7 @@ const settingsShape = {
     .boolean()
     .optional()
     .describe(
-      "Let user ids from afsa('identify', id) link payments that carry only a user id (metadata.afs_user_id / client_reference_id). Default false: only user ids sent by your server (track_events user_id) link payments, so nobody can pre-seed another user's attribution.",
+      "Trust user ids from afsa('identify', id) like server-sent ones: they link payments that carry only a user id (metadata.afs_user_id / client_reference_id) and identify the person for attribution (first touch, multi-touch credit, retention). Default false: a browser id only marks its own visit and events; only user ids sent by your server (track_events user_id) link payments and merge identities, so nobody can pre-seed or move another user's purchase attribution.",
     ),
   ignored_referrers: z
     .array(z.string().max(253))
@@ -182,6 +182,15 @@ const settingsShape = {
       "Drop matching events at ingest (from now on; stored data is not changed). Replaces the whole set; null clears it. Drops are counted per reason (excluded_ip, excluded_path, excluded_hostname, excluded_country, excluded_referrer); IPs are compared in memory, never stored.",
     ),
   protection: protectionField,
+  replay_proxy_path: z
+    .string()
+    .regex(REPLAY_PROXY_PATH_RE, 'a path such as "/_r": a leading slash, 1-3 segments of letters, digits, _ or -, no trailing slash')
+    .refine((p) => p !== PROXY_PATH, `not ${PROXY_PATH} (that is the analytics proxy's path)`)
+    .nullable()
+    .optional()
+    .describe(
+      `Where the site's own replay proxy lives, e.g. "/_r": forwarding <path>/* on the site's domain to the replay service, next to ${PROXY_PATH}/* (install.first_party_proxy has both routes). Set it once that proxy is installed: events that come through the path proxy then get the replay loader on that first-party path (https://<page host>/_r/r/<replay_site_id>.js) instead of the replay host. A first-party domain needs none of this (it serves /_r itself). null = none (default).`,
+    ),
 };
 
 export const createSiteInput = z.object({
@@ -243,6 +252,7 @@ export function siteJson(s: SiteRow, baseUrl: string) {
     browser_user_props: !!s.browser_user_props,
     trust_browser_user_id: !!s.trust_browser_user_id,
     replay_site_id: s.replay_site_id ?? null,
+    replay_proxy_path: s.replay_proxy_path ?? null,
     ignored_referrers: jsonList<string>(s.ignored_referrers) ?? [],
     path_rules: jsonList<PathRule>(s.path_rules) ?? [],
     redact_pii: s.redact_pii !== 0,
@@ -278,6 +288,9 @@ export function siteLimits(env: Bindings, standing: Standing) {
     account_claimed: standing.claimed,
     events_per_site_per_day: fin(caps.siteDaily),
     events_per_account_per_day: fin(caps.accountDaily),
+    // Server events, payments and subscription changes: a budget of their own, so browser floods never refuse them.
+    server_events_per_site_per_day: fin(caps.serverSiteDaily),
+    server_events_per_account_per_day: fin(caps.serverAccountDaily),
     storage_bytes: fin(caps.storageBytes),
     retention_days: retentionBounds(env, standing),
     goals_per_site: fin(siteCap(env, standing, "MAX_GOALS_PER_SITE", DEFAULT_MAX_GOALS_PER_SITE)),
@@ -352,6 +365,7 @@ const SETTING_COLUMNS = [
   "session_timeout_minutes",
   "channel_groups",
   "protection",
+  "replay_proxy_path",
 ] as const satisfies readonly (keyof SiteRow)[];
 
 const columnValues = (row: SiteRow) => SETTING_COLUMNS.map((c) => (row[c] ?? null) as string | number | null);
@@ -379,7 +393,8 @@ function checkTimezone(tz: string | undefined) {
 
 /** The install answer for a site: its proxy key and where first-party domains are created filled in. */
 async function installFor(ctx: Ctx, s: SiteRow, framework: Framework = "html") {
-  return installInstructions(s, ctx.baseUrl, framework, await proxyKeyFor(ctx.env, s.id), platformBase(ctx.env));
+  const replayBase = ctx.env.REPLAY_BASE_URL?.trim().replace(/\/+$/, "") || null;
+  return installInstructions(s, ctx.baseUrl, framework, await proxyKeyFor(ctx.env, s.id), platformBase(ctx.env), replayBase);
 }
 
 function nextSteps(ctx: Ctx, s: SiteRow): string[] {
@@ -451,6 +466,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     channel_groups: channelGroupsColumn(input.channel_groups),
     currency: input.currency ?? null,
     protection: input.protection ?? "auto",
+    replay_proxy_path: input.replay_proxy_path ?? null,
     created_at: now,
     updated_at: now,
   };
@@ -502,16 +518,19 @@ export async function getSite(ctx: Ctx, siteId: string) {
 
 /** Is the site currently refusing events (storage budget, daily limit)? */
 export function budgetStatus(
-  d: { usage_today?: { events: number; refused: number }; database_bytes?: number },
-  l: { events_per_site_per_day: number | null; storage_bytes: number | null },
+  d: { usage_today?: { events: number; server_events?: number; refused: number }; database_bytes?: number },
+  l: { events_per_site_per_day: number | null; server_events_per_site_per_day?: number | null; storage_bytes: number | null },
 ) {
   const storageFull = l.storage_bytes != null && (d.database_bytes ?? 0) >= l.storage_bytes;
   const dailyLimit = l.events_per_site_per_day != null && (d.usage_today?.events ?? 0) >= l.events_per_site_per_day;
+  const serverLimit = l.server_events_per_site_per_day != null && (d.usage_today?.server_events ?? 0) >= l.server_events_per_site_per_day;
   return {
     storage_full: storageFull,
     daily_limit_reached: dailyLimit,
+    server_daily_limit_reached: serverLimit,
     database_bytes: d.database_bytes ?? null,
     events_today: d.usage_today?.events ?? 0,
+    server_events_today: d.usage_today?.server_events ?? 0,
     refused_today: d.usage_today?.refused ?? 0,
   };
 }
@@ -561,6 +580,7 @@ export async function updateSite(ctx: Ctx, siteId: string, raw: unknown) {
   if (input.channel_groups !== undefined) next.channel_groups = channelGroupsColumn(input.channel_groups);
   if (input.currency !== undefined) next.currency = input.currency ?? null;
   if (input.protection !== undefined) next.protection = input.protection;
+  if (input.replay_proxy_path !== undefined) next.replay_proxy_path = input.replay_proxy_path ?? null;
   if (replayChange) next.replay_site_id = replaySiteColumn(input.replay_site_id ?? null);
   // A new domain has to be proven again (share pages show the domain only while it is).
   const domainChanged = next.domain !== s.domain;

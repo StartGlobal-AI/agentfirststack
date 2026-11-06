@@ -674,7 +674,28 @@ pre {
   background-position: right 13px center;
   text-overflow: ellipsis;
 }
-.app input::placeholder {
+.app textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background-color: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.app textarea:focus-visible {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(47, 107, 255, 0.18);
+}
+.abuse-form > .field {
+  align-self: stretch;
+}
+.app input::placeholder,
+.app textarea::placeholder {
   color: #8a92a1;
 }
 .app input:hover,

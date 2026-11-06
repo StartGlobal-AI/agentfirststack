@@ -265,6 +265,23 @@ textarea/title/noscript/template content) never counts.
 Preview links and environments of a draft that may not run custom code are served without those
 tags. `custom_js` variables count as custom code too.
 
+**Custom code checks** (`src/service/code-scan.ts`). Publishing (and `publish { version }`,
+rollback, pinning an environment) refuses known-bad code with `422 custom_code_blocked` and every
+finding (`{ path, rule, strong, match, message }`); drafts show it in validation. Checked: crypto
+miners (library names, `stratum+tcp://`, mining hosts); skimmers (a selector lookup naming a
+password or card field, reading `.value` and sending it with fetch / XHR / sendBeacon / an image
+or script src / WebSocket / jQuery ajax; a `dom_value` variable on such a field); obfuscated eval
+chains (eval / Function / setTimeout of a decoded string, the packer, `window["ev"+"al"]`,
+`document.write` of decoded markup, JSFuck); malicious hosts (mining services, the 2024
+polyfill.io supply-chain hosts, `EXTRA_BLOCKED_CODE_HOSTS`). Escapes, joined literals, `atob`
+literals, `fromCharCode` lists and `%XX` runs are decoded before matching. A strong match (a miner,
+a skimmer posting to another site or to an address decoded at run time, an operator-listed host)
+also pauses `tags.custom_code` for the account through the site (`SITE` binding,
+`requestCapabilityPause` in `@afs/shared`): later custom-code publishes answer `403
+capability_paused`, the live script and previews are served without custom code, and the
+operator lifts it. The pattern list errs towards missing things rather than refusing ordinary tag
+code (vendor snippets, JSON-LD, embeds, form trackers that skip password fields all pass).
+
 **Editing and migrating.** Items can be edited one at a time (`PUT|DELETE /draft/:kind/:key`,
 `POST /draft/:kind/:key/revert`), each write guarded by the draft revision it read: without
 `?revision=` a change is re-applied on top of a newer draft, with it a stale revision is a 409.
@@ -580,9 +597,11 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
   IPv6 /48, counted by an HMAC of container id, UTC day and network keyed from `ENCRYPTION_KEY`, one
   upsert per hit into the DO's `net_daily`), the rest of its hits that day are quarantined and the
   container is "contained". A 15-minute window with at least 10x the usual rate (the previous 7
-  days' `browser_events` / 96) and at least 1000 (`SPIKE_MIN_EVENTS`) puts it "under_attack" (in
-  memory, no extra query per hit): data-centre ASNs are quarantined and browser conversions are held
-  (each destination skipped with a `held: ...` reason). `strict` applies those measures always.
+  days' `browser_events` / 96) and at least 1000 (`SPIKE_MIN_EVENTS`), from at least 20 distinct
+  networks (`SPIKE_MIN_NETWORKS`; fewer = "contained"), puts it "under_attack" (in memory, no extra
+  query per hit): data-centre ASNs are quarantined, their conversions with them; conversions from
+  every other network keep flowing. `strict` quarantines data-centre ASNs always and also holds
+  every browser conversion (each destination skipped with a `held: ...` reason).
   Episodes end an hour after the last trigger. Quarantined hits are logged (`status: quarantined`,
   `quarantine`, `asn`, `as_org`; up to `MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY`), never
   delivered, never stored as visitors and not counted against the daily budgets. Backend events
@@ -647,6 +666,11 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
 | `MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY` | optional var; quarantined hits logged per container per UTC day, the rest counted only (unset = off) |
 | `MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY` | optional var; consent banner choices recorded per container per UTC day; past it choices still apply but aren't recorded (unset = off) |
 | `SPIKE_MIN_EVENTS` | optional var; fewest browser hits in 15 minutes that count as a spike, default `1000` (for tests) |
+| `SPIKE_MIN_NETWORKS` | optional var; fewest distinct networks in that window for a spike to be an attack, default `20` (fewer = contained) |
+| `MAX_SCANS_PER_ACCOUNT_PER_DAY`, `MAX_SCANS_PER_DAY` | optional vars; scans + domain verifications per account and for the whole deployment per UTC day, counted in D1 (refused ones too; unset = off) |
+| `MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY`, `MAX_DESTINATION_TESTS_PER_DAY` | optional vars; destination tests per account and deployment-wide per UTC day (unset = off) |
+| `EXTRA_BLOCKED_CODE_HOSTS` | optional var; hosts custom code may not load from or talk to, on top of the built-in list (a match pauses custom code) |
+| `SITE`, `PAUSE_LIFT_GRACE_HOURS` | optional service binding to the site Worker (capability pauses go through it so people are emailed at once; unbound, the pause is written to `AUTH_DB` and the site's cron emails), and the hours after the operator lifts a pause during which an automatic re-pause is skipped (default `24`) |
 | `MAX_VISITORS_PER_CONTAINER` | optional var; visitor rows kept per container, least recently seen evicted, default `250000` |
 | `MAX_CONTAINER_DB_BYTES` | optional var; ContainerDO database size above which `/collect` stops writing (backend events up to 25% more), default `1073741824` (1 GiB) |
 | `CIRCUIT_BREAKER_FAILURES`, `CIRCUIT_BREAKER_MINUTES` | optional vars; consecutive failed attempts that open a destination's circuit (default `20`, `0` = off) and minutes it stays open (default `60`) |

@@ -45,6 +45,16 @@ export default defineConfig({
           NOTIFY_REPLY_TO: "",
           OPERATOR_EMAIL: "",
           MAX_EMAILS_PER_PERSON_PER_DAY: "",
+          // Abuse handling: defaults in tests (each test sets what it checks).
+          SIGNUP_POW_DIFFICULTY: "",
+          PAUSE_LIFT_GRACE_HOURS: "",
+          ABUSE_REPORTS_HOURLY_LIMIT: "",
+          ABUSE_REPORTS_DAILY_LIMIT: "",
+          ABUSE_REPORT_EMAILS_PER_DAY: "",
+          SAFE_BROWSING_API_KEY: "",
+          SPAMHAUS_DQS_KEY: "",
+          REPUTATION_DOMAINS: "",
+          OWN_REPLAY_PROXY_KEY: "",
           // First-party domains: off unless a test turns Cloudflare for SaaS on (test/first-party-domains.test.ts).
           CF_SAAS_API_TOKEN: "",
           CF_SAAS_ZONE_ID: "",

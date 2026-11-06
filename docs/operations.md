@@ -54,10 +54,13 @@ deploy.
   prunes emails older than 30 days (`cron.email_prune`), writes setup notices (`cron.notices`),
   queues setup reminders (`cron.setup_reminders`), looks for analytics sites that went quiet
   (`cron.quiet_sites`), forgets limit warnings older than a month (`cron.limit_warnings_prune`)
-  and erases deleted projects past their 7 days (`cron.project_purge`).
+  and abuse reports older than 180 days (`cron.abuse_reports_prune`), sends the operator's daily
+  summary (`cron.operator_digest`) and erases deleted projects past their 7 days
+  (`cron.project_purge`).
 - **site**, hourly at :47: the reminders the day before a deleted project is erased, the usage of
-  every claimed project (warnings for caps close to their limit), then sends queued and retried
-  emails (`cron.email`, with `limits: {checked, warned}`).
+  every claimed project (warnings for caps close to their limit), the emails for capability pauses
+  a service wrote directly (`pauses`), then sends queued and retried emails (`cron.email`, with
+  `limits: {checked, warned}`).
 - **analytics**, every 5 minutes: alerts, reports, Stripe backfills and exchange rates.
 - **mail**, hourly at :17: retention purges and forwarding digests (see the mail README).
 - **replay**, hourly at :23: retention and R2 cleanup (see the replay README).
@@ -114,11 +117,35 @@ Free, instant signup attracts abuse. What bounds it, outermost first:
   only verified sites emit events, and delivery logs (`webhook_deliveries`) are purged after 7 days by the
   hourly cron. A stuck webhook shows in `GET /v1/webhooks/:id` (`status`, `error`).
 
+The policy behind all of it is public: `/acceptable-use` (site/public/acceptable-use.html), linked
+from the terms, every footer, llms.txt and the setup prompts. The rule: **strong signals pause one
+capability automatically; suspending a whole account is always a person's decision.**
+
 When something gets through, in order of escalation:
 
 1. **Limits.** The fair-use vars (see [self-hosting.md](self-hosting.md) and the table below)
    bound what one account or network can do. Tighten them in the profile and deploy.
-2. **Suspend the account.** Every key it has (OAuth tokens included) stops on every service at
+2. **Capability pauses** (automatic, or by hand). One capability of one account stops while
+   everything else keeps working: `mail.send`, `mail.inbox_create`, `tags.custom_code`,
+   `replay.share_links`, `analytics.share_links`. The services pause on strong signals (mail: the
+   last hour's bounce or complaint rate past its threshold, an inbox-creation burst; tags: custom
+   code matching known-malicious patterns at publish) by calling the site's
+   `POST https://site.internal/v1/internal/pauses` over a service binding with `x-afs-internal`
+   (`requestCapabilityPause()` in `@afs/shared`; without a `SITE` binding it writes the row itself
+   and the hourly cron sends the emails). The row lives in `capability_pauses` (identity DB); every
+   service reads it with `capabilityPaused()`, cached a minute per isolate, and answers
+   `403 capability_paused` with the reason. The project's people (account email, always sent) and
+   `OPERATOR_EMAIL` are emailed at once. Review each one:
+   ```sh
+   curl -s https://<domain>/v1/admin/pauses -H "authorization: Bearer $ADMIN_TOKEN"   # in force now
+   pnpm afs unpause hosted acct_... mail.send            # a false positive: lift it (people are told)
+   pnpm afs pause hosted acct_... replay.share_links --reason "phishing page, report abr_..."
+   ```
+   After a lift, automatic re-pauses of that capability are ignored for `PAUSE_LIFT_GRACE_HOURS`
+   (default 24), so the same hour of data doesn't pause it again; the operator's own pauses always
+   apply. `GET /v1/admin/accounts/:id` lists an account's pauses, lifted ones included. If the
+   pause shows clear abuse, go on to step 3.
+3. **Suspend the account.** Every key it has (OAuth tokens included) stops on every service at
    once with `403 account_suspended`, and its public ingest stops within a minute. Its data and
    keys are kept, so it can be undone:
    ```sh
@@ -128,12 +155,55 @@ When something gets through, in order of escalation:
    These call `POST /v1/admin/accounts/:id/suspend` and `/unsuspend` on the site with the
    profile's `ADMIN_TOKEN` (from `deploy/<profile>.secrets.json`); `GET /v1/admin/accounts/:id`
    shows an account's standing, key and member counts. Suspending twice keeps the first reason.
-3. **Remove its resources.** Delete its inboxes, sites and containers through the API with a
+4. **Remove its resources.** Delete its inboxes, sites and containers through the API with a
    temporary key, or with SQL on the app's database.
 
-4. **Close signup** temporarily: set `vars.all.SIGNUP_MODE` to `token` and deploy. For a burst
-   from many networks, `SIGNUP_GLOBAL_HOURLY_LIMIT` already pauses new signups deployment-wide
-   (`429 signups_paused`, existing keys unaffected) without a deploy.
+5. **Close signup** temporarily: set `vars.all.SIGNUP_MODE` to `token` and deploy. For a burst
+   from many networks, `SIGNUP_GLOBAL_HOURLY_LIMIT` already slows new signups deployment-wide
+   without a deploy: past it, `POST /v1/signup` answers `429 proof_of_work_required` with a signed
+   `challenge` and a `difficulty` (20 bits by default, `SIGNUP_POW_DIFFICULTY`; one more bit each
+   time the hour's count doubles past the limit, at most 4 more). A signup carrying a solution goes
+   through (per-network limits still apply; one signup per challenge, valid 10 minutes). An agent
+   solves it in about a second; a bulk script pays that per account. Challenges are signed with
+   `INTERNAL_TOKEN` (else `ADMIN_TOKEN`), so any app's challenge works on every app; with neither,
+   it's the old `429 signups_paused`. People creating projects in the dashboard (OAuth consent) are
+   counted but never held by the breaker: they have `PROJECTS_PER_USER_DAILY_LIMIT`.
+
+### Abuse reports
+
+Anyone can report abuse without an account: the form at `/report-abuse` (share pages link to it
+with `?url=`), `POST /v1/abuse-reports {url_or_resource, kind, details, contact?}` (kind:
+phishing, spam, malware, impersonation, other) or MCP `afs_report_abuse`. Reports are stored in
+`abuse_reports` (identity DB, kept 180 days, the reporter's network only as a hash); the same report
+from the same network within a day is the same report. Phishing and malware are emailed to
+`OPERATOR_EMAIL` at once (at most `ABUSE_REPORT_EMAILS_PER_DAY`, default 20; the rest wait for the
+summary), and every report is in the daily summary. Limits: `ABUSE_REPORTS_HOURLY_LIMIT` per
+network (default 5) and `ABUSE_REPORTS_DAILY_LIMIT` for the deployment (default 500). Work through
+them:
+
+```sh
+curl -s "https://<domain>/v1/admin/abuse-reports?status=new" -H "authorization: Bearer $ADMIN_TOKEN"
+# find the project behind the URL (a site_, ctr_, rsite_, inbox address or share token), then pause
+# or suspend, and close the report:
+curl -s -X PATCH https://<domain>/v1/admin/abuse-reports/abr_... -H "authorization: Bearer $ADMIN_TOKEN" \
+  -H 'content-type: application/json' -d '{"status":"reviewed","note":"paused replay.share_links"}'
+```
+
+Report text is from the public: read it, don't paste it into an agent as instructions.
+
+### Reputation checks
+
+The daily summary checks the deployment's own name (src/reputation.ts): Google Safe Browsing for
+the apex and its service hosts (secret `SAFE_BROWSING_API_KEY` on the site; skipped without it),
+the Spamhaus DBL for the apex through DNS over HTTPS (Spamhaus refuses public resolvers, so set
+`SPAMHAUS_DQS_KEY`, a free Data Query Service key, or the line reads "unknown"), and the mail
+service's delivery health for the last day (mail's `GET /v1/admin/delivery-health`, read over the
+binding as the deployment's own project, `OWN_ANALYTICS_ACCOUNT_ID`, else the oldest account; a
+bounce rate past 5% or complaints past 0.3% with at least 20 sends is a warning, and the worst
+accounts are named). `REPUTATION_DOMAINS` (comma-separated) adds domains the deployment uses,
+such as a user-content or shared-inbox domain. A listing or a warning puts "Needs a look" in the
+subject. If the apex is listed: find the cause in the abuse reports and pauses, fix it, then use
+the list's removal form (Safe Browsing: Search Console, Security issues; Spamhaus: its lookup page).
 
 ### Signup and key limits
 
@@ -147,7 +217,8 @@ breaker). Set them under `vars.all` so every app's `/v1/signup` and `/v1/keys` a
 | `SIGNUP_HOURLY_LIMIT` | off | New accounts per network per rolling hour. A network is an IPv4 address or an IPv6 /48 (free tunnel brokers hand out whole /48s) |
 | `SIGNUP_DAILY_LIMIT` | off | New accounts per network per rolling day |
 | `SIGNUP_ASN_DAILY_LIMIT` | off | New accounts per network operator (`request.cf.asn`) per rolling day; skipped when Cloudflare gives no ASN |
-| `SIGNUP_GLOBAL_HOURLY_LIMIT` | off | New accounts on the whole deployment per rolling hour: a circuit breaker |
+| `SIGNUP_GLOBAL_HOURLY_LIMIT` | off | New accounts on the whole deployment per rolling hour: a circuit breaker; past it a signup needs a proof of work |
+| `SIGNUP_POW_DIFFICULTY` | 20 | The proof of work's base difficulty in leading zero bits of SHA-256 (about a second; each bit doubles it) |
 | `MAX_KEYS_PER_ACCOUNT` | 50 | Active API keys per account (OAuth access tokens don't count) |
 | `UNCLAIMED_MAX_KEYS_PER_ACCOUNT` | unset | The same cap for accounts no person has claimed |
 | `KEYS_HOURLY_LIMIT` | off | New API keys per account per rolling hour, revoked ones included |
@@ -164,9 +235,11 @@ Writes and ingest keep their own limits; the dashboard's internal calls are not 
 dashboard's data route and live stream have `DASHBOARD_LIMITER` instead (namespace 42045, 600 per
 minute per signed-in person; a page load makes 20-40 reads). Both fail open if the binding errors.
 
-Reports arrive at `abuse@<domain>`. Role addresses (abuse, postmaster, security, admin and others)
-can't be claimed by users, so route them to a person: in the dashboard under Email > Email
-Routing > Routing rules, add a custom address rule for each one that forwards to your own mailbox.
+Reports also arrive at `abuse@<domain>`, and appeals of pauses and suspensions at
+`support@<domain>` (the emails and the `capability_paused` hint name it). Role addresses (abuse,
+support, postmaster, security, admin and others) can't be claimed by users, so route them to a
+person: in the dashboard under Email > Email Routing > Routing rules, add a custom address rule
+for each one that forwards to your own mailbox.
 
 ## Emails to people
 
@@ -192,8 +265,11 @@ Management), which shows who sends as the domain and their pass rate.
 `OPERATOR_EMAIL` (site var, comma-separated; off when unset) the last 24 hours: new, claimed,
 deleted, erased and suspended projects, new people, signup attempts and networks, the limit
 warnings and suspicious-traffic episodes emailed to projects, emails sent and failed (with the top
-failures), and whether each service answers. The subject starts "Needs a look:" when a service is
-down, there was an attack, an email failed or an account was suspended. `pnpm afs digest <profile>`
+failures), whether each service answers, the day's capability pauses and abuse reports, and the
+reputation checks (see "Reputation checks" above). It is never held back by
+`MAX_EMAILS_PER_PERSON_PER_DAY`. The subject starts "Needs a look:" when a service is down, there
+was an attack, an email failed, an account was suspended, a capability was paused, a phishing or
+malware report came in, or a reputation check found a listing or a warning. `pnpm afs digest <profile>`
 sends one now and prints it (admin route `POST /v1/admin/digest`). Worker errors aren't in it: see
 each Worker's Observability tab.
 

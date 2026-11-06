@@ -8,9 +8,11 @@ import {
   isTemporaryCredential,
   mcpChallenge,
   readAllowed,
+  parse,
   readLimited,
   renameProject,
 } from "@afs/shared";
+import { abuseAnswer, fileAbuseReport, reportBody } from "./abuse-reports";
 import { claimLinkResponse, createClaimLink } from "./claims";
 import { addFirstPartyDomain, getFirstPartyDomain, listFirstPartyDomains, removeFirstPartyDomain } from "./first-party-domains";
 import { deleteProject, deletionAnswer, isClaimed } from "./project-deletion";
@@ -28,7 +30,7 @@ import { checkTestVisit, readSince, runSetupTest } from "./setup-test";
  * scoping, read-only keys and errors behave exactly as on the service itself.
  *
  * Tools prefixed `afs_` are the gateway's own (platform-wide, not one service's):
- * `afs_check_setup`, `afs_get_usage`, `afs_check_test_visit` and `afs_list_first_party_domains` (every key),
+ * `afs_check_setup`, `afs_get_usage`, `afs_check_test_visit`, `afs_list_first_party_domains` and `afs_report_abuse` (every key),
  * `afs_test_setup`, `afs_update_project`, `afs_add_first_party_domain` and `afs_remove_first_party_domain` (keys that can write) and
  * `afs_create_claim_link` and `afs_delete_project` (full-access API keys only, not OAuth access tokens).
  *
@@ -223,6 +225,25 @@ const FP_REMOVE_TOOL: Tool = {
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
 };
 
+const REPORT_TOOL: Tool = {
+  name: "afs_report_abuse",
+  title: "Report abuse of AgentFirstStack",
+  description:
+    "Reports phishing, spam, malware or impersonation that uses AgentFirstStack (a share link, an inbox, a tag container, a page) to the operator. Not for this project's own problems (use the setup check). Answers with an id and what happens next; the same report within a day returns the existing one. Same as POST /v1/abuse-reports (also open without a key, and as a form at /report-abuse).",
+  inputSchema: {
+    type: "object",
+    properties: {
+      url_or_resource: { type: "string", description: "The URL, email address or id that is abused (3-2000 characters)." },
+      kind: { type: "string", enum: ["phishing", "spam", "malware", "impersonation", "other"] },
+      details: { type: "string", description: "What happened, when, and anything that helps find it (1-5000 characters)." },
+      contact: { type: "string", description: "Optional: an email address, only if the operator may need more information." },
+    },
+    required: ["url_or_resource", "kind", "details"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+};
+
 interface Caller {
   authHeader: string;
   auth: AuthContext;
@@ -281,6 +302,7 @@ async function buildToolList(env: Bindings, caller: Caller): Promise<Tool[]> {
     ...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []),
     ...(canWrite(caller.auth) ? [RENAME_TOOL] : []),
     ...(offersClaimTool(caller.auth) ? [DELETE_TOOL] : []),
+    REPORT_TOOL,
     ...lists.flat(),
   ];
 }
@@ -309,6 +331,17 @@ async function callGatewayTool(env: Bindings, caller: Caller, name: string, args
     return toolResult(await setupReport(env, caller.auth.accountId, { base: caller.base, domain, services, record: true }));
   }
   if (name === USAGE_TOOL.name) return toolResult(await usageReport(env, caller.auth.accountId));
+  if (name === REPORT_TOOL.name) {
+    try {
+      const input = parse(reportBody, args);
+      // Counted per project here (the REST route counts per network).
+      const r = await fileAbuseReport(env, caller.base, input, `acct:${caller.auth.accountId}`);
+      return toolResult(abuseAnswer(caller.base, r));
+    } catch (err) {
+      const e = err as { toJSON?: () => unknown; message?: string };
+      return toolResult(e.toJSON ? e.toJSON() : { error: { code: "internal", message: e.message ?? String(err) } }, true);
+    }
+  }
   if (name === TEST_TOOL.name || name === VISIT_TOOL.name) {
     const fail = (message: string, hint: string, code = "bad_request") => toolResult({ error: { code, message, hint } }, true);
     const raw = typeof args.domain === "string" ? args.domain : "";

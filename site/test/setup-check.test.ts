@@ -509,6 +509,24 @@ describe("setup check", () => {
     expect(clean.json.checks.some((x: { id: string }) => x.id === "analytics.proxy_key")).toBe(false);
   });
 
+  it("fails readiness when replay uploads come through a proxy without its proxy key, from the replay site it already reads", async () => {
+    const agent = await signup("replaykey.test");
+    const routes = healthy();
+    const rsite = routes.replay["/v1/sites/rsite_acme"] as { data: Record<string, unknown> };
+    rsite.data.warnings_last_7d = { proxy_key_invalid: { count: 7 }, proxy_key_missing: { count: 2 } };
+    const { env } = envWith(routes);
+    const r = await call("GET", "/v1/setup", { key: agent.key, env });
+    const c = byId(r.json.checks);
+    expect(r.json.ready).toBe(false);
+    expect(c("replay.proxy_key")).toMatchObject({ status: "failing", service: "replay", detail: expect.stringContaining("9 uploads") });
+    expect(c("replay.proxy_key").detail).toContain("with a wrong x-afs-proxy-key");
+    expect(c("replay.proxy_key").fix).toContain("https://replay.afs.test/v1/sites/rsite_acme/install");
+    expect(c("replay.proxy_key").fix).toContain("/v1/first-party-domains");
+    expect(r.json.report_markdown).toContain("Session replay");
+    const clean = await call("GET", "/v1/setup", { key: agent.key, env: envWith(healthy()).env });
+    expect(clean.json.checks.some((x: { id: string }) => x.id === "replay.proxy_key")).toBe(false);
+  });
+
   it("reports a service that doesn't answer as unavailable, which blocks ready", async () => {
     const agent = await signup("acme.test");
     const routes = healthy();

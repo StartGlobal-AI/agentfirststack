@@ -45,9 +45,9 @@ const pages = walk(PUBLIC)
   .map((rel) => ({ rel, path: rel === "index.html" ? "/" : `/${rel.replace(/\.html$/, "")}` }));
 for (const rel of EXTRA) pages.push({ rel, path: `/${rel}` });
 
-const priority = (path) =>
-  path === "/" ? "1.0" : path === "/guides" || path === "/llms.txt" ? "0.9" : /^\/(privacy|terms)$/.test(path) ? "0.3" : "0.8";
-const changefreq = (path) => (/^\/(privacy|terms)$/.test(path) ? "yearly" : "weekly");
+const LEGAL = /^\/(privacy|terms|acceptable-use)$/;
+const priority = (path) => (path === "/" ? "1.0" : path === "/guides" || path === "/llms.txt" ? "0.9" : LEGAL.test(path) ? "0.3" : "0.8");
+const changefreq = (path) => (LEGAL.test(path) ? "yearly" : "weekly");
 
 pages.sort((a, b) => (a.path === "/" ? -1 : b.path === "/" ? 1 : a.path.localeCompare(b.path)));
 

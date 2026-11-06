@@ -458,6 +458,11 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       : "The trial quota of an unverified site was reached; verify the domain for the full quota.",
     forced_daily_limit: "The daily quota of ?afsr=1 test sessions was reached; it resets at 00:00 UTC.",
     ip_daily_limit: "One network started more sessions than allowed per day (MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY).",
+    ip_bytes_limit: "One network sent more recording data than its daily share (MAX_BYTES_PER_IP_PER_SITE_PER_DAY).",
+    site_daily_limit:
+      "This site used its own daily recording budget (MAX_{CHUNKS,BYTES,DERIVED}_PER_SITE_PER_DAY, by default half the account's); the account's other sites kept recording. Lower sample_rate or block heavy parts with block_selectors.",
+    datacenter_under_attack:
+      "The site was under attack (a flood of new sessions), so new sessions from data-centre networks weren't recorded; data.protection in GET /v1/sites/:id shows the state. Visitors on residential networks were recorded as usual.",
     account_daily_limit: "The account's daily recording budget was reached; recording resumes after 00:00 UTC.",
     platform_budget: "The service hit its daily recording capacity; recording resumes later.",
     rate_limited: "Chunks were refused by the per-network or per-site rate limit.",
@@ -483,6 +488,15 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
         fix: why[reason],
       });
   }
+  const warned = sum.warnings_last_7d;
+  const proxyWarn = (warned.proxy_key_missing?.count ?? 0) + (warned.proxy_key_invalid?.count ?? 0);
+  if (proxyWarn)
+    checks.push({
+      id: "proxy_key",
+      ok: false,
+      detail: `${proxyWarn} chunks in the last 7 days came through a path proxy ${warned.proxy_key_invalid ? "with a wrong" : "without an"} x-afs-proxy-key header, so their IP and geo are the proxy's: the per-network caps count every visitor as one network, and their country is unknown.`,
+      fix: `Re-apply the proxy config from GET /v1/sites/${site.id}/install (first_party_proxy, with a full-access key): it sends x-afs-proxy-key with this site's key plus the visitor's IP and geo. Or use a first-party domain (first_party.first_party_domain), which needs no key.`,
+    });
   const bots = Object.entries(drops)
     .filter(([k]) => k.startsWith("bot:"))
     .reduce((n, [, v]) => n + v.count, 0);

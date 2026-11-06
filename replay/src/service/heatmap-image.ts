@@ -1,10 +1,10 @@
-import { accountStanding, ApiError, badRequest, parse, sha256Hex } from "@afs/shared";
+import { accountStanding, ApiError, badRequest, parse, sha256Hex, type Standing } from "@afs/shared";
 import { z } from "zod";
 import { DAY, utcDay } from "../do/db";
 import type { Bindings } from "../env";
 import { validGlob } from "../lib/glob";
 import { HEATMAP_IMAGE_TYPES, OVERLAY_HEAD, overlayHtml } from "../lib/heatmap-overlay";
-import { cap, DEFAULTS } from "../lib/limits";
+import { cap, claimedFirstCap, DEFAULTS } from "../lib/limits";
 import { findSnapshot, snapshotToHtml } from "../lib/snapshot-html";
 import { siteHostAllowed } from "../lib/url";
 import { chunkObject, type Ctx, isVerified, jsonList, loadSite, type SiteRow, siteStub } from "./context";
@@ -18,6 +18,11 @@ import { range } from "./sessions";
  * binding, a Quick Action screenshot of static HTML: JavaScript off, requests only to the site's
  * hosts). Cached in R2 (heatmaps/<site_id>/<hash>.png) per page + device + type + range for a day;
  * a render counts against daily caps per site, account and deployment (browser time is billed).
+ *
+ * Claimed projects only by default: an unclaimed account's daily cap is
+ * UNCLAIMED_MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY, 0 when unset (403 claim_required). It stays a
+ * read (GET, MCP read tool): a key of the account can only spend that account's own small daily
+ * share, cached images are free, and the deployment-wide cap bounds the total.
  */
 
 export const heatmapImageInput = z.object({
@@ -72,11 +77,22 @@ async function recordRender(env: Bindings, s: SiteRow, day: string, ms: number) 
   await env.DB.batch(SCOPES(s).map((scope) => st.bind(scope, day, Math.max(0, Math.round(ms)))));
 }
 
+/** Images an account may render a day: claimed-first (unclaimed: UNCLAIMED_MAX_..., default 0). */
+export const accountImageCap = (env: Bindings, standing: Standing) =>
+  claimedFirstCap(
+    env,
+    standing,
+    "MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY",
+    DEFAULTS.HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY,
+    DEFAULTS.UNCLAIMED_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY,
+  );
+
 export async function imageCaps(env: Bindings, accountId: string) {
   const standing = await accountStanding(env, accountId);
   return {
+    claimed: standing.claimed,
     site: cap(env, standing, "MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY", DEFAULTS.HEATMAP_IMAGES_PER_SITE_PER_DAY),
-    account: cap(env, standing, "MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY", DEFAULTS.HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY),
+    account: accountImageCap(env, standing),
     platform: cap(env, standing, "MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY", DEFAULTS.HEATMAP_IMAGES_PLATFORM_PER_DAY),
   };
 }
@@ -128,6 +144,13 @@ export async function renderHeatmapImage(ctx: Ctx, siteId: string, raw: unknown)
 
   const day = utcDay(now);
   const caps = await imageCaps(env, site.account_id);
+  if (!caps.claimed && caps.account === 0)
+    throw new ApiError(
+      403,
+      "claim_required",
+      "Heatmap images are rendered in a browser this deployment shares, so they're for projects a person has claimed.",
+      `Ask a person to claim the project (a claim link from the platform's POST /v1/claim-link, opened while signed in). GET /v1/sites/${site.id}/heatmap has the same data as JSON now.`,
+    );
   const used = await usageToday(env, site, day);
   const over =
     caps.site !== null && used.site >= caps.site
@@ -273,7 +296,7 @@ export async function heatmapImageInfo(ctx: Ctx, siteId: string, raw: Record<str
       .filter(([, v]) => v !== undefined)
       .map(([k, v]) => [k, String(v)]),
   ).toString();
-  const caps = await imageCaps(ctx.env, site.account_id);
+  const { claimed: _, ...caps } = await imageCaps(ctx.env, site.account_id);
   const used = await usageToday(ctx.env, site, utcDay(Date.now()));
   const MAX_B64 = 1_500_000;
   let b64: string | null = null;

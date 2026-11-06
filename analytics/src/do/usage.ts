@@ -11,8 +11,10 @@ import type { ProtectionView } from "./protection";
 
 export interface SiteUsage {
   day: string;
-  /** accepted events + engagement beacons + payments today (UTC): MAX_EVENTS_PER_SITE_PER_DAY counts these */
+  /** accepted browser events + engagement beacons today (UTC): MAX_EVENTS_PER_SITE_PER_DAY counts these */
   events_today: number;
+  /** accepted server events, payments and subscription changes today: MAX_SERVER_EVENTS_PER_SITE_PER_DAY */
+  server_events_today: number;
   crawl_hits_today: number;
   export_rows_today: number;
   /** manual annotations (kind note): MAX_ANNOTATIONS_PER_SITE */
@@ -38,6 +40,7 @@ export function siteUsage(db: Db, now = Date.now()): SiteUsage {
   return {
     day,
     events_today: today.events,
+    server_events_today: today.server_events,
     quarantined_today: today.quarantined,
     crawl_hits_today: one("SELECT hits AS n FROM crawl_usage WHERE day = ?", [day]),
     export_rows_today: one("SELECT rows AS n FROM export_usage WHERE day = ?", [day]),

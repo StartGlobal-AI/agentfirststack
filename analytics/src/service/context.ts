@@ -62,6 +62,8 @@ export interface SiteRow {
   trust_browser_user_id?: number;
   /** linked replay site, rsite_...; the tracker loads its recorder (migration 0008; NULL = none) */
   replay_site_id?: string | null;
+  /** where the site's own replay proxy lives, e.g. "/_r" (migration 0022; NULL = none) */
+  replay_proxy_path?: string | null;
   /** set when verify proved the domain is the account's (migration 0009; NULL = not verified) */
   verified_at?: number | null;
   /** homepage | dns_txt | dev_localhost */
@@ -95,7 +97,11 @@ type Obj = Record<string, unknown>;
 export interface SiteStub {
   configure(s: SiteSettings): Promise<{ ok: true }>;
   ingest(events: EnrichedEvent[], policy?: IngestPolicy): Promise<IngestResponse>;
-  recordDrop(reason: string, sample: string | null): Promise<{ replay_site_id: string | null } | null>;
+  recordDrop(
+    reason: string,
+    sample: string | null,
+    count?: number,
+  ): Promise<{ replay_site_id: string | null; replay_proxy_path?: string | null } | null>;
   stats(q: StatsRequest): Promise<Obj | DoError>;
   breakdown(q: StatsRequest & { breakdown: Breakdown | Breakdown[] }): Promise<Obj | DoError>;
   timeseries(q: TimeseriesRequest): Promise<Obj | DoError>;
@@ -193,7 +199,7 @@ export interface SiteSummary {
   last_event_at: number | null;
   dropped_last_7d: Record<string, DropCount>;
   warnings_last_7d: Record<string, DropCount>;
-  usage_today?: { day: string; events: number; bytes: number; refused: number };
+  usage_today?: { day: string; events: number; server_events?: number; bytes: number; refused: number };
   /** how the last 7 days' browser events reached the collector (direct = blockable), and the first-party domains they came through */
   collection_last_7d?: {
     direct: number;
@@ -263,6 +269,7 @@ export function settingsFor(site: SiteRow, goals: Goal[]): SiteSettings {
     browser_user_props: !!site.browser_user_props,
     trust_browser_user_id: !!site.trust_browser_user_id,
     replay_site_id: site.replay_site_id ?? null,
+    replay_proxy_path: site.replay_proxy_path ?? null,
     ignored_referrers: jsonList<string>(site.ignored_referrers),
     path_rules: jsonList<PathRule>(site.path_rules),
     redact_pii: site.redact_pii !== 0,

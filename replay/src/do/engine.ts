@@ -9,6 +9,7 @@
  * grow with stored data has a LIMIT or works on one session.
  */
 
+import { ATTACK_COOLDOWN_MS, SPIKE_FACTOR, SPIKE_WINDOW_MS } from "@afs/shared";
 import type { DerivedChunk } from "../lib/derive";
 import { ACTIVE_GAP_MS, anyIn, ATTENTION_BANDS, attentionAdd, DEAD_MS, shiftChunk } from "../lib/derive";
 import { type Budget, COUNTERS, type Counter, DEFAULTS, LIMITS, type Totals } from "../lib/limits";
@@ -25,7 +26,7 @@ import { FWD_ANALYTICS, queueSessionSignals, type TagsRequest, tagsQueued } from
  * engine). SCHEMA_V1 only runs for a brand-new database: running it again would recreate indexes a
  * migration dropped.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -361,6 +362,11 @@ CREATE INDEX IF NOT EXISTS tags_outbox_session ON tags_outbox(session_id);
 CREATE INDEX IF NOT EXISTS tags_outbox_response ON tags_outbox(response_id) WHERE response_id IS NOT NULL
 `;
 
+/** Version 5 (hardening round): bytes per client network per day, for the network's byte share. */
+const SCHEMA_V5 = `
+ALTER TABLE net_daily ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0
+`;
+
 const statements = (sql: string) =>
   sql
     .split(";")
@@ -395,6 +401,12 @@ const MIGRATIONS: { version: number; up: (db: Db, now: number) => void }[] = [
     version: 4,
     up: (db) => {
       for (const s of statements(SCHEMA_V4)) db.run(s);
+    },
+  },
+  {
+    version: 5,
+    up: (db) => {
+      for (const s of statements(SCHEMA_V5)) db.run(s);
     },
   },
 ];
@@ -456,11 +468,15 @@ export interface IngestLimits {
   upgraded_daily?: number | null;
   /** new sessions per client network per UTC day */
   net_daily?: number | null;
+  /** stored bytes per client network per UTC day (every chunk counts, new session or not) */
+  net_bytes?: number | null;
   /** analytics events forwarded per UTC day */
   forward_daily?: number | null;
   /** the account's and the deployment's daily budgets (null fields = no cap) */
   account?: Budget;
   platform?: Budget;
+  /** this site's own daily budget (null fields = no cap): a flooded site stops alone (site_daily_limit) */
+  site?: Budget;
 }
 
 /** The account's and the deployment's totals today as last read from D1 (they include what this site reported). */
@@ -493,6 +509,8 @@ export interface IngestRequest {
   tags?: TagsRequest | null;
   /** hashed client network (IPv4 address or IPv6 /48), for net_daily; never the address */
   net?: string | null;
+  /** the client network is a data centre (@afs/shared isDatacenterAsn): refused as a new session while the site is under attack */
+  dc?: boolean;
   usage?: UsageSnapshot | null;
 }
 
@@ -665,10 +683,27 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       if ((s.totals?.[k] ?? 0) + local[k] + add[k] > max) return reject(s.reason, true, k);
     }
   }
+  // This site's own share of the day (the account's other sites keep recording past it).
+  if (L.site)
+    for (const k of COUNTERS) {
+      const max = L.site[k];
+      if (max === null || max === undefined || !add[k]) continue;
+      if (d[k] + add[k] > max) return reject("site_daily_limit", true, k);
+    }
+  const netRow =
+    req.net && (L.net_daily != null || L.net_bytes != null)
+      ? db.all("SELECT sessions, bytes FROM net_daily WHERE day = ? AND net = ?", [day, req.net])[0]
+      : undefined;
 
   if (!existing) {
     // A new session starts with its page: its hostname is what was checked against the site.
     if (!c.hosts.length) return reject("page_host_required", false);
+    if (!meta.forced) {
+      // Every new-session attempt feeds spike detection; while under attack, data-centre networks
+      // start no session (refused before the daily caps, so they never count against them).
+      const attacked = noteSessionAttempt(db, now);
+      if (req.dc && attacked) return reject("datacenter_under_attack");
+    }
     if (meta.forced) {
       if (L.forced_daily !== null && L.forced_daily !== undefined && d.forced >= L.forced_daily) return reject("forced_daily_limit");
     } else if (L.daily_sessions !== null && d.sessions - d.forced >= L.daily_sessions) return reject("daily_session_limit");
@@ -679,10 +714,8 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
       num(db.all("SELECT upgraded FROM daily WHERE day = ?", [day])[0]?.upgraded) >= L.upgraded_daily
     )
       return reject("upgraded_daily_limit");
-    if (req.net && L.net_daily !== null && L.net_daily !== undefined) {
-      const n = num(db.all("SELECT sessions FROM net_daily WHERE day = ? AND net = ?", [day, req.net])[0]?.sessions);
-      if (n >= L.net_daily) return reject("ip_daily_limit");
-    }
+    if (req.net && L.net_daily !== null && L.net_daily !== undefined && num(netRow?.sessions) >= L.net_daily)
+      return reject("ip_daily_limit");
     if (req.bytes > L.session_bytes) return reject("session_bytes_limit");
   } else {
     if (existing.ua_hash && meta.ua_hash && existing.ua_hash !== meta.ua_hash) return reject("session_mismatch");
@@ -690,6 +723,9 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     if (existing.chunks >= (L.chunks_per_session ?? LIMITS.CHUNKS_PER_SESSION)) return reject("session_chunk_limit");
     if (lastTs - existing.started_at > L.max_session_ms + SESSION_GRACE_MS) return reject("max_duration");
   }
+  // The network's byte share of this site's day: every chunk counts, whichever session it belongs to.
+  if (req.net && L.net_bytes !== null && L.net_bytes !== undefined && num(netRow?.bytes) + req.bytes > L.net_bytes)
+    return reject("ip_bytes_limit");
   if (!existing) {
     db.run(
       `INSERT INTO sessions (id, started_at, last_at, received_at, day, device, browser, browser_version, os, country, region, city,
@@ -1051,11 +1087,12 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     [day, existing ? 0 : 1, !existing && meta.forced ? 1 : 0, req.bytes, added, forward.length],
   );
   if (!existing && meta.upgraded) db.run("UPDATE daily SET upgraded = upgraded + 1 WHERE day = ?", [day]);
-  if (!existing && req.net)
-    db.run("INSERT INTO net_daily (day, net, sessions) VALUES (?, ?, 1) ON CONFLICT(day, net) DO UPDATE SET sessions = sessions + 1", [
-      day,
-      req.net,
-    ]);
+  if (req.net)
+    db.run(
+      `INSERT INTO net_daily (day, net, sessions, bytes) VALUES (?, ?, ?, ?)
+       ON CONFLICT(day, net) DO UPDATE SET sessions = sessions + excluded.sessions, bytes = bytes + excluded.bytes`,
+      [day, req.net, existing ? 0 : 1, req.bytes],
+    );
   const test = !!session.forced || !!meta.debug;
   const tagsQueuedNow = req.tags ? queueSessionSignals(db, sid, Math.max(c.cover_end, lastTs) - 1500, req.end, req.tags, req.now, test) : 0;
   return {
@@ -1065,6 +1102,107 @@ function ingestTx(db: Db, req: IngestRequest): IngestResult {
     test,
     ...(newErrors.length ? { new_errors: newErrors } : {}),
     ...(tagsQueuedNow ? { tags_queued: tagsQueuedNow } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------------- attack mode
+
+/**
+ * Replay's attack mode (the vocabulary of @afs/shared protection.ts). Every new-session attempt
+ * (not ?afsr=1 tests) is counted per SPIKE_WINDOW_MS window; a window that reaches
+ * max(ATTACK_MIN_SESSIONS, SPIKE_FACTOR x the site's usual sessions per window over the previous
+ * 7 days) puts the site under attack until ATTACK_COOLDOWN_MS after the last such window. While it
+ * lasts, new sessions from data-centre networks are refused (datacenter_under_attack): they are
+ * not stored and never count against the site's daily sessions. Residential visitors are not
+ * affected, nor are sessions already recording.
+ *
+ * State is one meta row. A window stops being written once it reached the threshold, so a flood
+ * costs at most `threshold` writes per window (plus the usual rate, computed once a UTC day).
+ */
+export const ATTACK_MIN_SESSIONS = 30;
+const BASELINE_DAYS = 7;
+const WINDOWS_PER_DAY = DAY / SPIKE_WINDOW_MS;
+
+interface AttackState {
+  /** the episode: when it started and the last spiking window (0 = never) */
+  since: number;
+  last_seen_at: number;
+  /** the current window's start and its new-session attempts (counted up to the threshold) */
+  window: number;
+  attempts: number;
+  /** the usual sessions per window, and the UTC day it was computed on */
+  baseline: number;
+  baseline_day: string;
+}
+
+function attackState(db: Db): AttackState {
+  const base: AttackState = { since: 0, last_seen_at: 0, window: 0, attempts: 0, baseline: 0, baseline_day: "" };
+  try {
+    const raw = db.all("SELECT value FROM meta WHERE key = 'attack'")[0]?.value;
+    return raw ? { ...base, ...(JSON.parse(String(raw)) as Partial<AttackState>) } : base;
+  } catch {
+    return base;
+  }
+}
+
+const saveAttack = (db: Db, a: AttackState) =>
+  db.run("INSERT INTO meta (key, value) VALUES ('attack', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [JSON.stringify(a)]);
+
+const attackActive = (a: AttackState, now: number) => a.last_seen_at > 0 && now - a.last_seen_at < ATTACK_COOLDOWN_MS;
+
+/** Sessions per window, averaged over the BASELINE_DAYS full UTC days before `now`'s day. */
+function usualPerWindow(db: Db, now: number): number {
+  const today = utcDay(now);
+  const r = db.all("SELECT COALESCE(SUM(sessions), 0) AS n FROM daily WHERE day < ? AND day >= ?", [
+    today,
+    utcDay(now - BASELINE_DAYS * DAY),
+  ])[0];
+  return num(r?.n) / (BASELINE_DAYS * WINDOWS_PER_DAY);
+}
+
+/** The spike threshold for one window. */
+export const attackThreshold = (usual: number) => Math.max(ATTACK_MIN_SESSIONS, Math.ceil(SPIKE_FACTOR * usual));
+
+/** Count one new-session attempt; true when the site is under attack (after counting it). */
+export function noteSessionAttempt(db: Db, now: number): boolean {
+  const a = attackState(db);
+  let dirty = false;
+  const today = utcDay(now);
+  if (a.baseline_day !== today) {
+    a.baseline = usualPerWindow(db, now);
+    a.baseline_day = today;
+    dirty = true;
+  }
+  const w = now - (now % SPIKE_WINDOW_MS);
+  if (a.window !== w) {
+    a.window = w;
+    a.attempts = 0;
+  }
+  const threshold = attackThreshold(a.baseline);
+  if (a.attempts < threshold) {
+    a.attempts++;
+    dirty = true;
+    if (a.attempts >= threshold) {
+      if (!attackActive(a, now)) a.since = now;
+      a.last_seen_at = now;
+    }
+  }
+  if (dirty) saveAttack(db, a);
+  return attackActive(a, now);
+}
+
+/** What get_replay_site shows under data.protection. */
+export function protectionState(db: Db, now: number) {
+  const a = attackState(db);
+  const active = attackActive(a, now);
+  return {
+    state: active ? ("under_attack" as const) : ("none" as const),
+    since: active ? a.since : null,
+    last_seen_at: a.last_seen_at || null,
+    ends_at: active ? a.last_seen_at + ATTACK_COOLDOWN_MS : null,
+    /** new-session attempts in this window that put the site under attack */
+    threshold_per_window: attackThreshold(a.baseline_day === utcDay(now) ? a.baseline : usualPerWindow(db, now)),
+    window_minutes: SPIKE_WINDOW_MS / 60_000,
   };
 }
 
@@ -1691,13 +1829,17 @@ export function summary(db: Db, now: number) {
     [now - DAY, utcDay(now)],
   )[0]!;
   const drops: Record<string, { count: number; last_at: number }> = {};
+  const warnings: Record<string, { count: number; last_at: number }> = {};
   const samples: Record<string, string> = {};
   for (const r of db.all(
     "SELECT reason, SUM(count) AS n, MAX(last_at) AS last_at, MAX(sample) AS sample FROM drops WHERE day >= ? GROUP BY reason",
     [utcDay(now - 7 * DAY)],
   )) {
-    drops[String(r.reason)] = { count: num(r.n), last_at: num(r.last_at) };
-    if (r.sample != null) samples[String(r.reason)] = String(r.sample);
+    const reason = String(r.reason);
+    // warn:<what>: kept chunks with a setup problem (e.g. warn:proxy_key_missing), not refusals
+    if (reason.startsWith("warn:")) warnings[reason.slice(5)] = { count: num(r.n), last_at: num(r.last_at) };
+    else drops[reason] = { count: num(r.n), last_at: num(r.last_at) };
+    if (r.sample != null) samples[reason] = String(r.sample);
   }
   const hosts = db
     .all("SELECT host, COUNT(*) AS n FROM pages WHERE ts > ? AND host IS NOT NULL GROUP BY host ORDER BY n DESC LIMIT 10", [now - 7 * DAY])
@@ -1728,6 +1870,10 @@ export function summary(db: Db, now: number) {
     /** bytes kept in starred playback copies (counted against the daily byte budgets when copied) */
     starred_copy_bytes: starredBytes(db),
     dropped_last_7d: drops,
+    /** chunks kept with a setup problem: proxy_key_missing / proxy_key_invalid (a path proxy without this site's x-afs-proxy-key) */
+    warnings_last_7d: warnings,
+    /** attack mode: while under_attack, new sessions from data-centre networks are refused (datacenter_under_attack) */
+    protection: protectionState(db, now),
     /** the latest refused Origin / hostname / user agent per reason (raw request data: untrusted) */
     drop_samples: samples,
   };

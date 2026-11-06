@@ -50,6 +50,7 @@ import {
   updateMessage,
   updateThread,
 } from "../service/messages";
+import { deliveryHealth } from "../service/pauses";
 import { purgeAccount } from "../service/purge";
 import { findReservedInboxes } from "../service/reserved";
 import { forwardMessage, replyToMessage, sendFromInbox } from "../service/send";
@@ -126,6 +127,30 @@ api.get("/admin/reserved-inboxes", async (c) => {
           ...(r.truncated ? ["More than the limit matched: pass limit= (max 1000)."] : []),
         ]
       : ["No inbox holds a reserved username."],
+  });
+});
+
+/**
+ * GET /v1/admin/delivery-health?hours=: outbound bounce and complaint rates across the deployment,
+ * with the accounts that have bounces or complaints, worst first (src/service/pauses.ts). For the
+ * operator digest (the site over the service binding, internal auth) or the operator
+ * (x-admin-token). No MCP tool: it reads every account.
+ */
+api.get("/admin/delivery-health", async (c) => {
+  if (c.var.auth.keyId !== INTERNAL_KEY_ID && !isOperator(c.env, c.req.header("x-admin-token")))
+    throw forbidden(
+      "Only the operator can read the deployment's delivery rates.",
+      "Send the x-admin-token header with the ADMIN_TOKEN secret. Your own account's numbers are on GET /v1/usage (delivery, send_health).",
+    );
+  const q = readQuery(c, z.object({ hours: z.coerce.number().int().min(1).max(168).optional() }));
+  const r = await deliveryHealth(c.env, q.hours ?? 24);
+  return c.json({
+    ...r,
+    next_steps: r.tracking
+      ? [
+          "Accounts whose last hour passes SEND_PAUSE_BOUNCE_PERCENT / SEND_PAUSE_COMPLAINT_PERCENT have mail.send paused automatically; lift a pause with pnpm afs unpause <profile> <account_id> mail.send.",
+        ]
+      : ["Delivery tracking is off (DELIVERY_EVENTS_QUEUE unset): no bounces or complaints are seen, so these numbers stay at zero."],
   });
 });
 

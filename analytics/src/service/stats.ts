@@ -1,5 +1,6 @@
 import { ApiError, accountStanding, badRequest, capFor, parse } from "@afs/shared";
 import { DEFAULT_SQL_TIME_BUDGET_MS, enforce } from "../lib/limits";
+import { accountBudget, accountBudgetExhausted, chargeAccount } from "./account-budgets";
 import { z } from "zod";
 import {
   type Breakdown,
@@ -548,6 +549,9 @@ export async function querySql(ctx: Ctx, siteId: string, raw: unknown) {
   const site = await loadSite(ctx, siteId);
   const standing = await accountStanding(ctx.env, ctx.accountId);
   const budgetMs = capFor(ctx.env as unknown as Record<string, unknown>, standing, "SQL_TIME_BUDGET_MS", DEFAULT_SQL_TIME_BUDGET_MS);
+  // The account's SQL time a day over all its sites (MAX_SQL_MS_PER_ACCOUNT_PER_DAY), on top of the site's window.
+  const acct = await accountBudget(ctx.env, ctx.accountId, "sql_ms");
+  if (acct.left <= 0) throw accountBudgetExhausted(acct);
   const t0 = Date.now();
   try {
     return { site_id: site.id, ...(await callSite(ctx.env, site, (s) => s.sql(q, { budgetMs }))) };
@@ -557,5 +561,6 @@ export async function querySql(ctx: Ctx, siteId: string, raw: unknown) {
       await siteStub(ctx.env, site.id)
         .chargeSql(ms, budgetMs)
         .catch(() => {});
+    if (ms >= SQL_CHARGE_MIN_MS) await chargeAccount(ctx.env, acct, ctx.accountId, ms);
   }
 }

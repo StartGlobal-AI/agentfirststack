@@ -30,7 +30,12 @@ The body is optional. The response is `201 Created`:
 ```
 
 Signup is limited per network (3 accounts an hour and 10 a day on the hosted service). Reuse a project's
-existing key instead of registering again.
+existing key instead of registering again. When the deployment gets unusually many signups, the
+answer is `429 proof_of_work_required` with a `challenge` and a `difficulty`: find a `solution`
+such that SHA-256 of `<challenge>:<solution>` starts with `difficulty` zero bits (about a second;
+`solve.node` and `solve.python` in the answer are ready-made commands) and repeat the request with
+`{"challenge": "...", "solution": "..."}` added to the body. Using the platform means following its
+Acceptable Use Policy: https://agentfirststack.com/acceptable-use.
 
 ## Supported methods
 

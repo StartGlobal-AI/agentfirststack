@@ -8,12 +8,12 @@ and hosted for free at https://agentfirststack.com.
 
 | App | What it replaces | Hosted at | Local port |
 |---|---|---|---|
-| [`site/`](site) | Landing page, master `llms.txt` (with the full-setup procedure the prompt points to), the setup check and test (`/v1/setup`, `/v1/setup/test`, `src/setup-check.ts`, `src/setup-test.ts`), platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard (projects, then a project's Overview, Analytics, Tags, Replay, Mail and Settings tabs: `src/dashboard.ts`, `src/dashboard-frame.ts`, `src/analytics-dashboard.ts`, `src/service-views.ts`, `public/dashboard-app.js`), OAuth 2.1 server for MCP connectors (see `docs/accounts.md`), project deletion with 7 days to restore and a daily purge across the services (`src/project-deletion.ts`), emails to people about their projects (`src/email.ts`, `src/email-messages.ts`), usage and alerts (`src/project-health.ts`: `GET /v1/usage`, limit warnings, quiet sites), the dashboard's live analytics stream (`/dashboard/projects/:id/live/analytics/:site`, a WebSocket to the analytics site object), first-party domains on Cloudflare for SaaS (`src/first-party-domains.ts`: `/v1/first-party-domains`, MCP `afs_*_first_party_domain*`; the edge that serves them, before every other route, is `firstPartyEdge` in `src/first-party.ts`) | agentfirststack.com | 8786 |
+| [`site/`](site) | Landing page, master `llms.txt` (with the full-setup procedure the prompt points to), the setup check and test (`/v1/setup`, `/v1/setup/test`, `src/setup-check.ts`, `src/setup-test.ts`), platform-wide signup, MCP gateway (`/mcp`), agent discovery files, Google sign-in, claim links, dashboard (projects, then a project's Overview, Analytics, Tags, Replay, Mail and Settings tabs: `src/dashboard.ts`, `src/dashboard-frame.ts`, `src/analytics-dashboard.ts`, `src/service-views.ts`, `public/dashboard-app.js`), OAuth 2.1 server for MCP connectors (see `docs/accounts.md`), project deletion with 7 days to restore and a daily purge across the services (`src/project-deletion.ts`), emails to people about their projects (`src/email.ts`, `src/email-messages.ts`), usage and alerts (`src/project-health.ts`: `GET /v1/usage`, limit warnings, quiet sites), the dashboard's live analytics stream (`/dashboard/projects/:id/live/analytics/:site`, a WebSocket to the analytics site object), first-party domains on Cloudflare for SaaS (`src/first-party-domains.ts`: `/v1/first-party-domains`, MCP `afs_*_first_party_domain*`; the edge that serves them, before every other route, is `firstPartyEdge` in `src/first-party.ts`), abuse handling (capability pauses `src/pauses.ts`, abuse reports and `/report-abuse` `src/abuse-reports.ts`, the operator summary's reputation checks `src/reputation.ts`, `/acceptable-use`) | agentfirststack.com | 8786 |
 | [`analytics/`](analytics/README.md) | GA4 / Plausible: cookieless, server-side enriched web analytics (country, region, city, channel, UTM, click IDs, goals, revenue, subscriptions/MRR, ad spend, ecommerce items, AI crawlers, alerts and reports, a live WebSocket stream) | analytics.agentfirststack.com | 8787 |
 | [`tags/`](tags/README.md) | Google Tag Manager + server-side GTM: containers, triggers, pixels, server-side conversion APIs (GA4 MP, Meta CAPI, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap, X) with dedup | tags.agentfirststack.com | 8788 |
 | [`mail/`](mail/README.md) | Gmail / AgentMail / Postmark: instant inboxes, wait-for-email with code and link extraction, sending, custom domains, webhooks | mail.agentfirststack.com, inboxes `*@agentfirststack.com` | 8789 |
 | [`replay/`](replay/README.md) | Hotjar / Microsoft Clarity: headless session replay masked in the browser by default, sessions as readable transcripts, rage/dead/error clicks, heatmaps and JS errors as data, share-link player | replay.agentfirststack.com | 8790 |
-| [`shared/`](shared/src) | `@afs/shared`: accounts, API keys, instant signup, shared identity, JSON errors, ids, crypto, stateless MCP handler | n/a | n/a |
+| [`shared/`](shared/src) | `@afs/shared`: accounts, API keys, instant signup (with the proof of work past the breaker, `signup-challenge.ts`), shared identity, capability pauses (`pauses.ts`), JSON errors, ids, crypto, stateless MCP handler | n/a | n/a |
 
 ## The agent-native rules (every app follows all of them)
 
@@ -57,6 +57,21 @@ is accepted only on service-binding requests to an `https://<svc>.internal` URL.
 account (`pnpm afs suspend <profile> <acct>`): its keys and public ingest stop everywhere.
 Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 
+## Abuse: pause one capability, suspend by hand
+
+Strong abuse signals pause one capability of an account automatically (`mail.send`,
+`mail.inbox_create`, `tags.custom_code`, `replay.share_links`, `analytics.share_links`); suspending
+a whole account stays manual. Where a service uses a capability it checks
+`await capabilityPaused(env, accountId, "<capability>")` from `@afs/shared` (table
+`capability_pauses` in the identity DB, cached a minute) and throws `capabilityPausedError(pause)`
+(403 `capability_paused`). A service that detects a strong signal calls
+`requestCapabilityPause(env, { accountId, capability, reason, by, details })`: over a `SITE`
+service binding that is `POST https://site.internal/v1/internal/pauses` (x-afs-internal), which
+emails the project's people and `OPERATOR_EMAIL`; without the binding it writes the row and the
+site's hourly cron emails. The operator lifts with `pnpm afs unpause <profile> <acct> <capability>`.
+The public side: `/acceptable-use`, `POST /v1/abuse-reports` and `/report-abuse`. Runbook:
+`docs/operations.md`, "Abuse handling".
+
 ## Fair-use controls (vars, all off when unset)
 
 | Var | App | Hosted value |
@@ -72,7 +87,13 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_DESTINATIONS_PER_CONTAINER` / `MAX_VERSIONS_PER_CONTAINER` / `MAX_DRAFT_BYTES` | tags | 5 / 10 / 128 KB (defaults 10 / 50 / 512 KB) |
 | `SQL_MAX_ROWS_READ` | analytics | 100,000 (default 1,000,000) rows read per SQL query |
 | `MAX_ANNOTATIONS_PER_SITE` / `MAX_FUNNELS_PER_SITE` | analytics | 1000 / 50 |
-| `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (`429 signups_paused`) |
+| `SIGNUP_DAILY_LIMIT` / `SIGNUP_GLOBAL_HOURLY_LIMIT` | all | 10 per network a day / 60 deployment-wide an hour (past it `429 proof_of_work_required`; `SIGNUP_POW_DIFFICULTY` default 20 bits) |
+| `ABUSE_REPORTS_HOURLY_LIMIT` / `ABUSE_REPORTS_DAILY_LIMIT` / `ABUSE_REPORT_EMAILS_PER_DAY` / `PAUSE_LIFT_GRACE_HOURS` | site | defaults 5 per network / 500 / 20 / 24 h (these four default on) |
+| `SEND_PAUSE_BOUNCE_PERCENT` / `SEND_PAUSE_COMPLAINT_PERCENT` / `SEND_PAUSE_MIN_SENDS` | mail | pause `mail.send` when the last hour's external recipients bounce / complain past these percents, once there are at least MIN_SENDS (default 10); values in the hosted profile |
+| `INBOX_CREATE_BURST_PER_HOUR` | mail | pause `mail.inbox_create` past this many inbox creations in a UTC hour (unset: 3 x `MAX_INBOX_CREATES_PER_DAY` when that is set) |
+| `MAX_SCANS_PER_ACCOUNT_PER_DAY` / `MAX_SCANS_PER_DAY` / `MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY` / `MAX_DESTINATION_TESTS_PER_DAY` | tags | scans + domain verifications and destination tests per account and deployment-wide a day (lower `UNCLAIMED_` on the same counter); values in the hosted profile |
+| `SPIKE_MIN_NETWORKS` | tags | 20 distinct networks in 15 minutes before a spike counts as an attack (fewer = contained); custom code is scanned at publish and a strong match pauses `tags.custom_code` |
+| `MAX_CHUNKS_PER_SITE_PER_DAY` / `MAX_BYTES_PER_SITE_PER_DAY` / `MAX_DERIVED_PER_SITE_PER_DAY` / `MAX_BYTES_PER_IP_PER_SITE_PER_DAY` | replay | one site's daily budgets (unset: half the account's), and stored bytes per network per site (unset: a tenth of the site's); heatmap images are for claimed accounts only |
 | `MAX_KEYS_PER_ACCOUNT` / `KEYS_HOURLY_LIMIT` (+ `KEY_LIMITER` binding) | all | 25 active (10 unclaimed) / 20 created an hour |
 | `READ_LIMITER` binding | all | 300 API-key/OAuth reads (GET) and MCP requests per account a minute; the dashboard has `DASHBOARD_LIMITER` (site, 600 per person a minute) |
 | `SETUP_LIMITER` / `SETUP_TEST_LIMITER` bindings | site | 30 setup checks / 3 setup test runs per project a minute |
@@ -86,6 +107,7 @@ Spec and flows: `docs/accounts.md`. Tests: `site/test/`.
 | `MAX_UNVERIFIED_SITES_PER_ACCOUNT` / `MAX_CHUNKS_PER_SESSION` / `MAX_HEATMAP_RETENTION_DAYS` / `MAX_STARRED_RETENTION_DAYS` | replay | 1 / 600 / 90 / 14 |
 | `MAX_EVENTS_PER_NETWORK_PER_SITE_PER_DAY` / `..._PER_CONTAINER_PER_DAY` / `MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY` (`..._PER_CONTAINER_...`) | analytics / tags | attack protection (`shared/src/protection.ts`): past 2000 (unclaimed 500) / 1000 (200) browser events from one network a day, its events are quarantined (analytics `debug = 2`, tags log `quarantined`), not counted against the budget; 20000 (2000) quarantined a day. A spike (10x the usual 15 minutes, 1000+) puts a site under attack for an hour: data-centre networks quarantined, tags holds browser conversions. `protection: auto|strict|off` per site/container; review at `/quarantine` |
 | `MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY` | tags | consent banner choices stored as proof of consent per container a day (20000, unclaimed 2000; kept 12 months, never IP or user agent) |
+| `MAX_SERVER_EVENTS_PER_SITE_PER_DAY` / `MAX_SERVER_EVENTS_PER_ACCOUNT_PER_DAY` / `DAILY_SERVER_EVENT_BUDGET` / `MAX_SQL_MS_PER_ACCOUNT_PER_DAY` / `MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY` | analytics | server events, payments and subscriptions have their own daily budget, so a browser flood can never refuse them (100000 / 200000 / 1M, unclaimed a tenth); per-account SQL time (1 h a day) and exported rows (500000) so one account can't use a deployment-wide budget |
 | `UNCLAIMED_<NAME>` | all | any account cap or daily budget has a lower value for accounts no person has claimed (`capFor()` in `@afs/shared`) |
 | Daily budgets: events, deliveries, sessions, chunks, bytes, derived rows, crawler hits, export rows, alert deliveries, inbox creates, feed events, heatmap images | all | per site or container, per account and per deployment, counters never go down; values in the hosted profile |
 | `MAX_CONCURRENT_WAITS` / `MAX_INBOUND_PER_SENDER_PER_DAY` / `MAX_TEXT_BYTES_PER_ACCOUNT` | mail | 3 (2 unclaimed) / 20 / 10 MB |

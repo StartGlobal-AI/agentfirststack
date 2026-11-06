@@ -1,4 +1,4 @@
-import { accountStanding, clientIp, edgeHost, networkKey, sha256Hex } from "@afs/shared";
+import { accountStanding, clientAsn, clientIp, edgeHost, isDatacenterAsn, networkKey, sha256Hex } from "@afs/shared";
 import { chunkKey, type IngestResult } from "../do/engine";
 import { type Bindings, isDev } from "../env";
 import { gunzipCapped, gzip, readCapped } from "../lib/body";
@@ -27,14 +27,15 @@ import { tagsAvailable } from "./tags";
 import { tagsSignalsOf } from "../lib/tags";
 import { isVerified, jsonList, type SiteRow, siteById, siteStub } from "./context";
 import { onNewErrors, onSessionEnd } from "./webhook-events";
+import { isTrusted, type ProxyTrust, proxyTrust } from "./proxy";
 
 /**
  * POST /i?s=<site>&sid=<session>&q=<seq>&z=1|0: one recording chunk from the browser. Public and
  * CORS-enabled (anyone can call it, and site ids are public in every customer's HTML), so
  * everything is checked before it is stored, cheapest first:
  *   - edge rate limits per client network (before any D1 read), per site + network, per site;
- *   - the site exists, is enabled, its account isn't suspended; the deployment and the account
- *     aren't over their daily budget (remembered per isolate once the DO said so);
+ *   - the site exists, is enabled, its account isn't suspended; the deployment, the account and
+ *     the site aren't over their daily budget (remembered per isolate once the DO said so);
  *   - an Origin header naming the site's domain, a subdomain or allowed_hostnames (no Origin, or
  *     "null", is refused: browsers always send one with the recorder's requests);
  *   - sizes (compressed and decompressed), a well-formed envelope for this session and seq, mostly
@@ -42,8 +43,9 @@ import { onNewErrors, onSessionEnd } from "./webhook-events";
  *   - automated browsers are dropped, unless the recording was forced with ?afsr=1, which counts
  *     against its own small daily quota instead.
  * Then the chunk is derived here (CPU in the stateless Worker), the site's DO stores the facts and
- * enforces the per-session, per-site, per-network, per-account and deployment limits, and the
- * chunk goes to R2 as gzip.
+ * enforces the per-session, per-site, per-network (sessions and bytes), per-account and deployment
+ * limits and attack mode (no new sessions from data-centre networks while the site is under
+ * attack), and the chunk goes to R2 as gzip.
  *
  * Answers are JSON the recorder reads: {ok:true} or {ok:false, error, hint, stop?}. stop:true
  * tells the recorder to end recording for the tab (limits, unknown site, disabled).
@@ -64,20 +66,43 @@ const SKEW_MIN_MS = 60_000;
 const BUSY_MS = 60_000;
 
 /**
- * The visitor's IP: cf-connecting-ip, or, behind the platform's edge serving a first-party domain
- * (edge.example.com/_r/*, over a service binding with INTERNAL_TOKEN: @afs/shared edgeHost), the
- * first X-Forwarded-For hop the edge sets. Anyone else's X-Forwarded-For is ignored.
+ * Whether a request's forwarded IP and geo are the visitor's (service/proxy.ts proxyTrust):
+ * passed explicitly by the routes that know the site; left out, only the platform's edge counts.
  */
-export function visitorIp(req: Request, env: { INTERNAL_TOKEN?: string }): string | null {
-  if (edgeHost(env, req)) {
+const forwardedOk = (req: Request, env: { INTERNAL_TOKEN?: string }, trust: ProxyTrust | undefined) =>
+  trust === undefined ? !!edgeHost(env, req) : isTrusted(trust);
+
+/**
+ * The visitor's IP: cf-connecting-ip, or the first X-Forwarded-For hop when the platform's edge
+ * (a first-party domain: edge.example.com/_r/*, over a service binding with INTERNAL_TOKEN,
+ * @afs/shared edgeHost) or a customer's path proxy with the site's x-afs-proxy-key forwarded it.
+ * Anyone else's X-Forwarded-For is ignored.
+ */
+export function visitorIp(req: Request, env: { INTERNAL_TOKEN?: string }, trust?: ProxyTrust): string | null {
+  if (forwardedOk(req, env, trust)) {
     const first = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     if (first && /^[0-9a-fA-F:.]{3,45}$/.test(first)) return first;
   }
   return clientIp(req);
 }
 
-const forwarded = (req: Request, name: string, n: number) => {
-  const raw = req.headers.get(`x-afs-geo-${name}`);
+/**
+ * The visitor's network operator (ASN): request.cf, or the one a trusted edge or keyed proxy
+ * forwarded (x-afs-geo-asn; cf would describe the proxy; none forwarded = unknown). In DEV_MODE
+ * x-afs-dev-asn stands in (local dev and tests), as in tags.
+ */
+export function visitorAsn(req: Request, env: { INTERNAL_TOKEN?: string }, dev = false, trust?: ProxyTrust): number | null {
+  const num = (v: string | null) => (v && /^\d{1,10}$/.test(v) ? Number(v) : null);
+  if (dev) {
+    const d = num(req.headers.get("x-afs-dev-asn"));
+    if (d !== null) return d;
+  }
+  if (forwardedOk(req, env, trust)) return num(req.headers.get("x-afs-geo-asn"));
+  return clientAsn(req);
+}
+
+const header = (req: Request, name: string, n: number) => {
+  const raw = req.headers.get(name);
   if (!raw) return null;
   try {
     return decodeURIComponent(raw).slice(0, n) || null;
@@ -85,9 +110,16 @@ const forwarded = (req: Request, name: string, n: number) => {
     return raw.slice(0, n) || null;
   }
 };
+const forwarded = (req: Request, name: string, n: number) => header(req, `x-afs-geo-${name}`, n);
 
-/** The visitor's country, region and city: Cloudflare's, or the edge's forwarded ones (x-afs-geo-*) for a first-party domain. */
-export function geo(req: Request, dev: boolean, env: { INTERNAL_TOKEN?: string } = {}) {
+/**
+ * The visitor's country, region and city: Cloudflare's; the forwarded ones (x-afs-geo-*) from the
+ * platform's edge or a keyed path proxy (from a keyed proxy also Vercel's x-vercel-ip-*, and
+ * unknown rather than the proxy's own location when it sends none); unknown through a proxy
+ * without a valid key (request.cf is the proxy's: "eea" consent then applies, as for any unknown
+ * country).
+ */
+export function geo(req: Request, dev: boolean, env: { INTERNAL_TOKEN?: string } = {}, trust?: ProxyTrust) {
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf ?? {};
   const s = (v: unknown, n: number) => (typeof v === "string" && v ? v.slice(0, n) : null);
   if (dev) {
@@ -99,9 +131,15 @@ export function geo(req: Request, dev: boolean, env: { INTERNAL_TOKEN?: string }
         city: s(req.headers.get("x-dev-geo-city"), 100),
       };
   }
+  const unknown = { country: null, region: null, city: null };
+  if (trust === "missing" || trust === "invalid") return unknown;
   const country = forwarded(req, "country", 2);
-  if (country && edgeHost(env, req))
+  if (country && forwardedOk(req, env, trust))
     return { country: country.toUpperCase(), region: forwarded(req, "region", 100), city: forwarded(req, "city", 100) };
+  if (trust === "proxy") {
+    const vc = header(req, "x-vercel-ip-country", 2);
+    return vc && /^[a-z]{2}$/i.test(vc) ? { country: vc.toUpperCase(), region: null, city: header(req, "x-vercel-ip-city", 100) } : unknown;
+  }
   return { country: s(cf.country, 2)?.toUpperCase() ?? null, region: s(cf.region, 100), city: s(cf.city, 100) };
 }
 
@@ -122,16 +160,19 @@ const drops = new Sampler(60_000, 5_000);
 const busy = new Map<string, number>();
 
 // Keyed by the budget in force, so a refusal under one configuration never outlives it.
-const busyKeys = (accountId: string, caps: IngestCaps) => ({
+const busyKeys = (accountId: string, siteId: string, caps: IngestCaps) => ({
   platform: `p:${JSON.stringify(caps.platform)}`,
   account: `a:${accountId}:${JSON.stringify(caps.account)}`,
+  site: `s:${siteId}:${JSON.stringify(caps.site)}`,
 });
 
 function busyReason(keys: ReturnType<typeof busyKeys>, now: number): string | null {
   const p = busy.get(keys.platform);
   if (p && p > now) return "platform_budget";
   const a = busy.get(keys.account);
-  return a && a > now ? "account_daily_limit" : null;
+  if (a && a > now) return "account_daily_limit";
+  const s = busy.get(keys.site);
+  return s && s > now ? "site_daily_limit" : null;
 }
 
 function markBusy(r: Extract<IngestResult, { status: "rejected" }>, keys: ReturnType<typeof busyKeys>, now: number) {
@@ -140,6 +181,7 @@ function markBusy(r: Extract<IngestResult, { status: "rejected" }>, keys: Return
   if (busy.size > 5_000) busy.clear();
   if (r.reason === "platform_budget") busy.set(keys.platform, now + BUSY_MS);
   else if (r.reason === "account_daily_limit") busy.set(keys.account, now + BUSY_MS);
+  else if (r.reason === "site_daily_limit") busy.set(keys.site, now + BUSY_MS);
 }
 
 const HINTS: Record<string, string> = {
@@ -151,6 +193,11 @@ const HINTS: Record<string, string> = {
   forced_daily_limit: "This site recorded the most ?afsr=1 test sessions allowed per day; normal sessions continue.",
   upgraded_daily_limit: "This site recorded the most afsr('upgrade') sessions allowed per day (MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY).",
   ip_daily_limit: "This network started the most sessions allowed per site and day.",
+  ip_bytes_limit: "This network sent this site the most recording data allowed per day (MAX_BYTES_PER_IP_PER_SITE_PER_DAY).",
+  site_daily_limit:
+    "This site used its own daily recording budget (MAX_{CHUNKS,BYTES,DERIVED}_PER_SITE_PER_DAY); the account's other sites keep recording, this one resumes after 00:00 UTC.",
+  datacenter_under_attack:
+    "The site is under attack (a sudden flood of new sessions), so new sessions from data-centre networks aren't recorded until it ends (about an hour after the flood stops).",
   account_daily_limit: "The account used its daily recording budget here; recording resumes after 00:00 UTC.",
   platform_budget: "The service is at its daily recording capacity; recording resumes later (after 00:00 UTC at the latest).",
   session_bytes_limit: "This session stored the most bytes allowed per session; recording stopped.",
@@ -168,6 +215,8 @@ const STATUS: Record<string, number> = {
   forced_daily_limit: 429,
   upgraded_daily_limit: 429,
   ip_daily_limit: 429,
+  ip_bytes_limit: 429,
+  site_daily_limit: 429,
   account_daily_limit: 429,
   platform_budget: 429,
   page_host_required: 400,
@@ -185,7 +234,9 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   if (!SESSION_ID_RE.test(sid)) return fail(400, "bad_session_id", "?sid= must be rs_ + 16 base32 characters (the recorder generates it).");
   if (!/^\d{1,6}$/.test(seqRaw)) return fail(400, "bad_seq", "?q= must be the chunk number (0, 1, 2, ...).");
   const seq = Number(seqRaw);
-  const net = networkKey(visitorIp(req, env));
+  // A customer's path proxy with this site's key (or the platform's edge) forwards the visitor's IP and geo.
+  const trust = await proxyTrust(env, req, siteId);
+  const net = networkKey(visitorIp(req, env, trust));
   // Before any D1 read: a flood of random site ids from one network stops here.
   if (!(await allowed(env.INGEST_IP_LIMITER, `i:${net}`))) return fail(429, "rate_limited", HINTS.rate_limited!);
   const site = await siteById(env, siteId);
@@ -197,6 +248,8 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
     const t = drops.take(`${site.id}:${reason}`, Date.now(), sample);
     if (t) waitUntil(stub.recordDrop(reason, t.sample, t.count).catch(() => {}));
   };
+  // Kept, but its IP and geo are the proxy's: verify and get_replay_site say to send the key.
+  if (trust === "missing" || trust === "invalid") drop(`warn:proxy_key_${trust}`, null);
   const standing = await accountStanding(env, site.account_id);
   if (standing.suspended)
     return fail(403, "account_suspended", "The account that owns this replay site is suspended; nothing is recorded.", true);
@@ -207,7 +260,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   }
   const verified = isVerified(site);
   const caps = ingestCaps(env, standing, verified);
-  const keys = busyKeys(site.account_id, caps);
+  const keys = busyKeys(site.account_id, site.id, caps);
   const over = busyReason(keys, now);
   if (over) {
     drop(over, null);
@@ -246,7 +299,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   }
 
   // exclude_ip_ranges (an office, a QA network): checked here, the address is never stored.
-  if (site.exclude_ip_ranges && ipInRanges(visitorIp(req, env), rangesOf(site.exclude_ip_ranges))) {
+  if (site.exclude_ip_ranges && ipInRanges(visitorIp(req, env, trust), rangesOf(site.exclude_ip_ranges))) {
     drop("ip_excluded", null);
     return fail(403, "ip_excluded", "This network is in the site's exclude_ip_ranges; it isn't recorded.", true);
   }
@@ -331,7 +384,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
     skew_ms: shift,
     meta: {
       ...device,
-      ...geo(req, dev, env),
+      ...geo(req, dev, env, trust),
       ua_hash: ua ? (await sha256Hex(ua)).slice(0, 16) : null,
       user_id: envl.uid ?? null,
       analytics_visitor_id: envl.avid ?? null,
@@ -349,8 +402,10 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       forced_daily: caps.forced_daily,
       upgraded_daily: caps.upgraded_daily,
       net_daily: caps.net_daily,
+      net_bytes: caps.net_bytes,
       forward_daily: caps.forward_daily,
       account: caps.account,
+      site: caps.site,
       platform: caps.platform,
     },
     forward,
@@ -359,6 +414,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
       : null,
     tags_container: toTags ? site.tags_container_id : null,
     net: (await sha256Hex(`replay-net:${net}`)).slice(0, 16),
+    dc: isDatacenterAsn(visitorAsn(req, env, dev, trust)),
     account_id: site.account_id,
     config: { site_id: site.id, retention_days: site.retention_days, heatmap_retention_days: site.heatmap_retention_days },
   });
@@ -391,7 +447,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
         env,
         site,
         result.forward,
-        { ip: visitorIp(req, env), user_agent: ua, analytics_visitor_id: envl.avid ?? null },
+        { ip: visitorIp(req, env, trust), user_agent: ua, analytics_visitor_id: envl.avid ?? null },
         result.test,
       ),
     );

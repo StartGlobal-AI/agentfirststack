@@ -58,6 +58,25 @@ async function analyticsStub(req: Request): Promise<Response> {
   return json({ accepted: ((JSON.parse(text) as { events?: unknown[] }).events ?? []).length }, 202);
 }
 
+/**
+ * A stand-in for the site Worker behind the SITE service binding: it records capability pause
+ * requests (GET /__test/pauses) and answers 503, so requestCapabilityPause falls back to writing
+ * the pause into AUTH_DB itself (what the tests then read back).
+ */
+const pauseRequests: { url: string; internal: boolean; account: string | null; body: unknown }[] = [];
+async function siteStub(req: Request): Promise<Response> {
+  const u = new URL(req.url);
+  if (u.pathname === "/__test/pauses") return Response.json({ requests: pauseRequests });
+  const text = req.method === "GET" ? "" : await req.text();
+  pauseRequests.push({
+    url: req.url,
+    internal: u.hostname === "site.internal" && req.headers.get("x-afs-internal") === INTERNAL_TOKEN,
+    account: req.headers.get("x-afs-account"),
+    body: text ? JSON.parse(text) : null,
+  });
+  return Response.json({ error: { code: "unavailable" } }, { status: 503 });
+}
+
 export default defineConfig({
   test: {
     projects: [
@@ -73,7 +92,7 @@ export default defineConfig({
             miniflare: {
               // The pool bundles an older workerd than wrangler 4.156; pin a date it supports.
               compatibilityDate: "2026-08-01",
-              serviceBindings: { ANALYTICS: analyticsStub },
+              serviceBindings: { ANALYTICS: analyticsStub, SITE: siteStub },
               // The app's own rate limiters stay out of the way (tests send many hits from one
               // "network"); their logic is tested with stub limiters.
               ratelimits: Object.fromEntries(
@@ -116,6 +135,14 @@ export default defineConfig({
                 MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY: "",
                 UNCLAIMED_MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY: "",
                 SPIKE_MIN_EVENTS: "",
+                SPIKE_MIN_NETWORKS: "",
+                MAX_SCANS_PER_ACCOUNT_PER_DAY: "",
+                UNCLAIMED_MAX_SCANS_PER_ACCOUNT_PER_DAY: "",
+                MAX_SCANS_PER_DAY: "",
+                MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY: "",
+                UNCLAIMED_MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY: "",
+                MAX_DESTINATION_TESTS_PER_DAY: "",
+                EXTRA_BLOCKED_CODE_HOSTS: "",
                 MAX_VISITORS_PER_CONTAINER: "",
                 MAX_CONTAINER_DB_BYTES: "",
                 MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY: "",

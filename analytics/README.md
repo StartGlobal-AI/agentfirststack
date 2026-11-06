@@ -154,7 +154,8 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
   (queued `identify` calls are applied before the first pageview). Anyone can send browser events,
   so browser revenue counts only with the site setting `browser_revenue: true` (otherwise the event
   is kept without revenue and counted as the warning `browser_revenue_ignored`), and a browser user
-  id links payments only with `trust_browser_user_id: true`
+  id only marks its visit: it links payments and identifies the person for attribution (first
+  touch, multi-touch credit, retention) only with `trust_browser_user_id: true`
 - engagement time (visible time) sent with `sendBeacon` when the page is hidden or left, and
   before each SPA navigation; it feeds `visit_duration`
 - outbound link clicks (`outbound_click`) and file downloads (`file_download`), `{url}` prop
@@ -665,19 +666,27 @@ counts of small tables; user property keys by an index skip-scan), never a scan 
 - **Rate limits** (Workers rate-limit bindings, per Cloudflare location, `wrangler.jsonc`
   namespaces 42001-42007): `/e` per client network (the shared `networkKey`; the visitor's IP behind
   a proxy with the proxy key) and per site, before any storage or bot check; server events and
-  payments per account; SQL per account; verify per account and per domain; Stripe deliveries per
-  site; share dashboards per link. `429 rate_limited`. A missing binding is no limit; a failing one
-  fails open.
-- **Daily caps** (UTC): the site's DO counts accepted events, engagement beacons and payments in its
-  `usage` table (purges and deletes never lower it). `MAX_EVENTS_PER_SITE_PER_DAY` is checked there.
-  For `MAX_EVENTS_PER_ACCOUNT_PER_DAY` and `DAILY_EVENT_BUDGET` the DO reports its count to D1
+  payments per account; SQL per account; verify per account and per domain; payment webhook
+  deliveries that fail authentication per network and per endpoint (checked after the signature, so
+  signed deliveries are never limited); share dashboards per link. `429 rate_limited`. A missing
+  binding is no limit; a failing one fails open. The per-site `/e` limit is shed first: a network
+  the site's DO reported past its daily share is dropped in the Worker before it (remembered 10
+  minutes per isolate, counted as `network_over_share` drops), and data-centre networks (shared
+  `isDatacenterAsn`) use their own key (`dc:<site>`), so neither can get a residential visitor's
+  event refused.
+- **Daily caps** (UTC): the site's DO counts accepted browser events and engagement beacons
+  (`usage.events`) and, apart, server events, payments and subscription changes
+  (`usage.server_events`) in its `usage` table (purges and deletes never lower them).
+  `MAX_EVENTS_PER_SITE_PER_DAY` and `MAX_SERVER_EVENTS_PER_SITE_PER_DAY` (unset = the browser
+  number) are checked there, so a browser flood never refuses the owner's server events.
+  For `MAX_EVENTS_PER_ACCOUNT_PER_DAY` and `DAILY_EVENT_BUDGET` (and their `SERVER_` twins) the DO reports its counts to D1
   (`usage_daily`, absolute and idempotent; `usage_global`, by delta) at most once a minute or per 1%
   of the cap (at most 1,000 events) and reads back the account's and the platform's totals in the
   same batch, so the cost is one small D1 batch (2 rows written, about as many rows read as the
   account has sites) per active site per minute at most, and nothing when neither var is set. A
   deleted site's count stays in the account's total for the day. Payments (the API and signed
-  Stripe deliveries alike) are held to all three; a batch records what fits. `429 daily_limit` /
-  `over_capacity`.
+  Stripe deliveries alike) are held to the three server budgets; a batch records what fits.
+  `429 daily_limit` / `over_capacity`.
 - **Storage budget**: once the DO's database (`ctx.storage.sql.databaseSize`) passes
   `MAX_SITE_STORAGE_MB`, events and payments are refused (`507 storage_full`) and get_site / verify
   say so. Lowering `retention_days` purges at once and frees it.
@@ -686,7 +695,12 @@ counts of small tables; user property keys by an index skip-scan), never a scan 
 - **Counts**: `MAX_SITES_PER_ACCOUNT`, `MAX_GOALS_PER_SITE` (default 100: goals ride in the DO's
   settings copy), `MAX_SHARE_LINKS_PER_SITE` (default 10; revoking deletes them),
   `MAX_FUNNELS_PER_SITE`, `MAX_ANNOTATIONS_PER_SITE`: `403 quota_exceeded`.
-- **SQL**: see the SQL endpoint limits above (`SQL_TIME_BUDGET_MS`).
+- **SQL**: see the SQL endpoint limits above (`SQL_TIME_BUDGET_MS`). Per account per day over all
+  its sites (`account_usage_daily` in D1, `src/service/account-budgets.ts`):
+  `MAX_SQL_MS_PER_ACCOUNT_PER_DAY` (SQL wall time) and `MAX_EXPORT_ROWS_PER_ACCOUNT_PER_DAY`.
+- **Share links**: pages are noindex, rendered with `textContent` only, link to the platform's
+  abuse report form (`ABUSE_REPORT_URL`), and stop (with link creation) while the account's
+  `analytics.share_links` capability is paused (`@afs/shared` `capabilityPaused`).
 - **Alerts and reports**: `MAX_ALERT_DESTINATIONS_PER_SITE` (default 5), `MAX_ALERTS_PER_SITE`
   (default 20), `MAX_REPORTS_PER_SITE` (default 5); `MAX_ALERT_DELIVERIES_PER_SITE_PER_DAY`
   (default 100, every attempt counted, in `alert_usage`, never lowered) of which

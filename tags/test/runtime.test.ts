@@ -348,6 +348,68 @@ describe("runtime: served /c/:id.js in a simulated browser", () => {
     expect(b2.fetches.find((f) => f.body.type === "conversion")!.body.analytics_visitor_id).toBe("afsa_vid_123");
   });
 
+  describe("the analytics tag and the tracker the page may already load", () => {
+    const AB = "https://analytics.example.net";
+    const cfg: ContainerConfig = {
+      triggers: [{ id: "all_pages", type: "page_view" }],
+      tags: [{ id: "an", type: "analytics", params: { site_id: "site_abc123" }, triggers: ["all_pages"] }],
+    };
+    // In the order they were added (each new script goes before the page's first one).
+    const trackers = (b: ReturnType<typeof browser>) =>
+      b.doc
+        .querySelectorAll("script")
+        .filter((s) => String(s.src ?? s.attrs.src).endsWith("/s.js"))
+        .reverse();
+
+    it("the page loads the tracker itself (first-party /_a/s.js, not run yet, or window.afsa): no second script", () => {
+      const own = el("script", { src: "/_a/s.js", "data-site": "site_abc123", defer: "" });
+      const b = browser("https://shop.test/", { body: [own] });
+      b.run(serve(cfg, { ab: AB }));
+      expect(trackers(b)).toEqual([own]);
+      expect(typeof b.win.afsa).toBe("function"); // calls queue until the page's tracker runs
+
+      const b2 = browser("https://shop.test/");
+      (b2.win as Record<string, unknown>).afsa = Object.assign(function () {}, { visitorId: () => "afsa_vid_1" });
+      b2.run(serve(cfg, { ab: AB }));
+      expect(trackers(b2)).toEqual([]);
+    });
+
+    it("served first-party (<origin>/_t), it loads the tracker from <origin>/_a, falling back to the direct host", () => {
+      const b = browser("https://shop.test/", { scriptSrc: `https://shop.test/_t/c/${CID}.js` });
+      b.run(serve(cfg, { ab: AB }));
+      const [fp] = trackers(b);
+      expect(fp!.src).toBe("https://shop.test/_a/s.js");
+      expect(fp!.attrs["data-site"]).toBe("site_abc123");
+      fp!.onerror!(); // /_a isn't proxied on this site
+      expect(trackers(b).map((s) => s.src)).toEqual(["https://shop.test/_a/s.js", `${AB}/s.js`]);
+
+      // A first-party domain (edge.example) and a path that answers 200 without being the tracker (an SPA's index.html).
+      const b2 = browser("https://shop.test/", { scriptSrc: `https://edge.shop.test/_t/c/${CID}.js` });
+      b2.run(serve(cfg, { ab: AB }));
+      trackers(b2)[0]!.onload!();
+      expect(trackers(b2).map((s) => s.src)).toEqual(["https://edge.shop.test/_a/s.js", `${AB}/s.js`]);
+      // When the first-party tracker really ran, nothing else is loaded.
+      const b3 = browser("https://shop.test/", { scriptSrc: `https://edge.shop.test/_t/c/${CID}.js` });
+      b3.run(serve(cfg, { ab: AB }));
+      (b3.win as Record<string, unknown>).afsa = Object.assign(function () {}, { visitorId: () => "v" });
+      trackers(b3)[0]!.onload!();
+      expect(trackers(b3).map((s) => s.src)).toEqual(["https://edge.shop.test/_a/s.js"]);
+    });
+
+    it("served from the tags host, or with its own base_url, it loads the tracker from there", () => {
+      const b = browser("https://shop.test/");
+      b.run(serve(cfg, { ab: AB }));
+      expect(trackers(b).map((s) => s.src)).toEqual([`${AB}/s.js`]);
+      const own = {
+        ...cfg,
+        tags: [{ ...cfg.tags![0]!, params: { site_id: "site_abc123", base_url: "https://stats.other.test" } }],
+      } as ContainerConfig;
+      const b2 = browser("https://shop.test/", { scriptSrc: `https://shop.test/_t/c/${CID}.js` });
+      b2.run(serve(own, { ab: AB }));
+      expect(trackers(b2).map((s) => s.src)).toEqual(["https://stats.other.test/s.js"]);
+    });
+  });
+
   it("the browser API is window.afst only (no sgt alias) and debug/preview use afst_ query params", () => {
     const b = browser("https://shop.test/?afst_debug=1&sgt_preview=prv_abcdefghijklmnopqrstuvwx");
     b.run(serve(purchaseConfig));

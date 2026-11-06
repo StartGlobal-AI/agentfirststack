@@ -166,6 +166,24 @@ bytes per sender per day, stored bytes per sender).
   the reserved list changed (its fingerprint is in `cron_state`) and logs `mail.reserved_conflicts`,
   and `GET /v1/admin/reserved-inboxes?limit=` (any key plus `x-admin-token` = `ADMIN_TOKEN`) lists
   them on demand (`src/service/reserved.ts`).
+- **Automatic capability pauses** (`src/service/pauses.ts`, contract in `@afs/shared` `pauses.ts`):
+  on a strong abuse signal one capability stops, the project's people and the operator are
+  emailed (the site does that: mail posts to `https://site.internal/v1/internal/pauses` over the
+  `SITE` binding, or writes `capability_pauses` in `AUTH_DB` itself when the site can't be reached),
+  and only the operator lifts it (`pnpm afs unpause <profile> <acct> <capability>`). Account
+  suspension stays manual. `mail.send`: each bounce or complaint event re-reads the account's last
+  hour (external recipients of its sends, by `messages.received_at`); more than
+  `SEND_PAUSE_BOUNCE_PERCENT` bounced or `SEND_PAUSE_COMPLAINT_PERCENT` complained, with at least
+  `SEND_PAUSE_MIN_SENDS` recipients (default 10), pauses it. While paused, a send, reply, forward or
+  scheduled send with any recipient outside the account answers `403 capability_paused` (its hint
+  has the reason); mail to the account's own inboxes still works, and forwards to the project's
+  members are not affected. `mail.inbox_create`: attempts to create a new inbox are counted per UTC
+  hour (`account_daily` kind `inbox_create_try`, including attempts the caps refuse and taken
+  addresses); passing `INBOX_CREATE_BURST_PER_HOUR` (default 3 x `MAX_INBOX_CREATES_PER_DAY` when
+  that is set) pauses it; a create that returns an address the account owns still works (rule 7).
+  Unset (or `"0"`) thresholds turn a signal off; each reads `UNCLAIMED_<name>`. `GET /v1/usage`
+  shows `paused` and `send_health` (last hour and the thresholds); `GET /v1/admin/delivery-health`
+  gives the operator the deployment's rates.
 - **Project deletion** (`accounts.deleted_at` in the identity DB): reads as suspended, so keys stop,
   inbound mail is refused at SMTP and forwarding stops at once. 7 days later the site's cron calls
   `DELETE /v1/account` (internal auth only, no MCP tool; API keys get `403 forbidden`;
@@ -393,7 +411,8 @@ bytes per sender per day, stored bytes per sender).
   `message.failed`. Deleting it cancels it. OAuth access tokens may only schedule to the account's
   own inboxes and members.
 - **Deliverability report** (`src/service/analysis.ts`) and **attachment text** (Workers AI
-  `toMarkdown`, only with an `AI` binding, images not converted, `MAX_ATTACHMENT_TEXT_PER_DAY`).
+  `toMarkdown`, only with an `AI` binding, images not converted, `MAX_ATTACHMENT_TEXT_PER_DAY`;
+  a conversion that fails or throws still counts, only an unreadable file is refunded).
 - **Webhook management**: PATCH (url, events, `inbox_ids`, enabled), secret rotation, up to 5
   custom headers sealed with `ENCRYPTION_KEY` (names shown, values never), Standard Webhooks
   headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`) next to `x-signature`. Changing
@@ -424,7 +443,8 @@ bytes per sender per day, stored bytes per sender).
 | GET | `/me`; GET, POST `/keys`; DELETE `/keys/:id` | `@afs/shared` |
 | DELETE | `/account` | the platform's own: erases a deleted project's mail (see Project deletion); API keys get 403 |
 | GET | `/admin/reserved-inboxes` | operator only (`x-admin-token`): shared-domain inboxes whose username is reserved now, `?limit=` (max 1000) -> `{ inboxes: [{ inbox_id, account_id, address, created_at, last_message_at }], truncated, reserved_names, shared_domain, next_steps }`; changes nothing; no MCP tool |
-| POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days?, forward? }` (`forward: { mode: each\|digest\|off, digest_hour, timezone }`, applied to a new inbox; every inbox JSON has `forward` with `recipients`, `waiting_for_owner`, `last_forwarded_at`, `last_digest_at`, `forwarded_today`, `daily_limit`, never the members' addresses); random username if omitted; same address returns existing (200); another account's address, or a deleted shared-domain address that was another account's (ever), is 409, the same answer; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
+| GET | `/admin/delivery-health` | the operator digest (site, internal auth) or the operator (`x-admin-token`): outbound bounce and complaint rates across the deployment, `?hours=` (1-168, default 24) -> `{ hours, tracking, sent, bounced, complained, bounce_percent, complaint_percent, accounts: [{ account_id, sent, bounced, complained, bounce_percent, complaint_percent }] (worst first, at most 50), next_steps }`; no MCP tool |
+| POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days?, forward? }` (`forward: { mode: each\|digest\|off, digest_hour, timezone }`, applied to a new inbox; every inbox JSON has `forward` with `recipients`, `waiting_for_owner`, `last_forwarded_at`, `last_digest_at`, `forwarded_today`, `daily_limit`, never the members' addresses); random username if omitted; same address returns existing (200); another account's address, or a deleted shared-domain address that was another account's (ever), is 409, the same answer; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY`; 403 `capability_paused` while `mail.inbox_create` is paused |
 | GET | `/inboxes`, `/inboxes/:id` | list (`?limit=&domain=`); one with message/unread counts |
 | PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days?, forward? }` (null = forever; `forward` merges, a bad `timezone` is 400); delete removes all its mail and answers `address_reserved` (true on the shared domain: never given to another account) (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |
 | GET | `/inboxes/:id/messages` | `?unread=true&q=&from=&to=&subject=&direction=in\|out&tag=&has=code,link,attachments&auth=pass\|fail\|unknown&labels=&status=&after=&before=&order=asc\|desc&limit=` -> `{ messages, next_before }` (`next_after` with `order=asc`) |
@@ -536,6 +556,9 @@ served with a strict CSP.
 | `MAX_SCHEDULED_PER_ACCOUNT` | optional var; scheduled sends waiting at once (default 20, 5 unclaimed) |
 | `MAX_ATTACHMENT_TEXT_PER_DAY` | optional var; attachment-to-text conversions per account per UTC day (default 20, 5 unclaimed) |
 | `DELIVERY_EVENTS_QUEUE` | optional var; name of the queue the Email Sending event subscriptions publish to (consumed by this Worker); set = delivery tracking on (see Delivery status) |
+| `SEND_PAUSE_BOUNCE_PERCENT`, `SEND_PAUSE_COMPLAINT_PERCENT` | optional vars; pause `mail.send` when more than this percent of the external recipients the account emailed in the last hour bounced / complained (needs delivery tracking). Fractions allowed (`"0.5"`); unset or `"0"` = off |
+| `SEND_PAUSE_MIN_SENDS` | optional var; recipients the last hour must have before those rates count (default 10) |
+| `INBOX_CREATE_BURST_PER_HOUR` | optional var; pause `mail.inbox_create` when the account tries to create more new inboxes than this in one UTC hour, refused attempts included (default 3 x `MAX_INBOX_CREATES_PER_DAY` when that is set, else off; `"0"` = off) |
 | `UNCLAIMED_<name>` | optional var for every cap above |
 | `WEBHOOK_SIGNING_SECRET` | not needed: each webhook gets its own secret, returned once |
 
@@ -546,7 +569,8 @@ enforces senders), rate limits `SIGNUP_LIMITER` (41001), `WAIT_LIMITER` (42021, 
 account), `WEBHOOK_TEST_LIMITER` (42022, 5/min), `SEARCH_LIMITER` (42023, 30/min) (each optional:
 without the binding the check is skipped; the D1 caps are the strict limits), hourly cron (purges
 expired inboxes, old shared-domain mail, delivery logs, idempotency keys, events and counters,
-sweeps orphan blobs, sends scheduled messages an alarm missed and forward digests), observability on. Optional, not in
+sweeps orphan blobs, sends scheduled messages an alarm missed and forward digests), service binding `SITE`
+(`afs-site`: capability pauses; a lone mail app without the site deletes it, and without the site's `capability_pauses` table nothing is paused), observability on. Optional, not in
 the template: an `ai` binding named `AI` (attachment text) and a consumer for the Email Sending
 events queue (delivery status). `compatibility_date` is 2026-08-22, the newest date the
 workerd bundled with `@cloudflare/vitest-plugin` 1.5 supports, so tests run on the same

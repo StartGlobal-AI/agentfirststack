@@ -8,6 +8,8 @@ import { emailEnabled, waitUntilOf } from "./email";
 import { emailSuspension, emailWelcome } from "./email-messages";
 import { siteBase } from "./google";
 import { restoreProject } from "./project-deletion";
+import { accountPauses, activePauses, capabilityOf, liftCapability, pauseCapability } from "./pauses";
+import { listAbuseReports, reviewAbuseReport } from "./abuse-reports";
 
 /**
  * Operator tools for abuse of the free platform, on the site (it owns the identity database):
@@ -18,6 +20,11 @@ import { restoreProject } from "./project-deletion";
  *   POST /v1/admin/accounts/:id/restore      undo a project deletion before its purge (src/project-deletion.ts)
  *   POST /v1/admin/emails/test               { "email": "..." }  the welcome email to a signed-in person, now
  *   POST /v1/admin/digest                    the operator's daily summary, now (also returns it as JSON)
+ *   GET  /v1/admin/pauses                    capability pauses in force (src/pauses.ts)
+ *   POST /v1/admin/accounts/:id/pauses       { "capability", "reason", "until"? }  pause one capability by hand
+ *   DELETE /v1/admin/accounts/:id/pauses/:capability   lift a pause (pnpm afs unpause)
+ *   GET  /v1/admin/abuse-reports?status=new&limit=50   abuse reports (src/abuse-reports.ts)
+ *   PATCH /v1/admin/abuse-reports/:id        { "status": "reviewed" | "dismissed" | "new", "note"? }
  *
  * `Authorization: Bearer <ADMIN_TOKEN>` only (constant-time compare); without ADMIN_TOKEN the
  * routes refuse everyone. authenticate() reads suspended_at on every request, so keys stop at
@@ -78,7 +85,72 @@ const accountId = (c: Context<SiteEnv>) => {
   return id;
 };
 
-adminApi.get("/v1/admin/accounts/:id", async (c) => c.json({ account: await accountState(c.env.DB, accountId(c)) }));
+adminApi.get("/v1/admin/accounts/:id", async (c) => {
+  const id = accountId(c);
+  return c.json({ account: await accountState(c.env.DB, id), pauses: await accountPauses(c.env.DB, id) });
+});
+
+// ---------- capability pauses (src/pauses.ts) ----------
+
+adminApi.get("/v1/admin/pauses", async (c) => c.json({ pauses: await activePauses(c.env.DB) }));
+
+const operatorPauseBody = z.object({
+  capability: z.string().max(40),
+  reason: z.string().min(1).max(500),
+  until: z.number().int().positive().nullable().optional(),
+});
+
+adminApi.post("/v1/admin/accounts/:id/pauses", async (c) => {
+  const id = accountId(c);
+  const body = await readJson(c, operatorPauseBody);
+  const capability = capabilityOf(body.capability);
+  const r = await pauseCapability(
+    c.env,
+    siteBase(c),
+    { accountId: id, capability, reason: body.reason, by: "operator", until: body.until ?? null },
+    waitUntilOf(c),
+  );
+  return c.json({
+    ...r,
+    next_steps: [
+      `The services refuse ${capability} with 403 capability_paused within a minute (each Worker caches pauses for 60 s).`,
+      r.existing ? "It was already paused; nothing was emailed again." : "The project's people were emailed.",
+      `Lift it: DELETE /v1/admin/accounts/${id}/pauses/${capability} (pnpm afs unpause <profile> ${id} ${capability}).`,
+    ],
+  });
+});
+
+adminApi.delete("/v1/admin/accounts/:id/pauses/:capability", async (c) => {
+  const id = accountId(c);
+  await accountState(c.env.DB, id);
+  const capability = capabilityOf(c.req.param("capability"));
+  const lifted = await liftCapability(c.env, siteBase(c), id, capability, waitUntilOf(c));
+  return c.json({
+    account_id: id,
+    capability,
+    lifted,
+    existing: !lifted,
+    pauses: await accountPauses(c.env.DB, id),
+    next_steps: [
+      lifted
+        ? `${capability} works again within a minute; the project's people were emailed. Automatic re-pauses of it are ignored for PAUSE_LIFT_GRACE_HOURS (default 24).`
+        : `${capability} wasn't paused; nothing changed.`,
+    ],
+  });
+});
+
+// ---------- abuse reports (src/abuse-reports.ts) ----------
+
+adminApi.get("/v1/admin/abuse-reports", async (c) => {
+  const status = c.req.query("status");
+  const limit = Number(c.req.query("limit") ?? 50);
+  return c.json({ reports: await listAbuseReports(c.env.DB, { status: status || undefined, limit: Number.isFinite(limit) ? limit : 50 }) });
+});
+
+adminApi.patch("/v1/admin/abuse-reports/:id", async (c) => {
+  const body = await readJson(c, z.object({ status: z.enum(["new", "reviewed", "dismissed"]), note: z.string().max(1000).optional() }));
+  return c.json({ report: await reviewAbuseReport(c.env.DB, c.req.param("id"), body.status, body.note) });
+});
 
 // After shipping a new setup catalog version: write the notices now instead of at the daily cron.
 adminApi.post("/v1/admin/notices/refresh", async (c) => c.json(await refreshNotices(c.env, noticeBase(c.env))));

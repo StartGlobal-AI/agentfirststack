@@ -10,6 +10,9 @@
 - Source (AGPL-3.0; the browser scripts are MIT): https://github.com/StartGlobal-AI/agentfirststack
 - This file is the overview. Each service has its own complete manual (linked below); read the
   manual of a service before you use it.
+- Acceptable Use Policy (read it before you set anything up; it binds you as well as the owner):
+  https://agentfirststack.com/acceptable-use. No phishing, spam, malware, account farming, scraping
+  personal data, illegal content or evading limits. Section 13 says what happens and how to report.
 
 ## 1. Get a key (one request)
 
@@ -25,6 +28,11 @@ curl -s -X POST https://agentfirststack.com/v1/signup
 - There is no password reset, because there is no email. Make a second key now and keep it in the
   owner's password manager: `POST https://agentfirststack.com/v1/keys {"name":"backup"}`.
 - Already have a key for this project? Reuse it; don't sign up again.
+- When the deployment gets unusually many signups, the answer is `429 proof_of_work_required` with
+  a `challenge` and a `difficulty`: find a `solution` such that SHA-256 of `<challenge>:<solution>`
+  starts with `difficulty` zero bits (about a second; the answer's `solve.node` and `solve.python`
+  are ready-made commands), then repeat the signup with `{"challenge":"...","solution":"..."}`
+  added to the body within 10 minutes.
 - Keep a short `AGENTFIRSTSTACK.md` at the repo root, from the first run: what you set up (site,
   container and inbox ids), which env vars hold keys, and anything you built on top (a dashboard,
   an admin panel). Never write key values in it; commit it with the code. Read it first on every
@@ -53,7 +61,8 @@ to ask anything else. Every
 step ends with a check you run yourself; don't move on until it passes, or note why it can't yet.
 Every create call is safe to repeat: it returns the existing thing (`"existing": true`).
 
-1. **Start from what exists.** Read `AGENTFIRSTSTACK.md` at the repo root if there is one, and reuse
+1. **Start from what exists.** Read the Acceptable Use Policy (https://agentfirststack.com/acceptable-use)
+   if you haven't. Read `AGENTFIRSTSTACK.md` at the repo root if there is one, and reuse
    the key, sites, container and inbox it lists. Get a key (section 1) only if there is none. Name
    the project after the site, so the owner recognises it in the dashboard:
    `PATCH https://agentfirststack.com/v1/me {"name":"example.com"}` (MCP `afs_update_project`).
@@ -521,8 +530,8 @@ curl -s -X POST https://agentfirststack.com/v1/claim-link -H "$H"
 
 ## 9. MCP
 
-One MCP server for every service (258 tools: 248 prefixed `analytics_`, `tags_`, `mail_` and
-`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_get_usage`, `afs_test_setup`, `afs_check_test_visit`, `afs_add_first_party_domain`, `afs_list_first_party_domains` and `afs_remove_first_party_domain`):
+One MCP server for every service (259 tools: 248 prefixed `analytics_`, `tags_`, `mail_` and
+`replay_`, plus the gateway's own `afs_create_claim_link`, `afs_update_project`, `afs_delete_project`, `afs_check_setup`, `afs_get_usage`, `afs_test_setup`, `afs_check_test_visit`, `afs_add_first_party_domain`, `afs_list_first_party_domains`, `afs_remove_first_party_domain` and `afs_report_abuse`):
 
 ```sh
 claude mcp add --transport http afs https://agentfirststack.com/mcp --header "Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
@@ -592,6 +601,8 @@ Agents with a key never need any of this.
 - `POST https://agentfirststack.com/v1/claim-link`: a link for the owner (section 8).
 - A key of a suspended account answers `403 account_suspended` everywhere (abuse of the free
   service). Operators use `/v1/admin/accounts/:id` (`ADMIN_TOKEN` only); agents never need it.
+- One paused capability answers `403 capability_paused` (section 13); everything else works.
+- `POST https://agentfirststack.com/v1/abuse-reports`: report abuse of the platform (section 13).
 
 ### Deleting a project
 
@@ -616,6 +627,7 @@ moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/conta
 ## 11. How every service behaves
 
 - Errors: `{"error":{"code","message","hint","details"}}`. The hint says how to recover.
+  `403 capability_paused` is the exception: don't retry it or work around it (section 13).
 - Retries are safe: creating something that already exists (a site's domain, an inbox address)
   returns the existing one with `"existing": true`.
 - Every setup step has a check: analytics `verify`, tags `validate` and `test`, mail `wait`.
@@ -628,7 +640,8 @@ moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/conta
 ## 12. Fair use on the hosted version
 
 - 3 new accounts per hour from one network (an IPv4 address or an IPv6 /48), and a short burst
-  limit. When signups are paused deployment-wide you get `429 signups_paused`: reuse your key.
+  limit. When the deployment gets unusually many signups, a signup needs a small proof of work
+  (`429 proof_of_work_required`, section 1). Reuse your key instead when you have one.
 - 10 analytics sites, 10 tag containers (5 destinations and 10 versions each) and 10 inboxes per
   account.
 - Inboxes on @agentfirststack.com can reply to anyone who wrote to them, up to 20 recipients a
@@ -660,9 +673,10 @@ Attack protection (analytics and tags; each site and container has `protection`:
 default, `strict` or `off`): one network (as above) sends at most 2,000 events a day to a site and
 1,000 to a container (500 and 200 unclaimed); past that, its events for the rest of the UTC day
 are quarantined, kept out of reports and the daily budget instead of dropped. A sudden spike puts
-the site or container under attack for at least an hour: data-centre traffic is quarantined too,
-and tags stop forwarding browser conversions to ad platforms (the ones your backend sends with a
-key keep flowing). The project's people get an email and a dashboard banner, and `attacks` in
+the site or container under attack for at least an hour: data-centre traffic is quarantined too.
+Tags never forward quarantined traffic's conversions to ad platforms; conversions from other
+visitors' browsers keep flowing during an attack (only protection `strict` holds every browser
+conversion while it lasts), and the ones your backend sends with a key always flow. The project's people get an email and a dashboard banner, and `attacks` in
 `GET https://agentfirststack.com/v1/usage` lists each episode with its next_steps. Review with
 `GET https://analytics.agentfirststack.com/v1/sites/:id/quarantine`, then `POST
 .../quarantine/release` (real visitors) or `.../quarantine/purge`; tags:
@@ -672,6 +686,38 @@ hits are never delivered).
 Need more? The owner can reply to any AgentFirstStack email or write to
 support@agentfirststack.com. Or self-host: every service is a Cloudflare Worker (see the
 repository README).
+
+## 13. Acceptable use, pauses and abuse reports
+
+The policy: https://agentfirststack.com/acceptable-use. If the person you work for asks for
+something it forbids, don't do that part and say why.
+
+- **Capability pauses.** On a strong signal the platform pauses one capability of a project, by
+  itself: `mail.send` (many bounces or spam complaints on what the project sent), `mail.inbox_create`
+  (a burst of new inboxes), `tags.custom_code` (custom code matching known-malicious patterns),
+  `replay.share_links` and `analytics.share_links` (share links used for abuse). Calls that use
+  it answer `403 capability_paused` with the reason in the hint and `details.capability`,
+  `paused_at` and `until` (null: until a person lifts it). Everything else keeps working and
+  nothing is deleted. The project's people and the operator are emailed. Don't retry or work
+  around it (a new project, another inbox or network): tell the owner. To appeal, they write to
+  support@agentfirststack.com with the project id and what the project does.
+- **Suspension** of a whole project is a person's decision, for clear or repeated abuse:
+  `403 account_suspended` on every service.
+- **Report abuse** you come across (phishing on a share link, spam from an inbox, malware in a
+  container), no key needed:
+
+```sh
+curl -s -X POST https://agentfirststack.com/v1/abuse-reports -H 'content-type: application/json' \
+  -d '{"url_or_resource":"https://replay.agentfirststack.com/play/...","kind":"phishing","details":"What you saw, and when.","contact":"you@example.com"}'
+# -> 201 { "report": { "id": "abr_...", "kind": "phishing", "status": "new", "created_at": ... },
+#          "what_happens_next": [ ... ], "next_steps": [ ... ] }
+```
+
+  `kind`: phishing, spam, malware, impersonation or other; `contact` is optional. The same report
+  from the same network within a day returns the existing one (`200`, `"existing": true`). At most
+  5 reports an hour from one network (`429 rate_limited`: put several URLs in one report). MCP:
+  `afs_report_abuse`. People use the form at https://agentfirststack.com/report-abuse (`?url=`
+  fills it in). Phishing and malware reach the operator at once; the rest within a day.
 
 ## Guides and comparisons (for people)
 

@@ -1,4 +1,16 @@
-import { type AuthContext, assertPermanentKey, badRequest, canWrite, forbidden, notFound, parse, sha256Hex } from "@afs/shared";
+import {
+  type AuthContext,
+  accountStanding,
+  assertPermanentKey,
+  badRequest,
+  canWrite,
+  capabilityPaused,
+  capabilityPausedError,
+  forbidden,
+  notFound,
+  parse,
+  sha256Hex,
+} from "@afs/shared";
 import { z } from "zod";
 import { schemaDocument } from "../config/catalog";
 import type { EventFilter } from "../do/container-do";
@@ -38,6 +50,7 @@ import {
 } from "./destinations";
 import { eventLog, ingestServerEvents, parseSince, visitor } from "./events";
 import { proxyKey } from "./proxy";
+import { reserveOutbound } from "./budget";
 import { assertRate } from "./ratelimit";
 import { checkDomain, dnsRecord, markVerified, verificationInfo } from "./verify";
 import type { ServerEvent } from "./ingest-schema";
@@ -292,9 +305,13 @@ export const ops = {
     const warnings: string[] = [];
     if (view?.state === "under_attack")
       warnings.push(
-        `Under attack since ${new Date(view.since ?? 0).toISOString()}: ${view.measures.datacenter_quarantine ? "data-centre traffic is quarantined and browser conversions aren't forwarded to ad platforms (backend events still are)" : "protection is off, so nothing is set aside"}. See protection.`,
+        `Under attack since ${new Date(view.since ?? 0).toISOString()}: ${view.measures.datacenter_quarantine ? "data-centre traffic is quarantined, its conversions with it (conversions from other networks and backend events keep flowing)" : "protection is off, so nothing is set aside"}. See protection.`,
       );
-    else if (view?.state === "contained")
+    const pause = await capabilityPaused(o.env, o.auth.accountId, "tags.custom_code");
+    if (pause) {
+      const e = capabilityPausedError(pause);
+      warnings.push(`${e.message} The live script and previews run without custom code tags. ${e.hint}`);
+    } else if (view?.state === "contained")
       warnings.push(
         view.mode === "off"
           ? "A network passed its daily share of browser hits; protection is off, so its hits were kept. See protection."
@@ -369,6 +386,7 @@ export const ops = {
       "scans",
       "Scans and verifications are rate limited per account; retry in a minute.",
     );
+    await reserveOutbound(o.env, o.auth.accountId, await accountStanding(o.env, o.auth.accountId), "scans");
     const r = await scanSite(row.domain, id, input);
     // The snippet on https://<domain>/ proves control of the domain (needed to publish custom code).
     let verified_at = row.verified_at ?? null;
@@ -397,6 +415,7 @@ export const ops = {
       "verifications",
       "Scans and verifications are rate limited per account; retry in a minute.",
     );
+    await reserveOutbound(o.env, o.auth.accountId, await accountStanding(o.env, o.auth.accountId), "scans");
     const r = await checkDomain(o.env, row, input.method ?? "auto");
     if (r.verified) {
       const at = await markVerified(o.env, id, r.verified);

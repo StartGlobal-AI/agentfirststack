@@ -190,9 +190,9 @@ describe("a network's daily share", () => {
 });
 
 describe("attack mode", () => {
-  const spike = { SPIKE_MIN_EVENTS: "5" };
+  const spike = { SPIKE_MIN_EVENTS: "5", SPIKE_MIN_NETWORKS: "3" };
 
-  it("spike -> under_attack: data-centre traffic quarantined, browser conversions held, backend conversions delivered; cooldown ends it", async () => {
+  it("spike -> under_attack: data-centre traffic quarantined with its conversions, other conversions and backend ones delivered; cooldown ends it", async () => {
     const t = await container("spike.test");
     const now = Date.now();
     const r = await inDO(t.C, spike, async (i) => {
@@ -201,6 +201,7 @@ describe("attack mode", () => {
       const crowd: CollectResult[] = [];
       for (let n = 1; n <= 5; n++) crowd.push(await i.collect(visit(t.C, t.domain, { net: `net-${n}`, at: now })));
       const dc = await i.collect(visit(t.C, t.domain, { net: "net-dc", asn: AWS, at: now }));
+      const dcConv = await i.collect(purchase(t.C, t.domain, { net: "net-dc", asn: AWS, at: now }));
       const home = await i.collect(visit(t.C, t.domain, { net: "net-6", at: now }));
       const conv = await i.collect(purchase(t.C, t.domain, { net: "net-7", at: now }));
       const backend = await i.ingestServer([{ name: "purchase", order_id: "BACKEND-1", value: 9, currency: "USD" }], {
@@ -209,29 +210,34 @@ describe("attack mode", () => {
       });
       const during = await i.protection(now);
       const usage = await i.usageToday(today(), undefined, now);
-      return { before, crowd, dc, home, conv, backend, during, usage };
+      return { before, crowd, dc, dcConv, home, conv, backend, during, usage };
     });
     expect(statuses(r.before)).toEqual(["queued"]);
     expect(r.crowd.every((x) => x.ok && !("duplicate" in x))).toBe(true);
     expect(r.during).toMatchObject({
       mode: "auto",
       state: "under_attack",
-      quarantined: 1,
+      quarantined: 2,
       conversions_held_today: 1,
-      measures: { datacenter_quarantine: true, browser_conversions_held: true },
+      measures: { datacenter_quarantine: true, browser_conversions_held: false },
     });
     expect(r.during.reasons.map((x) => x.kind)).toEqual(["spike", "datacenter"]);
-    expect(r.usage).toMatchObject({ quarantined: 1, browser_events: 8 });
-    // The browser conversion is logged with the hold as each destination's skip reason.
-    expect(statuses(r.conv)).toEqual(["skipped:held"]);
-    expect(r.conv.ok && r.conv.note).toMatch(/^Held: the container is under attack/);
+    expect(r.during.reasons[0]!.detail).toMatch(/from at least 3 networks/);
+    expect(r.usage).toMatchObject({ quarantined: 2, browser_events: 8 });
+    // The data-centre conversion was quarantined (never planned for delivery)...
+    expect(r.dcConv).toEqual({ ok: true, event_id: expect.any(String) });
+    // ...while a conversion from a residential network keeps flowing during the attack.
+    expect(statuses(r.conv)).toEqual(["queued"]);
+    expect(r.conv.ok && r.conv.note).toBeFalsy();
     // Backend conversions (API key) keep flowing.
     expect(Array.isArray(r.backend) && r.backend[0]!.destinations.map((d) => d.status)).toEqual(["queued"]);
 
-    const log = (await t.api("GET", `/v1/containers/${t.C}/events?status=skipped`)).body.events;
-    expect(log[0].destinations[0].reason).toMatch(/^held: the container is under attack/);
-    const dcRow = (await t.api("GET", `/v1/containers/${t.C}/events?status=quarantined&include_visits=true`)).body.events;
-    expect(dcRow).toEqual([expect.objectContaining({ quarantine: "datacenter", network: { asn: AWS, as_org: "Amazon.com, Inc." } })]);
+    expect((await t.api("GET", `/v1/containers/${t.C}/events?status=skipped`)).body.events).toEqual([]);
+    const dcRows = (await t.api("GET", `/v1/containers/${t.C}/events?status=quarantined&include_visits=true`)).body.events;
+    expect(dcRows).toHaveLength(2);
+    expect(dcRows).toContainEqual(
+      expect.objectContaining({ type: "conversion", quarantine: "datacenter", network: { asn: AWS, as_org: "Amazon.com, Inc." } }),
+    );
 
     // GET /v1/usage: the contract with the platform site.
     const usage = (await t.api("GET", "/v1/usage")).body;
@@ -243,10 +249,11 @@ describe("attack mode", () => {
       mode: "auto",
       since: now,
       ended_at: null,
-      quarantined: 1,
+      quarantined: 2,
     });
     expect(item.next_steps.join("\n")).toContain(`GET ${B}/v1/containers/${t.C}/quarantine`);
     expect(item.next_steps.join("\n")).toMatch(/still delivered|always delivered/);
+    expect(item.next_steps.join("\n")).toMatch(/conversions from every other network keep flowing/);
 
     // An hour after the last trigger it's over: data-centre traffic is accepted again.
     const later = now + ATTACK_COOLDOWN_MS + 60_000;
@@ -256,10 +263,10 @@ describe("attack mode", () => {
       conv: await i.collect(purchase(t.C, t.domain, { net: "net-8", at: later })),
       usage: await i.usageToday(today(), undefined, later),
     }));
-    expect(after.view).toMatchObject({ state: "ended", ended_at: now + ATTACK_COOLDOWN_MS, quarantined: 1 });
+    expect(after.view).toMatchObject({ state: "ended", ended_at: now + ATTACK_COOLDOWN_MS, quarantined: 2 });
     expect(after.view.measures.datacenter_quarantine).toBe(false);
     expect(statuses(after.conv)).toEqual(["queued"]);
-    expect(after.usage.quarantined).toBe(1);
+    expect(after.usage.quarantined).toBe(2);
     // Ended episodes stay in attacks for 24 hours, then drop out.
     const gone = await inDO(t.C, {}, (i) => i.protection(now + ATTACK_COOLDOWN_MS + 25 * 3_600_000));
     expect(gone.state).toBe("none");
@@ -276,6 +283,28 @@ describe("attack mode", () => {
     expect(v.contained.state).toBe("contained");
     expect(v.attack).toMatchObject({ state: "under_attack", since: v.contained.since });
     expect(v.attack.reasons.map((x) => x.kind)).toEqual(["network_share", "spike"]);
+  });
+
+  it("a flood from few networks is contained, not an attack: data-centre traffic and conversions keep flowing", async () => {
+    const t = await container("few-networks.test");
+    const r = await inDO(t.C, { ...spike, SPIKE_MIN_NETWORKS: "4" }, async (i) => {
+      // 6 hits in the window (a spike past SPIKE_MIN_EVENTS) but from only 2 networks (fewer than 4).
+      for (let n = 0; n < 6; n++) await i.collect(visit(t.C, t.domain, { net: `few-${n % 2}` }));
+      return {
+        // A copy: the episode's reasons keep changing with the hits below.
+        view: structuredClone(await i.protection()),
+        dc: await i.collect(visit(t.C, t.domain, { net: "few-dc", asn: AWS })),
+        conv: await i.collect(purchase(t.C, t.domain, { net: "few-1" })),
+        after: await i.protection(),
+      };
+    });
+    expect(r.view).toMatchObject({ state: "contained", measures: { datacenter_quarantine: false, browser_conversions_held: false } });
+    expect(r.view.reasons).toEqual([
+      { kind: "spike", detail: expect.stringMatching(/from only 2 networks \(an attack needs 4\): contained/) },
+    ]);
+    expect(r.dc).toMatchObject({ ok: true });
+    expect(r.after.quarantined_today).toBe(0);
+    expect(statuses(r.conv)).toEqual(["queued"]);
   });
 
   it("protection off: detection and reporting run, nothing is quarantined or held", async () => {

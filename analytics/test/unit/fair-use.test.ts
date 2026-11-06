@@ -149,6 +149,26 @@ describe("ingest budgets (finding 1)", () => {
     );
   });
 
+  it("server events have their own budget: a browser flood past its caps never refuses them", () => {
+    engine.configure(db, settings());
+    const c = { ...caps(2, 2, 2), serverSiteDaily: 3, serverAccountDaily: 10, serverPlatformDaily: 100 };
+    const browser = (n: number) => Array.from({ length: n }, (_, i) => ev({ visitor_hash: `b${i}`, ts: NOW - i }));
+    const server = (n: number) =>
+      Array.from({ length: n }, (_, i) => ev({ visitor_hash: `s${i}`, origin: "server", name: "signup", ts: NOW - i }));
+    expect(reasons(engine.ingest(db, browser(3), NOW, { caps: c }))).toEqual(["ok", "ok", "daily_limit"]);
+    // the browser budget is used up; server events still go through, up to their own cap
+    expect(reasons(engine.ingest(db, server(4), NOW, { caps: c }))).toEqual(["ok", "ok", "ok", "server_daily_limit"]);
+    expect(engine.usageOn(db, utcDay(NOW))).toMatchObject({ events: 2, server_events: 3 });
+    expect(engine.ingest(db, server(1), NOW, { caps: c }).refused).toBe("server_daily_limit");
+    // the account's and the deployment's server totals count against theirs
+    const fresh = memoryDb();
+    engine.configure(fresh, settings());
+    expect(engine.ingest(fresh, server(1), NOW, { caps: c, serverAccountOthers: 10 }).refused).toBe("account_server_daily_limit");
+    expect(engine.ingest(fresh, server(1), NOW, { caps: c, serverPlatformOthers: 100 }).refused).toBe("platform_server_daily_budget");
+    // and browser totals elsewhere don't touch them
+    expect(engine.ingest(fresh, server(1), NOW, { caps: c, accountOthers: 1e9, platformOthers: 1e9 }).results[0]!.ok).toBe(true);
+  });
+
   it("a full storage budget refuses everything; oversized events are refused one by one", () => {
     engine.configure(db, settings());
     expect(engine.ingest(db, [ev(), ev()], NOW, { storageFull: true })).toMatchObject({ refused: "storage_full" });
@@ -360,6 +380,15 @@ describe("limits helpers", () => {
     expect(vars).toEqual({ MAX_EVENTS_PER_SITE_PER_DAY: "1000", UNCLAIMED_MAX_EVENTS_PER_SITE_PER_DAY: "100", MAX_SITE_STORAGE_MB: "2" });
     expect(ingestCaps(vars, CLAIMED)).toMatchObject({ siteDaily: 1000, storageBytes: 2 * 1024 * 1024, platformDaily: Infinity });
     expect(ingestCaps(vars, UNCLAIMED)).toMatchObject({ siteDaily: 100 });
+    // the server budget: its own vars, else the same numbers as the browser caps
+    expect(ingestCaps(vars, UNCLAIMED)).toMatchObject({ serverSiteDaily: 100, serverAccountDaily: Infinity });
+    const sv = limitVars({
+      MAX_EVENTS_PER_SITE_PER_DAY: "1000",
+      MAX_SERVER_EVENTS_PER_SITE_PER_DAY: "50",
+      UNCLAIMED_MAX_SERVER_EVENTS_PER_SITE_PER_DAY: "5",
+    });
+    expect(ingestCaps(sv, CLAIMED)).toMatchObject({ siteDaily: 1000, serverSiteDaily: 50 });
+    expect(ingestCaps(sv, UNCLAIMED)).toMatchObject({ serverSiteDaily: 5 });
     expect(siteCap({ MAX_GOALS_PER_SITE: "0" }, CLAIMED, "MAX_GOALS_PER_SITE", 100)).toBe(Infinity);
     expect(siteCap({}, CLAIMED, "MAX_GOALS_PER_SITE", 100)).toBe(100);
   });

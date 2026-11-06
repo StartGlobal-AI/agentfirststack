@@ -75,6 +75,15 @@ export interface Bindings extends AuthBindings {
   MAX_CHUNKS_PER_ACCOUNT_PER_DAY?: string;
   MAX_BYTES_PER_ACCOUNT_PER_DAY?: string;
   MAX_DERIVED_PER_ACCOUNT_PER_DAY?: string;
+  /**
+   * One site's daily chunks, stored bytes and derived rows (429 site_daily_limit), so a flooded
+   * site stops alone. Unset: half the account's budget for that counter when it has one.
+   */
+  MAX_CHUNKS_PER_SITE_PER_DAY?: string;
+  MAX_BYTES_PER_SITE_PER_DAY?: string;
+  MAX_DERIVED_PER_SITE_PER_DAY?: string;
+  /** Stored bytes one client network may send one site per UTC day (429 ip_bytes_limit). Unset: a tenth of the site's byte budget. */
+  MAX_BYTES_PER_IP_PER_SITE_PER_DAY?: string;
   MAX_PLATFORM_SESSIONS_PER_DAY?: string;
   MAX_PLATFORM_CHUNKS_PER_DAY?: string;
   MAX_PLATFORM_BYTES_PER_DAY?: string;
@@ -106,7 +115,10 @@ export interface Bindings extends AuthBindings {
   MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY?: string;
   MAX_TEST_RESPONSES_PER_SITE_PER_DAY?: string;
   MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY?: string;
-  /** 32-byte base64 key that seals webhook secrets at rest (secret). Without it webhooks can't be created (DEV_MODE: stored plain). */
+  /**
+   * 32-byte base64 key that seals webhook secrets at rest (secret). Without it webhooks can't be
+   * created (DEV_MODE: stored plain). Also derives each site's path-proxy key (service/proxy.ts).
+   */
   ENCRYPTION_KEY?: string;
   /** Webhooks per account (default 10), deliveries per account per UTC day (1000), test sends per day (50). */
   MAX_WEBHOOKS_PER_ACCOUNT?: string;

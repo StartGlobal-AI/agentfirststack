@@ -4,6 +4,7 @@ import type { SiteUsage } from "../do/engine";
 import { COUNTERS, type Counter, cap, DEFAULTS, ingestCaps, LIMITS, type Totals, zeroTotals } from "../lib/limits";
 import { analyticsAvailable } from "./analytics";
 import { type Ctx, siteStub } from "./context";
+import { accountImageCap } from "./heatmap-image";
 import { surveyCaps } from "./surveys";
 import { tagsAvailable } from "./tags";
 
@@ -299,8 +300,8 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
     heatmap_images_per_day: item(
       "Heatmap images a day",
       v("heatmap_images"),
-      images ? c("MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY", DEFAULTS.HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY) : 0,
-      "heatmap images rendered, across sites (cached ones are free)",
+      images ? accountImageCap(env, standing) : 0,
+      "heatmap images rendered, across sites (cached ones are free; claimed projects only unless UNCLAIMED_MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY allows some)",
       "MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY",
       resets,
       images
@@ -355,6 +356,46 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
       resets,
       {
         note: "Past it that site records no new session until 00:00 UTC (429 daily_session_limit, the recorder stops); sessions already recording continue.",
+        drops_data: true,
+      },
+    ),
+    // A site's own share of the account's day (lib/limits.ts siteBudget): a flooded site stops alone.
+    chunks_per_site_per_day: perSite(
+      "Recording chunks a day on one site",
+      sites,
+      (s) => t(s, "chunks"),
+      caps.site.chunks,
+      "recording chunks stored by one site (used = the busiest site today)",
+      "MAX_CHUNKS_PER_SITE_PER_DAY",
+      resets,
+      {
+        note: "Past it that site's chunks are refused until 00:00 UTC (429 site_daily_limit); the account's other sites keep recording. Unset, it is half the account's chunk budget.",
+        drops_data: true,
+      },
+    ),
+    recorded_bytes_per_site_per_day: perSite(
+      "Recording data a day on one site",
+      sites,
+      (s) => t(s, "bytes"),
+      caps.site.bytes,
+      "bytes stored by one site (chunks, starred copies, survey responses; used = the busiest site today)",
+      "MAX_BYTES_PER_SITE_PER_DAY",
+      resets,
+      {
+        note: "Past it that site's chunks are refused until 00:00 UTC (429 site_daily_limit); the account's other sites keep recording. Unset, it is half the account's byte budget.",
+        drops_data: true,
+      },
+    ),
+    derived_per_site_per_day: perSite(
+      "Derived events a day on one site",
+      sites,
+      (s) => t(s, "derived"),
+      caps.site.derived,
+      "derived rows stored by one site (used = the busiest site today)",
+      "MAX_DERIVED_PER_SITE_PER_DAY",
+      resets,
+      {
+        note: "Past it that site's chunks are refused until 00:00 UTC (429 site_daily_limit); the account's other sites keep recording. Unset, it is half the account's derived budget.",
         drops_data: true,
       },
     ),
@@ -544,7 +585,7 @@ export async function getUsage(ctx: Ctx, now = Date.now()) {
       ? { unread_sites: unread, unread_note: "These sites' counters couldn't be read just now (counted as 0): call again shortly." }
       : {}),
     not_listed:
-      "Caps on one session, chunk, survey, network or share link (MAX_CHUNKS_PER_SESSION, MAX_SESSION_BYTES, MAX_SESSION_MINUTES, MAX_CHUNK_BYTES, MAX_DERIVED_PER_CHUNK, MAX_DERIVED_PER_SESSION, MAX_NOTES_PER_SESSION, MAX_QUESTIONS_PER_SURVEY, MAX_ANSWER_CHARS, MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY, MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY, MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY, MAX_LINK_BYTES_PER_DAY, MAX_EXPORT_ROWS) and ceilings on settings (MAX_SAMPLE_RATE, MAX_RETENTION_DAYS, ...) are not account usage: GET /llms.txt lists them, GET /v1/sites/:id shows a site's limits and the chunks it refused by reason. Bursts are also limited per network and per site at the edge (429 rate_limited); those counters are not listed.",
+      "Caps on one session, chunk, survey, network or share link (MAX_CHUNKS_PER_SESSION, MAX_SESSION_BYTES, MAX_BYTES_PER_IP_PER_SITE_PER_DAY, MAX_SESSION_MINUTES, MAX_CHUNK_BYTES, MAX_DERIVED_PER_CHUNK, MAX_DERIVED_PER_SESSION, MAX_NOTES_PER_SESSION, MAX_QUESTIONS_PER_SURVEY, MAX_ANSWER_CHARS, MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY, MAX_RESPONSES_PER_NETWORK_PER_SITE_PER_DAY, MAX_IMPRESSIONS_PER_NETWORK_PER_SITE_PER_DAY, MAX_LINK_BYTES_PER_DAY, MAX_EXPORT_ROWS) and ceilings on settings (MAX_SAMPLE_RATE, MAX_RETENTION_DAYS, ...) are not account usage: GET /llms.txt lists them, GET /v1/sites/:id shows a site's limits and the chunks it refused by reason. Bursts are also limited per network and per site at the edge (429 rate_limited); those counters are not listed.",
     next_steps: [
       ...(standing.claimed
         ? []

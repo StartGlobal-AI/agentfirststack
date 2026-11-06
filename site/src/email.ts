@@ -62,6 +62,13 @@ export const OUTBOX_RETENTION_DAYS = 30;
 
 export const emailEnabled = (env: Bindings) => !!env.EMAIL && !!env.NOTIFY_EMAIL_FROM;
 
+/** The operator's addresses (OPERATOR_EMAIL, comma-separated): the daily summary, pauses, abuse reports. */
+export const operatorAddresses = (env: Bindings) =>
+  (env.OPERATOR_EMAIL ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+
 const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 
 /** "Name <addr>" or "addr" as the binding's sender. */
@@ -171,7 +178,7 @@ ${(content.after ?? []).map(p).join("\n")}
 async function footerFor(env: Bindings, base: string, e: OutgoingEmail): Promise<{ lines: string[]; unsubscribe: string | null }> {
   // With a Reply-To (NOTIFY_REPLY_TO), a reply reaches a person.
   const reply = env.NOTIFY_REPLY_TO && senderOf(env.NOTIFY_REPLY_TO) ? ["Questions? Reply to this email."] : [];
-  if (e.kind === "operator_digest")
+  if (e.kind.startsWith("operator_"))
     return { lines: [`Sent to ${e.to.email}, the operator of this deployment (OPERATOR_EMAIL on the site).`], unsubscribe: null };
   if (e.category === "account")
     return {
@@ -223,7 +230,7 @@ export async function queueEmail(
   env: Bindings,
   base: string,
   e: OutgoingEmail,
-  opts: { later?: boolean; waitUntil?: (p: Promise<unknown>) => void; now?: number } = {},
+  opts: { later?: boolean; waitUntil?: (p: Promise<unknown>) => void; now?: number; uncapped?: boolean } = {},
 ): Promise<QueueResult> {
   if (!emailEnabled(env) || !senderOf(env.NOTIFY_EMAIL_FROM ?? "")) return "off";
   if (!EMAIL_RE.test(e.to.email)) return "skipped";
@@ -238,7 +245,8 @@ export async function queueEmail(
     .prepare("SELECT count(*) AS n FROM email_outbox WHERE to_address = ? AND created_at > ? AND status != 'skipped'")
     .bind(e.to.email, now - DAY)
     .first<number>("n");
-  const overCap = (sentToday ?? 0) >= capOf(env);
+  // The operator's daily summary is never held back by the day's other emails to that address.
+  const overCap = !opts.uncapped && (sentToday ?? 0) >= capOf(env);
   const footer = await footerFor(env, base, e);
   const r = renderEmail(e.content, footer.lines);
   const id = newId("eml");

@@ -1,11 +1,14 @@
 import type { Bindings } from "./env";
-import { queueEmail } from "./email";
+import { operatorAddresses, queueEmail } from "./email";
+import { type ReputationCheck, reputationChecks } from "./reputation";
 
 /**
  * The operator's daily summary (OPERATOR_EMAIL, comma-separated; off when unset): what happened on
  * the deployment in the last 24 hours, so trouble shows up before a customer writes in. Everything
- * comes from the identity DB, plus one cheap request per service to see that it answers. Worker
- * errors aren't here (they live in Cloudflare's Workers observability).
+ * comes from the identity DB, plus one cheap request per service to see that it answers, and the
+ * reputation checks (src/reputation.ts: Safe Browsing, Spamhaus DBL, mail bounce and complaint
+ * rates). Capability pauses and abuse reports of the day are listed. Worker errors aren't here
+ * (they live in Cloudflare's Workers observability).
  */
 
 const DAY = 86_400_000;
@@ -26,11 +29,16 @@ export interface Digest {
   attacks: { project: string; item: string; level: string }[];
   emails: { sent: number; failed: number; skipped: number; pending: number; failures: { kind: string; error: string; n: number }[] };
   services: { service: string; ok: boolean; detail: string }[];
+  /** Capability pauses made in the window, and how many are in force now. */
+  pauses: { new: { project: string; account_id: string; capability: string; reason: string; by: string }[]; active: number };
+  /** Abuse reports received in the window, and how many are still new (not reviewed). */
+  abuse_reports: { received: number; urgent: number; open: number; recent: { id: string; kind: string; target: string }[] };
+  reputation: ReputationCheck[];
 }
 
 const n = (v: unknown) => Number(v ?? 0) || 0;
 
-export async function buildDigest(env: Bindings, now = Date.now()): Promise<Digest> {
+export async function buildDigest(env: Bindings, now = Date.now(), opts: { fetch?: typeof fetch } = {}): Promise<Digest> {
   const db = env.DB;
   const since = now - DAY;
   const one = async (sql: string, ...args: unknown[]) =>
@@ -75,6 +83,31 @@ export async function buildDigest(env: Bindings, now = Date.now()): Promise<Dige
       .all<{ kind: string; error: string; n: number }>(),
   ]);
   const rows = warnRows.results ?? [];
+  const [pauseRows, pauseCount, reports, recentReports] = await Promise.all([
+    db
+      .prepare(
+        `SELECT COALESCE(a.name, p.account_id) AS project, p.account_id, p.capability, p.reason, p.paused_by AS by FROM capability_pauses p
+         LEFT JOIN accounts a ON a.id = p.account_id WHERE p.paused_at > ? ORDER BY p.paused_at DESC LIMIT 20`,
+      )
+      .bind(since)
+      .all<Digest["pauses"]["new"][number]>(),
+    one("SELECT COUNT(*) AS n FROM capability_pauses WHERE lifted_at IS NULL AND (until IS NULL OR until > ?1)", now),
+    one(
+      `SELECT SUM(created_at > ?1) AS received, SUM(created_at > ?1 AND kind IN ('phishing', 'malware')) AS urgent,
+              SUM(status = 'new') AS open FROM abuse_reports`,
+      since,
+    ),
+    db
+      .prepare(
+        "SELECT id, kind, target FROM abuse_reports WHERE created_at > ? ORDER BY kind IN ('phishing', 'malware') DESC, created_at DESC LIMIT 10",
+      )
+      .bind(since)
+      .all<{ id: string; kind: string; target: string }>(),
+  ]);
+  const reputation = await reputationChecks(env, opts.fetch).catch((e) => {
+    console.error("reputation checks failed", e);
+    return [] as ReputationCheck[];
+  });
   const services = await Promise.all(
     SERVICES.map(async ([service, binding]) => {
       const svc = env[binding] as Fetcher | undefined;
@@ -113,6 +146,14 @@ export async function buildDigest(env: Bindings, now = Date.now()): Promise<Dige
       failures: (failures.results ?? []).map((f) => ({ kind: f.kind, error: f.error.slice(0, 160), n: n(f.n) })),
     },
     services,
+    pauses: { new: pauseRows.results ?? [], active: n(pauseCount.n) },
+    abuse_reports: {
+      received: n(reports.received),
+      urgent: n(reports.urgent),
+      open: n(reports.open),
+      recent: (recentReports.results ?? []).map((r) => ({ ...r, target: r.target.slice(0, 160) })),
+    },
+    reputation,
   };
 }
 
@@ -124,16 +165,28 @@ const itemText = (item: string) => {
   return `${what.replace(".", " ")}${id ? ` (${id})` : ""}`;
 };
 
-/** Needs a look: a service down, an attack, failed emails, suspensions. */
+/** Needs a look: a service down, an attack, failed emails, suspensions, pauses, urgent reports, a bad reputation. */
 export function needsAttention(d: Digest): boolean {
-  return d.services.some((s) => !s.ok) || d.attacks.length > 0 || d.emails.failed > 0 || d.projects.suspended > 0;
+  return (
+    d.services.some((s) => !s.ok) ||
+    d.attacks.length > 0 ||
+    d.emails.failed > 0 ||
+    d.projects.suspended > 0 ||
+    d.pauses.new.length > 0 ||
+    d.abuse_reports.urgent > 0 ||
+    d.reputation.some((r) => r.status === "listed" || r.status === "warning")
+  );
 }
 
 export function digestText(d: Digest, base: string): { subject: string; body: string[] } {
   const down = d.services.filter((s) => !s.ok);
   const day = new Date(d.until).toISOString().slice(0, 10);
+  const listed = d.reputation.filter((r) => r.status === "listed" || r.status === "warning");
   const headline = [
     down.length ? `${down.map((s) => s.service).join(", ")} not answering` : null,
+    listed.length ? `reputation: ${listed.map((r) => `${r.target} ${r.status}`).join(", ")}` : null,
+    d.pauses.new.length ? plural(d.pauses.new.length, "capability pause") : null,
+    d.abuse_reports.urgent ? plural(d.abuse_reports.urgent, "phishing or malware report") : null,
     d.attacks.length ? plural(d.attacks.length, "attack episode") : null,
     d.emails.failed ? plural(d.emails.failed, "failed email") : null,
     `${plural(d.projects.created, "new project")}, ${d.projects.claimed} claimed`,
@@ -154,6 +207,20 @@ export function digestText(d: Digest, base: string): { subject: string; body: st
           .map((w) => `${w.project}: ${itemText(w.item)} ${w.level}`)
           .join("; ")}${d.warnings.length > 10 ? `; and ${d.warnings.length - 10} more` : ""}. People can reply to ask for more.`
       : "Limit warnings sent: none.",
+    d.pauses.new.length
+      ? `Capability pauses (${d.pauses.active} in force): ${d.pauses.new
+          .slice(0, 10)
+          .map((p) => `${p.project} (${p.account_id}): ${p.capability} by ${p.by}, ${p.reason}`)
+          .join("; ")}. Lift one: pnpm afs unpause <profile> <acct_id> <capability>.`
+      : `Capability pauses: none new (${d.pauses.active} in force).`,
+    d.abuse_reports.received
+      ? `Abuse reports: ${plural(d.abuse_reports.received, "report")} (${d.abuse_reports.urgent} phishing or malware), ${d.abuse_reports.open} not reviewed yet: ${d.abuse_reports.recent
+          .map((r) => `${r.kind} ${r.target} (${r.id})`)
+          .join("; ")}. GET /v1/admin/abuse-reports lists them.`
+      : `Abuse reports: none (${d.abuse_reports.open} not reviewed yet).`,
+    d.reputation.length
+      ? `Reputation: ${d.reputation.map((r) => `${r.check.replace("_", " ")} ${r.target} ${r.status === "ok" ? "ok" : `${r.status.toUpperCase()} (${r.detail})`}`).join("; ")}.`
+      : "Reputation: no checks configured (PUBLIC_BASE_URL, SAFE_BROWSING_API_KEY, REPUTATION_DOMAINS).",
     `Emails: ${d.emails.sent} sent, ${d.emails.failed} failed, ${d.emails.skipped} skipped, ${d.emails.pending} waiting.${
       d.emails.failures.length
         ? ` Failures: ${d.emails.failures.map((f) => `${f.kind} x${f.n}${f.error ? ` (${f.error})` : ""}`).join("; ")}.`
@@ -164,11 +231,7 @@ export function digestText(d: Digest, base: string): { subject: string; body: st
   return { subject: `${needsAttention(d) ? "Needs a look: " : ""}AgentFirstStack ${day}: ${headline.join(", ")}`, body };
 }
 
-export const operatorAddresses = (env: Bindings) =>
-  (env.OPERATOR_EMAIL ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.includes("@"));
+export { operatorAddresses };
 
 /**
  * Daily cron: send the summary to each operator address (once a UTC day; a failed send is retried by
@@ -196,7 +259,7 @@ export async function emailOperatorDigest(env: Bindings, base: string, now = Dat
         accountId: null,
         content: { subject, body, action: { label: "Open the dashboard", url: `${base}/dashboard` } },
       },
-      { now },
+      { now, uncapped: true },
     );
     results.push(r);
     if (r === "sent") sent++;

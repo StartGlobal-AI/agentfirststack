@@ -260,7 +260,7 @@ export const createLinkInput = z.object({
   session_id: z.string().max(40).describe("rs_... from search_sessions."),
   expires_in: int(60, 30 * 86_400)
     .optional()
-    .describe("Seconds until the link stops working (default 604800 = 7 days, max 30 days)."),
+    .describe("Seconds until the link stops working (default 86400 = 1 day, max 30 days)."),
   start_ms: int(0, 24 * 3_600_000)
     .optional()
     .describe("A clip: play from here (ms since the session started)."),

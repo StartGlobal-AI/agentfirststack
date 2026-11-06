@@ -17,6 +17,9 @@ export default defineConfig({
               ratelimits: {
                 READ_LIMITER: { namespace_id: "42024", simple: { limit: 1_000_000, period: 60 } },
               },
+              // No site Worker in tests: a pause request falls back to writing AUTH_DB itself, as
+              // when the site can't be reached. Pause tests pass their own SITE to see the request.
+              serviceBindings: { SITE: () => new Response("no site in tests", { status: 503 }) },
               bindings: {
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
                 // The shared identity DB (AUTH_DB), as on the hosted platform.
@@ -61,6 +64,11 @@ export default defineConfig({
                 AUTH_ISSUER: "",
                 // Delivery tracking off, as in the generic template; its tests turn it on.
                 DELIVERY_EVENTS_QUEUE: "",
+                // Automatic capability pauses off; pause tests set their own.
+                SEND_PAUSE_BOUNCE_PERCENT: "",
+                SEND_PAUSE_COMPLAINT_PERCENT: "",
+                SEND_PAUSE_MIN_SENDS: "",
+                INBOX_CREATE_BURST_PER_HOUR: "",
                 ...Object.fromEntries(
                   [
                     "SEND_DAILY_LIMIT",
@@ -84,6 +92,10 @@ export default defineConfig({
                     "MAX_SCHEDULED_PER_ACCOUNT",
                     "MAX_ATTACHMENT_TEXT_PER_DAY",
                     "MAX_FORWARDS_PER_ACCOUNT_PER_DAY",
+                    "SEND_PAUSE_BOUNCE_PERCENT",
+                    "SEND_PAUSE_COMPLAINT_PERCENT",
+                    "SEND_PAUSE_MIN_SENDS",
+                    "INBOX_CREATE_BURST_PER_HOUR",
                   ].map((n) => [`UNCLAIMED_${n}`, ""]),
                 ),
               },

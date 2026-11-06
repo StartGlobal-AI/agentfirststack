@@ -125,7 +125,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export const ATTR_COLS = [
   "referrer",
@@ -398,6 +398,16 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       addColumn(db, "usage", "last_first_party_at", "INTEGER");
     },
   },
+  {
+    // Server events and payments get their own daily budget: a flood of browser events (anyone can
+    // send them) must never refuse the owner's server events, payments or subscriptions. Counted
+    // apart from usage.events, and reported to the D1 aggregate apart (server_flushed).
+    version: 14,
+    up: (db) => {
+      addColumn(db, "usage", "server_events", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "usage", "server_flushed", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 const VIA_COLS = ["via_direct", "via_proxy", "via_edge"] as const;
@@ -419,7 +429,7 @@ payments(id, ref [provider:external_id], provider, external_id, type [new|renewa
   event_rowid [events.id], linked_by [session|visitor|user|customer|original_payment|NULL], livemode,
   original_amount, original_currency, fx_rate, fx_day, fx_fallback [before conversion to the site currency], created_at, updated_at)
 annotations(id, kind [note|traffic_spike|alert], ts, end_ts, title, description, source [api|auto|alert], details [JSON], created_at, updated_at)
-usage(day [UTC YYYY-MM-DD], events [accepted events + engagement beacons], bytes, refused, flushed, quarantined [events quarantined that day])
+usage(day [UTC YYYY-MM-DD], events [accepted browser events + engagement beacons], server_events [accepted server events, payments and subscription changes: their own budget], bytes, refused, flushed, server_flushed, quarantined [events quarantined that day])
 net_daily(day [UTC], net [a keyed hash of one network, new every day], events [its browser events that day; pruned after the day])
 subscriptions(id, ref [provider:external_id], provider, external_id, customer [salted hash], status [trialing|active|past_due|unpaid|paused|canceled|incomplete|incomplete_expired],
   plan, currency, mrr [monthly, while paying], price_mrr, interval, interval_count, quantity, trial_start, trial_end, started_at, canceled_at, ended_at,
@@ -512,29 +522,38 @@ export function recordDrop(db: Db, reason: string, sample: string | null, now = 
 // ------------------------------------------------------------------ usage (daily caps)
 
 export interface UsageDay {
+  /** accepted browser events and engagement beacons (MAX_EVENTS_PER_SITE_PER_DAY) */
   events: number;
+  /** accepted server events, payments and subscription changes: their own budget (MAX_SERVER_EVENTS_PER_SITE_PER_DAY) */
+  server_events: number;
   bytes: number;
   refused: number;
   /** events already reported to the account / platform aggregate (D1) */
   flushed: number;
+  /** server events already reported to the aggregate */
+  server_flushed: number;
   /** events quarantined (stored with debug = 2, not in `events`): MAX_QUARANTINED_EVENTS_PER_SITE_PER_DAY */
   quarantined: number;
 }
 
 /** Today's (UTC) counters. They only ever go up: purges and deletes don't touch them. */
 export function usageOn(db: Db, day: string): UsageDay {
-  const r = db.all("SELECT events, bytes, refused, flushed, quarantined FROM usage WHERE day = ?", [day])[0];
+  const r = db.all("SELECT events, server_events, bytes, refused, flushed, server_flushed, quarantined FROM usage WHERE day = ?", [day])[0];
   return {
     events: num(r?.events),
+    server_events: num(r?.server_events),
     bytes: num(r?.bytes),
     refused: num(r?.refused),
     flushed: num(r?.flushed),
+    server_flushed: num(r?.server_flushed),
     quarantined: num(r?.quarantined),
   };
 }
 
 export interface UsageDelta {
   events?: number;
+  /** server events, payments, subscription changes */
+  server_events?: number;
   bytes?: number;
   refused?: number;
   quarantined?: number;
@@ -547,23 +566,25 @@ export interface UsageDelta {
 
 export function addUsage(db: Db, day: string, delta: UsageDelta): void {
   const e = delta.events ?? 0;
+  const se = delta.server_events ?? 0;
   const b = delta.bytes ?? 0;
   const r = delta.refused ?? 0;
   const q = delta.quarantined ?? 0;
   const vd = delta.via?.direct ?? 0;
   const vp = delta.via?.proxy ?? 0;
   const ve = delta.via?.edge ?? 0;
-  if (!e && !b && !r && !q && !vd && !vp && !ve) return;
+  if (!e && !se && !b && !r && !q && !vd && !vp && !ve) return;
   const at = delta.at ?? Date.now();
   db.run(
-    `INSERT INTO usage (day, events, bytes, refused, quarantined, via_direct, via_proxy, via_edge, edge_host, last_direct_at, last_first_party_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, bytes = bytes + excluded.bytes, refused = refused + excluded.refused,
+    `INSERT INTO usage (day, events, server_events, bytes, refused, quarantined, via_direct, via_proxy, via_edge, edge_host, last_direct_at, last_first_party_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, server_events = server_events + excluded.server_events,
+       bytes = bytes + excluded.bytes, refused = refused + excluded.refused,
        quarantined = quarantined + excluded.quarantined, via_direct = via_direct + excluded.via_direct, via_proxy = via_proxy + excluded.via_proxy,
        via_edge = via_edge + excluded.via_edge, edge_host = COALESCE(excluded.edge_host, edge_host),
        last_direct_at = MAX(COALESCE(last_direct_at, 0), COALESCE(excluded.last_direct_at, 0)),
        last_first_party_at = MAX(COALESCE(last_first_party_at, 0), COALESCE(excluded.last_first_party_at, 0))`,
-    [day, e, b, r, q, vd, vp, ve, delta.edge_host ?? null, vd ? at : null, vp || ve ? at : null],
+    [day, e, se, b, r, q, vd, vp, ve, delta.edge_host ?? null, vd ? at : null, vp || ve ? at : null],
   );
 }
 
@@ -595,15 +616,25 @@ export function collectionPaths(db: Db, now = Date.now()) {
   return out;
 }
 
-export function setUsageFlushed(db: Db, day: string, flushed: number): void {
-  db.run("INSERT INTO usage (day, flushed) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET flushed = MAX(flushed, excluded.flushed)", [
-    day,
-    flushed,
-  ]);
+export function setUsageFlushed(db: Db, day: string, flushed: number, serverFlushed = 0): void {
+  db.run(
+    `INSERT INTO usage (day, flushed, server_flushed) VALUES (?, ?, ?)
+     ON CONFLICT(day) DO UPDATE SET flushed = MAX(flushed, excluded.flushed), server_flushed = MAX(server_flushed, excluded.server_flushed)`,
+    [day, flushed, serverFlushed],
+  );
 }
 
-/** Refusals that apply to a whole batch (and the HTTP answer for it). */
-export const BUDGET_REASONS = ["account_suspended", "storage_full", "daily_limit", "account_daily_limit", "platform_daily_budget"] as const;
+/** Refusals that apply to a whole batch (and the HTTP answer for it). The server_ ones are the server budget's. */
+export const BUDGET_REASONS = [
+  "account_suspended",
+  "storage_full",
+  "daily_limit",
+  "account_daily_limit",
+  "platform_daily_budget",
+  "server_daily_limit",
+  "account_server_daily_limit",
+  "platform_server_daily_budget",
+] as const;
 export type BudgetReason = (typeof BUDGET_REASONS)[number];
 const isBudgetReason = (r: string | undefined): r is BudgetReason => !!r && (BUDGET_REASONS as readonly string[]).includes(r);
 
@@ -637,11 +668,18 @@ export function eventBytes(ev: EnrichedEvent): number {
 export interface IngestOptions {
   /** DEV_MODE: localhost / 127.0.0.1 count as the site's own hostnames */
   dev?: boolean;
-  /** daily caps (Infinity = none) */
-  caps?: { siteDaily: number; accountDaily: number; platformDaily: number };
+  /**
+   * daily caps (Infinity = none). Browser events count against siteDaily / accountDaily /
+   * platformDaily; server events against their own serverSiteDaily / ... (unset = no cap), so a
+   * flood of browser events never refuses the owner's server events.
+   */
+  caps?: DailyCaps;
   /** events counted today on the account's other sites / everywhere else (from the D1 aggregate) */
   accountOthers?: number;
   platformOthers?: number;
+  /** the same for server events */
+  serverAccountOthers?: number;
+  serverPlatformOthers?: number;
   /** the site's storage budget is used up: refuse everything */
   storageFull?: boolean;
   /** where drop and warning counts go (SiteDO coalesces them); default: written at once */
@@ -664,13 +702,35 @@ export interface IngestOptions {
   quarantineDaily?: number;
 }
 
-/** The daily cap an event would break with `used` events already counted today, or null. */
-export function capRefusal(o: Pick<IngestOptions, "caps" | "accountOthers" | "platformOthers">, used: number): BudgetReason | null {
+export interface DailyCaps {
+  siteDaily: number;
+  accountDaily: number;
+  platformDaily: number;
+  serverSiteDaily?: number;
+  serverAccountDaily?: number;
+  serverPlatformDaily?: number;
+}
+
+type CapOpts = Pick<IngestOptions, "caps" | "accountOthers" | "platformOthers" | "serverAccountOthers" | "serverPlatformOthers">;
+
+/** The daily cap a browser event would break with `used` browser events already counted today, or null. */
+export function capRefusal(o: CapOpts, used: number): BudgetReason | null {
   const c = o.caps;
   if (!c) return null;
   if (used >= c.siteDaily) return "daily_limit";
   if ((o.accountOthers ?? 0) + used >= c.accountDaily) return "account_daily_limit";
   if ((o.platformOthers ?? 0) + used >= c.platformDaily) return "platform_daily_budget";
+  return null;
+}
+
+/** The same for a server event, payment or subscription change, against the server budget. */
+export function serverCapRefusal(o: CapOpts, used: number): BudgetReason | null {
+  const c = o.caps;
+  if (!c) return null;
+  const inf = Number.POSITIVE_INFINITY;
+  if (used >= (c.serverSiteDaily ?? inf)) return "server_daily_limit";
+  if ((o.serverAccountOthers ?? 0) + used >= (c.serverAccountDaily ?? inf)) return "account_server_daily_limit";
+  if ((o.serverPlatformOthers ?? 0) + used >= (c.serverPlatformDaily ?? inf)) return "platform_server_daily_budget";
   return null;
 }
 
@@ -734,8 +794,11 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
     : (opts.drop ?? ((reason: string, sample: string | null) => recordDrop(db, reason, sample, now)));
   const run = () => {
     const today = usageOn(db, day);
+    // Browser events and server events have separate daily budgets.
     let used = today.events;
+    let serverUsed = today.server_events;
     let accepted = 0;
+    let serverAccepted = 0;
     let bytes = 0;
     // Quarantined events: their own daily cap, never the event budget.
     let quarantinedUsed = today.quarantined;
@@ -751,7 +814,12 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
     let edgeHost: string | null = null;
     for (const ev of events) {
       warnings = [];
-      const refusal: string | null = opts.storageFull ? "storage_full" : capRefusal(opts, used);
+      const server = ev.origin === "server";
+      const refusal: string | null = opts.storageFull
+        ? "storage_full"
+        : server
+          ? serverCapRefusal(opts, serverUsed)
+          : capRefusal(opts, used);
       if (refusal) {
         results.push({ ok: false, reason: refusal });
         continue;
@@ -762,7 +830,8 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
         continue;
       }
       // A site_search event rides along only while the daily caps (or the quarantine's) leave room for a second event.
-      const room = (q: boolean) => (q ? quarantinedUsed + 1 < qCap : capRefusal(opts, used + 1) === null);
+      const room = (q: boolean) =>
+        q ? quarantinedUsed + 1 < qCap : server ? serverCapRefusal(opts, serverUsed + 1) === null : capRefusal(opts, used + 1) === null;
       const before = dry ? num(db.all("SELECT MAX(id) AS m FROM events")[0]?.m) : 0;
       const r = ingestOne(db, settings, ev, now, {
         dev: !!opts.dev,
@@ -789,12 +858,17 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
         quarantined += n;
       } else if (r.ok && !r.uncounted) {
         const n = 1 + (r.extra_events ?? 0);
-        used += n;
-        accepted += n;
+        if (server) {
+          serverUsed += n;
+          serverAccepted += n;
+        } else {
+          used += n;
+          accepted += n;
+        }
         bytes += size * n;
       }
     }
-    if (!dry) addUsage(db, day, { events: accepted, bytes, quarantined, via, edge_host: edgeHost, at: now });
+    if (!dry) addUsage(db, day, { events: accepted, server_events: serverAccepted, bytes, quarantined, via, edge_host: edgeHost, at: now });
   };
   if (dry) {
     try {
@@ -935,6 +1009,12 @@ function ingestOne(
   let geo = pick(ev as unknown as Record<string, unknown>, GEO_COLS);
   let device = pick(ev as unknown as Record<string, unknown>, DEVICE_COLS);
   let userId = ev.user_id;
+  // Who may identify a user for attribution (first touch, the person behind multi-touch credit,
+  // retention): a server event (sent with a key), or the browser only when the site trusts it
+  // (trust_browser_user_id). Anyone can call afsa('identify', ...) with someone else's id, so a
+  // browser id still stamps its visit and events (people views, user properties) but never merges
+  // identities, which would let it pre-seed or move another user's purchase attribution.
+  const trustedUser = ev.origin !== "browser" || !!settings.trust_browser_user_id;
   // visit: false (server events) never opens a visit: with no live session to join, the event is
   // stored with its own attribution, no session row and no first touch, marked no_visit = 1 so it
   // never counts as a visitor or a visit (it still counts as an event, a conversion and revenue).
@@ -979,7 +1059,7 @@ function ingestOne(
     // First touch: the visitor's (and the user's) identity row learns about this session.
     const touch = { session_id: id, ts: ev.ts, attr: { ...evAttr, entry_page: isPageview ? ev.pathname : null } };
     touchIdentity(db, visitorId, touch);
-    if (userId) {
+    if (userId && trustedUser) {
       touchIdentity(db, `user:${userId}`, touch);
       linkIdentity(db, visitorId, userId);
     }
@@ -1039,7 +1119,10 @@ function ingestOne(
     if (userId && (!sess.user_id || (ev.origin === "server" && sess.user_source !== "server"))) {
       sets.push("user_id = ?", "user_source = ?");
       args.push(userId, ev.origin);
-      if (sess.user_id !== userId) {
+      // Already merged when the session got this id from a trusted sender; a browser id a server
+      // now confirms is merged now.
+      const merged = sess.user_id === userId && (sess.user_source === "server" || !!settings.trust_browser_user_id);
+      if (trustedUser && !merged) {
         touchIdentity(db, `user:${userId}`, {
           session_id: sess.id,
           ts: Number(sess.started_at),
@@ -1272,6 +1355,7 @@ export function shapeMetrics(row: Row | undefined, metrics: Metric[], totalVisit
     conversions: num(r.conversions),
     conversion_rate: visitors ? round((num(r.converted_visitors) / visitors) * 100, 1) : 0,
     revenue: round(revenue, 2),
+    goal_value: round(num(r.goal_value), 2),
     revenue_per_visitor: visitors ? round(revenue / visitors, 2) : 0,
     new_revenue: round(revenue - renewal - refund, 2),
     renewal_revenue: round(renewal, 2),
@@ -1530,7 +1614,7 @@ interface RowOpts {
 const totalVisitorsFor = (db: Db, ctx: QueryCtx | null | undefined, metrics: Metric[]) =>
   ctx && metrics.includes("percentage") ? Number(totals(db, ctx, ["visitors"]).visitors ?? 0) : undefined;
 
-const GOAL_ROW_METRICS = ["visitors", "conversions", "conversion_rate", "revenue"] as const;
+const GOAL_ROW_METRICS = ["visitors", "conversions", "conversion_rate", "revenue", "goal_value"] as const;
 
 function goalRows(db: Db, ctx: QueryCtx, limit: number) {
   return all(db, goalBreakdownQuery(ctx, limit)).map((r) => {
@@ -1544,6 +1628,7 @@ function goalRows(db: Db, ctx: QueryCtx, limit: number) {
       conversions: num(r.conversions),
       conversion_rate: total ? round((visitors / total) * 100, 1) : 0,
       revenue: round(num(r.revenue), 2),
+      goal_value: round(num(r.goal_value), 2),
     } as BreakdownRow & Record<(typeof GOAL_ROW_METRICS)[number], number>;
   });
 }
@@ -2325,7 +2410,7 @@ export function summary(db: Db, now = Date.now()) {
     // Kept events with a setup problem, e.g. proxy_key_missing: came through a first-party proxy
     // without a valid x-afs-proxy-key, so their IP and geo are the proxy's.
     warnings_last_7d: warnings,
-    usage_today: { day, events: usage.events, bytes: usage.bytes, refused: usage.refused },
+    usage_today: { day, events: usage.events, server_events: usage.server_events, bytes: usage.bytes, refused: usage.refused },
     // How browser events reached the collector in the last 7 days: direct (to the analytics host,
     // which ad blockers block), proxy (the site's own path proxy) or edge (a first-party domain).
     collection_last_7d: collectionPaths(db, now),

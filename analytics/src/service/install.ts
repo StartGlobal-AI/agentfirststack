@@ -10,6 +10,10 @@ export const FRAMEWORKS = ["html", "nextjs", "astro", "react", "wordpress", "gtm
 export type Framework = (typeof FRAMEWORKS)[number];
 
 export const PROXY_PATH = "/_a";
+/** Where the site's replay proxy goes next to PROXY_PATH (one proxy for analytics and replay). */
+export const REPLAY_PROXY_PATH = "/_r";
+/** replay_proxy_path: a leading slash, 1-3 segments of [A-Za-z0-9_-], no trailing slash. */
+export const REPLAY_PROXY_PATH_RE = /^\/[A-Za-z0-9_-]{1,32}(?:\/[A-Za-z0-9_-]{1,32}){0,2}$/;
 
 /** Paths the API keeps for itself: /s.js and /e are not served under them. */
 export const isReservedPath = (p: string) =>
@@ -39,7 +43,13 @@ interface FrameworkCode {
   files?: { file: string; language: string; code: string; note: string }[];
 }
 
-function frameworkCode(fw: Framework, baseUrl: string, siteId: string, proxyKey: string | null): FrameworkCode {
+function frameworkCode(
+  fw: Framework,
+  baseUrl: string,
+  siteId: string,
+  proxyKey: string | null,
+  replayBase: string | null = null,
+): FrameworkCode {
   const src = `${baseUrl}/s.js`;
   const proxied = `${PROXY_PATH}/s.js`;
   switch (fw) {
@@ -72,7 +82,7 @@ function frameworkCode(fw: Framework, baseUrl: string, siteId: string, proxyKey:
           {
             file: "proxy.ts",
             language: "ts",
-            code: nextProxyCode(baseUrl, proxyKey),
+            code: nextProxyCode(baseUrl, proxyKey, replayBase),
             note: "Next.js 16+; on Next.js 13-15 name it middleware.ts and the function middleware. It makes the src above first-party. If the project already has one, merge: run this for paths under /_a/.",
           },
           {
@@ -165,9 +175,36 @@ ${QUEUE_STUB}`,
 
 const keyOrPlaceholder = (proxyKey: string | null) => proxyKey ?? "<unavailable: SALT_SECRET is not set on this deployment>";
 
-/** Next.js proxy.ts (middleware.ts before Next.js 16): /_a/* to the collector with the site's proxy key and Vercel's geo. */
-function nextProxyCode(baseUrl: string, proxyKey: string | null): string {
+/**
+ * Next.js proxy.ts (middleware.ts before Next.js 16): /_a/* to the collector with the site's proxy
+ * key and Vercel's geo, and with a replay service, /_r/* to it (no key: it is analytics' secret).
+ */
+function nextProxyCode(baseUrl: string, proxyKey: string | null, replayBase: string | null = null): string {
   const key = keyOrPlaceholder(proxyKey);
+  if (replayBase)
+    return `import { NextResponse, type NextRequest } from "next/server";
+
+// Vercel's geo headers -> the collector's (other hosts: leave out or map your host's own)
+const GEO: Record<string, string> = { country: "x-vercel-ip-country", "region-code": "x-vercel-ip-country-region",
+  city: "x-vercel-ip-city", timezone: "x-vercel-ip-timezone", lat: "x-vercel-ip-latitude", lon: "x-vercel-ip-longitude" };
+
+// ${PROXY_PATH}/* -> analytics, ${REPLAY_PROXY_PATH}/* -> session replay: one proxy, both first-party
+export function proxy(request: NextRequest) {
+  const replay = request.nextUrl.pathname.startsWith("${REPLAY_PROXY_PATH}/");
+  const headers = new Headers(request.headers);
+  for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+  if (!replay) headers.set("${PROXY_KEY_HEADER}", "${key}"); // analytics' secret for this site: keep it server-side
+  headers.set("x-forwarded-for", (request.headers.get("x-forwarded-for") || "").split(",")[0].trim());
+  for (const [k, h] of Object.entries(GEO)) {
+    const v = request.headers.get(h);
+    if (v) headers.set("x-afs-geo-" + k, v);
+  }
+  headers.delete("cookie");
+  const dest = new URL(request.nextUrl.pathname + request.nextUrl.search, replay ? "${replayBase}" : "${baseUrl}");
+  return NextResponse.rewrite(dest, { request: { headers } });
+}
+
+export const config = { matcher: ["${PROXY_PATH}/:path*", "${REPLAY_PROXY_PATH}/:path*"] };`;
   return `import { NextResponse, type NextRequest } from "next/server";
 
 // Vercel's geo headers -> the collector's (other hosts: leave out or map your host's own)
@@ -191,34 +228,60 @@ export function proxy(request: NextRequest) {
 export const config = { matcher: "${PROXY_PATH}/:path*" };`;
 }
 
-export function proxyInstructions(baseUrl: string, siteId: string, proxyKey: string | null) {
+/**
+ * The path proxy for every common host. With a replay service (`replayBase`, REPLAY_BASE_URL), each
+ * one also forwards /_r/* to it next to /_a/*: one proxy for analytics and replay (the tags
+ * container's /_t/* is the tags service's own install answer). The proxy key goes to analytics only.
+ */
+export function proxyInstructions(baseUrl: string, siteId: string, proxyKey: string | null, replayBase: string | null = null) {
   const host = new URL(baseUrl).host;
   const proxied = `<script defer src="${PROXY_PATH}/s.js" data-site="${siteId}"></script>`;
   const key = keyOrPlaceholder(proxyKey);
+  const r = replayBase ? REPLAY_PROXY_PATH : null;
+  const replayHost = replayBase ? new URL(replayBase).host : null;
+  // Code lines that differ when replay rides along.
+  const cfTarget = r ? `url.pathname.startsWith("${r}/") ? "${replayBase}" : "${baseUrl}"` : `"${baseUrl}"`;
+  const cfKey = r
+    ? `if (!url.pathname.startsWith("${r}/")) headers.set("${PROXY_KEY_HEADER}", "${key}"); // analytics' secret for this site: the collector trusts the IP and geo below only with it`
+    : `headers.set("${PROXY_KEY_HEADER}", "${key}"); // this site's secret: the collector trusts the IP and geo below only with it`;
+  const vercelRoutes: Record<string, unknown>[] = [
+    {
+      src: `${PROXY_PATH}/(.*)`,
+      dest: `${baseUrl}${PROXY_PATH}/$1`,
+      transforms: [{ type: "request.headers", op: "set", target: { key: PROXY_KEY_HEADER }, args: key }],
+    },
+  ];
+  if (r) vercelRoutes.push({ src: `${r}/(.*)`, dest: `${replayBase}${r}/$1` });
   return {
     why: "Serving the script and collection endpoint from your own domain makes them first-party: no third-party request for ad blockers to block, and no extra DNS/TLS handshake. The tracker posts to the origin and path prefix it was loaded from, so only the snippet's src changes.",
     path_prefix: PROXY_PATH,
+    ...(r
+      ? {
+          replay_path_prefix: r,
+          replay: `Every example below also forwards ${r}/* to session replay (${replayBase}). Once it is live, PATCH /v1/sites/${siteId} {"replay_proxy_path":"${r}"} (MCP update_site): pages served through this proxy then load replay from https://<your domain>${r}/... instead of the replay host, so ad blockers don't stop it either.`,
+        }
+      : {}),
     snippet: proxied,
     proxy_key: proxyKey,
     proxy_key_header: PROXY_KEY_HEADER,
     visitor_ip_and_geo: `The collector trusts the visitor IP (first X-Forwarded-For hop) and geo (x-afs-geo-* headers, or Vercel's x-vercel-ip-*) only from a request carrying ${PROXY_KEY_HEADER}: ${key}. Every example sends it; keep it server-side (it is this site's secret, not for browser code). Without it the IP and geo are the proxy's own, so every visitor looks like one and verify reports proxy_key. Geo: the Cloudflare Worker and the Netlify Edge Function send exact country/region/city; Next.js on Vercel maps Vercel's geo headers; nginx behind Cloudflare sends the country; otherwise geo is Cloudflare's view of the proxy. Prefer the Cloudflare Worker route. (A first-party domain, first_party.first_party_domain, needs none of this: the platform's edge sends the visitor's IP and geo itself.)`,
     cloudflare_worker: {
-      route: `<your-domain>${PROXY_PATH}/*`,
+      route: r ? `<your-domain>${PROXY_PATH}/* and <your-domain>${r}/*` : `<your-domain>${PROXY_PATH}/*`,
       file: "src/index.js",
-      code: `// Worker on your zone, route: example.com${PROXY_PATH}/*
+      code: `// Worker on your zone, route: example.com${PROXY_PATH}/*${r ? ` and example.com${r}/* (session replay)` : ""}
 export default {
   async fetch(request) {
     const url = new URL(request.url);
     const headers = new Headers(request.headers);
     for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
-    headers.set("${PROXY_KEY_HEADER}", "${key}"); // this site's secret: the collector trusts the IP and geo below only with it
+    ${cfKey}
     headers.set("x-forwarded-for", request.headers.get("cf-connecting-ip") || "");
     const cf = request.cf || {};
     const geo = { country: cf.country, region: cf.region, "region-code": cf.regionCode, city: cf.city,
       continent: cf.continent, timezone: cf.timezone, lat: cf.latitude, lon: cf.longitude };
     for (const [k, v] of Object.entries(geo)) if (v != null) headers.set("x-afs-geo-" + k, encodeURIComponent(String(v)));
     headers.delete("cookie");
-    return fetch("${baseUrl}" + url.pathname + url.search, {
+    return fetch(${cfTarget} + url.pathname + url.search, {
       method: request.method,
       headers,
       body: request.method === "POST" ? request.body : undefined,
@@ -228,27 +291,15 @@ export default {
     },
     nextjs: {
       file: "proxy.ts (Next.js 16+; on Next.js 13-15 name it middleware.ts and the function middleware)",
-      code: nextProxyCode(baseUrl, proxyKey),
+      code: nextProxyCode(baseUrl, proxyKey, replayBase),
     },
     vercel: {
       file: "vercel.json (any framework; a route with a request-header transform)",
-      code: JSON.stringify(
-        {
-          routes: [
-            {
-              src: `${PROXY_PATH}/(.*)`,
-              dest: `${baseUrl}${PROXY_PATH}/$1`,
-              transforms: [{ type: "request.headers", op: "set", target: { key: PROXY_KEY_HEADER }, args: key }],
-            },
-          ],
-        },
-        null,
-        2,
-      ),
+      code: JSON.stringify({ routes: vercelRoutes }, null, 2),
     },
     netlify: {
       file: "netlify/edge-functions/afs-analytics.ts (a Netlify Edge Function: it sends the visitor's IP and geo, which a netlify.toml proxy redirect doesn't)",
-      code: `// Netlify Edge Function on ${PROXY_PATH}/*: forwards to the collector with the visitor's IP and geo
+      code: `// Netlify Edge Function on ${PROXY_PATH}/*${r ? ` and ${r}/*` : ""}: forwards to the collector${r ? " (and session replay)" : ""} with the visitor's IP and geo
 import type { Config, Context } from "@netlify/edge-functions";
 
 export default async (request: Request, context: Context) => {
@@ -256,20 +307,20 @@ export default async (request: Request, context: Context) => {
   const headers = new Headers(request.headers);
   for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
   headers.delete("cookie");
-  headers.set("${PROXY_KEY_HEADER}", "${key}"); // this site's secret: the collector trusts the IP and geo below only with it
+  ${cfKey}
   headers.set("x-forwarded-for", context.ip);
   const g = context.geo;
   const geo = { country: g?.country?.code, "region-code": g?.subdivision?.code, region: g?.subdivision?.name, city: g?.city,
     timezone: g?.timezone, lat: g?.latitude, lon: g?.longitude };
   for (const [k, v] of Object.entries(geo)) if (v != null && v !== "") headers.set("x-afs-geo-" + k, encodeURIComponent(String(v)));
-  return fetch("${baseUrl}" + url.pathname + url.search, {
+  return fetch(${cfTarget} + url.pathname + url.search, {
     method: request.method,
     headers,
     body: request.method === "POST" ? request.body : undefined,
   });
 };
 
-export const config: Config = { path: "${PROXY_PATH}/*" };`,
+export const config: Config = { path: ${r ? `["${PROXY_PATH}/*", "${r}/*"]` : `"${PROXY_PATH}/*"`} };`,
     },
     nginx: {
       file: "nginx server block",
@@ -292,7 +343,20 @@ export const config: Config = { path: "${PROXY_PATH}/*" };`,
     proxy_set_header X-Afs-Geo-Lat "";
     proxy_set_header X-Afs-Geo-Lon "";
     proxy_set_header Cookie "";
-}`,
+}${
+        r
+          ? `
+# session replay, the same way (no proxy key: it is analytics' secret)
+location ${r}/ {
+    proxy_pass ${replayBase}${r}/;
+    proxy_set_header Host ${replayHost};
+    proxy_ssl_server_name on;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Afs-Proxy-Key "";
+    proxy_set_header Cookie "";
+}`
+          : ""
+      }`,
     },
   };
 }
@@ -344,6 +408,7 @@ const FIRST_PARTY_NOTE =
 /**
  * `proxyKey`: the site's x-afs-proxy-key (proxyKeyFor), null when the deployment has no SALT_SECRET.
  * `siteBase`: the platform site, where first-party domains are created (platformBase).
+ * `replayBase`: the replay service (REPLAY_BASE_URL), so the proxy examples forward /_r/* too.
  */
 export function installInstructions(
   site: SiteLike,
@@ -351,8 +416,9 @@ export function installInstructions(
   framework: Framework = "html",
   proxyKey: string | null = null,
   siteBase: string | null = null,
+  replayBase: string | null = null,
 ) {
-  const fw = frameworkCode(framework, baseUrl, site.id, proxyKey);
+  const fw = frameworkCode(framework, baseUrl, site.id, proxyKey, replayBase);
   if (framework !== "nextjs" && framework !== "tags") fw.notes = [...fw.notes, FIRST_PARTY_NOTE];
   return {
     first_party: firstPartyBlock(baseUrl, site.id, siteBase),
@@ -393,7 +459,7 @@ export function installInstructions(
           ? "persistent: a random id is kept in localStorage, so returning visitors are linked across days"
           : "cookieless: no cookies or storage; visitors are a daily-salted hash of IP + user agent",
     },
-    first_party_proxy: proxyInstructions(baseUrl, site.id, proxyKey),
+    first_party_proxy: proxyInstructions(baseUrl, site.id, proxyKey, replayBase),
     revenue: {
       why: "Attribute payments to the visitor's source, page and country: revenue, revenue_per_visitor and purchase_rate per breakdown row, new vs renewal, refunds netted.",
       stripe: {

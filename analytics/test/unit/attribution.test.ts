@@ -31,7 +31,20 @@ describe("attribution over a person's sessions", () => {
     db = memoryDb();
     engine.configure(db, settings());
     // u1: Google 10 days ago (anonymous visitor v1, then identified), Facebook 3 days ago (another
-    // device), Direct today, then buys 100
+    // device), Direct today, then buys 100. Each device is identified by the site's server (a
+    // browser afsa('identify') alone doesn't merge identities: see the test at the end).
+    const login = (visitor: string, ts: number) =>
+      ev({
+        ts,
+        visitor_hash: visitor,
+        origin: "server",
+        name: "login",
+        user_id: "u1",
+        channel: "Direct",
+        source: null,
+        referrer_host: null,
+        referrer: null,
+      });
     engine.ingest(
       db,
       [
@@ -40,9 +53,9 @@ describe("attribution over a person's sessions", () => {
       ],
       NOW,
     );
-    engine.ingest(db, [ev({ ts: NOW - 3 * DAY, visitor_hash: "v2", user_id: "u1", ...fb })], NOW);
-    engine.ingest(db, [ev({ ts: NOW - 30 * MIN, visitor_hash: "v3", user_id: "u1" })], NOW);
-    payments.ingestPayments(db, [pay({ user_id: "u1", amount: 100, ts: NOW - 20 * MIN })], NOW, { trustBrowserUserId: true });
+    engine.ingest(db, [ev({ ts: NOW - 3 * DAY, visitor_hash: "v2", user_id: "u1", ...fb }), login("v2", NOW - 3 * DAY + MIN)], NOW);
+    engine.ingest(db, [ev({ ts: NOW - 30 * MIN, visitor_hash: "v3", user_id: "u1" }), login("v3", NOW - 29 * MIN)], NOW);
+    payments.ingestPayments(db, [pay({ user_id: "u1", amount: 100, ts: NOW - 20 * MIN })], NOW);
     // an anonymous buyer from Google today
     engine.ingest(db, [ev({ ts: NOW - 40 * MIN, visitor_hash: "anon", ...google })], NOW);
     payments.ingestPayments(db, [pay({ external_id: "p2", visitor_id: "anon", amount: 50, ts: NOW - 39 * MIN })], NOW);
@@ -112,6 +125,56 @@ describe("attribution over a person's sessions", () => {
       } as any,
       NOW,
     ) as any;
-    expect(g.results).toEqual([{ value: "Google", conversions: 1, revenue: 10, share: 100 }]);
+    // The goal's value is credited as goal_value, never as revenue.
+    expect(g.results).toEqual([{ value: "Google", conversions: 1, revenue: 0, goal_value: 10, share: 100 }]);
+    expect(g).toMatchObject({ revenue: 0, goal_value: 10 });
+  });
+
+  it("a browser-sent user id can't move a purchase's credit or first touch (unless the site trusts browser ids)", () => {
+    // Before u2 ever signs up, someone visits from their own campaign and calls afsa('identify', 'u2').
+    const evil = {
+      source: "evil",
+      channel: "Paid Search" as const,
+      utm_source: "evil",
+      utm_campaign: "steal",
+      referrer_host: null,
+      referrer: null,
+    };
+    engine.ingest(db, [ev({ ts: NOW - 6 * DAY, visitor_hash: "attacker", user_id: "u2", ...evil })], NOW);
+    // u2's real visit from Google, identified by the site's server, then a purchase.
+    engine.ingest(
+      db,
+      [
+        ev({ ts: NOW - 2 * DAY, visitor_hash: "real", ...google }),
+        ev({ ts: NOW - 2 * DAY + MIN, visitor_hash: "real", origin: "server", name: "signup", user_id: "u2" }),
+      ],
+      NOW,
+    );
+    payments.ingestPayments(db, [pay({ external_id: "p3", user_id: "u2", amount: 70, ts: NOW - 2 * DAY + 2 * MIN })], NOW);
+    const credited = (s = settings()) =>
+      (
+        attribution(
+          db,
+          s,
+          { period: "7d", filters: [], model: "first_touch", lookback_days: 30, breakdown: "channel", paths: false, limit: 50 } as any,
+          NOW,
+        ) as any
+      ).results;
+    // The attacker's session is not one of u2's touchpoints: Google gets the 70.
+    expect(credited().find((x: any) => x.value === "Paid Search")).toBeUndefined();
+    expect(credited().find((x: any) => x.value === "Organic Search")).toMatchObject({ revenue: 220 });
+    // u2's first touch is the real Google visit, and the attacker's visitor is not linked to u2.
+    const ident = (id: string) => db.all("SELECT channel, canonical FROM identities WHERE ident = ?", [id])[0];
+    expect(ident("user:u2")).toMatchObject({ channel: "Organic Search" });
+    expect(ident("attacker")).toMatchObject({ canonical: null, channel: "Paid Search" });
+    // The browser id still marks the attacker's own visit (people views): it is just not trusted.
+    expect(db.all("SELECT user_id, user_source FROM sessions WHERE visitor_id = 'attacker'")[0]).toMatchObject({
+      user_id: "u2",
+      user_source: "browser",
+    });
+    // A site that opts in (trust_browser_user_id) gets the old behaviour for its sessions.
+    expect(credited(settings({ trust_browser_user_id: true })).find((x: any) => x.value === "Paid Search")).toMatchObject({
+      conversions: 1,
+    });
   });
 });

@@ -220,7 +220,7 @@ describe("dashboard", () => {
     const dash = await b.get("/dashboard");
     // New projects start with the agent (setup prompt); existing ones come in by claim link.
     expect(dash.text).toContain("Set up a new project");
-    expect(dash.text).toContain("read https://agentfirststack.com/llms.txt and follow it");
+    expect(dash.text).toContain("read https://agentfirststack.com/llms.txt and the Acceptable Use Policy");
     expect(dash.text).toContain("Send me a claim link for our AgentFirstStack project.");
     expect(dash.text).not.toContain('name="key"');
     expect(dash.text).not.toContain("/dashboard/import");

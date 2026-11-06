@@ -2,8 +2,11 @@ import {
   ApiError,
   accountStanding,
   accountSuspended,
+  assertCapability,
   assertPermanentKey,
   canWrite,
+  capabilityPaused,
+  capabilityPausedError,
   isTemporaryCredential,
   notFound,
   parse,
@@ -42,6 +45,8 @@ export async function createShareLink(ctx: Ctx, siteId: string, raw: unknown) {
   assertPermanentKey(ctx.auth, "create share links");
   const input = parse(createShareInput, raw);
   const site = await loadSite(ctx, siteId);
+  // Public dashboards can be paused for an account after an abuse report (analytics.share_links).
+  await assertCapability(ctx.env, ctx.accountId, "analytics.share_links");
   // The page is titled with the domain on this service's host: only for a domain the account proved.
   if (!isVerified(site)) {
     const rec = verifyRecord(site);
@@ -170,8 +175,11 @@ export async function linkForToken(env: Bindings, token: string): Promise<{ site
   if (!link || !site) throw notFound("Share link", "The link was revoked or never existed.");
   if (link.expires_at != null && link.expires_at < Date.now())
     throw new ApiError(410, "share_link_expired", "This share link has expired.", "Ask the site's owner for a new link.");
-  // A suspended account's public dashboards go dark with it.
+  // A suspended account's public dashboards go dark with it, and so do they while the account's
+  // share links are paused (analytics.share_links, after an abuse report).
   if ((await accountStanding(env, site.account_id)).suspended) throw accountSuspended();
+  const pause = await capabilityPaused(env, site.account_id, "analytics.share_links");
+  if (pause) throw capabilityPausedError(pause);
   return { site, link };
 }
 

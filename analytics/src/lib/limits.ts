@@ -18,6 +18,9 @@ export const LIMIT_VARS = [
   "MAX_EVENTS_PER_SITE_PER_DAY",
   "MAX_EVENTS_PER_ACCOUNT_PER_DAY",
   "DAILY_EVENT_BUDGET",
+  "MAX_SERVER_EVENTS_PER_SITE_PER_DAY",
+  "MAX_SERVER_EVENTS_PER_ACCOUNT_PER_DAY",
+  "DAILY_SERVER_EVENT_BUDGET",
   "MAX_SITE_STORAGE_MB",
   "MIN_RETENTION_DAYS",
   "MAX_RETENTION_DAYS",
@@ -45,12 +48,20 @@ export function limitVars(env: object): LimitVars {
 }
 
 export interface IngestCaps {
-  /** accepted events (and engagement beacons) per site per UTC day */
+  /** accepted browser events (and engagement beacons) per site per UTC day */
   siteDaily: number;
   /** the same, summed over every site of the account */
   accountDaily: number;
-  /** the whole deployment's events per UTC day (unclaimed accounts are refused at the lower UNCLAIMED_ value) */
+  /** the whole deployment's browser events per UTC day (unclaimed accounts are refused at the lower UNCLAIMED_ value) */
   platformDaily: number;
+  /**
+   * Server events (POST /v1/sites/:id/events), payments and subscription changes have their own
+   * budget, per site, per account and deployment-wide, so a flood of browser events (anyone can send
+   * them) never refuses what the owner's server sends. Unset = the same number as the browser cap.
+   */
+  serverSiteDaily: number;
+  serverAccountDaily: number;
+  serverPlatformDaily: number;
   /** stop writing once the site's Durable Object database is this big */
   storageBytes: number;
   /** ecommerce items kept per event (the rest are dropped, counted as items_truncated) */
@@ -72,10 +83,16 @@ export const SPIKE_MIN = 1000;
 
 export function ingestCaps(vars: LimitVars, standing: Standing): IngestCaps {
   const mb = capFor(vars, standing, "MAX_SITE_STORAGE_MB", Number.POSITIVE_INFINITY);
+  const siteDaily = capFor(vars, standing, "MAX_EVENTS_PER_SITE_PER_DAY", Number.POSITIVE_INFINITY);
+  const accountDaily = capFor(vars, standing, "MAX_EVENTS_PER_ACCOUNT_PER_DAY", Number.POSITIVE_INFINITY);
+  const platformDaily = capFor(vars, standing, "DAILY_EVENT_BUDGET", Number.POSITIVE_INFINITY);
   return {
-    siteDaily: capFor(vars, standing, "MAX_EVENTS_PER_SITE_PER_DAY", Number.POSITIVE_INFINITY),
-    accountDaily: capFor(vars, standing, "MAX_EVENTS_PER_ACCOUNT_PER_DAY", Number.POSITIVE_INFINITY),
-    platformDaily: capFor(vars, standing, "DAILY_EVENT_BUDGET", Number.POSITIVE_INFINITY),
+    siteDaily,
+    accountDaily,
+    platformDaily,
+    serverSiteDaily: capFor(vars, standing, "MAX_SERVER_EVENTS_PER_SITE_PER_DAY", siteDaily),
+    serverAccountDaily: capFor(vars, standing, "MAX_SERVER_EVENTS_PER_ACCOUNT_PER_DAY", accountDaily),
+    serverPlatformDaily: capFor(vars, standing, "DAILY_SERVER_EVENT_BUDGET", platformDaily),
     storageBytes: Number.isFinite(mb) ? Math.floor(mb * 1024 * 1024) : Number.POSITIVE_INFINITY,
     itemsPerEvent: Math.max(0, Math.min(MAX_ITEMS_READ, capFor(vars, standing, "MAX_ITEMS_PER_EVENT", DEFAULT_MAX_ITEMS_PER_EVENT))),
     userPropKeys: Math.max(0, capFor(vars, standing, "MAX_USER_PROP_KEYS_PER_SITE", 50)),
@@ -91,7 +108,11 @@ export const STORAGE_FULL_HINT =
   "Lower retention_days (PATCH /v1/sites/:id: older data is purged at once), keep junk out with allowed_hostnames or exclusions, or delete the site's data. GET /v1/sites/:id shows storage and limits.";
 
 /** Do the caps need the account / platform totals (a D1 aggregate)? */
-export const needsAggregate = (c: IngestCaps) => Number.isFinite(c.accountDaily) || Number.isFinite(c.platformDaily);
+export const needsAggregate = (c: IngestCaps) =>
+  Number.isFinite(c.accountDaily) ||
+  Number.isFinite(c.platformDaily) ||
+  Number.isFinite(c.serverAccountDaily) ||
+  Number.isFinite(c.serverPlatformDaily);
 
 /** Schema bounds of retention_days (the zod schema) and the default for new sites. */
 export const RETENTION_SCHEMA = { min: 1, max: 3650, default: 400 } as const;

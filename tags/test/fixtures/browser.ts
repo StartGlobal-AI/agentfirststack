@@ -61,21 +61,25 @@ export interface FakeEl {
   querySelectorAll(sel: string): FakeEl[];
 }
 
-/** Minimal selector support: tag, #id, .class, [attr], [attr=value], [attr^=value], comma lists. */
+/** Minimal selector support: tag, #id, .class, then [attr], [attr=value], [attr^=value], [attr*=value], [attr$=value] (any number), comma lists. */
 function matchesSel(el: FakeEl, sel: string): boolean {
   return sel.split(",").some((part) => {
     const s = part.trim();
-    const m = /^([a-z]+)?(#[\w-]+)?(\.[\w-]+)?(\[([\w-]+)(?:(\^?=)['"]?([^'"\]]*)['"]?)?\])?$/i.exec(s);
+    const m = /^([a-z]+)?(#[\w-]+)?(\.[\w-]+)?((?:\[[\w-]+(?:[\^*$]?=['"]?[^'"\]]*['"]?)?\])*)$/i.exec(s);
     if (!m) return false;
-    const [, tag, id, cls, , attr, op, val] = m;
+    const [, tag, id, cls, attrs] = m;
     if (tag && el.tagName.toLowerCase() !== tag.toLowerCase()) return false;
     if (id && el.attrs.id !== id.slice(1)) return false;
     if (cls && !(el.attrs.class ?? "").split(/\s+/).includes(cls.slice(1))) return false;
-    if (attr) {
-      const v = el.attrs[attr];
+    for (const a of (attrs ?? "").matchAll(/\[([\w-]+)(?:([\^*$]?=)['"]?([^'"\]]*)['"]?)?\]/g)) {
+      const [, attr, op, val = ""] = a;
+      // A script's src set as a property (createElement) reads like the attribute, as in a browser.
+      const v = el.attrs[attr!] ?? (attr === "src" ? el.src : undefined);
       if (v === undefined) return false;
       if (op === "=" && v !== val) return false;
-      if (op === "^=" && !v.startsWith(val ?? "")) return false;
+      if (op === "^=" && !v.startsWith(val)) return false;
+      if (op === "*=" && !v.includes(val)) return false;
+      if (op === "$=" && !v.endsWith(val)) return false;
     }
     return true;
   });
@@ -325,7 +329,7 @@ export function browser(
 
 export function serve(
   cfg: ContainerConfig,
-  opts: { geo?: { country?: string; region?: string }; preview?: string; env?: BootConfig["env"] } = {},
+  opts: { geo?: { country?: string; region?: string }; preview?: string; env?: BootConfig["env"]; ab?: string } = {},
 ) {
   if (!runtimes) throw new Error("call loadRuntimes() in beforeAll");
   return compileScript(
@@ -336,6 +340,7 @@ export function serve(
       d: "shop.test",
       cfg,
       base: BASE,
+      ...(opts.ab ? { ab: opts.ab } : {}),
       ...(opts.preview ? { preview: opts.preview } : {}),
       ...(opts.env ? { env: opts.env } : {}),
     },

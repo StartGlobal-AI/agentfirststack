@@ -4,7 +4,7 @@ import type { ContainerConfig } from "../config/schema";
 import type { Bindings } from "../env";
 import { getContainerRow } from "./containers";
 import { limits } from "./limits";
-import { customCodeProblem } from "./verify";
+import { assertCodeSafe, codeGate, customCodeProblem } from "./verify";
 
 /**
  * Environments (GTM's): a named snippet `/c/:id.js?env=<token>` that serves a pinned version, or
@@ -95,12 +95,10 @@ async function checkVersion(
       `GET /v1/containers/${container.id}/versions lists the versions kept (POST /versions saves the draft as one).`,
     );
   // Serving a version is publishing it to that environment: the same custom-code rules apply.
-  const custom = customCodeProblem(
-    env,
-    container,
-    JSON.parse(r.config) as ContainerConfig,
-    await accountStanding(env, container.account_id),
-  );
+  const cfg = JSON.parse(r.config) as ContainerConfig;
+  await assertCodeSafe(env, container, cfg, `version ${v} isn't served`);
+  const { standing, pause } = await codeGate(env, container.account_id);
+  const custom = customCodeProblem(env, container, cfg, standing, pause);
   if (custom) throw new ApiError(422, "validation_failed", `Version ${v} can't be served: ${custom.message}`, custom.hint, [custom]);
   return v;
 }

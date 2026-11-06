@@ -49,7 +49,7 @@
     { "name": "SQL_LIMITER", "namespace_id": "42004", "simple": { "limit": 30, "period": 60 } },
     // verify per account, and per verified domain across accounts (each is an outbound fetch)
     { "name": "VERIFY_LIMITER", "namespace_id": "42005", "simple": { "limit": 6, "period": 60 } },
-    // Stripe webhook deliveries per site id
+    // Payment webhook deliveries that fail authentication, per client network and per endpoint (correctly signed ones are never limited)
     { "name": "WEBHOOK_LIMITER", "namespace_id": "42006", "simple": { "limit": 300, "period": 60 } },
     // public share dashboard requests per share token
     { "name": "SHARE_LIMITER", "namespace_id": "42007", "simple": { "limit": 120, "period": 60 } }

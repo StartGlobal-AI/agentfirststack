@@ -23,7 +23,12 @@ export const createGoalInput = z.object({
     .describe(
       'event: the exact event name (e.g. "signup"). pageview / scroll: a path, * matches anything (e.g. "/thank-you" or "/blog/*").',
     ),
-  value: z.number().min(0).nullable().optional().describe("Revenue counted per conversion when the event carries no revenue of its own."),
+  value: z
+    .number()
+    .min(0)
+    .nullable()
+    .optional()
+    .describe("What one conversion is worth: reported as the goal_value metric, never added to revenue (revenue is what was paid)."),
   threshold: z.number().int().min(1).max(100).optional().describe("scroll goals: max scroll depth % the pageview must reach (default 75)."),
   props: z
     .record(z.string().max(64), z.union([z.string().max(500), z.number(), z.boolean()]))

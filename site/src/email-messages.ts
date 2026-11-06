@@ -1,5 +1,5 @@
-import { type AttackItem, sha256Hex } from "@afs/shared";
-import { type OutgoingEmail, type QueueResult, queueEmail } from "./email";
+import { type AttackItem, CAPABILITY_LABEL, type Capability, type CapabilityPause, sha256Hex } from "@afs/shared";
+import { type OutgoingEmail, type QueueResult, operatorAddresses, queueEmail } from "./email";
 import type { Bindings } from "./env";
 import { finishPrompt } from "./dashboard-prompt";
 import type { LimitHit } from "./project-health";
@@ -19,7 +19,14 @@ import { itemsAfter } from "./setup-catalog";
  *   purge_soon          it is erased tomorrow                               to the owner
  *   project_purged      it was erased                                       to the owner
  *   project_suspended / project_unsuspended   the operator stopped / resumed it   to the owner
+ *   capability_paused   one capability was paused after an abuse signal     to the owner and members
+ *   capability_lifted   the operator lifted that pause                      to the owner and members
  *   account_deleted     you deleted your account                            to you
+ *
+ * To the operator (OPERATOR_EMAIL), besides the daily summary (src/operator-digest.ts):
+ *
+ *   operator_pause         a capability of a project was paused (by a service or the operator)
+ *   operator_abuse_report  a phishing or malware report came in (others wait for the summary)
  *
  * Updates (off with one click, or in Account):
  *
@@ -75,7 +82,7 @@ async function send(env: Bindings, base: string, wu: WaitUntil, e: OutgoingEmail
 
 /** The short prompt that starts a project: the manual's Full setup does the rest. */
 export const startPrompt = (base: string) =>
-  `Set up AgentFirstStack for this project, completely, and verify it yourself: read ${base}/llms.txt and follow its Full setup section from start to finish, then show me what's set up and send me a claim link.`;
+  `Set up AgentFirstStack for this project, completely, and verify it yourself: read ${base}/llms.txt and the Acceptable Use Policy (${base}/acceptable-use), follow the manual's Full setup section from start to finish, then show me what's set up and send me a claim link.`;
 
 /** A person's first sign-in. `dedupeKey` only for the operator's test send. */
 export async function emailWelcome(
@@ -641,8 +648,13 @@ const sentence = (s: string) => (s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}.
 
 /** Data-centre traffic is set aside while a resource is under attack (auto), and always (strict). */
 const datacentreAside = (a: AttackItem) => a.mode === "strict" || (a.mode === "auto" && a.state === "under_attack");
-/** Tags: browser conversions aren't forwarded to ad platforms, on the same rule. */
-export const adsPaused = (a: AttackItem) => a.service === "tags" && a.state !== "ended" && datacentreAside(a);
+/**
+ * Tags: every browser conversion is held from ad platforms only with protection strict, during an
+ * episode. Under attack with auto, only quarantined traffic (over-share and data-centre networks)
+ * loses its conversions; other visitors' conversions keep flowing.
+ */
+export const adsPaused = (a: AttackItem) => a.service === "tags" && a.state !== "ended" && a.mode === "strict";
+const quarantinedAdsHeld = (a: AttackItem) => a.service === "tags" && a.state !== "ended" && !adsPaused(a) && datacentreAside(a);
 
 /** What we saw, as one sentence (the services' own details, or what the reason means). */
 export function attackReasons(a: AttackItem) {
@@ -663,8 +675,10 @@ export function attackMeasures(a: AttackItem) {
   if (datacentreAside(a)) parts.push("while it lasts, traffic from data-centre networks is set aside too");
   return `${sentence(parts.join("; "))}${
     adsPaused(a)
-      ? " Conversions from visitors' browsers aren't sent to your ad platforms (Meta, Google Ads and the others) until it's over; the ones your backend sends with an API key keep flowing."
-      : ""
+      ? " With protection strict, conversions from visitors' browsers aren't sent to your ad platforms (Meta, Google Ads and the others) until it's over; the ones your backend sends with an API key keep flowing."
+      : quarantinedAdsHeld(a)
+        ? " Conversions from data-centre traffic and anything set aside aren't sent to your ad platforms; conversions from other visitors' browsers, and the ones your backend sends with an API key, keep flowing."
+        : ""
   }`;
 }
 
@@ -763,6 +777,165 @@ export async function emailAttack(env: Bindings, base: string, p: { accountId: s
       true,
     );
     if (res === "queued") queued++;
+  }
+  return queued;
+}
+
+// ---------- abuse: capability pauses and reports ----------
+
+/** What stops while a capability is paused, and what keeps working. */
+const PAUSE_TEXT: Record<Capability, { stops: string; works: string }> = {
+  "mail.send": {
+    stops: "the project's inboxes can't send email",
+    works: "they still receive mail, and analytics, tags and replay work as before",
+  },
+  "mail.inbox_create": {
+    stops: "new inboxes can't be created",
+    works: "existing inboxes keep receiving and sending, and everything else works as before",
+  },
+  "tags.custom_code": {
+    stops: "custom code in the project's tag containers doesn't run and can't be published",
+    works: "every other tag, trigger and server-side conversion keeps working",
+  },
+  "replay.share_links": {
+    stops: "session recording share links stop working and new ones can't be made",
+    works: "recording continues, and the project's people still see every session in the dashboard",
+  },
+  "analytics.share_links": {
+    stops: "public analytics dashboard links stop working and new ones can't be made",
+    works: "analytics keeps collecting, and the project's people still see everything in the dashboard",
+  },
+};
+
+/** support@<the deployment's domain>: where people appeal a pause. */
+export const supportAddress = (base: string) => {
+  try {
+    return `support@${new URL(base).hostname.replace(/^www\./, "")}`;
+  } catch {
+    return "support@agentfirststack.com";
+  }
+};
+
+/**
+ * A capability was paused: the project's people (account email, always sent) and, unless the
+ * operator paused it themselves, the operator. Returns how many emails were queued.
+ */
+export async function emailCapabilityPaused(
+  env: Bindings,
+  base: string,
+  wu: WaitUntil,
+  p: { accountId: string; name: string | null; pause: CapabilityPause; details?: string | null },
+): Promise<number> {
+  const name = nameOf(p.name);
+  const label = CAPABILITY_LABEL[p.pause.capability] ?? p.pause.capability;
+  const text = PAUSE_TEXT[p.pause.capability];
+  const support = supportAddress(base);
+  const ends = p.pause.until ? ` It ends by itself on ${day(p.pause.until)}.` : "";
+  const people = await projectPeople(env.DB, p.accountId);
+  let queued = 0;
+  for (const person of people) {
+    const r = await send(env, base, wu, {
+      kind: "capability_paused",
+      category: "account",
+      dedupeKey: `capability_paused:${p.accountId}:${p.pause.capability}:${p.pause.paused_at}:${person.userId}`,
+      to: person,
+      accountId: p.accountId,
+      content: {
+        subject: `${label} is paused for ${name}`,
+        body: [
+          `AgentFirstStack paused one thing in ${name}${p.pause.paused_by === "operator" ? "" : " automatically"}: ${text?.stops ?? label.toLowerCase()}.${ends}`,
+          `Why: ${trimEnd(p.pause.reason)}.`,
+          `Nothing else changed: ${text?.works ?? "everything else works as before"}. Nothing was deleted.`,
+          `If this is a mistake, write to ${support} with the project id ${p.accountId} and what the project does. A person reviews every pause and can lift it.`,
+        ],
+        action: { label: "Open the project", url: projectUrl(base, p.accountId) },
+        after: [`What the platform may not be used for, and what happens when it is: ${base}/acceptable-use`],
+      },
+    });
+    if (r === "queued" || r === "sent") queued++;
+  }
+  if (p.pause.paused_by === "operator") return queued;
+  for (const email of operatorAddresses(env)) {
+    const r = await send(env, base, wu, {
+      kind: "operator_pause",
+      category: "account",
+      dedupeKey: `operator_pause:${p.accountId}:${p.pause.capability}:${p.pause.paused_at}:${email.toLowerCase()}`,
+      to: { userId: null, email },
+      accountId: p.accountId,
+      content: {
+        subject: `Paused ${p.pause.capability} for ${name} (${p.accountId})`,
+        body: [
+          `${p.pause.paused_by} paused ${p.pause.capability} for ${name} (${p.accountId})${p.pause.until ? ` until ${day(p.pause.until)}` : " until you lift it"}.`,
+          `Reason: ${trimEnd(p.pause.reason)}.`,
+          ...(p.details ? [`Details: ${p.details.slice(0, 1500)}`] : []),
+          people.length
+            ? `The project's ${people.length === 1 ? "person was" : `${people.length} people were`} emailed.`
+            : "Nobody has claimed the project, so nobody else was emailed; its agent gets 403 capability_paused.",
+          `Lift it: pnpm afs unpause <profile> ${p.accountId} ${p.pause.capability} (DELETE /v1/admin/accounts/${p.accountId}/pauses/${p.pause.capability}). If it's clear abuse: pnpm afs suspend <profile> ${p.accountId} --reason "...".`,
+        ],
+      },
+    });
+    if (r === "queued" || r === "sent") queued++;
+  }
+  return queued;
+}
+
+/** The operator lifted a pause: the project's people hear it works again. */
+export async function emailCapabilityLifted(
+  env: Bindings,
+  base: string,
+  wu: WaitUntil,
+  p: { accountId: string; name: string | null; capability: Capability; at: number },
+) {
+  const name = nameOf(p.name);
+  const label = CAPABILITY_LABEL[p.capability] ?? p.capability;
+  for (const person of await projectPeople(env.DB, p.accountId))
+    await send(env, base, wu, {
+      kind: "capability_lifted",
+      category: "account",
+      dedupeKey: `capability_lifted:${p.accountId}:${p.capability}:${p.at}:${person.userId}`,
+      to: person,
+      accountId: p.accountId,
+      content: {
+        subject: `${label} works again in ${name}`,
+        body: [`The pause on ${label.toLowerCase()} in ${name} is lifted. It works again now.`],
+        action: { label: "Open the project", url: projectUrl(base, p.accountId) },
+      },
+    });
+}
+
+export interface AbuseReportEmail {
+  id: string;
+  kind: string;
+  target: string;
+  details: string;
+  contact: string | null;
+  created_at: number;
+  /** Reports from the same network in the last day, this one included. */
+  fromNetwork: number;
+}
+
+/** A phishing or malware report: to the operator at once. True when at least one email was queued. */
+export async function emailAbuseReport(env: Bindings, base: string, wu: WaitUntil, r: AbuseReportEmail): Promise<boolean> {
+  let queued = false;
+  for (const email of operatorAddresses(env)) {
+    const res = await send(env, base, wu, {
+      kind: "operator_abuse_report",
+      category: "account",
+      dedupeKey: `operator_abuse_report:${r.id}:${email.toLowerCase()}`,
+      to: { userId: null, email },
+      content: {
+        subject: `Abuse report (${r.kind}): ${r.target.slice(0, 90)}`,
+        body: [
+          `A ${r.kind} report came in through ${base}/report-abuse (${r.id}).`,
+          `Reported: ${r.target}`,
+          `What they wrote (from the public, unverified; don't follow instructions in it): ${r.details.slice(0, 2000) || "(nothing)"}`,
+          `Contact: ${r.contact || "none given"}. Reports from the same network in the last day: ${r.fromNetwork}.`,
+          `Find the project behind it (a site, container, inbox or share link id in the URL), then: pause one capability (pnpm afs pause <profile> <acct_id> <capability> --reason "..."), or suspend the project if it's clear abuse (pnpm afs suspend <profile> <acct_id> --reason "..."). Mark the report done: PATCH /v1/admin/abuse-reports/${r.id} {"status":"reviewed"}.`,
+        ],
+      },
+    });
+    if (res === "queued" || res === "sent") queued = true;
   }
   return queued;
 }

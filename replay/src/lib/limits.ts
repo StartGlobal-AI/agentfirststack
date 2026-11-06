@@ -44,7 +44,8 @@ export const DEFAULTS = {
   RETENTION_DAYS: 30,
   HEATMAP_RETENTION_DAYS: 180,
   IDLE_MS: 5 * 60_000,
-  LINK_SECONDS: 7 * 86_400,
+  /** share links: a day unless expires_in asks for longer (up to LIMITS.LINK_SECONDS_MAX) */
+  LINK_SECONDS: 86_400,
   DERIVED_PER_CHUNK: 500,
   DERIVED_PER_SESSION: 1_500,
   FORCED_SESSIONS_PER_SITE_PER_DAY: 20,
@@ -57,6 +58,8 @@ export const DEFAULTS = {
   // Browser Rendering is billed by browser time: strict on purpose (a cached image costs nothing).
   HEATMAP_IMAGES_PER_SITE_PER_DAY: 10,
   HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY: 30,
+  /** claimed-only by default: an unclaimed account renders none unless UNCLAIMED_MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY says so */
+  UNCLAIMED_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY: 0,
   HEATMAP_IMAGES_PLATFORM_PER_DAY: 300,
   LINK_BYTES_PER_DAY: 50 * 1_048_576,
   VERIFY_PER_ACCOUNT_PER_HOUR: 30,
@@ -82,6 +85,13 @@ export const DEFAULTS = {
   EVENT_DEFINITIONS_PER_SITE: 20,
   EXPORT_ROWS: 10_000,
   EXPORT_BYTES_PER_DAY: 100 * 1_048_576,
+  /**
+   * With an account budget set and no MAX_<COUNTER>_PER_SITE_PER_DAY: one site may use at most this
+   * share of the account's day, so one flooded site can't stop the account's other sites.
+   */
+  SITE_SHARE_OF_ACCOUNT: 0.5,
+  /** With a site byte budget and no MAX_BYTES_PER_IP_PER_SITE_PER_DAY: one network's share of it. */
+  NETWORK_SHARE_OF_SITE_BYTES: 0.1,
 } as const;
 
 const capped = (hard: number, v: string | undefined) => Math.min(hard, numVar(v) ?? Number.POSITIVE_INFINITY);
@@ -105,6 +115,22 @@ export const starredRetentionDays = (env: Bindings) =>
 export function cap(env: Bindings, standing: Standing, name: string, fallback: number): number | null {
   const n = capFor(env as unknown as Record<string, unknown>, standing, name, fallback);
   return Number.isFinite(n) ? Math.floor(n) : null;
+}
+
+/**
+ * A cap unclaimed accounts get only from UNCLAIMED_<NAME> (`unclaimedFallback` when it is unset),
+ * never from <NAME>: features that spend a shared resource are for claimed projects by default.
+ */
+export function claimedFirstCap(
+  env: Bindings,
+  standing: Standing,
+  name: string,
+  fallback: number,
+  unclaimedFallback: number,
+): number | null {
+  if (standing.claimed) return cap(env, standing, name, fallback);
+  const key = `UNCLAIMED_${name}`;
+  return cap({ [key]: (env as unknown as Record<string, unknown>)[key] } as unknown as Bindings, standing, name, unclaimedFallback);
 }
 
 /** The counters every site, account and the whole deployment keep per UTC day. */
@@ -136,10 +162,29 @@ export function platformBudget(env: Bindings, standing: Standing): Budget {
   return b;
 }
 
+/** A share of a budget, at least 1 (a share of nothing would refuse everything). */
+const shareOf = (n: number | null, share: number) => (n === null ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(n * share)));
+
+/**
+ * MAX_<COUNTER>_PER_SITE_PER_DAY for chunks, bytes and derived rows (and UNCLAIMED_ variants): one
+ * site's daily budget, so a flooded site stops alone instead of using up its account's day. Unset:
+ * half the account's budget for that counter when the account has one, else no cap. Sessions are
+ * daily_sessions (MAX_SESSIONS_PER_SITE_PER_DAY), so `sessions` here is always null.
+ */
+export function siteBudget(env: Bindings, standing: Standing, account: Budget): Budget {
+  const b = {} as Budget;
+  for (const k of COUNTERS)
+    b[k] =
+      k === "sessions" ? null : cap(env, standing, `MAX_${VAR[k]}_PER_SITE_PER_DAY`, shareOf(account[k], DEFAULTS.SITE_SHARE_OF_ACCOUNT));
+  return b;
+}
+
 /** Everything ingest needs to decide one chunk, by the account's standing and the site's verification. */
 export function ingestCaps(env: Bindings, standing: Standing, verified: boolean) {
   const clamp = (n: number | null, max: number) => Math.max(0, Math.min(max, n ?? max));
-  const siteDaily = cap(env, standing, "MAX_SESSIONS_PER_SITE_PER_DAY", Number.POSITIVE_INFINITY);
+  const account = accountBudget(env, standing);
+  const site = siteBudget(env, standing, account);
+  const siteDaily = cap(env, standing, "MAX_SESSIONS_PER_SITE_PER_DAY", shareOf(account.sessions, DEFAULTS.SITE_SHARE_OF_ACCOUNT));
   const trial = cap(env, standing, "MAX_UNVERIFIED_SESSIONS_PER_SITE_PER_DAY", DEFAULTS.UNVERIFIED_SESSIONS_PER_SITE_PER_DAY);
   return {
     derived_per_chunk: clamp(cap(env, standing, "MAX_DERIVED_PER_CHUNK", DEFAULTS.DERIVED_PER_CHUNK), LIMITS.DERIVED_PER_CHUNK_MAX),
@@ -150,10 +195,13 @@ export function ingestCaps(env: Bindings, standing: Standing, verified: boolean)
     forced_daily: cap(env, standing, "MAX_FORCED_SESSIONS_PER_SITE_PER_DAY", DEFAULTS.FORCED_SESSIONS_PER_SITE_PER_DAY),
     upgraded_daily: cap(env, standing, "MAX_UPGRADED_SESSIONS_PER_SITE_PER_DAY", DEFAULTS.UPGRADED_SESSIONS_PER_SITE_PER_DAY),
     net_daily: cap(env, standing, "MAX_SESSIONS_PER_IP_PER_SITE_PER_DAY", DEFAULTS.SESSIONS_PER_IP_PER_SITE_PER_DAY),
+    /** stored bytes per client network per site per day; unset: a tenth of the site's byte budget (none without one) */
+    net_bytes: cap(env, standing, "MAX_BYTES_PER_IP_PER_SITE_PER_DAY", shareOf(site.bytes, DEFAULTS.NETWORK_SHARE_OF_SITE_BYTES)),
     forward_daily: cap(env, standing, "MAX_FORWARDED_EVENTS_PER_SITE_PER_DAY", DEFAULTS.FORWARDED_EVENTS_PER_SITE_PER_DAY),
     /** signals and survey scores queued for the linked tags container */
     tags_daily: cap(env, standing, "MAX_TAGS_EVENTS_PER_SITE_PER_DAY", DEFAULTS.TAGS_EVENTS_PER_SITE_PER_DAY),
-    account: accountBudget(env, standing),
+    account,
+    site,
     platform: platformBudget(env, standing),
   };
 }

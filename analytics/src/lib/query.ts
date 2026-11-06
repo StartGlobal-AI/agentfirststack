@@ -345,7 +345,9 @@ const NEW_PURCHASE = "e.revenue > 0 AND e.revenue_type IS NOT 'renewal' AND e.re
  */
 function countCols(ctx: QueryCtx, pv: Frag = raw("e.name = 'pageview'"), pageScoped = false): Frag {
   const conv = ctx.hasGoals ? conversionCond(ctx) : null;
-  const revenue = ctx.hasGoalValues ? sql`COALESCE(e.revenue, ${goalValueFrag(ctx)})` : raw("e.revenue");
+  // Goal values are their own metric (goal_value), never added to revenue: revenue is money that
+  // was paid (event revenue and payments), a goal value is what the owner thinks a conversion is worth.
+  const goalValue = ctx.hasGoalValues ? sql`COALESCE(SUM(${goalValueFrag(ctx)}), 0)` : raw("0");
   const pvCount = sql`COALESCE(SUM(CASE WHEN ${pv} THEN 1 ELSE 0 END), 0)`;
   return sql`COUNT(DISTINCT CASE WHEN ${raw(VISIT_ACTIVITY)} THEN e.visitor_id END) AS visitors,
     COUNT(DISTINCT CASE WHEN ${raw(VISIT_ACTIVITY)} THEN e.session_id END) AS visits,
@@ -353,7 +355,8 @@ function countCols(ctx: QueryCtx, pv: Frag = raw("e.name = 'pageview'"), pageSco
     ${pageScoped ? pvCount : raw(`COALESCE(SUM(${NOT_PAYMENT}), 0)`)} AS events,
     ${conv ? sql`COALESCE(SUM(CASE WHEN ${conv} THEN 1 ELSE 0 END), 0)` : raw("0")} AS conversions,
     ${conv ? sql`COUNT(DISTINCT CASE WHEN ${conv} AND ${raw(IN_VISIT)} THEN e.visitor_id END)` : raw("0")} AS converted_visitors,
-    COALESCE(SUM(${revenue}), 0) AS revenue,
+    COALESCE(SUM(e.revenue), 0) AS revenue,
+    ${goalValue} AS goal_value,
     COALESCE(SUM(CASE WHEN e.revenue_type = 'renewal' THEN e.revenue END), 0) AS renewal_revenue,
     COALESCE(SUM(CASE WHEN e.revenue_type = 'refund' THEN e.revenue END), 0) AS refund_revenue,
     COALESCE(SUM(CASE WHEN ${raw(NEW_PURCHASE)} THEN 1 ELSE 0 END), 0) AS purchases,
@@ -429,6 +432,7 @@ const SORT_SQL: Record<string, string> = {
   conversions: "{p}conversions",
   conversion_rate: "{p}converted_visitors * 1.0 / MAX({p}visitors, 1)",
   revenue: "{p}revenue",
+  goal_value: "{p}goal_value",
   revenue_per_visitor: "{p}revenue * 1.0 / MAX({p}visitors, 1)",
   new_revenue: "({p}revenue - {p}renewal_revenue - {p}refund_revenue)",
   renewal_revenue: "{p}renewal_revenue",
@@ -634,13 +638,14 @@ export function groupedQuery(ctx: QueryCtx, g: GroupSpec, optsIn: GroupOpts | bo
 export function goalBreakdownQuery(ctx: QueryCtx, limit: number): Frag {
   const names = goalFilterNames(ctx.filters);
   return sql`WITH ${evCte(ctx)},
-  gm AS (SELECT g.id AS gid, e.id AS eid, e.visitor_id, e.no_visit, COALESCE(e.revenue, g.value) AS rev,
+  gm AS (SELECT g.id AS gid, e.id AS eid, e.visitor_id, e.no_visit, e.revenue AS rev, g.value AS gval,
            ${raw(ctx.hasOnceGoals ? "CASE WHEN g.counting = 'once_per_visit' THEN ROW_NUMBER() OVER (PARTITION BY g.id, e.session_id ORDER BY e.ts, e.id) ELSE 1 END" : "1")} AS rn
          FROM goals g JOIN ev e ON ${raw(GOAL_MATCH)})
   SELECT g.name AS value, g.type AS goal_type, g.match AS goal_match, g.counting AS goal_counting,
     COUNT(DISTINCT CASE WHEN m.no_visit = 0 THEN m.visitor_id END) AS visitors,
     COUNT(m.eid) AS conversions,
     COALESCE(SUM(m.rev), 0) AS revenue,
+    COALESCE(SUM(m.gval), 0) AS goal_value,
     (SELECT COUNT(DISTINCT visitor_id) FROM ev WHERE origin != 'payment' AND no_visit = 0) AS total_visitors
   FROM goals g LEFT JOIN gm m ON m.gid = g.id AND m.rn = 1
   ${names ? sql`WHERE ${valueCond(raw("g.name"), "==", names)}` : EMPTY}

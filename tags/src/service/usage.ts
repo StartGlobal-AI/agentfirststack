@@ -1,9 +1,10 @@
-import { type AttackItem, accountStanding } from "@afs/shared";
+import { type AttackItem, accountStanding, capabilityPaused } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { ContainerUsage } from "../do/container-do";
 import type { Bindings } from "../env";
 import { containerStub } from "./containers";
-import { containerCaps, deliveryBudgets, eventBudgets, limits, standingFlag, utcDay } from "./limits";
+import { outboundScope } from "./budget";
+import { containerCaps, deliveryBudgets, eventBudgets, limits, outboundBudgets, standingFlag, utcDay } from "./limits";
 import { customCodeIn } from "./verify";
 import { attackItem, protectionCaps } from "./protection";
 
@@ -139,11 +140,12 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
   const events = eventBudgets(env, standing);
   const deliveries = deliveryBudgets(env, standing);
   const protect = protectionCaps(env, standing);
+  const outbound = outboundBudgets(env, standing);
   const countCustomCode = Number.isFinite(caps.maxCustomCodeBytes);
 
   // Containers per account are capped (MAX_CONTAINERS_PER_ACCOUNT), and each subquery reads one
   // container's rows through its container_id index; the sums are what accountTagsBytes() adds up.
-  const [containers, daily, delivered] = await env.DB.batch([
+  const [containers, daily, delivered, outboundToday] = await env.DB.batch([
     env.DB.prepare(
       `SELECT c.id AS id, c.domain AS domain, c.created_at AS created_at,
               LENGTH(CAST(c.draft AS BLOB)) AS draft_bytes${countCustomCode ? ", c.draft AS draft" : ""},
@@ -163,7 +165,17 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
       day,
     ),
     env.DB.prepare("SELECT n FROM delivery_usage WHERE scope = ? AND day = ?").bind(`account:${accountId}`, day),
+    env.DB.prepare("SELECT scope, n FROM delivery_usage WHERE scope IN (?, ?) AND day = ?").bind(
+      outboundScope("scans", accountId),
+      outboundScope("tests", accountId),
+      day,
+    ),
   ]);
+  const outboundUsed = (kind: "scans" | "tests") =>
+    Number(
+      ((outboundToday?.results ?? []) as { scope: string; n: number }[]).find((r) => r.scope === outboundScope(kind, accountId))?.n ?? 0,
+    );
+  const pause = await capabilityPaused(env, accountId, "tags.custom_code");
   const rows = (containers?.results ?? []) as unknown as ContainerUsageRow[];
   const reported = (daily?.results ?? []) as unknown as { container_id: string; browser_events: number; server_events: number }[];
   const accountDeliveries = Number((delivered?.results[0] as { n?: number } | undefined)?.n ?? 0);
@@ -280,6 +292,26 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
         note: "Past it events are still logged, but not sent to ad platforms or other destinations (skipped with the reason) until 00:00 UTC.",
         drops_data: true,
       },
+    ),
+    scans_per_day: item(
+      "Scans and verifications a day",
+      outboundUsed("scans"),
+      outbound.scans.perAccount,
+      "site scans and domain verifications (each fetches pages of your site), refused ones included",
+      "MAX_SCANS_PER_ACCOUNT_PER_DAY",
+      resets,
+      {
+        note: "Past it scan and verify answer 429 quota_exceeded until 00:00 UTC; scan several pages in one call (paths) and verify with the DNS record.",
+      },
+    ),
+    destination_tests_per_day: item(
+      "Destination tests a day",
+      outboundUsed("tests"),
+      outbound.tests.perAccount,
+      "destination tests sent to ad platforms and webhooks, refused ones included",
+      "MAX_DESTINATION_TESTS_PER_ACCOUNT_PER_DAY",
+      resets,
+      { note: "Past it POST /destinations/:did/test answers 429 quota_exceeded until 00:00 UTC; real deliveries are not affected." },
     ),
     browser_events_per_container_per_day: item(
       "Browser events a day in one container",
@@ -492,7 +524,11 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
     claimed: standing.claimed,
     limits: limitsOut,
     attacks,
-    policy: { custom_code_allowed: standingFlag(env, standing, "ALLOW_CUSTOM_CODE", true, false) },
+    policy: {
+      custom_code_allowed: standingFlag(env, standing, "ALLOW_CUSTOM_CODE", true, false) && !pause,
+      // A strong abuse signal (or the operator) paused custom code: { reason, paused_at, until } until lifted.
+      custom_code_paused: pause ? { reason: pause.reason, paused_at: pause.paused_at, until: pause.until } : null,
+    },
     rate_limits:
       "Bursts are also limited at the edge: /collect per client network and per container (conversions tighter), and scan + verify, destination tests and backend event requests per account (429 rate_limited). Those counters are approximate and not listed here.",
     ...(missing > 0

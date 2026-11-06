@@ -36,6 +36,8 @@ export type Bindings = Env & {
   /** Proxy keys of our own analytics site and tags container: our pages use /_a/* and /_t/* (src/first-party.ts). Secrets. */
   OWN_ANALYTICS_PROXY_KEY?: string;
   OWN_TAGS_PROXY_KEY?: string;
+  /** Optional: our own replay site's proxy key, sent on /_r/* besides the edge-style trust (src/first-party.ts). Secret. */
+  OWN_REPLAY_PROXY_KEY?: string;
   /**
    * First-party domains on Cloudflare for SaaS (src/first-party-domains.ts): a token with Zone > SSL
    * and Certificates Edit and Zone > Workers Routes Edit (secret), the SaaS zone, the originless
@@ -56,6 +58,23 @@ export type Bindings = Env & {
   /** The operator's daily summary (src/operator-digest.ts): comma-separated addresses; off when unset. */
   OPERATOR_EMAIL?: string;
   MAX_EMAILS_PER_PERSON_PER_DAY?: string;
+  /** Signup proof of work's base difficulty in bits (default 20), past SIGNUP_GLOBAL_HOURLY_LIMIT (@afs/shared). */
+  SIGNUP_POW_DIFFICULTY?: string;
+  /** Hours after the operator lifts a capability pause during which automatic re-pauses are ignored (default 24; src/pauses.ts). */
+  PAUSE_LIFT_GRACE_HOURS?: string;
+  /** Abuse reports (src/abuse-reports.ts): per network per hour (default 5), deployment-wide per day (default 500), operator emails per day (default 20). */
+  ABUSE_REPORTS_HOURLY_LIMIT?: string;
+  ABUSE_REPORTS_DAILY_LIMIT?: string;
+  ABUSE_REPORT_EMAILS_PER_DAY?: string;
+  /**
+   * Reputation checks in the operator's summary (src/reputation.ts): Google Safe Browsing with this key
+   * (secret; off when unset), Spamhaus DBL through DNS over HTTPS (with SPAMHAUS_DQS_KEY, a secret, on
+   * Spamhaus's Data Query Service; public resolvers are usually refused without one), for the
+   * deployment's hosts plus REPUTATION_DOMAINS (comma-separated extra domains).
+   */
+  SAFE_BROWSING_API_KEY?: string;
+  SPAMHAUS_DQS_KEY?: string;
+  REPUTATION_DOMAINS?: string;
 };
 
 export interface User {
