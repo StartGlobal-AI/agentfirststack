@@ -180,6 +180,12 @@ D1: accounts, keys, containers, drafts, versions (immutable), preview tokens,
     "wait_for_update_ms": 500,      // passed to gtag('consent','default')
     "tcf": false                    // follow an IAB TCF v2 CMP (__tcfapi); see llms.txt for the purpose mapping
   },
+  "consent_banner": {               // the built-in consent banner; { "enabled": true } alone is complete
+    "enabled": true, "regions": "eea", // eea (EEA + UK + CH + unknown country) | all
+    "categories": ["analytics", "ads", "personalization"], "privacy_url": "https://example.com/privacy",
+    "position": "bottom", "expiry_days": 180, "version": 1, "reopen_button": false,
+    "text": { "title": "..." }, "languages": { "de": { "accept": "Alle akzeptieren" } }, "colors": { "accent": "#1a56db" }
+  },
   "settings": { "phone_country_code": "1", "cookie_domain": "example.com", "listen_to_gtag_events": false, "send_page_views": true, "debug": false,
                 "cross_domain": ["checkout.example.net"], "cross_domain_forms": false, "report_tag_fires": false,
                 "respect_dnt": true }         // default: nothing runs under Global Privacy Control / Do Not Track
@@ -197,7 +203,45 @@ destination will deliver, `server: true` with no destination of that type, unuse
 templates, param sets, conversion fields), templates in `send_to.ga4.params` /
 `send_to.meta.custom_data` (sent as written: `template_not_rendered`), destinations that
 receive nothing, Google Ads tag + upload double counting, and consent gaps (ad pixels with no
-consent config, opt-in without a banner call, EEA without GB, ad tags with `consent: []`).
+consent config, opt-in without a banner call, EEA without GB, ad tags with `consent: []`), and
+for the consent banner: no privacy link, ad tags without the ads category, visitors outside the
+regions who start denied but are never asked, a TCF CMP as well, and colors under 4.5:1 contrast.
+
+### Consent banner (`consent_banner`, replaces Cookiebot)
+
+Versioned with the rest of the config (draft -> publish). The runtime decides per visitor:
+asked (regions `eea`: Cloudflare's country is in the EEA, the UK or Switzerland, or unknown;
+`all`: everyone) and no current choice -> every category denied and the banner UI loaded; a
+stored choice (`_afst_cc` = consent id, banner version, time, bits; re-asked when `version`
+changes or after `expiry_days`, default 180, max 395) -> applied without the UI; everyone else
+-> the `consent` block's defaults. With regions `eea` the script is `cache-control: private`
+(also for `consent.regions`, which depend on the country too) and says `x-afs-consent-banner:
+ask|default`. Categories map to Consent Mode v2: analytics -> `analytics_storage`; ads ->
+`ad_storage`, `ad_user_data`; personalization -> `ad_personalization`, `personalization_storage`,
+`functionality_storage`. On every page and choice: `gtag('consent','default')` before any Google
+tag (also without Google tags in the config) and `'update'` on a choice; tags gated by their
+consent types are released or held; `dataLayer.push({ event: "afst_consent", afst_consent })`;
+`afsr('consent', analytics)` for replay (and `afsr('consent', false, 1)` while undecided);
+`afsa('consent', analytics)` when the analytics tracker was loaded with
+`data-require-consent="true"` (persistent visitor ids; cookieless analytics stores nothing and
+isn't told). Withdrawal deletes this container's identity cookies. Reopen with
+`afst('consent','open')`, any element with `data-afst-consent-open`, or `reopen_button`.
+
+The UI (`src/runtime/banner.ts`, bundled alone as `dist/consent-ui.txt`, about 7 KB / 3.4 KB
+gzip) is served at `/cb/<version>.js` (immutable) and loaded only when it must show. It renders
+in a shadow root: first layer with "Reject all" styled exactly like "Accept all", settings layer
+with unticked boxes per category (the current choice when reopened), labelled dialog, focus
+moved in and restored, Tab trapped in modal layers, Escape, `prefers-reduced-motion`, stacked
+buttons under 600 px. Text is plain text with English defaults, overridable per language
+(`<html lang>`, then the browser's languages).
+
+Each choice is posted to `/collect` as `type: "consent"` and stored in the ContainerDO
+(`consent_records`, 12 months; `consent_daily` counts for the rates): consent id, server time,
+banner version, method (`accept_all` / `reject_all` / `custom`), choice per category, country,
+text language and container version, never the IP, user agent or visitor id. Test traffic isn't
+recorded; `MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY` caps records (unset = off). `GET
+/containers/:id/consent` (rates, totals, status) and `/consent/records?consent_id=` (one
+visitor's history) read them.
 Drafts are capped at `MAX_DRAFT_BYTES` (default 512 KB of JSON; `413 draft_too_large`), and
 publish keeps the newest `MAX_VERSIONS_PER_CONTAINER` versions (default 50; older ones are
 deleted, the live one never). An account's drafts plus kept versions are capped at
@@ -379,7 +423,8 @@ id), `_fbp` (created per Meta's format when a Meta tag/conversion exists and it'
 `_fbc`, `_ttp`. Stores `_afst_vid`, `_afst_<clickid>` (90 days), `_afst_ft` (first touch) and
 `_afst_consent` as first-party cookies, only when consent allows (`analytics_storage` or
 `ad_storage` for the visitor id and first touch, `ad_storage` for click ids/_fbc/_fbp;
-otherwise they stay in memory for the page). When served first-party (proxy), `/collect` also
+otherwise they stay in memory for the page). The consent banner's `_afst_cc` holds only the
+choice itself, so it is written when the visitor chooses (strictly necessary). When served first-party (proxy), `/collect` also
 re-sets them server-side via `Set-Cookie` so they survive Safari ITP's 7-day script-cookie cap.
 The visitor IP (sent on to the conversion APIs) is `cf-connecting-ip`, or the first
 `X-Forwarded-For` hop only when the request carries the container's `x-afs-proxy-key`
@@ -452,6 +497,8 @@ in `window.__afst_debug` and the console (`?afst_debug=1`, preview, or `settings
 | PUT, GET, DELETE | `/containers/:id/lookups[/:name]` | lookup tables for destinations' `settings.params.set` |
 | GET | `/containers/:id/quarantine` | what attack protection set aside, `?since=7d` (at most 7 days): by reason, type and day, top network operators (ASN), countries; pages and browsers under `untrusted` |
 | GET | `/containers/:id/tag-stats`, `/coverage` | per-tag fire counts (`settings.report_tag_fires`) and pages that sent hits, `?since=7d` |
+| GET | `/containers/:id/consent` | consent banner status (live / draft), accept / reject / custom totals and rates, per category and per day, `?since=30d` (at most 365d), today's records against the cap, `next_steps` |
+| GET | `/containers/:id/consent/records` | proof of consent, newest first: `?consent_id=` (one visitor's history), `since`, `before` (cursor), `limit` |
 | POST | `/containers/:id/rollback` | `{ version }`: moves the live pointer to that version; the draft is unchanged |
 | POST, GET, PATCH, DELETE | `/containers/:id/destinations[/:did]` | POST: `403 quota_exceeded` past `MAX_DESTINATIONS_PER_CONTAINER` |
 | POST | `/containers/:id/destinations/:did/test` | `{ event_name?, test_event_code? }`: sends a test event in the platform's test mode, returns the platform's answer (webhook/analytics: status + short summary); never a real conversion (400 `test_event_code_required` / `no_test_mode` instead); `TEST_LIMITER` per account; a pass closes an open circuit |
@@ -482,7 +529,7 @@ content is marked untrusted), `verify_domain`, `get_config_schema`, `get_draft`,
 `update_environment`, `reauthorize_environment`, `delete_environment`, `add_destination`,
 `list_destinations`, `update_destination`, `remove_destination`, `test_destination`, `put_lookup`,
 `list_lookups`, `get_lookup`, `delete_lookup`, `send_server_events`, `get_event_log`,
-`get_visitor`, `get_tag_stats`, `get_coverage`, `get_quarantine`, `get_usage`, `setup_conversion_tracking` (recipe: given
+`get_visitor`, `get_tag_stats`, `get_coverage`, `get_quarantine`, `get_consent`, `list_consent_records`, `get_usage`, `setup_conversion_tracking` (recipe: given
 platforms + conversions in plain terms, writes a complete draft, creates destinations for
 platforms with credentials, validates it, and returns what's left to do, e.g. which IDs are
 missing and where to find them; a conversion gets `server: true` only when a destination will
@@ -598,6 +645,7 @@ also reads `UNCLAIMED_<NAME>` for accounts no person has claimed (`capFor` in `@
 | `MAX_EVENTS_PER_DAY` | optional var; the same for the whole deployment; unclaimed accounts stop at `UNCLAIMED_MAX_EVENTS_PER_DAY` on the same counter (unset = off) |
 | `MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY` | optional var; browser hits one network may send a container per UTC day before the rest are quarantined (attack protection; unset = off) |
 | `MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY` | optional var; quarantined hits logged per container per UTC day, the rest counted only (unset = off) |
+| `MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY` | optional var; consent banner choices recorded per container per UTC day; past it choices still apply but aren't recorded (unset = off) |
 | `SPIKE_MIN_EVENTS` | optional var; fewest browser hits in 15 minutes that count as a spike, default `1000` (for tests) |
 | `MAX_VISITORS_PER_CONTAINER` | optional var; visitor rows kept per container, least recently seen evicted, default `250000` |
 | `MAX_CONTAINER_DB_BYTES` | optional var; ContainerDO database size above which `/collect` stops writing (backend events up to 25% more), default `1073741824` (1 GiB) |
@@ -621,7 +669,7 @@ browser; integration tests in workerd via `@cloudflare/vitest-plugin`), `pnpm sm
 
 ## Not yet (v2)
 
-Built-in consent banner UI, Microsoft Ads server-side conversions, custom domains (Cloudflare for
+Microsoft Ads server-side conversions, custom domains (Cloudflare for
 SaaS), the Google tag gateway and a GA4 `/g/collect` client, Measurement Protocol-compatible
 ingest, a `draft` key scope (edit but not publish), A/B testing, Google Ads conversion
 adjustments / enhanced conversions for web (`uploadConversionAdjustments`; click uploads already

@@ -21,6 +21,11 @@ export interface Bindings extends AuthBindings {
    */
   SQL_MAX_ROWS_READ?: string;
   /**
+   * Optional Google API key for lab runs (GET /v1/sites/:id/web-vitals/lab, PageSpeed Insights).
+   * Unset = keyless, on Google's small shared quota.
+   */
+  PAGESPEED_API_KEY?: string;
+  /**
    * Seals third-party secrets at rest (the Stripe webhook signing secret): 32 bytes, base64
    * (openssl rand -base64 32). Optional; without it connecting Stripe is refused with a hint.
    */

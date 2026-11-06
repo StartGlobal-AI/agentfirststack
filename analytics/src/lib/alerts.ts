@@ -1,4 +1,5 @@
 import { median } from "./stats-math";
+import { MIN_SAMPLES, VITAL_THRESHOLDS, type VitalMetric, formatVital } from "./vitals";
 
 /**
  * Alert rules and the decision whether one fires. Pure: the cron asks the site's Durable Object
@@ -13,9 +14,12 @@ import { median } from "./stats-math";
  *                  then again only after data came back
  *   goal           conversions of `goal` in the last `window` >= threshold (default 1)
  *   payment        new payments (amount >= threshold, default 0) since the last check, batched
+ *   web_vitals     the p75 of `metric` (lcp, inp or cls) over the last `window` (default 1 day) is
+ *                  above threshold (default Google's "good" limit: 2500 ms, 200 ms, 0.1), with at
+ *                  least min_samples page loads (default 30)
  */
 
-export const ALERT_TYPES = ["traffic_spike", "traffic_drop", "no_data", "goal", "payment"] as const;
+export const ALERT_TYPES = ["traffic_spike", "traffic_drop", "no_data", "goal", "payment", "web_vitals"] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
 export const ALERT_DEFAULTS: Record<AlertType, { window: number; threshold: number; cooldown: number }> = {
@@ -24,8 +28,14 @@ export const ALERT_DEFAULTS: Record<AlertType, { window: number; threshold: numb
   no_data: { window: 720, threshold: 0, cooldown: 0 },
   goal: { window: 60, threshold: 1, cooldown: 60 },
   payment: { window: 5, threshold: 0, cooldown: 0 },
+  // threshold: the metric's "good" limit (vitalsThreshold)
+  web_vitals: { window: 1440, threshold: 0, cooldown: 1440 },
 };
 export const DEFAULT_MIN_VISITORS = 20;
+/** web_vitals: page loads a window needs before its p75 is trusted. */
+export const DEFAULT_MIN_SAMPLES = MIN_SAMPLES;
+/** web_vitals: windows shorter than this rarely have enough page loads. */
+export const MIN_VITALS_WINDOW = 60;
 export const BASELINE_DAYS = 7;
 /** The cron runs every 5 minutes; nothing is checked more often. */
 export const MIN_CHECK_MS = 5 * 60_000;
@@ -38,7 +48,14 @@ export interface AlertRule {
   threshold: number | null;
   min_visitors: number | null;
   goal: string | null;
+  /** web_vitals: lcp, inp or cls */
+  metric?: VitalMetric | null;
+  /** web_vitals: the fewest page loads with the metric in the window */
+  min_samples?: number | null;
 }
+
+/** web_vitals: the threshold set, or the metric's "good" limit. */
+export const vitalsThreshold = (r: Pick<AlertRule, "threshold" | "metric">) => r.threshold ?? VITAL_THRESHOLDS[r.metric ?? "lcp"].good;
 
 /** How often a rule is evaluated: payments every run, the rest every quarter of the window (5-60 min). */
 export function checkEveryMs(rule: Pick<AlertRule, "type" | "window_minutes">): number {
@@ -70,6 +87,10 @@ export interface AlertNumbers {
   cursor?: number;
   /** visitor-sent context: top sources in the window */
   top_sources?: { value: unknown; visitors: number }[];
+  /** web_vitals: the metric's p75, page loads and bands (% good / poor) in the window */
+  vitals?: { metric: VitalMetric; p75: number | null; samples: number; good: number; poor: number };
+  /** web_vitals, visitor-sent context: the pages with the highest p75 in the window */
+  top_pages?: { value: unknown; p75: number | null; samples: number }[];
 }
 
 export interface AlertState {
@@ -162,6 +183,31 @@ export function decide(rule: AlertRule, n: AlertNumbers, prev: AlertState, now: 
       const state = { ...keep, cursor: n.cursor ?? prev.cursor, last_value: count };
       return { fire: count > 0, value: count, baseline: null, reason: count ? `${count} new payments` : "no new payments", state };
     }
+    case "web_vitals": {
+      const metric = rule.metric ?? "lcp";
+      const short = VITAL_THRESHOLDS[metric].short;
+      const t = vitalsThreshold(rule);
+      const min = rule.min_samples ?? DEFAULT_MIN_SAMPLES;
+      const samples = n.vitals?.samples ?? 0;
+      const v = n.vitals?.p75 ?? null;
+      const state = { ...keep, last_value: v, last_baseline: t };
+      if (v == null || samples < min)
+        return {
+          fire: false,
+          value: v,
+          baseline: t,
+          reason: `${samples} page loads with ${short} in the window, below min_samples ${min}`,
+          state,
+        };
+      const fire = v > t;
+      return {
+        fire,
+        value: v,
+        baseline: t,
+        reason: `${short} p75 ${formatVital(metric, v)} ${fire ? "is over" : "is within"} ${formatVital(metric, t)} (${samples} page loads)`,
+        state,
+      };
+    }
   }
 }
 
@@ -175,6 +221,7 @@ const LABEL: Record<AlertType, string> = {
   no_data: "No data",
   goal: "Goal",
   payment: "Payment",
+  web_vitals: "Web Vitals",
 };
 
 const money = (amount: number, currency: string | null) => `${Math.round(amount * 100) / 100}${currency ? ` ${currency}` : ""}`;
@@ -207,6 +254,23 @@ export function alertText(
       return {
         title: `[${domain}] ${plural(n.payment_count ?? p.length, "payment")}${p.length ? ` (${money(total, p[0]!.currency)})` : ""}`,
         lines: p.map((x) => `${x.type} ${money(x.amount, x.currency)} at ${new Date(x.ts).toISOString()}`),
+      };
+    }
+    case "web_vitals": {
+      const metric = rule.metric ?? "lcp";
+      const t = VITAL_THRESHOLDS[metric];
+      const v = n.vitals;
+      return {
+        title: `[${domain}] ${t.short} p75 ${formatVital(metric, d.value)} over ${formatVital(metric, d.baseline)} in the last ${w}`,
+        lines: [
+          `${rule.name}: ${d.reason}.`,
+          ...(v
+            ? [
+                `${v.good}% of page loads good, ${v.poor}% poor (${t.name}: good up to ${formatVital(metric, t.good)}, poor above ${formatVital(metric, t.poor)}).`,
+              ]
+            : []),
+          "p75 by nearest rank over real visitors' page loads (Google's method). The slowest pages are listed with the details.",
+        ],
       };
     }
   }

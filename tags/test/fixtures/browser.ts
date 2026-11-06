@@ -7,11 +7,19 @@ import type { ContainerConfig } from "../../src/config/schema";
 import { compileScript, needsExt } from "../../src/service/script";
 import type { BootConfig } from "../../src/runtime/types";
 
-let runtimes: { core: string; ext: string } | null = null;
+let runtimes: { core: string; ext: string; ui: string } | null = null;
 export async function loadRuntimes() {
-  runtimes ??= { core: await bundleRuntime(), ext: await bundleRuntime({ ext: true }) };
+  runtimes ??= { core: await bundleRuntime(), ext: await bundleRuntime({ ext: true }), ui: await bundleRuntime({ banner: true }) };
   return runtimes;
 }
+/** The consent banner UI bundle (dist/consent-ui.txt), for b.run() after the runtime asked for it. */
+export function bannerUi(): string {
+  if (!runtimes) throw new Error("call loadRuntimes() in beforeAll");
+  return runtimes.ui;
+}
+
+/** The element focus() was last called on (the banner moves focus into its dialog). */
+export let lastFocused: FakeEl | null = null;
 
 export const CID = "ctr_abcdefgh12345678";
 export const BASE = "https://tags.example.net";
@@ -26,11 +34,23 @@ export interface FakeEl {
   value?: string;
   text?: string;
   textContent?: string;
-  style: Record<string, string>;
+  style: Record<string, string> & { setProperty?(k: string, v: string): void };
   innerHTML?: string;
   nodeType: number;
   onload?: () => void;
   onerror?: () => void;
+  /** Element event listeners (the banner's buttons and keydown handler). */
+  listeners: Record<string, ((e: unknown) => void)[]>;
+  shadowRoot?: FakeEl;
+  checked?: boolean;
+  disabled?: boolean;
+  lang?: string;
+  addEventListener(t: string, f: (e: unknown) => void): void;
+  /** Run this element's listeners for a DOM event (no propagation). */
+  fire(t: string, init?: Record<string, unknown>): void;
+  click(): void;
+  focus(opts?: unknown): void;
+  attachShadow(opts: unknown): FakeEl;
   setAttribute(k: string, v: string): void;
   getAttribute(k: string): string | null;
   appendChild(c: FakeEl): FakeEl;
@@ -66,8 +86,38 @@ export function el(tagName: string, attrs: Record<string, string> = {}, children
     tagName: tagName.toUpperCase(),
     attrs: { ...attrs },
     children: [],
-    style: {},
-    nodeType: 1,
+    style: {
+      setProperty(k: string, v: string) {
+        (this as Record<string, unknown>)[k] = v;
+      },
+    } as FakeEl["style"],
+    nodeType: tagName === "#text" ? 3 : 1,
+    listeners: {},
+    addEventListener(t, f) {
+      (this.listeners[t] ??= []).push(f);
+    },
+    fire(t, init = {}) {
+      const e = { type: t, target: this, defaultPrevented: false, preventDefault() {}, ...init };
+      for (const f of this.listeners[t] ?? []) f(e);
+    },
+    click() {
+      this.fire("click");
+    },
+    focus() {
+      lastFocused = this;
+    },
+    attachShadow() {
+      const root = el("#shadow-root");
+      // root.textContent = "" empties it, as on a real ShadowRoot.
+      Object.defineProperty(root, "textContent", {
+        get: () => root.children.map((c) => c.textContent ?? "").join(""),
+        set: () => {
+          root.children = [];
+        },
+      });
+      this.shadowRoot = root;
+      return root;
+    },
     setAttribute(k, v) {
       this.attrs[k] = v;
     },
@@ -168,6 +218,8 @@ export function browser(
     body,
     documentElement: html,
     createElement: (t: string) => el(t),
+    createTextNode: (t: string) => Object.assign(el("#text"), { textContent: t }),
+    getElementById: (id: string) => html.querySelector(`#${id}`),
     getElementsByTagName: (t: string) => html.querySelectorAll(t),
     querySelectorAll: (s: string) => html.querySelectorAll(s),
     querySelector: (s: string) => html.querySelector(s),

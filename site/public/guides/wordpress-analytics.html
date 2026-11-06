@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WordPress analytics in one prompt</title>
+<meta name="description" content="Add cookieless analytics to WordPress with one prompt: a first-party proxy, the tracker in wp_head, form and WooCommerce events from PHP, then verify.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/wordpress-analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="WordPress analytics in one prompt">
+<meta property="og:description" content="Add cookieless analytics to WordPress with one prompt: a first-party proxy, the tracker in wp_head, form and WooCommerce events from PHP, then verify.">
+<meta property="og:url" content="https://agentfirststack.com/guides/wordpress-analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WordPress analytics in one prompt">
+<meta name="twitter:description" content="Add cookieless analytics to WordPress with one prompt: a first-party proxy, the tracker in wp_head, form and WooCommerce events from PHP, then verify.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/wordpress-analytics#article",
+      "headline": "WordPress analytics in one prompt",
+      "description": "Add cookieless analytics to WordPress with one prompt: a first-party proxy, the tracker in wp_head, form and WooCommerce events from PHP, then verify.",
+      "url": "https://agentfirststack.com/guides/wordpress-analytics",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/wordpress-analytics",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "WordPress",
+        "applicationCategory": "WebApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "WordPress analytics",
+          "item": "https://agentfirststack.com/guides/wordpress-analytics"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/wordpress-analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Theme functions.php or a plugin?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A must-use plugin in wp-content/mu-plugins. It survives theme updates and theme switches and can't be deactivated by accident. Code in a parent theme's functions.php disappears on the theme's next update."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where should the API key live?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "In wp-config.php as a constant, read only by PHP. Never in a theme file, a page, the database options table or a \u003cscript> tag. The tracker needs only the public site id."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why do all my visitors show the same country?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You're behind a proxy that can't see visitor locations: the PHP plugin, or nginx without Cloudflare in front. Visitor counts are still right. For exact locations, put the domain on Cloudflare and use the Worker route."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it track logged-in admins?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, like any visitor. Exclude yourself by running localStorage.afsa_ignore = 1 in your browser's console on the site, or exclude your office IP in the site's exclusions."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>WordPress analytics</span></nav>
+      <h1>WordPress analytics in one prompt</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>Paste the prompt below into a coding agent that can reach your WordPress code (your theme or plugin repository, or the server over SSH). It gets an AgentFirstStack key, creates the site, serves the tracker from your own domain, adds it to every page with <code>wp_head</code>, and checks the live site until the setup check passes. Form submissions and WooCommerce orders can be sent from PHP, where visitors can't fake them. No access to the code at all? The <a href="#plugin">plugin route</a> at the end needs only wp-admin. Other platforms and tools: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into your coding agent, with the WordPress code open</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this WordPress site with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If wp-config.php or .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Store it as a constant in wp-config.php (define('AGENTFIRSTSTACK_API_KEY', '...')), never in theme files or the repository. Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the production domain and read GET /v1/sites/:id/install?framework=wordpress. Serve the tracker from the site's own domain: a Cloudflare Worker route on /_a/* if the domain is on Cloudflare, else the nginx block if we run nginx, else a must-use plugin that forwards /_a/* in PHP. The proxy key (first_party_proxy.proxy_key) goes in wp-config.php as AFS_PROXY_KEY or in the Worker's secrets. Then print &lt;script defer src="/_a/s.js" data-site="..."&gt; from a wp_head hook in a must-use plugin (wp-content/mu-plugins), not in a parent theme.
+
+4. Create goals for sign-ups, purchases, form submissions and the main buttons. Send successful form submissions and paid WooCommerce orders from PHP as server events.
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Deploy, purge any page cache, open the site once, then run verify and fix what it reports.
+
+7. Write the site id and where the keys live (never the values) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+8. Run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="tag">Where the tag goes</h2>
+<p><code>wp_head</code> "prints scripts or data in the head tag on the front end", and every well-behaved theme calls it, so a hook on it covers every page. <code>GET /v1/sites/:id/install?framework=wordpress</code> suggests a child theme's <code>functions.php</code>. A must-use plugin is sturdier: it loads before normal plugins, is enabled on every site of the install, can't be switched off in wp-admin, and survives a theme change. Code in a parent theme's <code>functions.php</code> is lost on the next theme update.</p>
+<pre><code>&lt;?php
+// wp-content/mu-plugins/agentfirststack.php
+add_action( 'wp_head', function () {
+    echo '&lt;script defer src="/_a/s.js" data-site="site_..."&gt;&lt;/script&gt;';
+} );</code></pre>
+<p>The site id is public. The two secrets, the API key and the proxy key, go in <code>wp-config.php</code>, which is outside the theme and normally outside version control.</p>
+
+<h2 id="proxy">Serve it from your own domain</h2>
+<p>Ad blockers block requests to <code>analytics.agentfirststack.com</code>. From your own domain, the script and its collect endpoint (<code>/_a/e</code>, next to wherever the script was loaded from) are first-party, so those visitors count too. Every proxy must add <code>x-afs-proxy-key</code>, the site's secret from <code>first_party_proxy.proxy_key</code>. The collector trusts the visitor IP and location headers only from requests that carry it; without it every visitor arrives with your server's address and merges into one, and verify reports <code>proxy_key</code>. Pick the first option that fits your hosting:</p>
+<p><b>1. Your domain is on Cloudflare</b> (the orange cloud is on). A Worker on the route <code>example.com/_a/*</code> runs in front of WordPress and sends the visitor's exact country, region and city. Store the key as a Worker secret (<code>wrangler secret put AFS_PROXY_KEY</code>):</p>
+<pre><code>// Cloudflare Worker, route: example.com/_a/*
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const headers = new Headers(request.headers);
+    for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+    headers.set("x-afs-proxy-key", env.AFS_PROXY_KEY);
+    headers.set("x-forwarded-for", request.headers.get("cf-connecting-ip") || "");
+    const cf = request.cf || {};
+    const geo = { country: cf.country, region: cf.region, "region-code": cf.regionCode, city: cf.city,
+      continent: cf.continent, timezone: cf.timezone, lat: cf.latitude, lon: cf.longitude };
+    for (const [k, v] of Object.entries(geo)) if (v != null) headers.set("x-afs-geo-" + k, encodeURIComponent(String(v)));
+    headers.delete("cookie");
+    return fetch("https://analytics.agentfirststack.com" + url.pathname + url.search, {
+      method: request.method,
+      headers,
+      body: request.method === "POST" ? request.body : undefined,
+    });
+  },
+};</code></pre>
+<p><b>2. You run the server's nginx.</b> The install answer's <code>first_party_proxy.nginx</code> is a <code>location /_a/</code> block, filled in with the key, that passes the visitor IP (and, behind Cloudflare, the country). Without Cloudflare in front, nginx can't know the visitor's location, so country and city show your server's.</p>
+<p><b>3. Managed hosting, no server config.</b> A must-use plugin can answer <code>/_a/*</code> itself. With pretty permalinks on, as on most sites, WordPress sends requests for paths that aren't files to <code>index.php</code>, so the plugin sees them before any page is rendered:</p>
+<pre><code>&lt;?php
+// wp-content/mu-plugins/agentfirststack-proxy.php
+// Needs define( 'AFS_PROXY_KEY', '...' ) in wp-config.php.
+add_action( 'plugins_loaded', function () {
+    $path = (string) parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH );
+    if ( strpos( $path, '/_a/' ) !== 0 || ! defined( 'AFS_PROXY_KEY' ) ) {
+        return;
+    }
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+        define( 'DONOTCACHEPAGE', true ); // keep page caches from storing the answer
+    }
+    $post  = ( $_SERVER['REQUEST_METHOD'] ?? 'GET' ) === 'POST';
+    $query = isset( $_SERVER['QUERY_STRING'] ) &amp;&amp; $_SERVER['QUERY_STRING'] !== '' ? '?' . $_SERVER['QUERY_STRING'] : '';
+    $res   = wp_remote_request( 'https://analytics.agentfirststack.com' . $path . $query, array(
+        'method'     =&gt; $post ? 'POST' : 'GET',
+        'timeout'    =&gt; 5,
+        'user-agent' =&gt; $_SERVER['HTTP_USER_AGENT'] ?? '',
+        'headers'    =&gt; array(
+            'x-afs-proxy-key' =&gt; AFS_PROXY_KEY,
+            'x-forwarded-for' =&gt; $_SERVER['REMOTE_ADDR'] ?? '',
+            'accept-language' =&gt; $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
+            'content-type'    =&gt; 'text/plain',
+        ),
+        'body'       =&gt; $post ? file_get_contents( 'php://input' ) : null,
+    ) );
+    if ( is_wp_error( $res ) ) {
+        status_header( 502 );
+        exit;
+    }
+    status_header( (int) wp_remote_retrieve_response_code( $res ) );
+    foreach ( array( 'content-type', 'cache-control' ) as $h ) {
+        $v = wp_remote_retrieve_header( $res, $h );
+        if ( $v ) {
+            header( "$h: $v" );
+        }
+    }
+    echo wp_remote_retrieve_body( $res );
+    exit;
+}, 0 );</code></pre>
+<p>Two limits to accept with this one. Your PHP server can't see where visitors are, so country and city show your server's location (the visitor counts are right; the IP is passed on). And if your host puts a load balancer in front, <code>REMOTE_ADDR</code> may be the balancer's address; ask the host which header carries the visitor's IP. If location matters more to you than visitors with ad blockers, use the direct snippet instead: <code>src="https://analytics.agentfirststack.com/s.js"</code>.</p>
+
+<h2 id="server">Forms and orders from PHP</h2>
+<p>For a quick read on forms, add <code>data-forms="true"</code> to the script tag: it sends <code>form_start</code> and <code>form_submit</code> with the form's id or name, never the field values. A submit isn't a success, though. To count only submissions that went through, send a server event from the form plugin's hook. These hooks run in the visitor's own request, so passing their IP address and user agent joins the event to their visit, exactly as the browser would. Behind Cloudflare, use <code>$_SERVER['HTTP_CF_CONNECTING_IP']</code> instead of <code>REMOTE_ADDR</code>:</p>
+<pre><code>function afs_event( $name, array $extra = array() ) {
+    wp_remote_post( 'https://analytics.agentfirststack.com/v1/sites/site_.../events', array(
+        'blocking' =&gt; false,
+        'headers'  =&gt; array(
+            'Authorization' =&gt; 'Bearer ' . AGENTFIRSTSTACK_API_KEY,
+            'Content-Type'  =&gt; 'application/json',
+        ),
+        'body'     =&gt; wp_json_encode( array( 'events' =&gt; array( array_merge( array(
+            'name'       =&gt; $name,
+            'ip'         =&gt; $_SERVER['REMOTE_ADDR'] ?? '',
+            'user_agent' =&gt; $_SERVER['HTTP_USER_AGENT'] ?? '',
+        ), $extra ) ) ) ),
+    ) );
+}
+
+// Contact Form 7: fires after the mail was sent
+add_action( 'wpcf7_mail_sent', function ( $form ) {
+    afs_event( 'contact_submit', array( 'props' =&gt; array( 'form' =&gt; $form-&gt;title() ) ) );
+} );
+// WPForms: only for entries saved without errors
+add_action( 'wpforms_process_complete', function ( $fields, $entry, $form_data ) {
+    afs_event( 'contact_submit', array( 'props' =&gt; array( 'form' =&gt; $form_data['settings']['form_title'] ?? '' ) ) );
+}, 10, 3 );
+// Gravity Forms: note it also runs for entries marked as spam
+add_action( 'gform_after_submission', function ( $entry, $form ) {
+    afs_event( 'contact_submit', array( 'props' =&gt; array( 'form' =&gt; $form['title'] ) ) );
+}, 10, 2 );</code></pre>
+<p><b>WooCommerce.</b> A payment often completes in the payment provider's callback, not the shopper's request, so use the IP address and user agent WooCommerce saved on the order. Hook both statuses a paid order can reach (WooCommerce sets Processing or Completed when a payment completes; offline payments such as cheques wait On-Hold until you move them on), and mark the order so it's sent once. <code>visit: false</code> keeps a late callback from creating a visit of its own; if the shopper's visit is still live, the purchase joins it:</p>
+<pre><code>function afs_purchase( $order_id, $order ) {
+    if ( $order-&gt;get_meta( '_afs_sent' ) ) {
+        return;
+    }
+    $order-&gt;update_meta_data( '_afs_sent', 1 );
+    $order-&gt;save();
+    afs_event( 'purchase', array(
+        'ip'         =&gt; $order-&gt;get_customer_ip_address(),
+        'user_agent' =&gt; $order-&gt;get_customer_user_agent(),
+        'visit'      =&gt; false,
+        'revenue'    =&gt; array( 'amount' =&gt; (float) $order-&gt;get_total(), 'currency' =&gt; $order-&gt;get_currency() ),
+        'props'      =&gt; array( 'order_id' =&gt; (string) $order-&gt;get_order_number() ),
+    ) );
+}
+add_action( 'woocommerce_order_status_processing', 'afs_purchase', 10, 2 );
+add_action( 'woocommerce_order_status_completed', 'afs_purchase', 10, 2 );</code></pre>
+<p>Then create the goals: <code>{"name":"Contact","type":"event","match":"contact_submit"}</code> and <code>{"name":"Purchase","type":"event","match":"purchase"}</code>.</p>
+
+<h2 id="verify">Check it on the live site</h2>
+<ol>
+<li><b>Purge the page cache</b> (your caching plugin's or your host's). Until you do, cached pages are served without the tag.</li>
+<li><b>Open the site once</b> in a normal browser, logged out. Headless browsers are filtered out unless the visit is marked with <code>?afsa_debug=1</code>.</li>
+<li><b>Run verify:</b> <code>POST https://analytics.agentfirststack.com/v1/sites/:id/verify</code>. It finds the tag in your HTML, fetches <code>/_a/s.js</code> through your proxy, checks the Content-Security-Policy and whether events arrived with the proxy key, and lists fixes.</li>
+<li><b>Run the setup check:</b> <code>GET https://agentfirststack.com/v1/setup?services=analytics</code> until <code>"ready": true</code>.</li>
+</ol>
+<p><b>Script optimizers.</b> WP Rocket's "Delay JavaScript execution" holds back scripts "until there is a user interaction", so visitors who leave without touching the page are never counted. Add <code>/_a/s.js</code> under Excluded JavaScript Files (File Optimization tab), or add the <code>nowprocket</code> attribute to the tag. Other optimizers with a "delay JS" option need the same exclusion.</p>
+
+<h2 id="plugin">No code access: the wp-admin route</h2>
+<p>On a site where you only have wp-admin, paste the direct snippet into a header plugin such as WPCode (Insert Headers and Footers), under its Code Snippets menu:</p>
+<pre><code>&lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_..."&gt;&lt;/script&gt;</code></pre>
+<p>That route can't proxy, so visitors with ad blockers aren't counted. On WordPress.com, installing plugins is available on every paid plan (Personal, Premium, Business and Commerce), according to WordPress.com's support pages. You can still run the API side (creating the site, goals, verify, the setup check) from any agent with a terminal.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Theme functions.php or a plugin?</h3>
+<p>A must-use plugin in <code>wp-content/mu-plugins</code>. It survives theme updates and theme switches and can't be deactivated by accident. Code in a parent theme's <code>functions.php</code> disappears on the theme's next update.</p>
+<h3>Where should the API key live?</h3>
+<p>In <code>wp-config.php</code> as a constant, read only by PHP. Never in a theme file, a page, the database options table or a <code>&lt;script&gt;</code> tag. The tracker needs only the public site id.</p>
+<h3>Why do all my visitors show the same country?</h3>
+<p>You're behind a proxy that can't see visitor locations: the PHP plugin, or nginx without Cloudflare in front. Visitor counts are still right. For exact locations, put the domain on Cloudflare and use the Worker route.</p>
+<h3>Does it track logged-in admins?</h3>
+<p>Yes, like any visitor. Exclude yourself by running <code>localStorage.afsa_ignore = 1</code> in your browser's console on the site, or exclude your office IP in the site's exclusions.</p>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode.</p>
+
+<p class="meta">WordPress is a trademark of the WordPress Foundation; WooCommerce, WP Rocket, WPCode, Contact Form 7, WPForms and Gravity Forms belong to their owners. AgentFirstStack isn't affiliated with any of them. Details come from <a href="https://developer.wordpress.org/reference/hooks/wp_head/">wp_head</a>, <a href="https://developer.wordpress.org/advanced-administration/plugins/mu-plugins/">must-use plugins</a>, <a href="https://developer.wordpress.org/themes/advanced-topics/child-themes/">child themes</a>, <a href="https://developer.wordpress.org/reference/classes/wp_http/request/">WP_Http</a>, <a href="https://wordpress.com/support/plugins/">WordPress.com plugins</a>, <a href="https://wordpress.org/plugins/insert-headers-and-footers/">WPCode</a>, <a href="https://wpforms.com/developers/wpforms_process_complete/">WPForms</a>, <a href="https://docs.gravityforms.com/gform_after_submission/">Gravity Forms</a>, <a href="https://woocommerce.com/wc-apidocs/class-WC_Order.html">WC_Order</a>, <a href="https://developer.woocommerce.com/docs/features/payments/payment-gateway-api">WooCommerce payments</a> and <a href="https://docs.wp-rocket.me/article/1349-delay-javascript-execution">WP Rocket</a>, checked on 6 November 2026. The Contact Form 7 hook was read in its source (6.2.4.1).</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/webflow-analytics"><span class="svc svc-analytics">Analytics</span><b>Webflow analytics in one prompt</b><span>Head code, publishing and form webhooks.</span></a></li>
+        <li><a class="card" href="/guides/shopify-analytics"><span class="svc svc-analytics">Analytics</span><b>Shopify analytics in one prompt</b><span>theme.liquid, custom pixels and order webhooks.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#tag">Where the tag goes</a></li><li><a href="#proxy">Serve it from your own domain</a></li><li><a href="#server">Forms and orders from PHP</a></li><li><a href="#verify">Check it on the live site</a></li><li><a href="#plugin">No code access: the wp-admin route</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

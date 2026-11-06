@@ -76,6 +76,12 @@ export const SETUP_CATALOG: CatalogItem[] = [
       "bringing over what the site used before (GA4, Google Tag Manager, Plausible, DataFast and others): its setup, its history, and a check that our numbers match before the old tools are removed",
     checks: ["migrate.tools", "migrate.compare"],
   },
+  {
+    version: 5,
+    label:
+      "serving analytics, tags and replay from the site's own domain (a first-party domain: one CNAME, no server code; or the path proxy), so ad blockers don't drop visitors",
+    checks: ["analytics.first_party"],
+  },
 ];
 
 export const CATALOG_VERSION = Math.max(...SETUP_CATALOG.map((i) => i.version));

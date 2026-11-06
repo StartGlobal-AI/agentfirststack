@@ -13,7 +13,9 @@ const textModules: Plugin = {
       ? await bundleRuntime()
       : id.endsWith("dist/runtime-ext.txt")
         ? await bundleRuntime({ ext: true })
-        : readFileSync(id, "utf8");
+        : id.endsWith("dist/consent-ui.txt")
+          ? await bundleRuntime({ banner: true })
+          : readFileSync(id, "utf8");
     return `export default ${JSON.stringify(text)};`;
   },
 };
@@ -116,6 +118,8 @@ export default defineConfig({
                 SPIKE_MIN_EVENTS: "",
                 MAX_VISITORS_PER_CONTAINER: "",
                 MAX_CONTAINER_DB_BYTES: "",
+                MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY: "",
+                UNCLAIMED_MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY: "",
                 CIRCUIT_BREAKER_FAILURES: "",
                 CIRCUIT_BREAKER_MINUTES: "",
                 ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",

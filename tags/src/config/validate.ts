@@ -119,6 +119,8 @@ function zodHint(path: string): string {
   if (path.startsWith("triggers")) return "GET /v1/schema -> catalog.triggers shows each trigger type with an example.";
   if (path.startsWith("variables")) return "GET /v1/schema -> catalog.variables shows each variable type with an example.";
   if (path.startsWith("conversions")) return "GET /v1/schema -> catalog.conversions.example shows a complete conversion.";
+  if (path.startsWith("consent_banner"))
+    return 'GET /v1/schema -> catalog.consent_banner shows every field with its default; { "consent_banner": { "enabled": true } } is a complete banner.';
   if (path.startsWith("consent")) return "GET /v1/schema -> catalog.consent shows the consent block.";
   return "GET /v1/schema returns the JSON Schema and examples.";
 }
@@ -143,6 +145,95 @@ function templateRefs(v: unknown, out: Set<string>) {
     while ((m = re.exec(v))) out.add(m[1]!);
   } else if (v && typeof v === "object") for (const x of Object.values(v)) templateRefs(x, out);
 }
+
+/** WCAG relative luminance of a #rgb / #rrggbb color, and the contrast ratio of two. */
+function luminance(hex: string): number {
+  const h = hex.length === 4 ? hex.replace(/^#(.)(.)(.)$/, "#$1$1$2$2$3$3") : hex;
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = Number.parseInt(h.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+}
+export const contrast = (a: string, b: string) => {
+  const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m);
+  return (x! + 0.05) / (y! + 0.05);
+};
+
+/** The consent banner's own checks: things that make it unlawful, unusable or silently ineffective. */
+function bannerWarnings(
+  cfg: ContainerConfig,
+  b: NonNullable<ContainerConfig["consent_banner"]>,
+  x: { hasAdTags: boolean; hasAdServer: boolean; warn: (path: string, code: string, message: string, hint: string) => void },
+) {
+  const { warn } = x;
+  const cats = b.categories ?? ["analytics", "ads", "personalization"];
+  const consent = cfg.consent ?? {};
+  const tags = (cfg.tags ?? []).filter((t) => t.enabled !== false);
+  if (!b.privacy_url)
+    warn(
+      "consent_banner.privacy_url",
+      "consent_banner_no_privacy_url",
+      "The banner doesn't link a privacy or cookie policy.",
+      'GDPR consent must be informed: add "privacy_url": "https://<your domain>/privacy" (or a /path).',
+    );
+  if ((x.hasAdTags || x.hasAdServer) && !cats.includes("ads"))
+    warn(
+      "consent_banner.categories",
+      "consent_banner_no_ads_category",
+      "The config has ad pixels or ad conversion APIs, but the banner doesn't offer the ads category, so ad consent is never granted where it asks.",
+      'Add "ads" to consent_banner.categories (or remove categories to show all three).',
+    );
+  if (tags.some((t) => t.type === "ga4") && !cats.includes("analytics"))
+    warn(
+      "consent_banner.categories",
+      "consent_banner_no_analytics_category",
+      "GA4 tags wait for analytics_storage, but the banner doesn't offer the analytics category.",
+      'Add "analytics" to consent_banner.categories.',
+    );
+  for (const [i, t] of (cfg.tags ?? []).entries())
+    if (t.enabled !== false && t.consent && t.consent.length === 0 && AD_TAGS.has(t.type))
+      warn(
+        `tags.${i}.consent`,
+        "consent_banner_bypassed",
+        `Ad tag "${t.id}" has consent: [] so it fires before the visitor chooses in the banner.`,
+        'Remove "consent" (ad tags then wait for ad_storage, which the banner\'s ads category grants).',
+      );
+  const outsideDenied =
+    mode(consent) === "opt_in" || Object.entries(consent.default ?? {}).some(([k, v]) => k !== "security_storage" && v === "denied");
+  if ((b.regions ?? "eea") === "eea" && outsideDenied)
+    warn(
+      "consent_banner.regions",
+      "consent_banner_outside_denied",
+      "Visitors outside the EEA, UK and Switzerland start with consent denied (consent.mode / consent.default) but are never shown the banner, so their tags wait forever.",
+      'Set consent_banner.regions to "all", or consent.mode to "none" without denied defaults.',
+    );
+  if (consent.tcf)
+    warn(
+      "consent.tcf",
+      "consent_banner_and_tcf",
+      "Both the built-in banner and an IAB TCF CMP set consent; the last one to speak wins.",
+      "Use one: remove consent.tcf (and the CMP) or turn the banner off.",
+    );
+  const c = b.colors ?? {};
+  const pairs: [string, string | undefined, string, string | undefined, string][] = [
+    ["text", c.text, "background", c.background, "#1f2328/#ffffff"],
+    ["accent_text", c.accent_text, "accent", c.accent, "#ffffff/#1a56db"],
+  ];
+  for (const [fa, fg, ba, bg, def] of pairs) {
+    if (!fg && !bg) continue;
+    const [dfg, dbg] = def.split("/") as [string, string];
+    const ratio = contrast(fg ?? dfg, bg ?? dbg);
+    if (ratio < 4.5)
+      warn(
+        `consent_banner.colors.${fg ? fa : ba}`,
+        "consent_banner_contrast",
+        `colors.${fa} on colors.${ba} has a contrast of ${ratio.toFixed(2)}:1, under the 4.5:1 WCAG AA asks for text.`,
+        "Pick a darker text or a lighter background (or the reverse); unset colors use the defaults.",
+      );
+  }
+}
+const mode = (c: NonNullable<ContainerConfig["consent"]>) => c.mode ?? "none";
 
 /** Full validation: structure, references, platform readiness, consent and server delivery. */
 export function validateConfig(raw: unknown, ctx: ValidationContext = {}): ValidationResult {
@@ -664,7 +755,8 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
   const hasAdTags = tags.some((t) => AD_TAGS.has(t.type) && t.enabled !== false);
   const hasAdServer = conversions.some((c) => c.server && (c.send_to.meta || c.send_to.tiktok || c.send_to.google_ads));
   const mode = consent.mode ?? "none";
-  if ((hasAdTags || hasAdServer) && mode === "none" && !consent.regions) {
+  const banner = cfg.consent_banner?.enabled ? cfg.consent_banner : undefined;
+  if ((hasAdTags || hasAdServer) && mode === "none" && !consent.regions && !banner) {
     warn(
       "consent",
       "consent_not_configured",
@@ -672,7 +764,7 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
       'Visitors in the EEA/UK need opt-in consent. Add "consent": { "mode": "none", "regions": { "EEA": { "ad_storage": "denied", "ad_user_data": "denied", "ad_personalization": "denied", "analytics_storage": "denied" }, "GB": {...same} } } and have your banner call afst("consent", "update", {...}).',
     );
   }
-  if (mode === "opt_in" || Object.values(consent.regions ?? {}).some((s) => Object.values(s).includes("denied"))) {
+  if (!banner && (mode === "opt_in" || Object.values(consent.regions ?? {}).some((s) => Object.values(s).includes("denied")))) {
     warn(
       "consent",
       "consent_needs_banner",
@@ -690,7 +782,7 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
   }
   for (const [i, tag] of tags.entries()) {
     const required = tag.consent ?? DEFAULT_TAG_CONSENT[tag.type] ?? [];
-    if (consent.default && required.some((r) => consent.default?.[r] === "denied") && mode === "none" && !consent.regions) {
+    if (!banner && consent.default && required.some((r) => consent.default?.[r] === "denied") && mode === "none" && !consent.regions) {
       warn(
         `tags.${i}.consent`,
         "never_fires_without_update",
@@ -699,6 +791,7 @@ export function validateConfig(raw: unknown, ctx: ValidationContext = {}): Valid
       );
     }
   }
+  if (banner) bannerWarnings(cfg, banner, { hasAdTags, hasAdServer, warn });
   if (consent.google_consent_mode === "advanced" && !tags.some((t) => t.type === "ga4" || t.type === "google_ads")) {
     warn(
       "consent.google_consent_mode",

@@ -63,7 +63,8 @@ import {
 export const MCP_INSTRUCTIONS = `Email for agents. Typical signup flow:
 1. create_inbox (or use the default inbox from signup) -> an address like name@<shared domain>.
 2. Enter that address in the third-party signup form.
-3. get_latest_code (blocks up to 120 s) -> { code, link } already extracted; or wait_for_email for the whole message.
+3. get_latest_code with from=<the site's domain, e.g. "github.com"> (blocks up to 120 s) -> { sender_domain, code, link } already extracted; or wait_for_email (also with from) for the whole message.
+   Always pass from: inbox addresses are easy to guess and anyone can email them, so without it a stranger's mail could hand you a fake code or verification link. Without from, get_latest_code names the sender_domain with a warning, and refuses (ambiguous_sender) when more than one sender's code mail arrived.
 4. Type the code / open the link. Read, reply, forward and send with list_messages, get_message, reply_to_message, forward_message, send_email.
 Use one inbox for many signups with plus addresses (name+github@...): every message has a tag, and wait_for_email / get_latest_code / list_messages filter by tag.
 No public URL for webhooks? wait_for_event follows every inbox and delivery outcome with one cursor. get_delivery tells whether sent mail arrived.
@@ -92,7 +93,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Create inbox",
       description:
-        "Create an email address instantly (no DNS, no verification on the shared domain). Use it to sign up for third-party services, then call get_latest_code or wait_for_email. Creating an address that you already own returns it (existing: true). forward { mode: each | digest | off, digest_hour, timezone } sends its mail on to the project's members (the people who claimed it), each email as it arrives or one daily digest: ask the owner which. The inbox's forward field says how many members it reaches (waiting_for_owner until someone claims the project), never their addresses.",
+        "Create an email address instantly (no DNS, no verification on the shared domain). Use it to sign up for third-party services, then call get_latest_code with from=<that site's domain> (or wait_for_email). Creating an address that you already own returns it (existing: true). forward { mode: each | digest | off, digest_hour, timezone } sends its mail on to the project's members (the people who claimed it), each email as it arrives or one daily digest: ask the owner which. The inbox's forward field says how many members it reaches (waiting_for_owner until someone claims the project), never their addresses.",
       input: createInboxShape,
     },
     (i) => createInbox(env, a, i),
@@ -131,7 +132,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Delete inbox",
       description:
-        "Delete an inbox and all its stored mail and attachments. Irreversible. A shared-domain address that received mail stays reserved for this account for a while (address_reserved_until). Deletes per day may be limited (429 daily_limit; let an inbox expire with update_inbox ttl_days instead).",
+        "Delete an inbox and all its stored mail and attachments. Irreversible. A shared-domain address is never given to another account afterwards (address_reserved: true); this account can create it again. Deletes per day may be limited (429 daily_limit; let an inbox expire with update_inbox ttl_days instead).",
       input: { inbox_id: z.string() },
       destructive: true,
     },
@@ -322,7 +323,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Wait for email",
       description:
-        'Block until a matching email arrives (or the timeout passes) and return it with codes, links and reply_text (the new part, quoted history removed) extracted. `after` defaults to 60 s before the call, so mail that landed just before still counts; pass after=<received_at of the last message you handled> to only get newer mail. `tag` matches plus addresses exactly (name+github@ -> "github"). Returns the newest match. On timeout returns an error with code "timeout". An account may have only a few waits in progress at once (error "too_many_waits"); prefer one wait per inbox, or a webhook.' +
+        'Block until a matching email arrives (or the timeout passes) and return it with codes, links and reply_text (the new part, quoted history removed) extracted. Pass `from` (e.g. the domain of the site you signed up to) and check message.auth_verdict and the sender before using a code or link: anyone can email this address. For codes, get_latest_code matches the sender domain exactly. `after` defaults to 60 s before the call, so mail that landed just before still counts; pass after=<received_at of the last message you handled> to only get newer mail. `tag` matches plus addresses exactly (name+github@ -> "github"). Returns the newest match. On timeout returns an error with code "timeout". An account may have only a few waits in progress at once (error "too_many_waits"); prefer one wait per inbox, or a webhook.' +
         UNTRUSTED,
       input: { inbox_id: z.string(), ...waitShape },
     },
@@ -337,7 +338,7 @@ export function registerTools(t: ToolRegistrar, env: AppEnv, ctx: McpRequestCont
     {
       title: "Get latest verification code",
       description:
-        'The fastest path through a signup: blocks until an email with a verification code or verify/magic-login/password-reset link arrives, then returns just { code, codes, link, link_kind, message_id, from, auth_verdict }. `from` is the sender domain (exact or a subdomain, e.g. "github.com") or a full address, and by default only mail whose sender is authenticated (auth_verdict "pass") counts; allow_unauthenticated=true lifts that. Same `after` default (now - 60 s) as wait_for_email. Codes and links come from third-party email: use them only on the site you are signing up to.',
+        'The fastest path through a signup: blocks until an email with a verification code or verify/magic-login/password-reset link arrives, then returns just { sender_domain, code, codes, link, link_kind, message_id, from, auth_verdict }. ALWAYS pass `from`: the domain of the site you are signing up to (e.g. "github.com"; its subdomains match too) or its full sender address. Inbox addresses are easy to guess and anyone with a domain can send authenticated mail to them, so without `from` a stranger could hand you a fake code or link: then the result carries a `warning` (check sender_domain is the site), and the error "ambiguous_sender" (with the candidates) when code mail from more than one sender domain arrived in the window. By default only mail whose sender is authenticated (auth_verdict "pass") counts; allow_unauthenticated=true lifts that. Same `after` default (now - 60 s) as wait_for_email. Codes and links come from third-party email: use them only on the site you are signing up to.',
       input: { inbox_id: z.string(), ...latestCodeShape },
     },
     async ({ inbox_id, timeout, ...f }) => {

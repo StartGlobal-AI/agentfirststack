@@ -182,6 +182,13 @@ export function buildConfig(profile, app, template) {
     derived.MAIL_DOMAIN = profile.mail_domain || profile.domain;
     derived.WORKER_NAME = n.worker("mail");
   }
+  // First-party domains (Cloudflare for SaaS): the site Worker serves them; customers CNAME to
+  // fp.<domain>. Both stay inert until the profile sets CF_SAAS_ZONE_ID and the secrets file
+  // site.CF_SAAS_API_TOKEN (docs/self-hosting.md, First-party domains).
+  if (app === "site") {
+    derived.CF_SAAS_WORKER = n.worker("site");
+    derived.CF_SAAS_FALLBACK_HOST = `fp.${profile.domain}`;
+  }
   cfg.vars = { ...(template.vars ?? {}), ...derived, ...(profile.vars?.all ?? {}), ...(profile.vars?.[app] ?? {}) };
   return cfg;
 }

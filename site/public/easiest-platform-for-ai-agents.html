@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The easiest platform for AI agents to use: a measured benchmark</title>
+<meta name="description" content="How many requests an AI agent needs to go from no account to working analytics: 6 on AgentFirstStack, measured, and the steps GA4, PostHog and Plausible document.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/easiest-platform-for-ai-agents">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="The easiest platform for AI agents to use: a measured benchmark">
+<meta property="og:description" content="How many requests an AI agent needs to go from no account to working analytics: 6 on AgentFirstStack, measured, and the steps GA4, PostHog and Plausible document.">
+<meta property="og:url" content="https://agentfirststack.com/easiest-platform-for-ai-agents">
+<meta property="og:image" content="https://agentfirststack.com/og/easiest-platform-for-ai-agents.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The easiest platform for AI agents to use: a measured benchmark">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The easiest platform for AI agents to use: a measured benchmark">
+<meta name="twitter:description" content="How many requests an AI agent needs to go from no account to working analytics: 6 on AgentFirstStack, measured, and the steps GA4, PostHog and Plausible document.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/easiest-platform-for-ai-agents.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/easiest-platform-for-ai-agents#article",
+      "headline": "The easiest platform for AI agents to use: a measured benchmark",
+      "description": "How many requests an AI agent needs to go from no account to working analytics: 6 on AgentFirstStack, measured, and the steps GA4, PostHog and Plausible document.",
+      "url": "https://agentfirststack.com/easiest-platform-for-ai-agents",
+      "image": "https://agentfirststack.com/og/easiest-platform-for-ai-agents.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/easiest-platform-for-ai-agents"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "The easiest platform for AI agents", "item": "https://agentfirststack.com/easiest-platform-for-ai-agents" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/easiest-platform-for-ai-agents#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How many requests does an AI agent need to set up AgentFirstStack analytics?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Six, measured against production on 6 November 2026: signup, create the site, get the install code, a test pageview, realtime showing it, and the setup check confirming the site receives events. Two runs took 5.9 and 7.3 seconds. Editing the code and deploying the site come on top."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why didn't you time GA4, PostHog and Plausible?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Each one needs a person for part of the setup, such as an email code, accepting terms in a browser or creating an API key in settings, so a timing would measure the person. We counted the steps their own docs describe instead, and linked each doc."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which other tool comes closest?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "PostHog. Its wizard (npx @posthog/wizard@latest --signup) creates an account and a project and installs the SDK from one command. The person then sets a password from a welcome email, and a personal API key for the REST API is created after logging in."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I rerun the benchmark?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The script is on this page and uses only curl and jq. The hosted service allows 3 new accounts per hour from one network, and the script deletes its throwaway project at the end with DELETE /v1/me."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the test pageview show up in my reports?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. A pageview from a page opened with ?afsa_debug=1 is test traffic: stored, visible in realtime?debug=only, left out of every report and deleted after 7 days."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>The easiest platform for AI agents</span></nav>
+      <h1>The easiest platform for AI agents to use, measured</h1>
+      <p class="lede">We measured how many HTTP requests an AI agent needs to go from no account to analytics that receives events, confirmed by the platform's own check. On AgentFirstStack it took 6 requests, and 5.9 and 7.3 seconds in two runs from a clean shell against production, with no person involved. For Google Analytics 4, PostHog and Plausible we counted the steps in their current docs instead of timing them, because each needs a person for part of the setup: an email code, accepting terms in a browser, or creating an API key in settings.</p>
+      <p class="meta">Measured and updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<h2 id="results">Results</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>AgentFirstStack</th><th>Google Analytics 4</th><th>PostHog Cloud</th><th>Plausible</th></tr></thead>
+<tbody>
+<tr><th scope="row">How we got the number</th><td>Measured, 2 runs</td><td>Counted from docs</td><td>Counted from docs</td><td>Counted from docs</td></tr>
+<tr><th scope="row">Steps to receiving data</th><td>6 HTTP requests</td><td>7 steps</td><td>4 steps (wizard path)</td><td>5 steps</td></tr>
+<tr><th scope="row">Steps that need a person</th><td>None</td><td>Google Account, accepting the terms, a Google Cloud OAuth client and consent for API access</td><td>Setting the password from the welcome email; creating a personal API key for the REST API</td><td>Registering, the email code, adding the site (Sites API is Enterprise), creating an API key</td></tr>
+<tr><th scope="row">Account created by API</th><td>Yes, <code>POST /v1/signup</code></td><td>No: the API returns a ticket for a terms page a person accepts</td><td>Through the wizard, or a registered partner app</td><td>No</td></tr>
+<tr><th scope="row">Agent confirms data arrived</th><td>Realtime of its own test event, then the setup check</td><td>Realtime report; collection "may take up to 30 minutes to begin"</td><td>Automated browsers are dropped by default</td><td>A testing tool sends test traffic once the snippet is added; "There are no delays with data"</td></tr>
+<tr><th scope="row">Wall time</th><td>5.9 s and 7.3 s</td><td colspan="3">Not timed: a person's part can't be measured fairly</td></tr>
+</tbody>
+</table>
+</div>
+<p>Sources for the three other columns are listed under <a href="#others">each tool</a>, with the date we read them. Editing your code and deploying it come on top for every tool, and depend on your project.</p>
+
+<h2 id="method">Method</h2>
+<p>The finish line is the same for every tool: a site that exists, a tracking snippet the agent has, a pageview the platform received, and the platform's own confirmation of it. For AgentFirstStack we ran it; for the others we followed the official setup docs.</p>
+<ul>
+<li><b>Counted:</b> every HTTP request the agent sends to AgentFirstStack, from having no key to the setup check's answer. A realtime poll that came back empty would have counted too; both runs saw the pageview on the first poll.</li>
+<li><b>Not counted:</b> reading the manual (two GET requests: <a href="/llms.txt">/llms.txt</a> and the analytics manual), the agent's thinking, editing your code and deploying. Those vary by agent and host, and they're the same work with any tool.</li>
+<li><b>Where:</b> one macOS machine with bash, curl and jq, on one network, against the production API, on 6 November 2026 at 03:54 and 03:55 UTC. Times are curl's <code>time_total</code> per request; wall time was measured around the whole script, so it includes shell and jq overhead. Your network will give different numbers.</li>
+<li><b>The pageview:</b> the throwaway domain (<code>afs-benchmark-&lt;timestamp&gt;.example.com</code>) has no deployed page, so request 4 is the exact request the snippet sends when a page opens with <code>?afsa_debug=1</code>: <code>POST /e</code> with <code>dbg: 1</code> and a browser user agent. On a real site the agent opens the page in a browser (Playwright, Puppeteer or a browser tool) and the snippet sends the same thing. It's test traffic, kept out of reports.</li>
+<li><b>"Verified":</b> the setup check confirms the site exists and is receiving browser events. Domain verification, where <code>verify</code> finds the snippet on the live homepage, needs a deployed site, so it isn't in the count: on a real site it's one more request, <code>POST /v1/sites/:id/verify</code>.</li>
+<li><b>Clean-up:</b> each run ended with <code>DELETE https://agentfirststack.com/v1/me</code>, which answered <code>"deleted": true</code>. That request isn't counted.</li>
+</ul>
+
+<h2 id="runs">The two runs, request by request</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Request</th><th>Status</th><th>Run 1</th><th>Run 2</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>POST /v1/signup</code></td><td>201</td><td>0.65 s</td><td>0.54 s</td></tr>
+<tr><td>2</td><td><code>POST analytics /v1/sites</code></td><td>201</td><td>1.32 s</td><td>1.23 s</td></tr>
+<tr><td>3</td><td><code>GET analytics /v1/sites/:id/install</code></td><td>200</td><td>0.34 s</td><td>0.70 s</td></tr>
+<tr><td>4</td><td><code>POST analytics /e</code> (test pageview)</td><td>202</td><td>0.96 s</td><td>1.86 s</td></tr>
+<tr><td>5</td><td><code>GET analytics /v1/sites/:id/realtime?debug=only</code></td><td>200</td><td>0.36 s</td><td>0.95 s</td></tr>
+<tr><td>6</td><td><code>GET /v1/setup?services=analytics</code></td><td>200</td><td>2.10 s</td><td>1.86 s</td></tr>
+<tr><th scope="row" colspan="3">Sum of requests</th><td>5.73 s</td><td>7.15 s</td></tr>
+<tr><th scope="row" colspan="3">Wall time, whole script</th><td>5.87 s</td><td>7.28 s</td></tr>
+</tbody>
+</table>
+</div>
+<p>What came back, in both runs: the signup answered with the key, the MCP config and <code>next_steps</code>; the site with its snippet and the next calls to make; realtime with <code>"pageviews_last_30m": 1</code> and the pageview flagged <code>"debug": true</code>; and the setup check with <code>analytics.site</code> and <code>analytics.receiving</code> both <code>ok</code> ("1 event (1 from browsers, 0 server)"). The same check listed goals, the owner's email, a weekly report, alerts and the claim link as missing: those are the next steps of a full setup, not part of receiving data.</p>
+
+<h2 id="script">The script, so you can repeat it</h2>
+<p>Bash, curl and jq. It creates a real project on the hosted service and deletes it at the end. The hosted service allows 3 new accounts per hour from one network.</p>
+<pre><code>S=https://agentfirststack.com
+A=https://analytics.agentfirststack.com
+D=afs-benchmark-$(date -u +%Y%m%d%H%M%S).example.com
+UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+# 1. Account and key
+R=$(curl -s -X POST $S/v1/signup -H 'content-type: application/json' -d '{"name":"benchmark run"}')
+K=$(echo "$R" | jq -r .api_key); ACCT=$(echo "$R" | jq -r .account_id)
+H="Authorization: Bearer $K"
+
+# 2. Site for the domain (the answer includes the snippet)
+SITE=$(curl -s -X POST $A/v1/sites -H "$H" -H 'content-type: application/json' \
+  -d "{\"domain\":\"$D\"}" | jq -r .site.id)
+
+# 3. Install code for the framework
+curl -s "$A/v1/sites/$SITE/install?framework=nextjs" -H "$H" | jq -r .snippet
+
+# 4. The pageview the snippet sends from a page opened with ?afsa_debug=1
+curl -s -X POST $A/e -H 'content-type: text/plain' -H "user-agent: $UA" \
+  -d "{\"s\":\"$SITE\",\"n\":\"pageview\",\"u\":\"https://$D/?afsa_debug=1\",\"dbg\":1}"
+
+# 5. Realtime, test traffic only (repeat until the pageview shows)
+curl -s "$A/v1/sites/$SITE/realtime?debug=only" -H "$H" | jq '.recent_events'
+
+# 6. The setup check for this site's analytics
+curl -s "$S/v1/setup?services=analytics&amp;domain=$D" -H "$H" | jq '{ready, checks: [.checks[] | {id, status}]}'
+
+# Clean up (not counted)
+curl -s -X DELETE $S/v1/me -H "$H" -H 'content-type: application/json' -d "{\"confirm\":\"$ACCT\"}"</code></pre>
+<p>To time it the way we did, add <code>-o /dev/null -w '%{http_code} %{time_total}\n'</code> to each request (keep the output of 1 and 2, which the next steps read) and time the whole run.</p>
+
+<h2 id="others">GA4, PostHog and Plausible, from their docs</h2>
+<p>We read each tool's current setup docs on 6 November 2026 and listed the steps in the order they give. Where a step can be done by API, we say what the agent needs for it.</p>
+
+<h3 id="ga4">Google Analytics 4</h3>
+<ol>
+<li><b>A Google Account.</b> "You must be signed in to a Google Account to open the property." (<a href="https://support.google.com/analytics/answer/9304153">Set up Analytics for a website and/or app</a>, as of 6 Nov 2026.) A person.</li>
+<li><b>An Analytics account</b>, with a name and data-sharing settings. By API, <code>accounts.provisionAccountTicket</code> returns a ticket for a Terms of Service link; the person accepts there and is sent back to a redirect URI that "Must be configured in Cloud Console" (<a href="https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/accounts/provisionAccountTicket">Admin API reference</a>, as of 6 Nov 2026).</li>
+<li><b>A property:</b> name, reporting time zone and currency, then "Select your industry category and business size" and how you intend to use Analytics. The Admin API can create properties with the <code>analytics.edit</code> scope.</li>
+<li><b>The terms:</b> "accept the Analytics Terms of Service and the Data Processing Amendment." A person.</li>
+<li><b>A web data stream:</b> the site URL, a stream name, enhanced measurement on or off. Also possible by API.</li>
+<li><b>The Google tag</b> with the stream's measurement ID, in the <code>&lt;head&gt;</code> of each page. The agent can do this.</li>
+<li><b>Check:</b> the Realtime report. "Data collection may take up to 30 minutes to begin."</li>
+</ol>
+<p>For any of the API steps, the agent needs OAuth credentials for a Google Cloud project, which a person creates and consents to. Google's <a href="/google-analytics-mcp">Analytics MCP server</a> reads properties that already exist.</p>
+
+<h3 id="posthog">PostHog Cloud</h3>
+<ol>
+<li><b>Account and project.</b> The fastest path is the wizard: <code>npx @posthog/wizard@latest --signup --email you@example.com --region us</code> creates the account, provisions a project and installs the SDK (<a href="https://posthog.com/docs/ai-engineering/wizard-signup">Wizard signup</a>, as of 6 Nov 2026). The page recommends running it interactively; its <code>--ci</code> mode is "turned off in published builds".</li>
+<li><b>Set a password.</b> "check your inbox for the welcome email and follow the link to set a password". A person.</li>
+<li><b>An API key for the agent.</b> "Signing up this way doesn't mint a personal API key"; you create one from your project settings after logging in. A person. (Apps that register with PostHog as partners can create accounts and projects over OAuth with PKCE, after hosting a metadata document and a signing key on their own domain: <a href="https://posthog.com/docs/integrate/provisioning">Provisioning</a>, as of 6 Nov 2026.)</li>
+<li><b>Check.</b> The SDK's bot filter "also drops every capture when the browser looks automated", and Playwright, Puppeteer and Selenium match by default, so an agent testing with a headless browser has to override those signals first (<a href="https://posthog.com/docs/product-analytics/troubleshooting">Troubleshooting</a>, as of 6 Nov 2026).</li>
+</ol>
+
+<h3 id="plausible">Plausible</h3>
+<ol>
+<li><b>Register:</b> name, email and a password; a 30-day trial, and "No credit card is required to sign up for the trial" (<a href="https://plausible.io/docs/register-account">Register an account</a>, as of 6 Nov 2026). A person.</li>
+<li><b>Verify the email:</b> "enter the four digit code" from the verification email. A person.</li>
+<li><b>Add the site.</b> In the dashboard; by API only with the Sites API, which "is an Enterprise plan feature", with a key Plausible issues on request. A site's domain "must be a globally unique, the request will fail if the domain is already taken" (<a href="https://plausible.io/docs/sites-api">Sites API</a>, as of 6 Nov 2026).</li>
+<li><b>The snippet</b> in the <code>&lt;head&gt;</code>. The agent can do this.</li>
+<li><b>Check.</b> "Our testing tool launches automatically in the background" to send test traffic, with the result in a banner on the dashboard, and "There are no delays with data in Plausible" (<a href="https://plausible.io/docs/troubleshoot-integration">Troubleshoot integration</a>, as of 6 Nov 2026). For reading stats later, the agent needs a Stats API key, which "is a Business plan feature" (<a href="https://plausible.io/docs/stats-api">Stats API</a>, as of 6 Nov 2026).</li>
+</ol>
+
+<h2 id="choose">Where the others fit better</h2>
+<p>Being easy for an agent to set up is one criterion. These tools win on others:</p>
+<ul>
+<li><b>Google Analytics 4</b>, if you run Google Ads and want Google's own audiences and attribution, or your team already reports from GA4. Both can run on the same site, and AgentFirstStack can import GA4 history.</li>
+<li><b>PostHog</b>, if you want product analytics, feature flags, experiments and session replay in one product, and its wizard covers the setup well. See <a href="/posthog-mcp">PostHog MCP compared</a>.</li>
+<li><b>Plausible</b>, if people on your team will read the dashboard every day and want a simple, privacy-friendly one they may already know.</li>
+</ul>
+<p>We wrote this benchmark about our own product. Our side is a script anyone can rerun; for the others we used their own docs and linked every claim. If a doc changes, <a href="mailto:support@agentfirststack.com">tell us</a> and we'll update the page.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>How many requests does an AI agent need to set up AgentFirstStack analytics?</h3>
+<p>Six, measured against production on 6 November 2026: signup, create the site, get the install code, a test pageview, realtime showing it, and the setup check confirming the site receives events. Two runs took 5.9 and 7.3 seconds. Editing the code and deploying the site come on top.</p>
+<h3>Why didn't you time GA4, PostHog and Plausible?</h3>
+<p>Each one needs a person for part of the setup, such as an email code, accepting terms in a browser or creating an API key in settings, so a timing would measure the person. We counted the steps their own docs describe instead, and linked each doc.</p>
+<h3>Which other tool comes closest?</h3>
+<p>PostHog. Its wizard (<code>npx @posthog/wizard@latest --signup</code>) creates an account and a project and installs the SDK from one command. The person then sets a password from a welcome email, and a personal API key for the REST API is created after logging in.</p>
+<h3>Can I rerun the benchmark?</h3>
+<p>Yes. The script is on this page and uses only curl and jq. The hosted service allows 3 new accounts per hour from one network, and the script deletes its throwaway project at the end with <code>DELETE /v1/me</code>.</p>
+<h3>Does the test pageview show up in my reports?</h3>
+<p>No. A pageview from a page opened with <code>?afsa_debug=1</code> is test traffic: stored, visible in <code>realtime?debug=only</code>, left out of every report and deleted after 7 days.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, PostHog or Plausible.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/agent-first-analytics"><span class="svc svc-analytics">Analytics</span><b>Agent-first analytics</b><span>What it is, and what to ask of any tool.</span></a></li>
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>One prompt, every step, and what's left for you.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/umami-alternative"><span class="svc svc-analytics">Analytics</span><b>Umami alternative</b><span>Two open-source analytics tools, compared.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#results">Results</a></li><li><a href="#method">Method</a></li><li><a href="#runs">The two runs</a></li><li><a href="#script">The script</a></li><li><a href="#others">GA4, PostHog and Plausible</a></li><li><a href="#choose">Where the others fit better</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

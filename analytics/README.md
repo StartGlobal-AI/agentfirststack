@@ -4,9 +4,10 @@ Cookieless, privacy-friendly web analytics that an agent can set up in two reque
 server-side enrichment (every country, region and city from Cloudflare's edge, not from the
 browser), server-side event ingestion for backends, goals, revenue attribution (Stripe webhook or
 any provider), visitors and journeys, derived insights, comparisons, annotations with automatic
-traffic-spike notes, saved funnels, ingest exclusions, scroll depth and Core Web Vitals, AI
-crawler visits reported by the site's server, history imported from GA4, Plausible or any other
-tool, and an agent-queryable stats API.
+traffic-spike notes, saved funnels, ingest exclusions, scroll depth and a real-visitor Core Web
+Vitals report (with alerts and a PageSpeed Insights lab run), AI crawler visits reported by the
+site's server and an AI search report that lines them up with visitors from AI assistants, history
+imported from GA4, Plausible or any other tool, and an agent-queryable stats API.
 
 Sections marked (v2) are deliberately not built yet. `GET /llms.txt` is the complete manual.
 
@@ -227,6 +228,9 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | POST | `/sites/:id/crawls` | bot requests the site's server saw `{hits: [{user_agent, path, status?, timestamp?}]}`: classified by user agent, counted per bot / page / day, never as visitors or events |
 | GET | `/sites/:id/crawlers` | crawler hits by bot, operator, category, page or status; daily series per category |
 | GET | `/crawlers` | the maintained crawler list and a prefilter regex (no key) |
+| GET | `/sites/:id/ai-search?period=&compare=` | AI search in one answer: AI crawlers by bot / operator / category and the pages they read (with robots.txt / llms.txt / sitemap fetches), AI assistants that sent visitors and their landing pages, what those visitors did next to all other channels (lift), gaps between crawled and referred pages, a daily series, the previous period (default) and `next_steps` |
+| GET | `/sites/:id/web-vitals?period=&breakdown=page\|device\|country\|browser&compare=` | real visitors' Core Web Vitals: p75 by nearest rank (Google's method), % good / needs improvement / poor by Google's thresholds, samples (`enough_samples` under 30), assessment, worst pages, breakdown rows with comparison, `next_steps`; filters and segments apply |
+| GET | `/sites/:id/web-vitals/lab?url=&strategy=` | a Google PageSpeed Insights (Lighthouse) run on one https page of the site's own domain: lab metrics, opportunities, Google's field data, and our real-visitor p75 for the same path. Full key; `VERIFY_LIMITER` per account and domain; 45 s timeout |
 | GET | `/rollup` | every site of the account: per-site totals for a period (optional compare) and sums |
 | GET | `/usage` | every fair-use limit for the account with `label`, `used`, `limit`, `remaining`, `resets_at`, `unit`, `var`, `drops_data` and, for per-site caps, `per` (every site, highest first); `attacks` (sites under attack protection now or in the last 24 h); see Fair use |
 | GET | `/sites/:id/realtime` | visitors in last 5 / 30 min, top pages/countries/sources (30 min), a 1-60 minute `window` (`minutes`, `breakdown`), recent events (`since`, `limit`); `filters` and `debug=only` (the debug view) apply to all of it |
@@ -264,7 +268,7 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | DELETE | `/sites/:id/share?token=` | revoke (and delete) one share link, or all |
 | GET | `/sites/:id/share` | share links with their options (password configured, expires_at, segment_id, label) |
 | POST/GET/DELETE | `/sites/:id/destinations[/:destination_id]`, `POST .../:destination_id/test` | alert and report destinations: signed webhook (secret shown once), Slack incoming webhook, or email to the project's members (with the optional `EMAIL` binding + `ALERT_EMAIL_FROM`). URLs sealed with `ENCRYPTION_KEY`, never returned; https on 443, public hostnames only, never the platform's own domain (checked at create and before every delivery), no redirects. Project key only (`403 temporary_credential` for an OAuth token) |
-| POST/GET/PATCH/DELETE | `/sites/:id/alerts[/:alert_id]`, `POST .../test`, `GET .../history`, `GET /sites/:id/alerts/:alert_id?evaluate=true` | `traffic_spike`, `traffic_drop`, `no_data`, `goal`, `payment` rules checked by the cron; evaluate computes one now without sending; test sends a sample |
+| POST/GET/PATCH/DELETE | `/sites/:id/alerts[/:alert_id]`, `POST .../test`, `GET .../history`, `GET /sites/:id/alerts/:alert_id?evaluate=true` | `traffic_spike`, `traffic_drop`, `no_data`, `goal`, `payment`, `web_vitals` (a metric's p75 over a threshold for the window, with min_samples) rules checked by the cron; evaluate computes one now without sending; test sends a sample |
 | GET | `/sites/:id/deliveries` | every firing, report and test with per-destination results (90 days) |
 | GET | `/sites/:id/digest` | period summary: kpis and revenue with change, goals, channels, alerts fired; top sources / pages / countries, movers and annotations under `untrusted` |
 | POST/GET/PATCH/DELETE | `/sites/:id/reports[/:report_id]`, `POST .../send` | the digest weekly or monthly at an hour of the site timezone, through the destinations |
@@ -480,6 +484,21 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   counter of their own, plus account-wide and deployment-wide budgets (`MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY`,
   `MAX_CRAWL_HITS_PER_DAY`) from a D1 aggregate. Imports, cost rows and crawler hits are refused on a
   full site (507 `storage_full`) like events. Middleware snippets for Workers, Next.js and Express are in llms.txt.
+- **AI search** (`src/lib/ai-search.ts`, `src/do/ai-search.ts`, `src/service/ai-search.ts`): one DO
+  call reads the `crawler_hits` daily aggregate for the AI categories (bots, top 200 paths, the
+  discovery files, the previous period; all with LIMITs) and runs the usual grouped queries over
+  the period's events for the AI Assistants channel (per channel, all other channels, sources,
+  entry pages, a day series). The gap check runs only when the site reports crawler hits: AI
+  landing pages (up to 500 page x assistant pairs) against crawled paths, and each assistant's
+  pages against its vendor's crawlers (`ASSISTANT_OPERATOR`: ChatGPT -> OpenAI, Claude ->
+  Anthropic, Gemini -> Google incl. Googlebot, Copilot -> Microsoft's bingbot, ...) over the
+  period plus 30 days before it. Advice (`next_steps`) is pure code from the numbers.
+- **Web Vitals** (`src/lib/vitals.ts`, `src/do/vitals.ts`, `src/service/vitals.ts`): pageviews
+  whose engagement beacon carried LCP / INP / CLS; per set of rows two queries (counts and bands
+  with a LIMIT, then nearest-rank p75 with window functions for those rows only). worst_pages ranks
+  the 100 most-loaded pages by how far their worst metric (10+ samples) is over its good limit. The
+  lab run calls PageSpeed Insights keyless (or with `PAGESPEED_API_KEY`) for https URLs on the
+  site's domain only, and is a write-scope call (an outbound request on the caller's behalf).
 - **Reads** (`src/do/sessions-list.ts`, `src/service/reads.ts`): the session list joins sessions to
   the events that match the filters and links replay through `props.replay_session_id`; the
   realtime map groups the window's located events by city; `/v1/rollup` calls each of the
@@ -588,7 +607,8 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   destinations,reports,cron}.ts`): rules live in D1; the cron (every 5 minutes) picks due ones
   (at most 100 alerts, 50 reports and 50 retries per run, and no new work after 40 s), asks the
   site's DO for a few read-only aggregates (the window now and the same window on each of the 7
-  days before; conversions; payments after a cursor), decides in pure code, and delivers to each
+  days before; conversions; payments after a cursor; a metric's p75, samples and slowest pages for
+  `web_vitals`), decides in pure code, and delivers to each
   destination in parallel with a 10 s timeout and no redirects. Each message is one
   `alert_events` row with per-destination results; failures are retried twice (5 and 30 min).
   Slack text escapes `<`, `>` and `&` so a visitor-sent referrer can't become a mention or link;
@@ -610,13 +630,14 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
 `get_realtime`, `get_funnel`, `get_paths`, `get_attribution`, `track_events`, `create_goal`, `list_goals`, `delete_goal`,
 `query_sql`, `create_share_link`, `revoke_share_links`, `list_share_links`, `list_visitors`, `get_visitor`,
 `get_session`, `get_journeys`, `get_retention`, `get_stripe_integration`, `connect_stripe`, `connect_stripe_key`, `backfill_stripe`, `disconnect_stripe`,
-`get_fx_rates`, `get_billing_integration`, `connect_billing_provider`, `disconnect_billing_provider`, `record_payments`, `list_payments`, `delete_payment`, `record_subscriptions`, `list_subscriptions`, `get_mrr`, `record_costs`, `list_costs`, `delete_costs`, `get_items`, `list_user_props`, `list_sessions`, `get_realtime_map`, `get_account_rollup`, `get_usage`, `record_crawls`, `get_crawlers`, `import_csv`, `list_imports`, `compare_import`, `delete_import`, `export_events`, `list_annotations`, `create_annotation`,
+`get_fx_rates`, `get_billing_integration`, `connect_billing_provider`, `disconnect_billing_provider`, `record_payments`, `list_payments`, `delete_payment`, `record_subscriptions`, `list_subscriptions`, `get_mrr`, `record_costs`, `list_costs`, `delete_costs`, `get_items`, `list_user_props`, `list_sessions`, `get_realtime_map`, `get_account_rollup`, `get_usage`, `record_crawls`, `get_crawlers`, `get_ai_search`, `get_web_vitals`, `get_web_vitals_lab`, `import_csv`, `list_imports`, `compare_import`, `delete_import`, `export_events`, `list_annotations`, `create_annotation`,
 `update_annotation`, `delete_annotation`, `get_exclusions`, `list_funnels`, `create_funnel`,
 `update_funnel`, `delete_funnel`, `create_destination`, `list_destinations`, `test_destination`,
 `delete_destination`, `create_alert`, `list_alerts`, `get_alert`, `update_alert`, `delete_alert`,
 `test_alert`, `get_alert_history`, `get_digest`, `create_report`, `list_reports`, `update_report`,
 `delete_report`, `send_report`, `get_quarantine`, `release_quarantine`, `purge_quarantine`. Write tools are hidden from read-only keys; `verify_install` is a write tool
-(like `POST /sites/:id/verify`, it makes outbound fetches). `get_site` and `verify_install` return
+(like `POST /sites/:id/verify`, it makes outbound fetches), and so is `get_web_vitals_lab` (Google
+fetches the page on the caller's behalf; its REST route refuses read keys too). `get_site` and `verify_install` return
 third-party strings (bot user agents, dropped hostnames, the last event, anything copied from the
 fetched page) only under an `untrusted` key with a notice, like the mail tools, and say so in
 their descriptions. Tools that return visitor-sent values (stats and breakdowns, realtime,
@@ -733,6 +754,7 @@ pages/sources/countries/devices tables, light and dark. It reads `GET /share/:to
 | `MAX_SHARE_LINKS_PER_SITE` | optional var; active share links per site. Default 10 |
 | `UNCLAIMED_<NAME>` | optional; for every cap and budget above (and the annotation / funnel caps): the value for accounts no person has claimed. Unset = the plain var. `0` means "no cap" for count caps (sites, goals, share links, funnels, annotations) and "nothing" for daily budgets and storage |
 | `INGEST_IP_LIMITER`, `INGEST_SITE_LIMITER`, `API_INGEST_LIMITER`, `SQL_LIMITER`, `VERIFY_LIMITER`, `WEBHOOK_LIMITER`, `SHARE_LIMITER` | rate-limit bindings in `wrangler.jsonc` (namespaces 42001-42007); remove one and that limit is off |
+| `PAGESPEED_API_KEY` | optional secret; a Google API key for lab runs (`/sites/:id/web-vitals/lab`). Unset = keyless, on Google's small shared quota (`503 upstream_rate_limited` when it runs out) |
 | `ENCRYPTION_KEY` | optional secret; 32 bytes base64 (`openssl rand -base64 32`). Seals the Stripe webhook signing secret. Unset: connecting Stripe returns 503 `not_configured` with a hint (the payments API still works). Changing it makes stored secrets unreadable: connect Stripe again |
 | `MAX_ANNOTATIONS_PER_SITE` | optional var; manual annotations per site (403 `quota_exceeded` beyond). Unset = no cap |
 | `MAX_EXPORT_ROWS_PER_SITE_PER_DAY` | optional var; raw events exported per site per UTC day (default 1000000) |

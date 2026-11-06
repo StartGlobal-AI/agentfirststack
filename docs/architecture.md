@@ -50,6 +50,34 @@ error groups, signal spikes) are D1 delivery rows sent right away and retried by
 alarm, so replay needs no queue. Saved segments, event definitions, surveys and webhooks are D1
 config; tags, labels, notes, responses and attention data live in the DO with the session.
 
+## First-party collection
+
+Ad blockers block requests to `analytics.*` hosts, so every install answer leads with `first_party`
+(analytics, tags and replay alike): a first-party domain, then the path proxy, then the direct
+snippet as a last resort. Collection reaches the services three ways, and analytics counts each
+day's browser events by which one (`via_direct`, `via_proxy`, `via_edge` in the DO's `usage` row,
+in the same upsert as the daily budget), which the setup check's `analytics.first_party` reads:
+
+- **Direct**: the browser calls `analytics.<apex>/e`, `tags.<apex>/collect`, `replay.<apex>/i`.
+  IP and geo are Cloudflare's view of the request.
+- **Path proxy**: the customer's own server or edge forwards `/_a/*`, `/_t/*` or `/_r/*` unchanged
+  (the services serve their browser endpoints under any prefix) with the resource's proxy key
+  (`x-afs-proxy-key`, an HMAC of the site or container id). Only with a valid key do analytics and
+  tags trust its X-Forwarded-For and `x-afs-geo-*`.
+- **First-party domain** (Cloudflare for SaaS): `edge.shop.com` is a custom hostname on the
+  platform's zone with a Worker route to the site Worker (`site/src/first-party-domains.ts` creates
+  both and stores them in `first_party_domains` in the identity DB). The site Worker's edge
+  (`firstPartyEdge` in `site/src/first-party.ts`, before every other route) looks the Host up
+  (cached a minute per isolate) and forwards `/_a/*`, `/_t/*`, `/_r/*` over the service bindings to
+  `https://<svc>.internal`, with cookies and visitor-sent `x-afs-*` removed, the visitor's IP and
+  geo added, and `x-afs-internal` (INTERNAL_TOKEN) plus `x-afs-edge-host`. `edgeHost()` in
+  `@afs/shared` accepts that only over a binding (the `.internal` host) with a constant-time token
+  match, and the services trust it like a valid proxy key; analytics then hands the tracker a
+  replay loader on the same hostname. No account is involved: the edge only forwards public
+  collection, and `x-afs-internal` without `x-afs-account` is refused everywhere else. Every other
+  path on such a host is a small 404, except the platform's own static files (images, CSS, JS),
+  which the assets binding serves before the Worker runs (`run_worker_first` skips them).
+
 ## Identity
 
 - `POST /v1/signup` on any service (or the site) creates an account and an API key. Nothing else

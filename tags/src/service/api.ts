@@ -2,6 +2,8 @@ import { type AuthContext, assertPermanentKey, badRequest, canWrite, forbidden, 
 import { z } from "zod";
 import { schemaDocument } from "../config/catalog";
 import type { EventFilter } from "../do/container-do";
+import { BANNER_CATEGORY_NAMES, type ConsentBanner } from "../config/schema";
+import { same } from "../config/diff";
 import type { Bindings } from "../env";
 import {
   containerNextSteps,
@@ -13,6 +15,7 @@ import {
   draftValidation,
   getContainerRow,
   installInstructions,
+  platformBase,
   type LastImport,
   lastImportOf,
   listContainers,
@@ -73,7 +76,7 @@ import {
   reauthorizeEnvironment,
   updateEnvironment,
 } from "./environments";
-import { shownCap, utcDay } from "./limits";
+import { CONSENT_RETENTION_DAYS, shownCap, utcDay } from "./limits";
 import { deleteLookup, getLookup, listLookups, lookupInput, putLookup } from "./lookups";
 import {
   changesVsLive,
@@ -188,6 +191,20 @@ export const verifyInput = z.strictObject({
       "dns: the _afs-verify TXT record; snippet: this container's <script> on https://<domain>/; auto (default): dns, then snippet.",
     ),
 });
+export const consentQuery = z.object({
+  since: z.string().max(40).optional().describe('Start of the period (default 30d, at most 365d): "7d", unix ms or ISO.'),
+});
+export const consentRecordsQuery = z.object({
+  consent_id: z
+    .string()
+    .regex(/^[0-9a-z]{16,32}$/, "A consent id: 16 to 32 lowercase letters and digits.")
+    .optional()
+    .describe("One visitor's consent id (shown in the banner's settings; afst('get','consent_id') on the page): their whole history."),
+  since: z.string().max(40).optional().describe('Default 30d (365d with consent_id), at most 365d: "7d", unix ms or ISO.'),
+  before: z.coerce.number().int().positive().optional().describe("Cursor: next_before from the previous page."),
+  limit: z.coerce.number().int().min(1).max(200).optional().describe("Default 50."),
+});
+
 export const eventsQuery = z.object({
   name: z.string().max(64).optional(),
   status: z
@@ -252,8 +269,8 @@ export const ops = {
         container: publicContainer(row, o.base),
         existing,
         // The proxy key stays out of this answer: GET /install?proxy=1 returns it when a proxy is set up.
-        install: installInstructions(o.base, row),
-        next_steps: containerNextSteps(row.id, existing, row.live_version != null),
+        install: installInstructions(o.base, row, null, platformBase(o.env)),
+        next_steps: containerNextSteps(row.id, existing, row.live_version != null, platformBase(o.env), row.domain),
       },
     };
   },
@@ -310,7 +327,7 @@ export const ops = {
       ...(warnings.length ? { warnings } : {}),
       next_steps:
         row.live_version == null
-          ? containerNextSteps(id, false, false)
+          ? containerNextSteps(id, false, false, platformBase(o.env), row.domain)
           : [
               `GET /v1/containers/${id}/events shows recent conversions and their delivery.`,
               `PATCH /v1/containers/${id}/draft then POST /publish to change tags.`,
@@ -329,14 +346,19 @@ export const ops = {
 
   async install(o: OpCtx, id: string, opts: { proxy?: boolean } = {}) {
     const row = await getContainerRow(o.env, o.auth.accountId, id);
-    if (!opts.proxy) return { container_id: id, ...installInstructions(o.base, row) };
+    const site = platformBase(o.env);
+    if (!opts.proxy) {
+      const { first_party, ...rest } = installInstructions(o.base, row, null, site);
+      return { first_party, container_id: id, ...rest };
+    }
     // The proxy key lets a request set the visitor IP /collect sends on: full-access keys only.
     if (!canWrite(o.auth))
       throw forbidden(
         "The proxy configs carry the container's proxy key, which read-only keys can't see.",
         `Use a key with scope "*" for GET /v1/containers/${id}/install?proxy=1, or leave proxy out for the snippet and the rest.`,
       );
-    return { container_id: id, ...installInstructions(o.base, row, { key: await proxyKey(o.env, row.id) }) };
+    const { first_party, ...rest } = installInstructions(o.base, row, { key: await proxyKey(o.env, row.id) }, site);
+    return { first_party, container_id: id, ...rest };
   },
 
   async scan(o: OpCtx, id: string, input: z.infer<typeof scanInput>) {
@@ -738,6 +760,106 @@ export const ops = {
     };
   },
 
+  /** GET /v1/containers/:id/consent: the consent banner's status (live and draft) and its accept / reject / custom rates. */
+  async consent(o: OpCtx, id: string, since?: string) {
+    const row = await getContainerRow(o.env, o.auth.accountId, id);
+    const now = Date.now();
+    const from = Math.max(parseSince(since ?? "30d") ?? now - 30 * DAY_MS, now - CONSENT_RETENTION_DAYS * DAY_MS);
+    const [live, sum] = await Promise.all([liveConfig(o.env, row), containerStub(o.env, id).consentSummary(utcDay(from))]);
+    const lb = live?.consent_banner;
+    const db = draftConfig(row).consent_banner;
+    const status = lb?.enabled ? "on" : db?.enabled ? "draft_only" : "off";
+    const totals = { records: 0, accept_all: 0, reject_all: 0, custom: 0 };
+    const granted = { analytics: 0, ads: 0, personalization: 0 };
+    const days = new Map<string, { day: string; records: number; accept_all: number; reject_all: number; custom: number }>();
+    for (const d of sum.days) {
+      const k = d.method as "accept_all" | "reject_all" | "custom";
+      totals.records += d.n;
+      totals[k] = (totals[k] ?? 0) + d.n;
+      granted.analytics += d.analytics;
+      granted.ads += d.ads;
+      granted.personalization += d.personalization;
+      const day = days.get(d.day) ?? { day: d.day, records: 0, accept_all: 0, reject_all: 0, custom: 0 };
+      day.records += d.n;
+      day[k] = (day[k] ?? 0) + d.n;
+      days.set(d.day, day);
+    }
+    const rate = (n: number) => (totals.records ? Math.round((n / totals.records) * 1000) / 1000 : null);
+    const u = `${o.base}/v1/containers/${id}`;
+    const turnOn = `PATCH ${u}/draft {"consent_banner":{"enabled":true,"privacy_url":"https://${row.domain}/privacy"}} (MCP patch_draft), then POST ${u}/publish`;
+    return {
+      container_id: id,
+      status,
+      banner: bannerView(lb),
+      draft: { banner: bannerView(db), differs_from_live: !same(db ?? null, lb ?? null) },
+      since: from,
+      totals,
+      rates: { accept_all: rate(totals.accept_all), reject_all: rate(totals.reject_all), custom: rate(totals.custom) },
+      categories: Object.fromEntries(BANNER_CATEGORY_NAMES.map((k) => [k, { granted: granted[k], rate: rate(granted[k]) }])) as Record<
+        (typeof BANNER_CATEGORY_NAMES)[number],
+        { granted: number; rate: number | null }
+      >,
+      by_day: [...days.values()],
+      today: { records: sum.today, limit: sum.limit },
+      retention_days: CONSENT_RETENTION_DAYS,
+      note: "One record per choice made in the banner (accept_all, reject_all, or custom from the settings layer): consent id, time, banner version, choice per category, country, text language and container version, never the IP, user agent or visitor id. Test traffic (preview, ?afsa_debug=1) isn't recorded. Records are kept 12 months.",
+      next_steps:
+        status === "off"
+          ? [
+              `Turn it on: ${turnOn}. Visitors in the EEA, UK and Switzerland are then asked first; everyone else gets your consent defaults.`,
+            ]
+          : status === "draft_only"
+            ? [
+                `The draft has the banner but it isn't live: POST ${u}/preview to try it (add &afst_consent=open to the preview URL to see it from anywhere), then POST ${u}/publish.`,
+              ]
+            : [
+                totals.records
+                  ? `Look up one visitor's choices: GET ${u}/consent/records?consent_id=<id> (the id is in the banner's settings layer and afst('get','consent_id')).`
+                  : `No choices recorded in this period. Open https://${row.domain}/?afst_consent=open in a normal tab (not a preview, which isn't recorded), choose, then check again.`,
+                'Add a way to change the choice later: <a href="#" data-afst-consent-open>Cookie settings</a> in the footer (or consent_banner.reopen_button: true).',
+                ...(db && !same(db, lb)
+                  ? [`The draft's banner differs from the live one: POST ${u}/publish to apply it (raise version to ask everyone again).`]
+                  : []),
+              ],
+    };
+  },
+
+  /** GET /v1/containers/:id/consent/records: proof of consent, newest first; consent_id = one visitor's history. */
+  async consentRecords(o: OpCtx, id: string, q: z.infer<typeof consentRecordsQuery>) {
+    await getContainerRow(o.env, o.auth.accountId, id);
+    const now = Date.now();
+    const def = q.consent_id ? now - CONSENT_RETENTION_DAYS * DAY_MS : now - 30 * DAY_MS;
+    const from = Math.max(parseSince(q.since) ?? def, now - CONSENT_RETENTION_DAYS * DAY_MS);
+    const r = await containerStub(o.env, id).consentRecords({ consent_id: q.consent_id, since: from, before: q.before, limit: q.limit });
+    const records = r.records.map((x) => ({
+      consent_id: x.consent_id,
+      at: x.at,
+      at_iso: new Date(x.at).toISOString(),
+      version: x.version,
+      method: x.method,
+      choice: { necessary: true, analytics: !!x.analytics, ads: !!x.ads, personalization: !!x.personalization },
+      country: x.country,
+      language: x.language,
+      container_version: x.container_version,
+    }));
+    return {
+      container_id: id,
+      ...(q.consent_id ? { consent_id: q.consent_id } : {}),
+      since: from,
+      records,
+      next_before: r.next_before,
+      note: "Newest first. version is the banner version the visitor saw; container_version the published version whose text they saw (GET /v1/containers/:id/versions/:n), in language (null: consent_banner.text). Records are anonymous and kept 12 months.",
+      next_steps:
+        q.consent_id && !records.length
+          ? [
+              "No record for this consent id in the last 12 months. Check the id (the banner's settings layer shows it); choices from test traffic (preview, ?afsa_debug=1) and past MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY aren't recorded.",
+            ]
+          : r.next_before
+            ? [`More: the same request with before=${r.next_before}.`]
+            : [],
+    };
+  },
+
   /** GET /v1/containers/:id/quarantine: what attack protection set aside (the event log keeps 7 days). */
   async quarantine(o: OpCtx, id: string, since?: string) {
     await getContainerRow(o.env, o.auth.accountId, id);
@@ -928,6 +1050,24 @@ export const ops = {
     return getUsage(o.env, o.auth.accountId, Date.now(), o.base);
   },
 };
+
+const DAY_MS = 86_400_000;
+
+/** The consent banner as GET /consent shows it: the defaults filled in. */
+function bannerView(b: ConsentBanner | undefined) {
+  if (!b) return null;
+  return {
+    enabled: b.enabled,
+    regions: b.regions ?? "eea",
+    categories: b.categories ?? [...BANNER_CATEGORY_NAMES],
+    version: b.version ?? 1,
+    expiry_days: b.expiry_days ?? 180,
+    position: b.position ?? "bottom",
+    privacy_url: b.privacy_url ?? null,
+    languages: Object.keys(b.languages ?? {}),
+    reopen_button: !!b.reopen_button,
+  };
+}
 
 async function itemResponse(
   o: OpCtx,

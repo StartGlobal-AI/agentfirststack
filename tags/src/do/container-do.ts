@@ -14,7 +14,16 @@ import type { Bindings } from "../env";
 import { type EventCounts, type EventScope, NO_EVENTS, reportEventUsage, reserveDeliveries } from "../service/budget";
 import { aggregateStatus, type DestinationInfo, planDispatch, type PlannedTarget, type TargetResult } from "../service/dispatch-plan";
 import { mergeVisitor, type VisitorData, type VisitorUpdate } from "../service/identity";
-import { CLAIMED, containerCaps, type EventBudgets, eventBudgets, needsAggregate, shownCap, utcDay } from "../service/limits";
+import {
+  CLAIMED,
+  CONSENT_RETENTION_DAYS,
+  containerCaps,
+  type EventBudgets,
+  eventBudgets,
+  needsAggregate,
+  shownCap,
+  utcDay,
+} from "../service/limits";
 import {
   browserDispatchEvent,
   type CollectHit,
@@ -25,7 +34,7 @@ import {
   serverUserData,
   visitorUpdateFromHit,
 } from "../service/ingest";
-import type { ServerEvent } from "../service/ingest-schema";
+import type { ConsentRecordPayload, ServerEvent } from "../service/ingest-schema";
 import { hostAllowed, originHost } from "../service/origin";
 import { eventForLog, LOG_IDENTITY } from "../service/privacy";
 import {
@@ -51,6 +60,8 @@ export const PREVIEW_LOG_HOURS = 48;
 export const TAG_STATS_DAYS = 30;
 /** Distinct host + path rows for coverage; further pages count under path "(other)". */
 export const MAX_COVERAGE_PAGES = 1000;
+/** The daily consent counts behind the rates are kept a little longer than the records (CONSENT_RETENTION_DAYS). */
+const CONSENT_DAILY_DAYS = 400;
 const DAY = 86_400_000;
 /** Backend events keep working past MAX_CONTAINER_DB_BYTES up to this factor, so a /collect flood can't block them. */
 export const SERVER_STORAGE_HEADROOM = 1.25;
@@ -83,6 +94,8 @@ export interface ContainerUsage {
   /** Browser hits quarantined today (attack protection), and the most hits one network sent today. */
   quarantined: number;
   network_max: number;
+  /** Consent banner choices recorded today. */
+  consent_records: number;
   protection: ProtectionView;
 }
 
@@ -92,6 +105,34 @@ export interface DispatchMessage {
   type: string;
   test: boolean;
   event: DispatchEvent;
+}
+
+/** One consent banner choice to record (the Worker checked it isn't test traffic). No IP, user agent or visitor id. */
+export interface ConsentRecordInput {
+  record: ConsentRecordPayload;
+  /** The page's host (origin check), the visitor's country (Cloudflare), the container version the page ran. */
+  host: string | null;
+  country: string | null;
+  container_version: number | null;
+  at: number;
+}
+
+export type ConsentRecordResult =
+  | { ok: true }
+  | { ok: false; error: "not_synced" | "origin_not_allowed" | "suspended"; host?: string }
+  | { ok: false; error: "consent_quota" | "storage_full"; limit: number };
+
+export interface ConsentRecordRow {
+  consent_id: string;
+  at: number;
+  version: number;
+  analytics: number;
+  ads: number;
+  personalization: number;
+  method: string;
+  country: string | null;
+  language: string | null;
+  container_version: number | null;
 }
 
 export type CollectResult =
@@ -231,6 +272,15 @@ export class ContainerDO extends DurableObject<Bindings> {
           host TEXT NOT NULL, path TEXT NOT NULL, hits INTEGER NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
           PRIMARY KEY (host, path));
         CREATE TABLE IF NOT EXISTS net_daily (day TEXT NOT NULL, net TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, net));
+        CREATE TABLE IF NOT EXISTS consent_records (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT, consent_id TEXT NOT NULL, at INTEGER NOT NULL, version INTEGER NOT NULL,
+          analytics INTEGER NOT NULL, ads INTEGER NOT NULL, personalization INTEGER NOT NULL, method TEXT NOT NULL,
+          country TEXT, language TEXT, container_version INTEGER);
+        CREATE INDEX IF NOT EXISTS consent_records_id ON consent_records(consent_id, at);
+        CREATE INDEX IF NOT EXISTS consent_records_at ON consent_records(at);
+        CREATE TABLE IF NOT EXISTS consent_daily (
+          day TEXT NOT NULL, method TEXT NOT NULL, n INTEGER NOT NULL,
+          analytics INTEGER NOT NULL, ads INTEGER NOT NULL, personalization INTEGER NOT NULL, PRIMARY KEY (day, method));
       `);
       const hasEvents = this.tableExists("events");
       const version = hasEvents ? (this.getMeta<number>("schema") ?? 1) : 0;
@@ -374,6 +424,8 @@ export class ContainerDO extends DurableObject<Bindings> {
     this.sql.exec("DELETE FROM preview_log WHERE received_at < ?", now - PREVIEW_LOG_HOURS * 3_600_000);
     this.sql.exec("DELETE FROM tag_stats WHERE day < ?", utcDay(now - TAG_STATS_DAYS * DAY));
     this.sql.exec("DELETE FROM pages WHERE last_seen < ?", now - TAG_STATS_DAYS * DAY);
+    this.sql.exec("DELETE FROM consent_records WHERE at < ?", now - CONSENT_RETENTION_DAYS * DAY);
+    this.sql.exec("DELETE FROM consent_daily WHERE day < ?", utcDay(now - CONSENT_DAILY_DAYS * DAY));
     this.visitorCount = null;
     this.pageCount = null;
     await this.ctx.storage.setAlarm(now + DAY);
@@ -566,6 +618,105 @@ export class ContainerDO extends DurableObject<Bindings> {
       )
       .toArray();
     return { pages, capped: pages.some((p) => p.path === "(other)") };
+  }
+
+  // ------------------------------------------------------------------ consent banner records (proof of consent)
+
+  /** Record one banner choice: origin checked like /collect hits, capped per day (MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY). */
+  async recordConsent(input: ConsentRecordInput): Promise<ConsentRecordResult> {
+    const state = this.getMeta<ContainerState>("container");
+    if (!state) return { ok: false, error: "not_synced" };
+    if (!input.host || !hostAllowed(input.host, state)) return { ok: false, error: "origin_not_allowed", host: input.host ?? undefined };
+    const standing = await accountStanding(this.env, state.account_id);
+    if (standing.suspended) return { ok: false, error: "suspended" };
+    const caps = containerCaps(this.env, standing);
+    if (this.sql.databaseSize > caps.dbBytes) return { ok: false, error: "storage_full", limit: caps.dbBytes };
+    const day = utcDay(input.at);
+    if (this.usage(day, "consent_records") >= caps.consentRecordsPerDay)
+      return { ok: false, error: "consent_quota", limit: caps.consentRecordsPerDay };
+    const r = input.record;
+    const [a, d, p] = [+r.analytics, +r.ads, +r.personalization];
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO consent_records (consent_id, at, version, analytics, ads, personalization, method, country, language, container_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        r.id,
+        input.at,
+        r.version,
+        a,
+        d,
+        p,
+        r.method,
+        input.country,
+        r.language ?? null,
+        input.container_version,
+      );
+      this.sql.exec(
+        `INSERT INTO consent_daily (day, method, n, analytics, ads, personalization) VALUES (?, ?, 1, ?, ?, ?)
+         ON CONFLICT(day, method) DO UPDATE SET n = n + 1, analytics = analytics + excluded.analytics,
+           ads = ads + excluded.ads, personalization = personalization + excluded.personalization`,
+        day,
+        r.method,
+        a,
+        d,
+        p,
+      );
+      this.bump(day, "consent_records", 1);
+    });
+    await this.ensureAlarm();
+    return { ok: true };
+  }
+
+  /** Daily counts since a day (for GET /consent), and today's records against the cap. */
+  async consentSummary(sinceDay: string) {
+    if (!this.ready) return { days: [], today: 0, limit: null };
+    const state = this.getMeta<ContainerState>("container");
+    const standing = state ? await accountStanding(this.env, state.account_id) : undefined;
+    const days = this.sql
+      .exec<{ day: string; method: string; n: number; analytics: number; ads: number; personalization: number }>(
+        "SELECT day, method, n, analytics, ads, personalization FROM consent_daily WHERE day >= ? ORDER BY day",
+        sinceDay,
+      )
+      .toArray();
+    return {
+      days,
+      today: this.usage(utcDay(Date.now()), "consent_records"),
+      limit: shownCap(containerCaps(this.env, standing).consentRecordsPerDay),
+    };
+  }
+
+  /** Records newest first: one consent id's history, or all since a time (before = cursor). */
+  async consentRecords(f: {
+    consent_id?: string;
+    since?: number;
+    before?: number;
+    limit?: number;
+  }): Promise<{ records: ConsentRecordRow[]; next_before: number | null }> {
+    if (!this.ready) return { records: [], next_before: null };
+    const limit = Math.min(Math.max(f.limit ?? 50, 1), 200);
+    const where: string[] = ["at >= ?"];
+    const args: (string | number)[] = [f.since ?? 0];
+    if (f.consent_id) {
+      where.push("consent_id = ?");
+      args.push(f.consent_id);
+    }
+    if (f.before) {
+      where.push("seq < ?");
+      args.push(f.before);
+    }
+    const rows = this.sql
+      .exec<ConsentRecordRow & { seq: number } & Record<string, SqlStorageValue>>(
+        `SELECT seq, consent_id, at, version, analytics, ads, personalization, method, country, language, container_version
+         FROM consent_records WHERE ${where.join(" AND ")} ORDER BY seq DESC LIMIT ?`,
+        ...args,
+        limit + 1,
+      )
+      .toArray() as (ConsentRecordRow & { seq: number })[];
+    const page = rows.slice(0, limit);
+    return {
+      records: page.map(({ seq: _, ...r }) => r as ConsentRecordRow),
+      next_before: rows.length > limit ? page[page.length - 1]!.seq : null,
+    };
   }
 
   // ------------------------------------------------------------------ ingest
@@ -1631,7 +1782,17 @@ export class ContainerDO extends DurableObject<Bindings> {
     const state = this.getMeta<ContainerState>("container");
     const protection = this.protectionView(state, now, standing);
     if (!this.ready)
-      return { browser_events: 0, server_events: 0, deliveries: 0, visitors: 0, db_bytes: 0, quarantined: 0, network_max: 0, protection };
+      return {
+        browser_events: 0,
+        server_events: 0,
+        deliveries: 0,
+        visitors: 0,
+        db_bytes: 0,
+        quarantined: 0,
+        network_max: 0,
+        consent_records: 0,
+        protection,
+      };
     this.visitorCount ??= this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM visitors").toArray()[0]?.n ?? 0;
     return {
       browser_events: this.usage(day, "browser_events"),
@@ -1641,6 +1802,7 @@ export class ContainerDO extends DurableObject<Bindings> {
       db_bytes: this.sql.databaseSize,
       quarantined: this.quarantineCounts(day).total,
       network_max: this.networkMax(day),
+      consent_records: this.usage(day, "consent_records"),
       protection,
     };
   }

@@ -84,8 +84,10 @@ check "extracted code 61873352" '[ "$(jq -r .message.code <<<"$BODY")" = 6187335
 check "extracted verify link" '[[ "$(jq -r .message.verify_link <<<"$BODY")" == https://github.com/account_verifications/confirm/* ]] && [ "$(jq -r .message.verify_link_kind <<<"$BODY")" = verify ]' "$BODY"
 MSG=$(jq -r .message.id <<<"$BODY")
 
+req GET "/v1/inboxes/$INBOX/latest-code?from=github.com&after=0&timeout=2"
+check "latest-code returns code + link" '[ "$CODE" = 200 ] && [ "$(jq -r .code <<<"$BODY")" = 61873352 ] && [ "$(jq -r .link_kind <<<"$BODY")" = verify ] && [ "$(jq -r .sender_domain <<<"$BODY")" = github.com ]' "$BODY"
 req GET "/v1/inboxes/$INBOX/latest-code?after=0&timeout=2"
-check "latest-code returns code + link" '[ "$CODE" = 200 ] && [ "$(jq -r .code <<<"$BODY")" = 61873352 ] && [ "$(jq -r .link_kind <<<"$BODY")" = verify ]' "$BODY"
+check "latest-code without from still works for one sender, with a warning" '[ "$CODE" = 200 ] && [ "$(jq -r .code <<<"$BODY")" = 61873352 ] && [ "$(jq -r .warning <<<"$BODY")" != null ]' "$BODY"
 
 req GET "/v1/inboxes/$INBOX/wait?from=nobody-sends-this&timeout=1"
 check "wait times out with 408 + hint" '[ "$CODE" = 408 ] && [ "$(jq -r .error.code <<<"$BODY")" = timeout ] && [ "$(jq -r .error.hint <<<"$BODY")" != null ]' "$BODY"
@@ -211,14 +213,14 @@ check "/ui is one HTML page with a sandboxed iframe + CSP" '[ "$CODE" = 200 ] &&
 echo "-- cleanup"
 req DELETE "/v1/inboxes/$INBOX"
 check "delete inbox removes it and its blobs" '[ "$CODE" = 200 ] && [ "$(jq -r .blobs_deleted <<<"$BODY")" -ge 3 ]' "$BODY"
-check "an address that received mail stays reserved (address_reserved_until)" '[ "$(jq -r .address_reserved_until <<<"$BODY")" -gt "$(( $(date +%s) * 1000 ))" ]' "$BODY"
+check "a deleted shared-domain address is retired for good (address_reserved)" '[ "$(jq -r .address_reserved <<<"$BODY")" = true ]' "$BODY"
 req GET "/v1/messages/$MSG"
 check "its messages are gone" '[ "$CODE" = 404 ]' "$BODY"
 OWNER_KEY=$KEY
 KEY="" req POST /v1/signup '{"name":"smoke-2"}'
 KEY=$(jq -r .api_key <<<"$BODY")
 req POST /v1/inboxes "{\"username\":\"smoke-$RUN\"}"
-check "a deleted shared address that received mail is not handed to another account (409)" '[ "$CODE" = 409 ] && [ "$(jq -r .error.code <<<"$BODY")" = conflict ]' "$BODY"
+check "a deleted shared address is never handed to another account (409)" '[ "$CODE" = 409 ] && [ "$(jq -r .error.code <<<"$BODY")" = conflict ]' "$BODY"
 KEY=$OWNER_KEY
 req POST /v1/inboxes "{\"username\":\"smoke-$RUN\"}"
 check "its old owner can create it again (201)" '[ "$CODE" = 201 ]' "$BODY"

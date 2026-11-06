@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Bindings } from "../src/env";
-import { parseDomain, type SetupCheck } from "../src/setup-check";
+import { adPixelsBeforeConsent, parseDomain, type SetupCheck } from "../src/setup-check";
 import { E, call, signup, testEnv } from "./helpers";
 
 /**
@@ -236,6 +236,55 @@ describe("setup check", () => {
     expect(again.json.counts.ok).toBe(again.json.checks.length);
   });
 
+  it("analytics.first_party: fails while browser events go straight to the collector, waits on the owner's DNS record, then passes", async () => {
+    const agent = await signup("acme.test");
+    const routes = healthy();
+    const detail = routes.analytics["/v1/sites/site_acme"] as { data: Record<string, unknown> };
+    const { env } = envWith(routes);
+    const check = async () => byId((await call("GET", "/v1/setup", { key: agent.key, env })).json.checks)("analytics.first_party");
+
+    detail.data.collection_last_7d = { direct: 40, proxy: 0, edge: 0, edge_hosts: [], last_direct_at: NOW, last_first_party_at: null };
+    let c = await check();
+    expect(c).toMatchObject({ status: "failing", step: 4, service: "analytics", domain: "acme.test" });
+    expect(c.detail).toContain("40 browser events");
+    expect(c.fix).toContain('POST https://afs.test/v1/first-party-domains {"hostname":"edge.acme.test"}');
+    expect(c.fix).toContain("https://analytics.afs.test/v1/sites/site_acme/install");
+    const report = await call("GET", "/v1/setup", { key: agent.key, env });
+    expect(report.json.ready).toBe(false);
+    expect(report.json.rows.find((r: { part: string }) => r.part === "Analytics").status).toBe("failing");
+
+    // A first-party domain waiting for its CNAME: the owner's move, not blocking.
+    await E.DB.prepare(
+      "INSERT INTO first_party_domains (hostname, account_id, status, created_at, updated_at) VALUES ('edge.acme.test', ?, 'pending', ?, ?)",
+    )
+      .bind(agent.accountId, NOW, NOW)
+      .run();
+    c = await check();
+    expect(c.status).toBe("waiting_on_owner");
+    expect(c.fix).toContain("CNAME edge.acme.test");
+    // Active, but the pages still use the direct snippet: swap it.
+    await E.DB.prepare("UPDATE first_party_domains SET status = 'active' WHERE hostname = 'edge.acme.test'").run();
+    c = await check();
+    expect(c.status).toBe("failing");
+    expect(c.fix).toContain('<script defer src="https://edge.acme.test/_a/s.js" data-site="site_acme"></script>');
+    // Swapped: the latest events come through the domain; earlier direct ones only warn.
+    detail.data.collection_last_7d = {
+      direct: 40,
+      proxy: 0,
+      edge: 12,
+      edge_hosts: ["edge.acme.test"],
+      last_direct_at: NOW - 3_600_000,
+      last_first_party_at: NOW,
+    };
+    c = await check();
+    expect(c.status).toBe("warning");
+    expect(c.detail).toContain("The latest browser events came first-party (12 through edge.acme.test)");
+    detail.data.collection_last_7d = { direct: 0, proxy: 3, edge: 12, edge_hosts: ["edge.acme.test"], last_first_party_at: NOW };
+    c = await check();
+    expect(c.status).toBe("ok");
+    expect(c.detail).toBe("All 15 browser events in 7 days came first-party (12 through edge.acme.test, 3 through the site's own proxy).");
+  });
+
   it("says which tools the site used before still have to be brought over, then compares the numbers", async () => {
     const agent = await signup("acme.test");
     const routes = healthy();
@@ -298,6 +347,81 @@ describe("setup check", () => {
     expect(cmp.status).toBe("ok");
     expect(cmp.detail).toBe("Within 6% of Google Analytics 4 over 7 days. The old tool can go once the owner agrees.");
     expect(r.json.rows.find((x: { part: string }) => x.part === "Other tools").status).toBe("ok");
+  });
+
+  it("warns when ad pixels fire for EU, UK or Swiss visitors without a consent banner, with the call that turns it on", async () => {
+    const agent = await signup("acme.test");
+    const routes = healthy();
+    const live = routes.tags["/v1/containers/ctr_acme/versions/2"] as { config: Record<string, unknown> };
+    live.config.tags = [
+      { id: "analytics", type: "analytics", params: { site_id: "site_acme" }, triggers: ["all_pages"] },
+      { id: "meta", type: "meta_pixel", params: { pixel_id: "1234567890123456" }, triggers: ["all_pages"] },
+    ];
+    let { env } = envWith(routes);
+    let r = await call("GET", "/v1/setup", { key: agent.key, env });
+    let c = byId(r.json.checks)("tags.consent_banner");
+    expect(c.status).toBe("warning");
+    expect(c.domain).toBe("acme.test");
+    expect(c.detail).toContain("meta fire for visitors from the EU, UK or Switzerland (AT, BE, BG, HR, CY and 27 more)");
+    expect(c.detail).toContain("and from an unknown country");
+    expect(c.fix).toBe(
+      'PATCH https://tags.afs.test/v1/containers/ctr_acme/draft {"consent_banner":{"enabled":true,"privacy_url":"https://acme.test/privacy"}} (MCP tags_patch_draft), then POST https://tags.afs.test/v1/containers/ctr_acme/publish (MCP tags_publish)',
+    );
+    // A warning: it doesn't count against ready (only the claim is open), and the owner's table has its own row.
+    expect(
+      r.json.checks.filter((x: SetupCheck) => ["missing", "failing", "unavailable"].includes(x.status)).map((x: SetupCheck) => x.id),
+    ).toEqual(["project.claimed"]);
+    expect(r.json.rows.find((x: { part: string }) => x.part === "Consent banner").status).toBe("warning");
+
+    // EEA, UK and CH denied (the recipe's eea_opt_in): only visitors whose country is unknown still get the pixel.
+    const denied = { ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" };
+    live.config.consent = { mode: "none", regions: { EEA: denied, GB: denied, CH: denied } };
+    ({ env } = envWith(routes));
+    r = await call("GET", "/v1/setup", { key: agent.key, env });
+    c = byId(r.json.checks)("tags.consent_banner");
+    expect(c.status).toBe("warning");
+    expect(c.detail).toContain("meta fire for visitors from an unknown country");
+    expect(c.detail).not.toContain("Switzerland (");
+
+    // Opt-in everywhere: nothing fires before consent (the site's own banner grants it).
+    live.config.consent = { mode: "opt_in" };
+    ({ env } = envWith(routes));
+    c = byId((await call("GET", "/v1/setup", { key: agent.key, env })).json.checks)("tags.consent_banner");
+    expect(c.status).toBe("ok");
+
+    // A tag that opts out of consent fires anyway.
+    (live.config.tags as Record<string, unknown>[])[1]!.consent = [];
+    ({ env } = envWith(routes));
+    c = byId((await call("GET", "/v1/setup", { key: agent.key, env })).json.checks)("tags.consent_banner");
+    expect(c.status).toBe("warning");
+
+    // The built-in banner on: ok.
+    live.config.consent_banner = { enabled: true };
+    ({ env } = envWith(routes));
+    r = await call("GET", "/v1/setup", { key: agent.key, env });
+    c = byId(r.json.checks)("tags.consent_banner");
+    expect(c.status).toBe("ok");
+    expect(c.detail).toBe("The consent banner asks visitors from the EU, UK and Switzerland first.");
+    expect(r.json.rows.find((x: { part: string }) => x.part === "Consent banner")).toMatchObject({ status: "ok", details: c.detail });
+  });
+
+  it("has no consent banner check when the live config has no ad pixels", async () => {
+    const agent = await signup("acme.test");
+    const { env } = envWith(healthy());
+    const r = await call("GET", "/v1/setup", { key: agent.key, env });
+    expect(r.json.checks.some((x: SetupCheck) => x.id === "tags.consent_banner")).toBe(false);
+    expect(
+      adPixelsBeforeConsent({ tags: [{ id: "g", type: "google_ads" }], consent: { mode: "none", default: { ad_storage: "denied" } } }),
+    ).toEqual({
+      tags: [],
+      countries: [],
+    });
+    expect(
+      adPixelsBeforeConsent({
+        tags: [{ id: "g", type: "google_ads" }],
+        consent: { mode: "opt_in", regions: { US: { ad_storage: "granted" }, DE: { ad_storage: "granted" } } },
+      }).countries,
+    ).toEqual(["DE"]);
   });
 
   it("warns, without holding up ready, when no crawler visits are reported", async () => {

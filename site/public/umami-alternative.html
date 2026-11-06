@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Umami alternative: open-source analytics an AI agent sets up</title>
+<meta name="description" content="Umami and AgentFirstStack are both open-source, cookieless web analytics. Compare licenses, self-hosting, Umami Cloud's plans, APIs and MCP, and when Umami is the better pick.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/umami-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Umami alternative: open-source analytics an AI agent sets up">
+<meta property="og:description" content="Umami and AgentFirstStack are both open-source, cookieless web analytics. Compare licenses, self-hosting, Umami Cloud's plans, APIs and MCP, and when Umami is the better pick.">
+<meta property="og:url" content="https://agentfirststack.com/umami-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/umami-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Umami alternative: open-source analytics an AI agent sets up">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Umami alternative: open-source analytics an AI agent sets up">
+<meta name="twitter:description" content="Umami and AgentFirstStack are both open-source, cookieless web analytics. Compare licenses, self-hosting, Umami Cloud's plans, APIs and MCP, and when Umami is the better pick.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/umami-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/umami-alternative#article",
+      "headline": "Umami alternative: open-source analytics an AI agent sets up",
+      "description": "Umami and AgentFirstStack are both open-source, cookieless web analytics. Compare licenses, self-hosting, Umami Cloud's plans, APIs and MCP, and when Umami is the better pick.",
+      "url": "https://agentfirststack.com/umami-alternative",
+      "image": "https://agentfirststack.com/og/umami-alternative.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/umami-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Umami alternative", "item": "https://agentfirststack.com/umami-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/umami-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is AgentFirstStack open source like Umami?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, under a different license. Umami is MIT. AgentFirstStack is AGPL-3.0, and its browser scripts, the tracker included, are MIT. AGPL means that if you run a modified version as a service for others, you share your changes."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can an AI agent set up Umami?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Partly. Umami has a REST API that can create websites, and an official MCP server that reads data. On Umami Cloud a person signs up and enters a 6-digit email code first, and API and MCP access start on the Pro plan. On a self-hosted instance, an agent can script it once someone has deployed it."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Umami's MCP server read-only?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Umami's docs say no tool can change settings, create websites or delete data. AgentFirstStack's MCP tools can also create sites, goals, funnels, alerts and reports, with write tools hidden from read-only keys."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I move my Umami history to AgentFirstStack?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The daily totals, yes: POST /v1/sites/:id/imports with source other, tool umami and rows of date, visitors, visits and pageviews from Umami's export or API. Keep your custom event names so goals line up. Keep Umami running for a week and compare with GET /v1/sites/:id/imports/compare."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do both work without cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Umami's FAQ says its tracker doesn't use cookies. AgentFirstStack's tracker sets none by default either: a visitor is a hash of a daily salt, the site, the IP address and the user agent."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Umami alternative</span></nav>
+      <h1>Umami alternative: open-source analytics an AI agent sets up</h1>
+      <p class="lede">Umami is MIT-licensed, cookieless web analytics you can self-host with Node.js and PostgreSQL, or use as Umami Cloud, from a free Hobby plan (100K events a month, one website, no API access) to Pro at $20 a month (as of 6 November 2026). AgentFirstStack Analytics is open source and cookieless too, under AGPL-3.0 with an MIT tracker, but built so an AI agent can create the account, the site and the goals over REST and MCP, and check its own install. Umami is the better choice if you want a permissive license, a mature dashboard your team will use daily, or to self-host on any server with Postgres.</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. If the site runs Umami, the agent keeps it in place and brings its history over.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add analytics to this project with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Find what the site uses today. If it runs Umami, note its website id and every custom event name (umami.track calls and data-umami-event attributes), and don't remove it.
+
+4. Create a site for the production domain, add the snippet for this framework to the root layout, served through the first-party proxy config from the install answer (/_a/* on our own domain, proxy key kept server-side). Create a goal for each conversion, keeping Umami's event names.
+
+5. If you can get Umami's daily totals (its API with a key in .env, or an export I give you), import them: POST /v1/sites/:id/imports with source "other", tool "umami".
+
+6. Deploy (or tell me to), open the site with ?afsa_debug=1, run verify, then GET https://agentfirststack.com/v1/setup?services=analytics until it says ready or tells you what's left.
+
+7. Write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up and imported, how you verified it, and give me the claim link. Leave Umami installed until I say otherwise.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="umami">What Umami is</h2>
+<p><a href="https://umami.is/">Umami</a> is web analytics under the <a href="https://github.com/umami-software/umami/blob/master/LICENSE">MIT License</a>. Self-hosting needs "A server with Node.js version 20.19 or newer (22 LTS recommended)", and "Umami supports PostgreSQL (minimum v12.14) databases" (<a href="https://docs.umami.is/docs/install">Install</a>, as of 6 Nov 2026). Its FAQ says: "Umami's web tracker does not use cookies" (<a href="https://docs.umami.is/docs/faq">FAQ</a>).</p>
+<p>On Umami Cloud, web analytics, custom events, funnels, goals, journeys, retention, UTM, revenue, attribution, segments and cohorts are on every plan, and session replays and heatmaps on Business and Enterprise (<a href="https://docs.umami.is/docs/cloud">Umami Cloud</a>, as of 6 Nov 2026). The plans (<a href="https://umami.is/pricing">umami.is/pricing</a>, as of 6 Nov 2026):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Plan</th><th>Price</th><th>Events a month</th><th>Websites</th><th>Retention</th><th>API and MCP</th></tr></thead>
+<tbody>
+<tr><th scope="row">Hobby</th><td>$0</td><td>Up to 100K</td><td>1</td><td>6 months</td><td>No</td></tr>
+<tr><th scope="row">Pro</th><td>$20 a month</td><td>1M included</td><td>Up to 20</td><td>2 years</td><td>Yes</td></tr>
+<tr><th scope="row">Business</th><td>$200 a month</td><td>10M included</td><td>Unlimited</td><td>5 years</td><td>Yes</td></tr>
+<tr><th scope="row">Enterprise</th><td>Custom</td><td>Custom</td><td>Unlimited</td><td>Custom</td><td>Yes</td></tr>
+</tbody>
+</table>
+</div>
+<p>For agents: Umami's REST API can create a website (<code>POST /api/websites</code> with a name and domain: <a href="https://docs.umami.is/docs/api-reference/create-website">API reference</a>) and read stats. On Cloud, API keys are created in Settings &gt; API keys and each is "limited to 50 calls every 15 seconds" (<a href="https://docs.umami.is/docs/cloud/api-key">API key</a>). Umami's official MCP server reads data only: "No tool can change settings, create websites, or delete data", and on Cloud it needs the Pro plan or above (<a href="https://docs.umami.is/docs/mcp">MCP</a>, as of 6 Nov 2026). Signing up for Cloud takes a 6-digit email code and a choice of US or EU region (<a href="https://docs.umami.is/docs/cloud/sign-up">Sign up</a>).</p>
+
+<h2 id="agentfirststack">How AgentFirstStack Analytics differs</h2>
+<p>The analytics are comparable in spirit: cookieless, privacy-friendly, open source. The difference is who operates the tool.</p>
+<ul>
+<li><b>No signup form.</b> <code>POST https://agentfirststack.com/v1/signup</code> returns a key. The agent creates the site, gets the install code for the framework, adds goals and checks the install; a person claims the project at the end with a link and their Google sign-in.</li>
+<li><b>Writes over MCP, not only reads.</b> The same key works on a REST API and an MCP server that can create sites, goals, funnels, alerts, reports and segments, record payments and run read-only SQL. Read-only keys see only the read tools.</li>
+<li><b>Checks the agent runs.</b> <code>verify</code> fetches the live page and checks the snippet, the script and the Content-Security-Policy; <code>?afsa_debug=1</code> marks the agent's own visit as test traffic it can watch in realtime; the setup check returns <code>"ready": true</code> or a list of fixes.</li>
+<li><b>Beyond pageviews:</b> server events from your backend, revenue from Stripe (or Polar, Paddle and LemonSqueezy by webhook), AI crawler visits reported by your server, imports from GA4, Plausible and other tools, scheduled email reports and alerts, Core Web Vitals and scroll depth.</li>
+<li><b>Replay and tags on the same key.</b> Session replay with heatmaps, and a tag manager with server-side conversion APIs, are separate services in the same project, free on the hosted version.</li>
+</ul>
+<p>Like any hosted script, ours can be blocked: the default snippet loads from <code>analytics.agentfirststack.com</code>. Serve it through a path on your own domain (<code>/_a/*</code>) with the proxy configs from <code>GET /v1/sites/:id/install</code>; there's no custom-domain option yet.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Umami</th><th>AgentFirstStack Analytics</th></tr></thead>
+<tbody>
+<tr><th scope="row">License</th><td>MIT</td><td>AGPL-3.0; the tracker and other browser scripts MIT</td></tr>
+<tr><th scope="row">Self-hosting</th><td>Node.js 20.19+ and PostgreSQL 12.14+, on any server</td><td>Cloudflare Workers: a Cloudflare account on Workers Paid and a domain on Cloudflare (<a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/docs/self-hosting.md">self-hosting guide</a>)</td></tr>
+<tr><th scope="row">Free hosted plan</th><td>Hobby: 100K events a month, 1 website, 6 months, no API</td><td>Free with fair-use limits: 10 sites per account, daily event budgets, 400 days of raw events by default</td></tr>
+<tr><th scope="row">Account</th><td>Cloud signup with a 6-digit email code</td><td><code>POST /v1/signup</code>, one request</td></tr>
+<tr><th scope="row">API</th><td>REST; on Cloud from the Pro plan</td><td>REST on every account, read and write</td></tr>
+<tr><th scope="row">MCP</th><td>Official, read-only; Cloud Pro and up</td><td>Read and write, on the same key</td></tr>
+<tr><th scope="row">Cookies</th><td>None</td><td>None by default; persistent mode is opt-in</td></tr>
+<tr><th scope="row">Funnels, goals, revenue, journeys</th><td>Yes</td><td>Yes</td></tr>
+<tr><th scope="row">Session replay and heatmaps</th><td>Cloud Business and Enterprise</td><td>A separate replay service, free hosted</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use Umami if</h3>
+<ul>
+<li>You want the MIT License, with no obligation to share changes to a hosted fork.</li>
+<li>You want to self-host on your own server or VPS with Postgres, not on Cloudflare.</li>
+<li>People on your team will use the dashboard every day, and you want a mature one with a large community behind it (<a href="https://github.com/umami-software/umami">Umami on GitHub</a>).</li>
+<li>One small site fits in the free Hobby plan and nobody needs API access.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>An agent should set up analytics from nothing, keep it current and answer questions, without a person creating accounts or keys.</li>
+<li>You want API and MCP access, writes included, on the free plan.</li>
+<li>You also want session replay, a tag manager with server-side conversion APIs, or an email inbox for the agent, on the same key.</li>
+</ul>
+
+<h2 id="moving">Moving from Umami</h2>
+<p>Run both for a week. The agent keeps Umami's custom event names as goal names, imports Umami's daily totals with <code>POST /v1/sites/:id/imports {"source":"other","tool":"umami","rows":[{"date","visitors","visits","pageviews"}]}</code>, and <code>GET /v1/sites/:id/imports/compare</code> checks our daily visitors against Umami's for the days both ran. Remove Umami's script when the numbers agree and you say so.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is AgentFirstStack open source like Umami?</h3>
+<p>Yes, under a different license. Umami is MIT. AgentFirstStack is AGPL-3.0, and its browser scripts, the tracker included, are MIT. AGPL means that if you run a modified version as a service for others, you share your changes.</p>
+<h3>Can an AI agent set up Umami?</h3>
+<p>Partly. Umami has a REST API that can create websites, and an official MCP server that reads data. On Umami Cloud a person signs up and enters a 6-digit email code first, and API and MCP access start on the Pro plan. On a self-hosted instance, an agent can script it once someone has deployed it.</p>
+<h3>Is Umami's MCP server read-only?</h3>
+<p>Yes. Umami's docs say no tool can change settings, create websites or delete data. AgentFirstStack's MCP tools can also create sites, goals, funnels, alerts and reports, with write tools hidden from read-only keys.</p>
+<h3>Can I move my Umami history to AgentFirstStack?</h3>
+<p>The daily totals, yes: <code>POST /v1/sites/:id/imports</code> with source <code>other</code>, tool <code>umami</code> and rows of date, visitors, visits and pageviews from Umami's export or API. Keep your custom event names so goals line up. Keep Umami running for a week and compare with <code>GET /v1/sites/:id/imports/compare</code>.</p>
+<h3>Do both work without cookies?</h3>
+<p>Yes. Umami's FAQ says its tracker doesn't use cookies. AgentFirstStack's tracker sets none by default either: a visitor is a hash of a daily salt, the site, the IP address and the user agent.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Umami Software.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/agent-first-analytics"><span class="svc svc-analytics">Analytics</span><b>Agent-first analytics</b><span>What it is, and what to ask of any tool.</span></a></li>
+        <li><a class="card" href="/easiest-platform-for-ai-agents"><span class="svc">All services</span><b>The easiest platform for AI agents</b><span>Requests and seconds from nothing to tracking, measured.</span></a></li>
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>One prompt, every step, and what's left for you.</span></a></li>
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/hotjar-alternative"><span class="svc svc-replay">Replay</span><b>Hotjar alternative</b><span>Contentsquare, or replay an agent reads as text.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#umami">What Umami is</a></li><li><a href="#agentfirststack">How AgentFirstStack differs</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from Umami</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

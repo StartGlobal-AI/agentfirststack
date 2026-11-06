@@ -53,14 +53,19 @@ export type AppEnv = Omit<
    *   MAX_INBOXES_PER_ACCOUNT  cap on inboxes per account.
    *   MAX_INBOX_CREATES_PER_DAY / MAX_INBOX_DELETES_PER_DAY  inbox creations / API deletions per
    *                            account per UTC day.
-   *   ADDRESS_TOMBSTONE_DAYS   how long a deleted shared-domain address that received mail stays
-   *                            reserved for its old account (default 90).
-   *   EXTRA_RESERVED_USERNAMES comma-separated local parts nobody may claim on the shared domain
-   *                            (brand and role names of the operator: hello, billing, ...).
+   *   EXTRA_RESERVED_USERNAMES comma-separated local parts nobody may claim on the shared domain,
+   *                            on top of the built-in role names (the operator's brand names).
+   *                            Inboxes created before a name was reserved are listed by the cron
+   *                            and GET /v1/admin/reserved-inboxes, never deleted.
    *   MAX_MESSAGES_PER_INBOX   inbound messages an inbox holds; beyond it the oldest mail of the
    *                            sender holding the most is evicted.
    *   MAX_INBOUND_PER_ACCOUNT_PER_DAY  inbound messages an account may receive per UTC day.
    *   MAX_INBOUND_PER_SENDER_PER_DAY   inbound messages one sender may send one inbox per UTC day.
+   *   MAX_INBOUND_BYTES_PER_SENDER_PER_DAY  bytes of raw mail one sender may send the account
+   *                            (all its inboxes) per UTC day; more from that sender is rejected.
+   *   MAX_INBOUND_MESSAGE_BYTES        largest inbound message accepted, in bytes (default 25 MiB,
+   *                            Email Routing's limit and the most it can be; 10 MiB for unclaimed
+   *                            accounts; "0" = 25 MiB).
    *   MAX_TEXT_BYTES_PER_ACCOUNT       stored text (bodies + links) per account; beyond it new
    *                            mail keeps only a short excerpt in D1.
    *   MAX_BLOB_BYTES_PER_ACCOUNT       bytes of mail an account keeps in R2 (raw MIME, HTML bodies,
@@ -89,11 +94,12 @@ export type AppEnv = Omit<
   MAX_INBOXES_PER_ACCOUNT?: string;
   MAX_INBOX_CREATES_PER_DAY?: string;
   MAX_INBOX_DELETES_PER_DAY?: string;
-  ADDRESS_TOMBSTONE_DAYS?: string;
   EXTRA_RESERVED_USERNAMES?: string;
   MAX_MESSAGES_PER_INBOX?: string;
   MAX_INBOUND_PER_ACCOUNT_PER_DAY?: string;
   MAX_INBOUND_PER_SENDER_PER_DAY?: string;
+  MAX_INBOUND_BYTES_PER_SENDER_PER_DAY?: string;
+  MAX_INBOUND_MESSAGE_BYTES?: string;
   MAX_TEXT_BYTES_PER_ACCOUNT?: string;
   MAX_BLOB_BYTES_PER_ACCOUNT?: string;
   MAX_CONCURRENT_WAITS?: string;
@@ -126,6 +132,8 @@ export type CapName =
   | "MAX_MESSAGES_PER_INBOX"
   | "MAX_INBOUND_PER_ACCOUNT_PER_DAY"
   | "MAX_INBOUND_PER_SENDER_PER_DAY"
+  | "MAX_INBOUND_BYTES_PER_SENDER_PER_DAY"
+  | "MAX_INBOUND_MESSAGE_BYTES"
   | "MAX_TEXT_BYTES_PER_ACCOUNT"
   | "MAX_BLOB_BYTES_PER_ACCOUNT"
   | "MAX_CONCURRENT_WAITS"

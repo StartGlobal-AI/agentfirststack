@@ -17,7 +17,8 @@ import { oauthApi, oauthPages } from "./oauth";
 import { noticeBase, refreshNotices } from "./notices";
 import { ownAnalytics, trackCrawl, trackOwn } from "./own-analytics";
 import { servePage, withAssetHeaders } from "./static-pages";
-import { firstParty } from "./first-party";
+import { firstParty, firstPartyEdge } from "./first-party";
+import { firstPartyDomainsApi } from "./first-party-domains";
 import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
@@ -28,12 +29,16 @@ import { setupTestApi } from "./setup-test";
 //   /             content negotiation (Accept: text/markdown -> /index.md) and discovery Link headers
 //   /mcp          the MCP gateway over every service
 //   /v1/*         the one signup endpoint for the whole platform, key management, claim links,
-//                 and the operator's /v1/admin/* (ADMIN_TOKEN only)
+//                 first-party domains, and the operator's /v1/admin/* (ADMIN_TOKEN only)
 //   /signin, /auth/*, /claim/*, /dashboard/*   optional accounts for people (docs/accounts.md)
 //   /oauth/*, /.well-known/oauth-*             the OAuth 2.1 server for MCP connectors
 const app = new Hono<SiteEnv>();
 app.onError(onError);
 app.notFound(onNotFound);
+
+// Customers' first-party domains (edge.example.com, a CNAME on Cloudflare for SaaS) reach this
+// Worker too: their /_a/*, /_t/* and /_r/* go to the services, before anything else here runs.
+app.use("*", firstPartyEdge);
 
 // AI crawler and search bot requests for the public pages go to the deployment's own analytics.
 app.use("*", async (c, next) => {
@@ -136,6 +141,7 @@ app.route("/", setupTestApi);
 app.route("/", adminApi);
 app.route("/", deletionApi);
 app.route("/", usageApi);
+app.route("/", firstPartyDomainsApi);
 app.route("/", emailRoutes);
 app.route("/dashboard", dashboard);
 

@@ -103,8 +103,15 @@
   //   analytics site) get a server event for each signup and project claim here (src/own-analytics.ts);
   //   email: NOTIFY_EMAIL_FROM ("Name <address>", with the EMAIL binding), NOTIFY_REPLY_TO (optional),
   //   MAX_EMAILS_PER_PERSON_PER_DAY (default 20), OPERATOR_EMAIL (the operator's daily summary,
-  //   comma-separated; src/operator-digest.ts).
-  // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard),
-  // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google). See docs/accounts.md.
+  //   comma-separated; src/operator-digest.ts);
+  //   first-party domains on Cloudflare for SaaS (src/first-party-domains.ts): CF_SAAS_ZONE_ID (the
+  //   SaaS zone), CF_SAAS_FALLBACK_HOST (the originless fallback customers CNAME to, fp.<domain>),
+  //   CF_SAAS_WORKER (this Worker's name; `pnpm afs config` derives both), with the secret
+  //   CF_SAAS_API_TOKEN; off (503 not_configured) unless all four are set;
+  //   MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT (+ UNCLAIMED_).
+  // Secrets: ADMIN_TOKEN, SIGNUP_TOKEN, INTERNAL_TOKEN (shared with the services, for the dashboard
+  // and the first-party edge), GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (Sign in with Google),
+  // CF_SAAS_API_TOKEN (Zone SSL and Certificates Edit + Workers Routes Edit). See docs/accounts.md
+  // and docs/self-hosting.md.
   "observability": { "enabled": true }
 }

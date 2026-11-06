@@ -1,5 +1,5 @@
 import { ApiError, badRequest, conflict, newId, notFound } from "@afs/shared";
-import { type AppEnv, type Standing, cap, positiveIntVar, standingOf } from "../env";
+import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { checkUsername, normalizeDomain, randomUsername } from "../lib/address";
 import { DEFAULT_FORWARD, type ForwardInput, mergeForward } from "../lib/forwarding";
 import { headerSafe } from "../lib/headers";
@@ -9,9 +9,6 @@ import { forwardContext, forwardNextSteps, settingOf } from "./forward-settings"
 
 export const MAX_TTL_DAYS = 3650;
 const DAY = 86_400_000;
-/** ADDRESS_TOMBSTONE_DAYS default: how long a deleted shared-domain address stays its old account's. */
-export const DEFAULT_TOMBSTONE_DAYS = 90;
-export const tombstoneDays = (env: AppEnv) => positiveIntVar(env.ADDRESS_TOMBSTONE_DAYS, DEFAULT_TOMBSTONE_DAYS);
 /** Wall time one cron run may spend on each purge before handing the rest to the next run. */
 export const PURGE_BUDGET_MS = 20_000;
 const PURGE_BATCH = 200;
@@ -94,19 +91,18 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   assertActive(standing);
   const fwd = mergeForward(DEFAULT_FORWARD, input.forward); // 400 on a bad value, before anything is created
   const dom = await resolveInboxDomain(env, accountId, input.domain);
-  const tombCutoff = now - tombstoneDays(env) * DAY;
   const expiresAt = input.ttl_days ? now + Math.round(input.ttl_days * DAY) : null;
   const display = cleanDisplayName(input.display_name);
 
   /** null = the address is someone else's: taken by another account, or (shared domain) once theirs. */
   const insert = async (username: string): Promise<{ row: InboxRow; existing: boolean } | null> => {
     const address = `${username}@${dom.domain}`;
-    // One query for both, so a live address and a tombstoned one cost the same and answer the same.
-    // Tombstones lapse after ADDRESS_TOMBSTONE_DAYS; permanent ones (a deleted project's) never do.
+    // One query for both, so a live address and a retired one cost the same and answer the same.
+    // Retired shared-domain addresses (address_tombstones) never lapse: see deleteInbox.
     const found = await env.DB.prepare(
-      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address AND (t.permanent = 1 OR t.deleted_at > ?)",
+      "SELECT i.*, t.account_id AS tomb_account FROM (SELECT ? AS address) a LEFT JOIN inboxes i ON i.address = a.address LEFT JOIN address_tombstones t ON t.address = a.address",
     )
-      .bind(address, tombCutoff)
+      .bind(address)
       .first<InboxRow & { id: string | null; tomb_account: string | null }>();
     if (found?.id) {
       if (found.account_id !== accountId) return null;
@@ -177,11 +173,23 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   let result: { row: InboxRow; existing: boolean } | null = null;
   if (input.username) {
     const chk = checkUsername(input.username, { sharedDomain: dom.shared, extraReserved: env.EXTRA_RESERVED_USERNAMES });
-    if (!chk.ok) throw badRequest(`Invalid username: ${chk.reason}`, "Pick another username, or omit it for a random one.");
-    result = await insert(chk.username);
+    if (!chk.ok) {
+      // A name reserved after this account created it: its inbox keeps working, and a retried
+      // create still returns it (rule 7). Nobody else gets it.
+      const mine =
+        chk.reserved && chk.username
+          ? await env.DB.prepare("SELECT * FROM inboxes WHERE address = ? AND account_id = ?")
+              .bind(`${chk.username}@${dom.domain}`, accountId)
+              .first<InboxRow>()
+          : null;
+      if (!mine) throw badRequest(`Invalid username: ${chk.reason}`, "Pick another username, or omit it for a random one.");
+      result = { row: mine, existing: true };
+    } else result = await insert(chk.username);
     if (!result) {
+      // The same answer whether another account holds the address now or held it once: polling
+      // this tells nobody when (or whether) an address was deleted.
       throw conflict(
-        `${chk.username}@${dom.domain} belongs to another account.`,
+        `${input.username.trim().toLowerCase()}@${dom.domain} is taken: it belongs to another account, now or before. Addresses are never passed from one account to another.`,
         "Pick another username, or omit username for a random one.",
       );
     }
@@ -194,7 +202,7 @@ export async function createInbox(env: AppEnv, accountId: string, input: CreateI
   const inbox = inboxJson(result.row, ctx);
   const kept = settingOf(result.row);
   const next_steps = [
-    `Use ${inbox.address} in the signup form, then GET /v1/inboxes/${inbox.id}/wait?timeout=60 (or /latest-code) to block until the email arrives with codes and links extracted.`,
+    `Use ${inbox.address} in the signup form, then GET /v1/inboxes/${inbox.id}/latest-code?from=<the site's domain, e.g. github.com>&timeout=60 to block until its code or link arrives (or /wait?from=... for the whole message). Always pass from: anyone can email this address.`,
     ...(dom.sendOnly
       ? [`${dom.domain} is send-only: this inbox sends, but receives no mail here (its mail goes to your existing MX).`]
       : dom.shared || dom.verified
@@ -334,23 +342,14 @@ export async function deleteInboxMessages(env: AppEnv, inboxId: string, deadline
   }
 }
 
-export interface DeleteInboxOptions {
-  /**
-   * "permanent": the inbox's project is being erased (src/service/purge.ts) and can never come back,
-   * so an address that would be tombstoned is reserved for good (migrations/0015).
-   */
-  reserve?: "permanent";
-}
-
-export async function deleteInbox(env: AppEnv, accountId: string, id: string, now = Date.now(), opts: DeleteInboxOptions = {}) {
+export async function deleteInbox(env: AppEnv, accountId: string, id: string, now = Date.now()) {
   const row = await getInboxRow(env, accountId, id);
   await deleteInboxMessages(env, id);
-  // A shared-domain address that ever received mail may have been used to sign up somewhere, so it
-  // stays its old account's for ADDRESS_TOMBSTONE_DAYS (see migrations/0006 and 0009), or for good
-  // when its project is erased (0015). One that never received mail is free again at once:
-  // create/delete loops reserve nothing.
-  const tombstone = row.domain === sharedDomain(env) && row.last_message_at !== null;
-  const permanent = tombstone && opts.reserve === "permanent";
+  // A shared-domain address is retired for good when its inbox goes (by API, ttl expiry or the
+  // project's erasure): it may be the recovery email of accounts elsewhere, whether or not mail has
+  // arrived yet, so it is never given to another account (migrations/0016). Its old account may
+  // create it again. Addresses on an account's own domain are that domain owner's business.
+  const tombstone = row.domain === sharedDomain(env);
   await env.DB.batch([
     env.DB.prepare("UPDATE domains SET catch_all_inbox_id = NULL WHERE catch_all_inbox_id = ?").bind(id),
     env.DB.prepare("DELETE FROM threads WHERE inbox_id = ?").bind(id),
@@ -359,10 +358,11 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
     env.DB.prepare("DELETE FROM inboxes WHERE id = ?").bind(id),
     ...(tombstone
       ? [
-          // A permanent reservation is never downgraded.
+          // The account that held it last is the one that may create it again (only an address that
+          // was free under the old 90-day rule can have had an earlier owner).
           env.DB.prepare(
-            "INSERT INTO address_tombstones (address, account_id, deleted_at, permanent) VALUES (?, ?, ?, ?) ON CONFLICT(address) DO UPDATE SET account_id = excluded.account_id, deleted_at = excluded.deleted_at, permanent = MAX(address_tombstones.permanent, excluded.permanent)",
-          ).bind(row.address, row.account_id, now, permanent ? 1 : 0),
+            "INSERT INTO address_tombstones (address, account_id, deleted_at, permanent) VALUES (?, ?, ?, 1) ON CONFLICT(address) DO UPDATE SET account_id = excluded.account_id, deleted_at = excluded.deleted_at, permanent = 1",
+          ).bind(row.address, row.account_id, now),
         ]
       : []),
   ]);
@@ -371,9 +371,8 @@ export async function deleteInbox(env: AppEnv, accountId: string, id: string, no
     deleted: id,
     address: row.address,
     blobs_deleted: blobs,
-    address_reserved_until: tombstone && !permanent ? now + tombstoneDays(env) * DAY : null,
-    // Only for the purge (the REST and MCP deletes never pass reserve).
-    ...(opts.reserve === "permanent" ? { address_reserved_permanently: permanent } : {}),
+    // true: no other account will ever get this address; this account can create it again.
+    address_reserved: tombstone,
   };
 }
 
@@ -444,10 +443,9 @@ export async function purgeOldSharedMessages(env: AppEnv, now = Date.now(), budg
 
 /**
  * Cron: housekeeping rows that are no longer needed: daily counters older than a week (inbound,
- * per sender, per-account budgets), wait slots past their expiry (a Worker that died), address
- * tombstones older than ADDRESS_TOMBSTONE_DAYS (never a permanent one: a deleted project's), and
- * mail that waited FORWARD_QUEUE_MAX_DAYS to be forwarded (nobody claimed the project: nothing
- * waits forever).
+ * per sender, per-account budgets), wait slots past their expiry (a Worker that died), and mail
+ * that waited FORWARD_QUEUE_MAX_DAYS to be forwarded (nobody claimed the project: nothing waits
+ * forever). Address tombstones are never pruned: a retired address stays retired.
  */
 export async function pruneCounters(env: AppEnv, now = Date.now()) {
   const weekAgo = utcDay(now - 7 * DAY);
@@ -456,11 +454,10 @@ export async function pruneCounters(env: AppEnv, now = Date.now()) {
     env.DB.prepare("DELETE FROM sender_counters WHERE day < ?").bind(weekAgo),
     env.DB.prepare("DELETE FROM account_daily WHERE day < ?").bind(weekAgo),
     env.DB.prepare("DELETE FROM active_waits WHERE expires_at < ?").bind(now),
-    env.DB.prepare("DELETE FROM address_tombstones WHERE permanent = 0 AND deleted_at < ?").bind(now - tombstoneDays(env) * DAY),
     env.DB.prepare("DELETE FROM forward_queue WHERE received_at < ?").bind(now - FORWARD_QUEUE_MAX_DAYS * DAY),
   ]);
   const n = (i: number) => r[i]?.meta.changes ?? 0;
-  return { counters_pruned: n(0) + n(1) + n(2), wait_slots_pruned: n(3), tombstones_pruned: n(4), forward_queue_pruned: n(5) };
+  return { counters_pruned: n(0) + n(1) + n(2), wait_slots_pruned: n(3), forward_queue_pruned: n(4) };
 }
 
 /**

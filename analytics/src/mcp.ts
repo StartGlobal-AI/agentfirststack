@@ -30,6 +30,8 @@ import { getItems, itemsInput } from "./service/items";
 import { compareImport, compareInput, deleteImport, importData, importInput, listImports } from "./service/imports";
 import { exportEvents, exportInput } from "./service/export";
 import { crawlersInput, crawlsShape, getCrawlers, recordCrawls } from "./service/crawlers";
+import { aiSearchInput, getAiSearch } from "./service/ai-search";
+import { getWebVitals, getWebVitalsLab, labInput, webVitalsInput } from "./service/vitals";
 import { getRealtimeMap, getRollup, listSessions, realtimeMapInput, rollupInput, sessionsInput } from "./service/reads";
 import { costsShape, deleteCosts, deleteCostsInput, listCosts, listCostsInput, recordCosts } from "./service/costs";
 import { connectBilling, connectBillingInput, disconnectBilling, getBillingIntegration } from "./service/billing-webhooks";
@@ -594,6 +596,36 @@ export function registerTools(t: ToolRegistrar, ctx: Ctx): void {
       input: { site_id: siteId, ...crawlersInput.shape },
     },
     ({ site_id, ...rest }) => getCrawlers(ctx, site_id, rest),
+  );
+  t.read(
+    "get_ai_search",
+    {
+      title: "AI search report",
+      description: `In one answer: which AI crawlers read the site (bots by operator and category, top pages, robots.txt / llms.txt / sitemap fetches and their outcome), which AI assistants sent visitors (ChatGPT, Perplexity, Claude, Gemini, Copilot, ...) and the pages they landed on, what those visitors did (conversions, revenue, engagement, bounce) next to all other channels (lift = AI / others) and each channel, gaps (pages AI crawlers read that sent no AI visitor; an assistant's landing pages its vendor's crawlers didn't fetch, when the data allows), a daily series, the previous period (compare, default previous) and next_steps (robots.txt, llms.txt, crawler errors, goals). Crawler data needs record_crawls from the site's server. ${UNTRUSTED}`,
+      input: { site_id: siteId, ...aiSearchInput.shape },
+    },
+    ({ site_id, ...rest }) => getAiSearch(ctx, site_id, rest),
+  );
+  t.read(
+    "get_web_vitals",
+    {
+      title: "Page speed (Core Web Vitals)",
+      description: `Real visitors' Core Web Vitals, Google's method: p75 (nearest rank) of LCP (ms), INP (ms) and CLS per page load, the % of page loads good / needs improvement / poor by Google's thresholds (LCP 2500 / 4000 ms, INP 200 / 500 ms, CLS 0.1 / 0.25), sample counts (enough_samples false under 30), the assessment (passed / failed / not_enough_data), coverage (pageviews with vitals), the worst pages, an optional breakdown (page, device, country, browser) with comparison per row, compare for change_percent, filters, and next_steps (what to fix per metric). ${UNTRUSTED}`,
+      input: { site_id: siteId, ...webVitalsInput.shape },
+    },
+    ({ site_id, ...rest }) => getWebVitals(ctx, site_id, rest),
+  );
+  // Write scope, like verify_install: Google fetches the page on the caller's behalf.
+  t.write(
+    "get_web_vitals_lab",
+    {
+      title: "Lab page speed (PageSpeed Insights)",
+      description:
+        "Run Google PageSpeed Insights (Lighthouse) on one page of the site (url: https on the site's domain or a subdomain; default the homepage; strategy mobile or desktop): lab LCP, CLS, Total Blocking Time (the lab stand-in for INP), FCP, Speed Index, TTFB and the performance score, the biggest opportunities with estimated savings, Google's own field data for the URL or origin (Chrome UX Report), and this service's real-visitor p75 for the same path, side by side, with next_steps. Takes 10-45 s; a few runs a minute. The final URL and Lighthouse warnings are only inside `untrusted`.",
+      input: { site_id: siteId, ...labInput.shape },
+      openWorld: true,
+    },
+    ({ site_id, ...rest }) => getWebVitalsLab(ctx, site_id, rest),
   );
   t.read(
     "list_sessions",

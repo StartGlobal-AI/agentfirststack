@@ -2594,6 +2594,489 @@
       }
     }
 
+    // ----- AI search and page speed: shared bits -----
+    /** A % change chip like the KPI row's (green when it moved the good way). */
+    function changeChip(c, lowerIsBetter, title) {
+      if (c === null || c === undefined) return el("span", { class: "afa-kpi-ch is-flat", text: " " });
+      const good = c === 0 ? null : lowerIsBetter ? c < 0 : c > 0;
+      return el(
+        "span",
+        { class: `afa-kpi-ch ${good === null ? "is-flat" : good ? "is-good" : "is-bad"}`, title },
+        `${Math.abs(Math.round(c))}%`,
+        c ? el("span", { class: "afa-arrow", text: c > 0 ? "↑" : "↓", attrs: { "aria-label": c > 0 ? "up" : "down" } }) : null,
+      );
+    }
+    const miniKpi = (label, value, ch) =>
+      el(
+        "div",
+        { class: "afa-kpi" },
+        el("span", { class: "afa-kpi-label", text: label }),
+        el("span", { class: "afa-kpi-num", text: value }),
+        ch,
+      );
+    const subHead = (text) => el("h3", { class: "afa-sub-h", text });
+    /** The report ignores the dashboard's filters (it is about the whole site): say so when some are set. */
+    const unfiltered = (what) =>
+      state.filters.length
+        ? el("p", { class: "fine afa-panel-note", text: `Filters don't apply to ${what}: it covers the whole site.` })
+        : null;
+
+    // ----- AI search -----
+    const AI_COLOR = CHANNEL_COLOR["AI Assistants"];
+    const aiCard = el("section", { class: "afa-card afa-wide" });
+    const aiBody = el("div", { class: "afa-panel-body" });
+    aiCard.append(
+      el(
+        "div",
+        { class: "afa-panel-head" },
+        el("h2", { class: "afa-panel-h", text: "AI search" }),
+        el("span", { class: "afa-panel-title", text: "Assistants that send visitors, and the AI bots that read your pages" }),
+      ),
+      aiBody,
+    );
+    grid.append(aiCard);
+    let aiGen = 0;
+    async function loadAiSearch() {
+      const g = ++aiGen;
+      busy(aiBody, el("div", null, el("div", { class: "afa-kpis", attrs: { "aria-hidden": "true" } }, SK.kpis(5)), splitSkel()));
+      try {
+        const p = q({ limit: 8, compare: "previous" });
+        delete p.filters;
+        delete p.filters_json;
+        const r = await api(project, `${base}/ai-search`, p);
+        if (g !== aiGen) return;
+        const v = aiView(r);
+        swap(aiBody, v.node);
+        if (v.after) v.after();
+      } catch (e) {
+        if (g !== aiGen) return;
+        swap(aiBody, errorBox(e, loadAiSearch));
+      }
+    }
+    function aiView(r) {
+      const s = r.summary || {};
+      const ch = (r.comparison && r.comparison.change_percent) || {};
+      const vsTitle = r.comparison ? `vs ${rangeLabel(r.comparison.period.from, r.comparison.period.to)}` : null;
+      const crawlers = r.crawlers || {};
+      const vs = r.vs_other_channels || {};
+      const ask = `Improve how AI assistants find, cite and send visitors to ${site.domain}: read GET /v1/sites/${site.id}/ai-search from AgentFirstStack analytics (MCP get_ai_search) and work through its next_steps.`;
+      if (!s.ai_visitors && !s.ai_crawler_hits)
+        return {
+          node: el(
+            "div",
+            null,
+            empty({
+              icon: "spark",
+              title: "See what AI assistants do with your site",
+              text: crawlers.reporting
+                ? "No visits from ChatGPT, Perplexity, Claude, Gemini or Copilot in this period, and no AI bot read a page. When they do, this shows where those visitors land and how they convert next to your other channels."
+                : "Visits from ChatGPT, Perplexity, Claude, Gemini and Copilot show up here with what those visitors did, next to the AI bots that read your pages. Bots don't run JavaScript, so your server reports them in one fire-and-forget call.",
+              ask: crawlers.reporting
+                ? ask
+                : `Report AI crawler visits from our server to AgentFirstStack analytics (site ${site.id}) following the "AI crawlers" section of https://analytics.agentfirststack.com/llms.txt, then read GET /v1/sites/${site.id}/ai-search and work through its next_steps.`,
+            }),
+            unfiltered("AI search"),
+          ),
+        };
+      const aiM = vs.ai_assistants || {};
+      const oth = vs.all_other_channels || {};
+      const kpiRow = el(
+        "div",
+        { class: "afa-kpis afa-kpis-panel" },
+        miniKpi("Visitors from AI", num(s.ai_visitors), changeChip(ch.ai_visitors, false, vsTitle)),
+        miniKpi("Share of visitors", pct(s.share_of_visitors), el("span", { class: "afa-kpi-ch is-flat", text: "of all visitors" })),
+        miniKpi(
+          "AI conversion rate",
+          pct(s.ai_conversion_rate),
+          el("span", { class: "afa-kpi-ch is-flat", text: `others ${pct(oth.conversion_rate || 0)}` }),
+        ),
+        s.ai_revenue || ch.ai_revenue
+          ? miniKpi("Revenue from AI", money(s.ai_revenue, cur), changeChip(ch.ai_revenue, false, vsTitle))
+          : null,
+        miniKpi(
+          "AI crawler hits",
+          num(s.ai_crawler_hits),
+          crawlers.reporting
+            ? changeChip(ch.ai_crawler_hits, false, vsTitle)
+            : el("span", { class: "afa-kpi-ch is-flat", text: "not reported" }),
+        ),
+      );
+      // Visitors from AI per day (one series, one axis: crawler hits have their own panel above).
+      const chart = el("div", { class: "afa-chart" });
+      const sources = ((r.referrals && r.referrals.sources) || []).map((x) => ({ ...x, value: x.source }));
+      const pages = ((r.referrals && r.referrals.landing_pages) || []).map((x) => ({ ...x, value: x.page }));
+      const top = el(
+        "div",
+        { class: "afa-split" },
+        s.ai_visitors ? chart : empty("No visitors from AI assistants in this period."),
+        el(
+          "div",
+          { class: "afa-split-side" },
+          sources.length
+            ? barRows("source", sources, "visitors", s.ai_visitors, (x) => pickFilter("source", x))
+            : empty("No assistant sent a visitor yet."),
+        ),
+      );
+      // AI visitors vs everyone else: paired bars per measure, AI in its channel colour, the rest in grey.
+      const measures = [
+        ["Conversion rate", "conversion_rate", pct],
+        ["Engaged visits", "engagement_rate", pct],
+        ["Pages per visit", "views_per_visit", (n) => (n === null || n === undefined ? "–" : n.toFixed(1))],
+        ["Revenue per visitor", "revenue_per_visitor", (n) => money(n, cur)],
+        ["Bounce rate", "bounce_rate", pct],
+      ].filter(([, k]) => k !== "revenue_per_visitor" || aiM[k] || oth[k]);
+      const pair = el(
+        "div",
+        { class: "afa-vs" },
+        el(
+          "div",
+          { class: "afa-vs-legend" },
+          el("span", null, swatchOf(AI_COLOR), "AI assistants"),
+          el("span", null, swatchOf(PREVIOUS), "All other channels"),
+        ),
+        measures.map(([label, k, f]) => {
+          const a = aiM[k] || 0;
+          const b = oth[k] || 0;
+          const max = Math.max(a, b) || 1;
+          const bar = (v, color) => {
+            const fill = growTo(el("span", { class: "afa-vs-fill" }), "width", `${(v / max) * 100}%`);
+            fill.style.background = color;
+            return el("span", { class: "afa-vs-track" }, fill);
+          };
+          return el(
+            "div",
+            { class: "afa-vs-row" },
+            el("span", { class: "afa-vs-label", text: label }),
+            el("span", { class: "afa-vs-bars" }, bar(a, AI_COLOR), bar(b, PREVIOUS)),
+            el("span", { class: "afa-vs-vals" }, el("b", { text: f(a) }), el("span", { text: f(b) })),
+          );
+        }),
+        vs.enough_data ? null : el("p", { class: "fine", text: "Fewer than 30 visitors on one side: read these as rough." }),
+      );
+      const gaps = r.gaps || {};
+      const unread = gaps.crawled_not_referred || [];
+      const gapList = gaps.crawled_not_referred
+        ? unread.length
+          ? el(
+              "ul",
+              { class: "afa-plain-list" },
+              unread
+                .slice(0, 6)
+                .map((x) =>
+                  el(
+                    "li",
+                    null,
+                    el("span", { class: "afa-mono afa-row-text", text: x.page }),
+                    el("b", { text: `${num(x.ai_crawler_hits)} hits` }),
+                  ),
+                ),
+            )
+          : el("p", { class: "muted small", text: "Every page AI bots read also sent AI visitors." })
+        : el("p", {
+            class: "muted small",
+            text: crawlers.reporting
+              ? "No AI bot read a page in this period."
+              : "Needs crawler hits from your server (see the panel above).",
+          });
+      const bottom = el(
+        "div",
+        { class: "afa-ai-cols" },
+        el(
+          "div",
+          null,
+          subHead("Pages they landed on"),
+          pages.length
+            ? barRows("entry_page", pages, "visitors", s.ai_visitors, (x) => pickFilter("entry_page", x))
+            : el("p", { class: "muted small", text: "No landings yet." }),
+        ),
+        el("div", null, subHead("AI visitors vs other channels"), pair),
+        el("div", null, subHead("Read by AI bots, no AI visitors yet"), gapList),
+      );
+      const steps = r.next_steps || [];
+      return {
+        node: el("div", null, kpiRow, top, bottom, steps.length ? askCard(ask) : null, unfiltered("AI search")),
+        after: () => {
+          if (!s.ai_visitors) return;
+          const series = r.series || [];
+          linesChart(
+            chart,
+            series.map((x) => x.date),
+            [{ name: "Visitors from AI", color: AI_COLOR, values: series.map((x) => x.ai_visitors || 0) }],
+            {
+              interval: "day",
+              height: 240,
+            },
+          );
+        },
+      };
+    }
+    function swatchOf(color) {
+      const sw = el("span", { class: "afa-sw", attrs: { "aria-hidden": "true" } });
+      sw.style.background = color;
+      return sw;
+    }
+
+    // ----- page speed (Core Web Vitals) -----
+    // Status colours (good / needs improvement / poor), kept apart from the categorical series and
+    // always shown with a shape and a word: circle, square, triangle, as Lighthouse does.
+    const RATING = {
+      good: { label: "Good", color: "#0ca30c", shape: "●" },
+      needs_improvement: { label: "Needs improvement", color: "#fab219", shape: "■" },
+      poor: { label: "Poor", color: "#d03b3b", shape: "▲" },
+    };
+    const VITALS = [
+      ["lcp", "LCP", "Largest Contentful Paint", "How long the main content takes to show"],
+      ["inp", "INP", "Interaction to Next Paint", "How fast the page answers a tap or click"],
+      ["cls", "CLS", "Cumulative Layout Shift", "How much the layout jumps while loading"],
+    ];
+    const fmtVital = (m, v) => {
+      if (v === null || v === undefined) return "–";
+      if (m === "cls") return v.toFixed(2);
+      if (m === "lcp" && v >= 1000) return `${(v / 1000).toFixed(1)} s`;
+      return `${Math.round(v)} ms`;
+    };
+    const ratingTag = (rating) => {
+      const r = RATING[rating];
+      if (!r) return el("span", { class: "afa-rating is-none", text: "No data" });
+      const shape = el("span", { class: "afa-rating-shape", text: r.shape, attrs: { "aria-hidden": "true" } });
+      shape.style.color = r.color;
+      return el("span", { class: "afa-rating" }, shape, r.label);
+    };
+    const vitalsCard = el("section", { class: "afa-card afa-wide" });
+    const vitalsTabs = el("div", { class: "afa-tabs", attrs: { role: "tablist" } });
+    const vitalsBody = el("div", { class: "afa-panel-body" });
+    vitalsCard.append(
+      el(
+        "div",
+        { class: "afa-panel-head" },
+        vitalsTabs,
+        el("span", { class: "afa-panel-title", text: "Page speed from real visitors (Core Web Vitals)" }),
+      ),
+      vitalsBody,
+    );
+    grid.append(vitalsCard);
+    const VITAL_TABS = [
+      ["page", "Page"],
+      ["device", "Device"],
+      ["country", "Country"],
+      ["browser", "Browser"],
+    ];
+    let vitalsDim = "page";
+    let vitalsGen = 0;
+    const vitalsBtns = VITAL_TABS.map(([k, label]) => {
+      const b = el("button", {
+        class: "afa-tab",
+        text: label,
+        attrs: { type: "button", role: "tab" },
+        on: {
+          click: () => {
+            vitalsDim = k;
+            paintVitalsTabs();
+            loadVitals();
+          },
+        },
+      });
+      vitalsTabs.append(b);
+      return b;
+    });
+    const vitalsSlide = tabSlider(vitalsTabs);
+    function paintVitalsTabs() {
+      vitalsBtns.forEach((b, i) => b.setAttribute("aria-selected", String(VITAL_TABS[i][0] === vitalsDim)));
+      vitalsSlide();
+    }
+    paintVitalsTabs();
+    async function loadVitals() {
+      const g = ++vitalsGen;
+      busy(vitalsBody, el("div", null, el("div", { class: "afa-vitals", attrs: { "aria-hidden": "true" } }, SK.kpis(3)), SK.table(6)));
+      try {
+        const r = await api(
+          project,
+          `${base}/web-vitals`,
+          q({ breakdown: vitalsDim, limit: 15, ...(state.compare ? { compare: "previous" } : {}) }),
+        );
+        if (g !== vitalsGen) return;
+        swap(vitalsBody, vitalsView(r));
+      } catch (e) {
+        if (g !== vitalsGen) return;
+        swap(vitalsBody, errorBox(e, loadVitals));
+      }
+    }
+    function vitalsView(r) {
+      if (!r.page_loads)
+        return empty({
+          icon: "bulb",
+          title: "Page speed, as your visitors see it",
+          text:
+            (r.coverage && r.coverage.pageviews) || totals.visitors
+              ? "None of this period's pageviews carried Web Vitals yet. The tracker sends LCP, INP and CLS when a visitor leaves a page; browsers without the Performance APIs send none."
+              : "LCP, INP and CLS arrive with the tracker's beacon when a visitor leaves a page, rated by Google's thresholds. Install the tracker and they start coming in.",
+          ask: `Check page speed for ${site.domain}: read GET /v1/sites/${site.id}/web-vitals from AgentFirstStack analytics (MCP get_web_vitals) and tell me which pages fail Core Web Vitals and why.`,
+        });
+      const ch = (r.comparison && r.comparison.change_percent) || {};
+      const vsTitle = r.comparison ? `vs ${rangeLabel(r.comparison.period.from, r.comparison.period.to)}` : null;
+      const ASSESS = {
+        passed: ["good", "Passes Core Web Vitals"],
+        failed: ["poor", "Fails Core Web Vitals"],
+        not_enough_data: [null, "Not enough page loads to assess yet"],
+      };
+      const [aRating, aText] = ASSESS[r.assessment] || ASSESS.not_enough_data;
+      const head = el(
+        "p",
+        { class: "afa-vitals-assess" },
+        aRating ? el("span", { class: "afa-rating-shape", text: RATING[aRating].shape, attrs: { "aria-hidden": "true" } }) : null,
+        el("b", { text: aText }),
+        el("span", { class: "muted", text: ` · p75 of ${numFull(r.page_loads)} page loads (Google's method)` }),
+      );
+      if (aRating) head.firstChild.style.color = RATING[aRating].color;
+      const tiles = el(
+        "div",
+        { class: "afa-vitals" },
+        VITALS.map(([k, short, name, what]) => {
+          const m = (r.metrics && r.metrics[k]) || {};
+          const dist = el("div", {
+            class: "afa-dist",
+            attrs: {
+              role: "img",
+              "aria-label": `${m.good || 0}% good, ${m.needs_improvement || 0}% needs improvement, ${m.poor || 0}% poor`,
+            },
+          });
+          for (const band of ["good", "needs_improvement", "poor"]) {
+            const share = m[band] || 0;
+            if (!share) continue;
+            const seg = growTo(el("span", { class: "afa-dist-seg" }), "width", `${share}%`);
+            seg.style.background = RATING[band].color;
+            dist.append(seg);
+          }
+          return el(
+            "div",
+            {
+              class: "afa-vital",
+              on: {
+                pointermove: (e) =>
+                  showTip(
+                    e.clientX,
+                    e.clientY,
+                    el("div", { class: "afa-tip-head", text: name }),
+                    swatchRow(RATING.good.color, "Good", pct(m.good || 0)),
+                    swatchRow(RATING.needs_improvement.color, "Needs improvement", pct(m.needs_improvement || 0)),
+                    swatchRow(RATING.poor.color, "Poor", pct(m.poor || 0)),
+                    el("div", { class: "afa-tip-sep" }),
+                    tipRow("Page loads", numFull(m.samples || 0)),
+                    el("div", { class: "afa-tip-note", text: what }),
+                  ),
+                pointerleave: hideTip,
+              },
+            },
+            el("span", { class: "afa-kpi-label" }, el("b", { text: short }), name),
+            el("span", { class: "afa-vital-row" }, el("span", { class: "afa-kpi-num", text: fmtVital(k, m.p75) }), ratingTag(m.rating)),
+            dist,
+            el("span", {
+              class: "afa-dist-text",
+              text: `${pct(m.good || 0)} good · ${pct(m.needs_improvement || 0)} needs improvement · ${pct(m.poor || 0)} poor`,
+            }),
+            el(
+              "span",
+              { class: "afa-vital-foot" },
+              `${numFull(m.samples || 0)} page loads`,
+              m.samples && !m.enough_samples
+                ? el("span", { class: "afa-tag", text: "too few to trust", title: "Under 30 page loads: the p75 can swing a lot." })
+                : null,
+              r.comparison ? changeChip(ch[`${k}_p75`], true, vsTitle) : null,
+            ),
+          );
+        }),
+      );
+      const rows = r.results || [];
+      const dimLabel = (VITAL_TABS.find(([k]) => k === vitalsDim) || [0, "Value"])[1];
+      const cell = (x, k) => {
+        const m = x[k] || {};
+        if (m.p75 === null || m.p75 === undefined) return el("td", { class: "num muted", text: "–" });
+        const rt = RATING[m.rating];
+        const shape = el("span", { class: "afa-rating-shape", text: rt ? rt.shape : "", attrs: { "aria-hidden": "true" } });
+        if (rt) shape.style.color = rt.color;
+        return el(
+          "td",
+          {
+            class: "num",
+            title: `${rt ? rt.label : ""} · ${numFull(m.samples)} page loads${m.enough_samples ? "" : " (too few to trust)"}`,
+          },
+          shape,
+          " ",
+          el("span", { class: m.enough_samples ? null : "muted", text: fmtVital(k, m.p75) }),
+        );
+      };
+      const label = (x) =>
+        vitalsDim === "country" ? `${flag(x.value)} ${countryName(x.value)}` : vitalsDim === "device" ? cap(x.value) : x.value;
+      const table = el(
+        "table",
+        { class: "afa-table" },
+        el(
+          "thead",
+          null,
+          el(
+            "tr",
+            null,
+            el("th", { text: dimLabel }),
+            el("th", { class: "num", text: "Page loads" }),
+            VITALS.map(([, short]) => el("th", { class: "num", text: `${short} p75` })),
+          ),
+        ),
+        el(
+          "tbody",
+          null,
+          rows.map((x, i) => {
+            const tr = el(
+              "tr",
+              { class: "afa-stagger" },
+              el(
+                "td",
+                null,
+                el(
+                  "span",
+                  { class: `afa-row-label${vitalsDim === "page" ? " afa-mono" : ""}` },
+                  el("span", { class: "afa-row-text", text: label(x) }),
+                ),
+              ),
+              el("td", { class: "num", text: numFull(x.page_loads) }),
+              VITALS.map(([k]) => cell(x, k)),
+            );
+            tr.style.setProperty("--i", String(i));
+            return tr;
+          }),
+        ),
+      );
+      const worst = (r.worst_pages || []).slice(0, 3);
+      const short = (k) => (VITALS.find((v) => v[0] === k) || [k, k])[1];
+      return el(
+        "div",
+        null,
+        head,
+        tiles,
+        worst.length
+          ? el(
+              "p",
+              { class: "afa-vitals-worst" },
+              el("b", { text: "Slowest pages: " }),
+              worst.map((w, i) => [
+                i ? ", " : "",
+                el("span", { class: "afa-mono", text: w.page }),
+                ` (${short(w.worst_metric)} ${fmtVital(w.worst_metric, w[w.worst_metric].p75)})`,
+              ]),
+            )
+          : null,
+        rows.length ? el("div", { class: "afa-table-wrap" }, table) : empty("No page loads with vitals for this breakdown."),
+        el("p", {
+          class: "fine",
+          text: "p75 = 75% of page loads were at least this fast. Good: LCP up to 2.5 s, INP up to 200 ms, CLS up to 0.1. INP is recorded only for interactions slower than 40 ms, so read it as an upper bound.",
+        }),
+        r.assessment === "failed"
+          ? askCard(
+              `Make ${site.domain} pass Core Web Vitals: read GET /v1/sites/${site.id}/web-vitals?breakdown=page (MCP get_web_vitals), run a lab test on the slowest page with GET /v1/sites/${site.id}/web-vitals/lab, and fix what it finds.`,
+            )
+          : null,
+      );
+    }
+
     // ----- dock: live view and insights -----
     const dock = buildDock();
     function buildDock() {
@@ -3031,6 +3514,8 @@
           for (const p of panels) p.load();
           loadGoals();
           loadCrawlers();
+          loadAiSearch();
+          loadVitals();
         });
     }
 

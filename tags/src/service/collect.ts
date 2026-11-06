@@ -1,4 +1,4 @@
-import { ApiError, accountSuspended, networkKey, parse } from "@afs/shared";
+import { ApiError, accountSuspended, edgeHost, networkKey, parse } from "@afs/shared";
 import UAParser from "ua-parser-js";
 import type { ContainerConfig } from "../config/schema";
 import type { CollectResult } from "../do/container-do";
@@ -40,10 +40,56 @@ export function automatedBrowser(ua: string): boolean {
   return /\bHeadless/i.test(ua) && !BOT.test(ua.replace(/\bHeadless/gi, ""));
 }
 
-export function geoFrom(req: Request): Enrichment["geo"] {
+/** A geo header the visitor's own first-party proxy or the platform's edge forwarded (x-afs-geo-*, URI-encoded). */
+export function forwardedGeo(req: Request, name: string, max = 100): string | undefined {
+  const raw = req.headers.get(`x-afs-geo-${name}`);
+  if (!raw) return undefined;
+  let v = raw;
+  try {
+    v = decodeURIComponent(raw);
+  } catch {
+    /* keep it raw */
+  }
+  return v.trim().slice(0, max) || undefined;
+}
+
+/**
+ * Cloudflare's country of the request; in DEV_MODE (local dev, tests) x-dev-geo-country overrides
+ * it. Behind a trusted proxy (the container's proxy key) or the platform's edge (a first-party
+ * domain), request.cf describes the proxy, so the forwarded x-afs-geo-country wins when present.
+ */
+export function requestCountry(env: { DEV_MODE?: unknown }, req: Request, trusted = false): string | undefined {
+  const dev = isDevMode(env) ? req.headers.get("x-dev-geo-country") : null;
+  if (dev && /^[A-Z0-9]{2}$/.test(dev)) return dev;
+  const fwd = trusted ? forwardedGeo(req, "country", 2)?.toUpperCase() : undefined;
+  if (fwd && /^[A-Z]{2}$/.test(fwd)) return fwd;
+  return (req as unknown as { cf?: { country?: string } }).cf?.country;
+}
+
+/** The visitor's geo: forwarded by a trusted proxy or the edge (x-afs-geo-*) when it sent a country, else Cloudflare's. */
+export function geoFrom(req: Request, trusted = false): Enrichment["geo"] {
+  if (trusted && forwardedGeo(req, "country")) {
+    const g = (k: string) => forwardedGeo(req, k);
+    return {
+      country: g("country")?.toUpperCase(),
+      region: g("region"),
+      region_code: g("region-code"),
+      city: g("city"),
+      postal_code: g("postal-code"),
+    };
+  }
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf ?? {};
   const s = (k: string) => (typeof cf[k] === "string" && cf[k] ? (cf[k] as string) : undefined);
   return { country: s("country"), region: s("region"), region_code: s("regionCode"), city: s("city"), postal_code: s("postalCode") };
+}
+
+/**
+ * Forwarded headers are trusted from the container's own first-party proxy (its x-afs-proxy-key)
+ * or the platform's edge serving a first-party domain (@afs/shared edgeHost: a service binding
+ * with INTERNAL_TOKEN and x-afs-edge-host).
+ */
+export async function trustedRequest(env: Bindings, req: Request, containerId: string): Promise<boolean> {
+  return edgeHost(env, req) !== null || (await fromTrustedProxy(env, req, containerId));
 }
 
 export function deviceFrom(ua: string | undefined, lang?: string | null): Enrichment["device"] {
@@ -146,6 +192,63 @@ export async function collectRateLimited(env: Bindings, ipKey: string, container
   return null;
 }
 
+/**
+ * A consent banner choice (type "consent"): stored as an anonymous record (consent id, time, banner
+ * version, choice per category, method, country, text language, container version), never the IP,
+ * user agent or visitor id. Test traffic (preview, ?afsa_debug=1, afst('test', true)) isn't kept.
+ */
+async function collectConsent(env: Bindings, req: Request, payload: CollectPayload, host: string | null, test: boolean, trusted = false) {
+  const r = payload.consent_record;
+  if (!r)
+    throw new ApiError(
+      400,
+      "bad_request",
+      "A consent hit needs consent_record.",
+      "The runtime sends it when a visitor chooses in the consent banner; nothing else should post type consent.",
+    );
+  if (test)
+    return {
+      ok: true,
+      test: true,
+      stored: false,
+      note: "Test traffic (preview, ?afsa_debug=1, afst('test', true)): the choice applies in the browser but isn't kept as a consent record.",
+    };
+  const country = requestCountry(env, req, trusted) ?? null;
+  const input = {
+    record: r,
+    host,
+    country: country && /^[A-Z0-9]{2}$/.test(country) ? country : null,
+    container_version: typeof payload.version === "number" ? payload.version : null,
+    at: Date.now(),
+  };
+  const stub = containerStub(env, payload.container_id);
+  let result = await stub.recordConsent(input);
+  if (!result.ok && result.error === "not_synced") {
+    if (!(await resyncById(env, payload.container_id)))
+      throw new ApiError(404, "not_found", "Unknown container.", "Check the container id in the snippet.");
+    result = await stub.recordConsent(input);
+  }
+  if (!result.ok) {
+    if (result.error === "suspended") throw accountSuspended();
+    if (result.error === "consent_quota")
+      throw new ApiError(
+        429,
+        "consent_quota",
+        `This container recorded its ${result.limit} consent choices for today; the choice applies in the browser but isn't kept.`,
+        "MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY on this deployment; it resets at 00:00 UTC. GET /v1/usage shows it.",
+      );
+    if (result.error === "storage_full")
+      throw new ApiError(507, "storage_full", "This container's event store is full.", "GET /v1/containers/:id shows stats.storage.");
+    throw new ApiError(
+      403,
+      "origin_not_allowed",
+      `Hits from "${result.error === "origin_not_allowed" ? (result.host ?? "unknown host") : "?"}" aren't accepted for this container.`,
+      "The page must be on the container's domain (or a subdomain). Add other hosts with PATCH /v1/containers/:id { allowed_hostnames: [...] }.",
+    );
+  }
+  return { ok: true, stored: true, consent_id: r.id };
+}
+
 export async function handleCollect(env: Bindings, req: Request): Promise<Response> {
   const cors = corsHeaders(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "access-control-max-age": "86400" } });
@@ -177,7 +280,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
         hint: "Known bot/headless user agent. To test with a headless browser, mark the visit as test traffic: open the first page with ?afsa_debug=1 (or call afst('test', true)), or use a preview link (POST /v1/containers/:id/preview).",
       });
     // Rate limits before any storage is touched (the preview lookup reads D1).
-    const trusted = await fromTrustedProxy(env, req, payload.container_id);
+    const trusted = await trustedRequest(env, req, payload.container_id);
     const ip = clientIpFrom(req, trusted);
     const network = networkKey(ip ?? null);
     const limited = await collectRateLimited(env, network, payload.container_id, payload.type === "conversion");
@@ -205,6 +308,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
         throw new ApiError(507, "storage_full", "This container's event store is full.", "GET /v1/containers/:id shows stats.storage.");
       return json({ ok: true, stored: r.stored });
     }
+    if (payload.type === "consent") return json(await collectConsent(env, req, payload, host, test, trusted));
     if (payload.env && !preview) envConfig = (await environmentByToken(env, payload.container_id, payload.env))?.config;
     const receivedAt = Date.now();
     const hit: CollectHit = {
@@ -212,7 +316,7 @@ export async function handleCollect(env: Bindings, req: Request): Promise<Respon
       enrich: {
         ip,
         user_agent: ua,
-        geo: geoFrom(req),
+        geo: geoFrom(req, trusted),
         device: deviceFrom(ua, req.headers.get("accept-language")),
         origin_host: host ?? undefined,
         received_at: receivedAt,

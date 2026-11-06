@@ -18,8 +18,10 @@ import { deleteMessageRows } from "./messages";
 export { DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES, maxBlobBytes, storedBlobBytes } from "./budgets";
 import { emitEvent } from "./webhooks";
 
-/** Email Routing's inbound limit. */
+/** Email Routing's inbound limit: the most MAX_INBOUND_MESSAGE_BYTES can be. */
 export const MAX_MESSAGE_BYTES = 25 * 1024 * 1024;
+/** MAX_INBOUND_MESSAGE_BYTES default for accounts no person has claimed. */
+export const DEFAULT_UNCLAIMED_MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
 /**
  * Plain text kept in D1 (and indexed), in UTF-8 bytes. Longer bodies are cut there and flagged
  * `text_truncated`; the raw MIME in R2 keeps everything.
@@ -70,12 +72,74 @@ function capReferences(refs: string | null | undefined): string | null {
 //                                    Checked right after the headers are parsed, before the body.
 //   MAX_MESSAGES_PER_INBOX           what an inbox holds: beyond it the oldest mail of the sender
 //                                    holding the most is evicted (one flooder cannot fill it)
+//   MAX_INBOUND_BYTES_PER_SENDER_PER_DAY  bytes of raw mail one sender key may send the account
+//                                    (all its inboxes) per UTC day; counted with the per-sender
+//                                    message count, in the same upsert, before the body is read.
+//   MAX_INBOUND_MESSAGE_BYTES        the largest message accepted (default 25 MiB, Email Routing's
+//                                    limit; 10 MiB unclaimed): checked from the SMTP size, first.
 //   MAX_BLOB_BYTES_PER_ACCOUNT       bytes of mail kept in R2 (default 1 GiB, 256 MiB unclaimed;
 //                                    "0" = off): checked before the body is read and again, with the
-//                                    exact size, in the transaction that stores the message.
+//                                    exact size, in the transaction that stores the message. A nearly
+//                                    full account keeps room for small mail: see storageVerdict.
 
 export const maxMessagesPerInbox = (env: AppEnv, standing: Standing) => Math.max(1, cap(env, standing, "MAX_MESSAGES_PER_INBOX"));
 export const maxInboundPerDay = (env: AppEnv, standing: Standing) => cap(env, standing, "MAX_INBOUND_PER_ACCOUNT_PER_DAY");
+export const maxInboundBytesPerSender = (env: AppEnv, standing: Standing) => cap(env, standing, "MAX_INBOUND_BYTES_PER_SENDER_PER_DAY");
+
+/** The largest inbound message the account accepts: MAX_INBOUND_MESSAGE_BYTES, never above Email Routing's 25 MiB; "0" = 25 MiB. */
+export function maxInboundMessageBytes(env: AppEnv, standing: Standing): number {
+  const n = cap(env, standing, "MAX_INBOUND_MESSAGE_BYTES", standing.claimed ? MAX_MESSAGE_BYTES : DEFAULT_UNCLAIMED_MAX_MESSAGE_BYTES);
+  return n >= 1 ? Math.min(n, MAX_MESSAGE_BYTES) : MAX_MESSAGE_BYTES;
+}
+
+/** The SMTP answer for a message over the account's size limit. */
+export const tooLargeReason = (address: string, limit: number) =>
+  `Message too large: ${address} accepts messages up to ${formatBytes(limit)}`;
+
+// ---------------------------------------------------------------------------------------------
+// A nearly full account (MAX_BLOB_BYTES_PER_ACCOUNT) keeps taking small mail. Otherwise a few
+// large messages from anyone (about 11 of 25 MB fill 256 MiB) would get every later message
+// refused, verification codes included, until the owner deletes mail. So:
+//   - a message up to SMALL_MESSAGE_BYTES fits until the account is completely full;
+//   - a larger one may not use the last SMALL_MAIL_RESERVE of the storage;
+//   - once the account is NEAR_FULL, a larger one is refused from a sender that already keeps
+//     HEAVY_SENDER of the storage (sender_usage, by sender key): the senders that filled it are
+//     refused first, not everyone.
+
+/** Messages up to this size are "small" (a verification email is a few KB). */
+export const SMALL_MESSAGE_BYTES = 256 * 1024;
+/** Fractions of MAX_BLOB_BYTES_PER_ACCOUNT. */
+export const SMALL_MAIL_RESERVE = 0.05;
+export const NEAR_FULL = 0.8;
+export const HEAVY_SENDER = 0.1;
+
+export type StorageVerdict = "full" | "reserved_for_small_mail" | "heavy_sender" | null;
+
+/** The byte thresholds behind storageVerdict for a storage cap (whole bytes). Pure. */
+export function storageThresholds(blobCap: number) {
+  return {
+    /** Larger messages must keep stored bytes at or under this. */
+    largeLimit: blobCap - Math.floor(blobCap * SMALL_MAIL_RESERVE),
+    nearFull: Math.floor(blobCap * NEAR_FULL),
+    heavySender: Math.floor(blobCap * HEAVY_SENDER),
+  };
+}
+
+/**
+ * Whether a message of `bytes` fits an account that keeps `stored` of at most `blobCap` bytes;
+ * `senderStored` is what its sender already keeps there (undefined = not known yet: before the
+ * headers are parsed). null = it fits. Pure; admissionGuard is the same rule in SQL.
+ */
+export function storageVerdict(blobCap: number, stored: number, bytes: number, senderStored?: number | null): StorageVerdict {
+  if (!Number.isFinite(blobCap)) return null;
+  if (stored + bytes > blobCap) return "full";
+  if (bytes <= SMALL_MESSAGE_BYTES) return null;
+  const t = storageThresholds(blobCap);
+  if (stored + bytes > t.largeLimit) return "reserved_for_small_mail";
+  if (senderStored !== undefined && senderStored !== null && stored + bytes > t.nearFull && senderStored + bytes > t.heavySender)
+    return "heavy_sender";
+  return null;
+}
 
 export type Admission = { ok: true; day: string | null } | { ok: false; reason: string };
 
@@ -92,9 +156,9 @@ export function formatBytes(n: number): string {
 
 /**
  * Why the inbox's account cannot take a message of `bytes` more stored bytes now, or null: its
- * daily quota is used up, or its storage would pass MAX_BLOB_BYTES_PER_ACCOUNT. Read-only (one
- * query): the email() handler calls it before reading the body, ingest again after a refused
- * commit to say why.
+ * daily quota is used up, or its storage cannot take it (storageVerdict; with `senderKey`, the
+ * sender's share counts too). Read-only (one query): the email() handler calls it before reading
+ * the body (no sender yet), ingest after the headers and again after a refused commit to say why.
  */
 export async function inboundRefusal(
   env: AppEnv,
@@ -102,29 +166,36 @@ export async function inboundRefusal(
   standing: Standing,
   bytes: number,
   now = Date.now(),
+  senderKey?: string,
 ): Promise<string | null> {
   const perDay = maxInboundPerDay(env, standing);
   const blobCap = maxBlobBytes(env, standing);
   if (!Number.isFinite(perDay) && !Number.isFinite(blobCap)) return null;
   const row = await env.DB.prepare(
     `SELECT (SELECT count FROM inbound_counters WHERE account_id = ?1 AND day = ?2) AS today,
-            (SELECT blob_bytes FROM account_usage WHERE account_id = ?1) AS stored`,
+            (SELECT blob_bytes FROM account_usage WHERE account_id = ?1) AS stored,
+            (SELECT blob_bytes FROM sender_usage WHERE account_id = ?1 AND sender_key = ?3) AS sender_stored`,
   )
-    .bind(inbox.account_id, utcDay(now))
-    .first<{ today: number | null; stored: number | null }>();
+    .bind(inbox.account_id, utcDay(now), senderKey ?? null)
+    .first<{ today: number | null; stored: number | null; sender_stored: number | null }>();
   if ((row?.today ?? 0) >= perDay)
     return `Daily limit reached: the account behind ${inbox.address} received its maximum of ${perDay} messages today (UTC); retry after 00:00 UTC`;
-  if ((row?.stored ?? 0) + bytes > blobCap)
+  const verdict = storageVerdict(blobCap, row?.stored ?? 0, bytes, senderKey === undefined ? undefined : (row?.sender_stored ?? 0));
+  if (verdict === "full")
     return `Mailbox full: the account behind ${inbox.address} keeps at most ${formatBytes(blobCap)} of mail and this message does not fit; it accepts mail again once older mail is deleted`;
+  if (verdict === "reserved_for_small_mail")
+    return `Mailbox nearly full: the account behind ${inbox.address} keeps its last ${formatBytes(blobCap - storageThresholds(blobCap).largeLimit)} for messages up to ${formatBytes(SMALL_MESSAGE_BYTES)}; larger mail is accepted again once older mail is deleted`;
+  if (verdict === "heavy_sender")
+    return `Mailbox nearly full: much of what the account behind ${inbox.address} keeps is mail from ${senderKey === UNAUTHENTICATED_SENDER ? "unauthenticated senders" : senderKey}, so its messages over ${formatBytes(SMALL_MESSAGE_BYTES)} are refused until older mail is deleted`;
   return null;
 }
 
 /**
  * SQL condition (for the INSERT of the message) that admits it only if the account's daily quota
- * and stored-bytes budget still have room, evaluated inside the commit's transaction: concurrent
- * deliveries cannot overshoot either. null when neither is capped.
+ * and storage still have room (storageVerdict, with the sender's share), evaluated inside the
+ * commit's transaction: concurrent deliveries cannot overshoot either. null when neither is capped.
  */
-function admissionGuard(env: AppEnv, inbox: InboxRow, standing: Standing, bytes: number, day: string) {
+function admissionGuard(env: AppEnv, inbox: InboxRow, standing: Standing, bytes: number, day: string, senderKey: string) {
   const perDay = maxInboundPerDay(env, standing);
   const blobCap = maxBlobBytes(env, standing);
   const parts: string[] = [];
@@ -134,50 +205,96 @@ function admissionGuard(env: AppEnv, inbox: InboxRow, standing: Standing, bytes:
     binds.push(inbox.account_id, day, perDay);
   }
   if (Number.isFinite(blobCap)) {
-    parts.push("COALESCE((SELECT blob_bytes FROM account_usage WHERE account_id = ?), 0) + ? <= ?");
-    binds.push(inbox.account_id, bytes, blobCap);
+    const stored = "COALESCE((SELECT blob_bytes FROM account_usage WHERE account_id = ?), 0)";
+    if (bytes <= SMALL_MESSAGE_BYTES) {
+      parts.push(`${stored} + ? <= ?`);
+      binds.push(inbox.account_id, bytes, blobCap);
+    } else {
+      const t = storageThresholds(blobCap);
+      parts.push(
+        `${stored} + ? <= ? AND (${stored} + ? <= ? OR COALESCE((SELECT blob_bytes FROM sender_usage WHERE account_id = ? AND sender_key = ?), 0) + ? <= ?)`,
+      );
+      binds.push(
+        inbox.account_id,
+        bytes,
+        t.largeLimit,
+        inbox.account_id,
+        bytes,
+        t.nearFull,
+        inbox.account_id,
+        senderKey,
+        bytes,
+        t.heavySender,
+      );
+    }
   }
   return parts.length ? { sql: parts.join(" AND "), binds, countDay: Number.isFinite(perDay) } : null;
 }
 
 /**
- * Per-sender admission, once the sender is known (after parsing): at most
- * MAX_INBOUND_PER_SENDER_PER_DAY messages from one sender key to one inbox per UTC day, and at
- * most half of MAX_INBOUND_PER_ACCOUNT_PER_DAY from one sender key across the account, so one
- * outsider can neither fill an inbox nor use up the account's daily quota. One atomic statement.
+ * Per-sender admission, once the sender is known (after parsing the headers): at most
+ * MAX_INBOUND_PER_SENDER_PER_DAY messages from one sender key to one inbox per UTC day, at most
+ * half of MAX_INBOUND_PER_ACCOUNT_PER_DAY from one sender key across the account, and at most
+ * MAX_INBOUND_BYTES_PER_SENDER_PER_DAY bytes (the raw size) from one sender key across the
+ * account, so one outsider can neither fill an inbox, nor use up the account's daily quota, nor
+ * fill its storage in a day. One atomic statement.
  */
-export async function admitSender(env: AppEnv, standing: Standing, inbox: InboxRow, sender: string, now = Date.now()): Promise<Admission> {
+export async function admitSender(
+  env: AppEnv,
+  standing: Standing,
+  inbox: InboxRow,
+  sender: string,
+  now = Date.now(),
+  bytes = 0,
+): Promise<Admission> {
   const perInbox = cap(env, standing, "MAX_INBOUND_PER_SENDER_PER_DAY");
   const perDay = maxInboundPerDay(env, standing);
   const perAccount = Number.isFinite(perDay) ? Math.max(1, Math.floor(perDay / 2)) : Number.POSITIVE_INFINITY;
-  if (!Number.isFinite(perInbox) && !Number.isFinite(perAccount)) return { ok: true, day: null };
-  const bound = (n: number) => (Number.isFinite(n) ? n : NO_CAP);
+  const bytesPerDay = maxInboundBytesPerSender(env, standing);
+  if (!Number.isFinite(perInbox) && !Number.isFinite(perAccount) && !Number.isFinite(bytesPerDay)) return { ok: true, day: null };
+  const bound = (n: number) => (Number.isFinite(n) ? n : NO_CAP * 1000);
   const day = utcDay(now);
   const sum = "(SELECT COALESCE(SUM(count), 0) FROM sender_counters WHERE account_id = ?4 AND sender = ?2 AND day = ?3)";
+  const sumBytes = "(SELECT COALESCE(SUM(bytes), 0) FROM sender_counters WHERE account_id = ?4 AND sender = ?2 AND day = ?3)";
   const row = await env.DB.prepare(
-    `INSERT INTO sender_counters (inbox_id, sender, day, account_id, count)
-     SELECT ?1, ?2, ?3, ?4, 1 WHERE ?5 >= 1 AND ${sum} < ?6
-     ON CONFLICT(inbox_id, sender, day) DO UPDATE SET count = sender_counters.count + 1
-     WHERE sender_counters.count < ?5 AND ${sum} < ?6
+    `INSERT INTO sender_counters (inbox_id, sender, day, account_id, count, bytes)
+     SELECT ?1, ?2, ?3, ?4, 1, ?7 WHERE ?5 >= 1 AND ${sum} < ?6 AND ${sumBytes} + ?7 <= ?8
+     ON CONFLICT(inbox_id, sender, day) DO UPDATE SET count = sender_counters.count + 1, bytes = sender_counters.bytes + excluded.bytes
+     WHERE sender_counters.count < ?5 AND ${sum} < ?6 AND ${sumBytes} + ?7 <= ?8
      RETURNING count`,
   )
-    .bind(inbox.id, sender, day, inbox.account_id, bound(perInbox), bound(perAccount))
+    .bind(inbox.id, sender, day, inbox.account_id, bound(perInbox), bound(perAccount), bytes, bound(bytesPerDay))
     .first<{ count: number }>();
-  if (!row)
-    return {
-      ok: false,
-      reason:
-        sender === UNAUTHENTICATED_SENDER
-          ? `Too much unauthenticated mail (no SPF, DKIM or DMARC pass) to ${inbox.address} today (UTC); retry after 00:00 UTC`
-          : `Too much mail from ${sender} to ${inbox.address} today (UTC); retry after 00:00 UTC`,
-    };
-  return { ok: true, day };
+  if (row) return { ok: true, day };
+  const who = sender === UNAUTHENTICATED_SENDER ? "unauthenticated mail (no SPF, DKIM or DMARC pass)" : `mail from ${sender}`;
+  if (Number.isFinite(bytesPerDay)) {
+    // Refused: say so when it was the byte budget (one read, only on this rare path).
+    const used = await env.DB.prepare(
+      "SELECT COALESCE(SUM(bytes), 0) AS b FROM sender_counters WHERE account_id = ? AND sender = ? AND day = ?",
+    )
+      .bind(inbox.account_id, sender, day)
+      .first<{ b: number }>();
+    if ((used?.b ?? 0) + bytes > bytesPerDay)
+      return {
+        ok: false,
+        reason: `Too much ${who} to the account behind ${inbox.address} today (UTC): at most ${formatBytes(bytesPerDay)} a day from one sender; retry after 00:00 UTC`,
+      };
+  }
+  return {
+    ok: false,
+    reason:
+      sender === UNAUTHENTICATED_SENDER
+        ? `Too much unauthenticated mail (no SPF, DKIM or DMARC pass) to ${inbox.address} today (UTC); retry after 00:00 UTC`
+        : `Too much mail from ${sender} to ${inbox.address} today (UTC); retry after 00:00 UTC`,
+  };
 }
 
-async function refundSender(env: AppEnv, inboxId: string, sender: string, day: string | null) {
+async function refundSender(env: AppEnv, inboxId: string, sender: string, day: string | null, bytes = 0) {
   if (!day) return;
-  await env.DB.prepare("UPDATE sender_counters SET count = MAX(0, count - 1) WHERE inbox_id = ? AND sender = ? AND day = ?")
-    .bind(inboxId, sender, day)
+  await env.DB.prepare(
+    "UPDATE sender_counters SET count = MAX(0, count - 1), bytes = MAX(0, bytes - ?) WHERE inbox_id = ? AND sender = ? AND day = ?",
+  )
+    .bind(bytes, inboxId, sender, day)
     .run();
 }
 
@@ -443,9 +560,11 @@ export async function ingestRaw(
   const { inbox, via } = target;
   const raw = input.raw instanceof Uint8Array ? input.raw : new Uint8Array(input.raw);
   const size = raw.byteLength;
-  if (size > MAX_MESSAGE_BYTES) return { status: "rejected", reason: "Message too large (25 MB limit)" };
+  if (size > MAX_MESSAGE_BYTES) return { status: "rejected", reason: tooLargeReason(inbox.address, MAX_MESSAGE_BYTES) };
   const standing = input.standing ?? (await standingOf(env, inbox.account_id));
   if (standing.suspended) return { status: "rejected", reason: suspendedReason(inbox.address) };
+  const maxSize = maxInboundMessageBytes(env, standing);
+  if (size > maxSize) return { status: "rejected", reason: tooLargeReason(inbox.address, maxSize) };
 
   // 1. Headers only.
   const head: Email = await PostalMime.parse(headerBlock(raw));
@@ -467,7 +586,11 @@ export async function ingestRaw(
   const listed = await receiveRefusal(env, inbox, { fromAddress: from.address, envelopeFrom, auth });
   if (listed) return { status: "rejected", reason: listed };
   const senderKey = senderKeyFor({ fromAddress: from.address, envelopeFrom, auth }, [sharedDomain(env)]);
-  const sender = await admitSender(env, standing, inbox, senderKey, now);
+  // A nearly full account refuses the large mail of the senders that filled it, before their
+  // allowance is spent or the body is read.
+  const early = await inboundRefusal(env, inbox, standing, size, now, senderKey);
+  if (early) return { status: "rejected", reason: early };
+  const sender = await admitSender(env, standing, inbox, senderKey, now, size);
   if (!sender.ok) return { status: "rejected", reason: sender.reason };
 
   let stored = false;
@@ -503,7 +626,7 @@ export async function ingestRaw(
     }));
 
     // D1 reads first: nothing is in R2 yet if one of them throws, or if the account is full.
-    const refusal = await inboundRefusal(env, inbox, standing, blobBytes, now);
+    const refusal = await inboundRefusal(env, inbox, standing, blobBytes, now, senderKey);
     if (refusal) return { status: "rejected", reason: refusal };
     const threadId = await resolveThread(
       env,
@@ -586,7 +709,7 @@ export async function ingestRaw(
     }
 
     const day = utcDay(now);
-    const guard = admissionGuard(env, inbox, standing, blobBytes, day);
+    const guard = admissionGuard(env, inbox, standing, blobBytes, day, senderKey);
     const keys = [rawKey, ...(htmlKey ? [htmlKey] : [])];
     try {
       await Promise.all([
@@ -642,7 +765,7 @@ export async function ingestRaw(
       const winner = await findDup();
       if (winner) return { status: "duplicate", message_id: winner.id, inbox_id: inbox.id };
       // Refused by the guard: the quota or the storage filled up since the check above.
-      const reason = await inboundRefusal(env, inbox, standing, blobBytes, now);
+      const reason = await inboundRefusal(env, inbox, standing, blobBytes, now, senderKey);
       return { status: "rejected", reason: reason ?? "Mailbox temporarily unavailable; retry later" };
     }
 
@@ -678,7 +801,7 @@ export async function ingestRaw(
       ...(fwdKind === "forward" && fwdMode === "each" ? { forward: true as const } : {}),
     };
   } finally {
-    if (!stored) await refundSender(env, inbox.id, senderKey, sender.day).catch(() => {});
+    if (!stored) await refundSender(env, inbox.id, senderKey, sender.day, size).catch(() => {});
   }
 }
 
@@ -750,13 +873,19 @@ export async function handleEmail(message: ForwardableEmailMessage, env: AppEnv)
     return null;
   }
   if (message.rawSize > MAX_MESSAGE_BYTES) {
-    message.setReject("Message too large (25 MB limit)");
+    message.setReject(tooLargeReason(target.inbox.address, MAX_MESSAGE_BYTES));
     return null;
   }
   const standing = await standingOf(env, target.inbox.account_id);
   if (standing.suspended) {
     console.log(JSON.stringify({ event: "mail.rejected", reason: "account_suspended", inbox_id: target.inbox.id }));
     message.setReject(suspendedReason(target.inbox.address));
+    return null;
+  }
+  const maxSize = maxInboundMessageBytes(env, standing);
+  if (message.rawSize > maxSize) {
+    console.log(JSON.stringify({ event: "mail.rejected", reason: "too_large", inbox_id: target.inbox.id, size: message.rawSize }));
+    message.setReject(tooLargeReason(target.inbox.address, maxSize));
     return null;
   }
   // Read-only: the quota is only counted when the message is stored (see ingestRaw).

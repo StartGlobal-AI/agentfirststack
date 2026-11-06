@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics to a Bolt app with its AI agent</title>
+<meta name="description" content="Connect AgentFirstStack to Bolt as a custom MCP connector, paste one prompt, click Update, and Bolt's agent adds analytics and checks the live app.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-bolt">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics to a Bolt app with its AI agent">
+<meta property="og:description" content="Connect AgentFirstStack to Bolt as a custom MCP connector, paste one prompt, click Update, and Bolt's agent adds analytics and checks the live app.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-bolt">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics to a Bolt app with its AI agent">
+<meta name="twitter:description" content="Connect AgentFirstStack to Bolt as a custom MCP connector, paste one prompt, click Update, and Bolt's agent adds analytics and checks the live app.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-bolt#article",
+      "headline": "Add analytics to a Bolt app with its AI agent",
+      "description": "Connect AgentFirstStack to Bolt as a custom MCP connector, paste one prompt, click Update, and Bolt's agent adds analytics and checks the live app.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-bolt",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-bolt",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Bolt",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Add analytics to a Bolt app",
+          "item": "https://agentfirststack.com/guides/add-analytics-with-bolt"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-bolt#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can Bolt's agent run the setup with curl?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not reliably. Bolt's terminal runs in WebContainers inside your browser, where requests to APIs without CORS headers can fail, and AgentFirstStack's API doesn't send them. Use the MCP connector, or run the API side from a coding agent with a real terminal."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why doesn't this guide use a first-party proxy on bolt.host?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Bolt's hosting docs describe no way to forward a path to another server with a header. On Netlify you can, with an Edge Function. Without a proxy, ad blockers block the tracker."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the API key end up in my app?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The tracker needs only the public site id. The key lives in the connector (or nowhere, with OAuth), and for server events in Bolt Cloud Secrets."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will it count page changes in a single-page app?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, every History API navigation is a page view. Hash routes (#/page) need data-hash=\"true\" on the script tag."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics to a Bolt app</span></nav>
+      <h1>Add analytics to a Bolt app with its AI agent</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics to a Bolt app, connect AgentFirstStack to Bolt as a custom MCP connector, paste the prompt below, and publish. Bolt's agent then has AgentFirstStack's tools: it creates the analytics site, adds the tracker to your app's HTML head, and after you publish it runs verify and the setup check. One thing to know first: Bolt's hosting has no documented way to serve the tracker from your own domain, so on <code>bolt.host</code> the tracker loads from <code>analytics.agentfirststack.com</code>, and visitors with an ad blocker aren't counted. If you host the project on Netlify instead, you can fix that. Other builders and tools: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="connect">1. Connect AgentFirstStack to Bolt</h2>
+<p>In the chat box: <b>+ &gt; Connectors &gt; Manage connectors &gt; Custom MCP server</b>. Use the HTTP transport and the URL <code>https://agentfirststack.com/mcp</code>. Bolt offers three kinds of authentication: API key, MCP OAuth, or none.</p>
+<ul>
+<li><b>MCP OAuth</b> is the safer bet. AgentFirstStack's MCP server supports OAuth 2.1 with dynamic client registration: you sign in with Google, create a project named after your app's domain, and choose full access. The project is yours from the start.</li>
+<li><b>API key</b> works if Bolt sends it as <code>Authorization: Bearer</code> or <code>X-API-Key</code>, the two headers AgentFirstStack accepts. Bolt's docs don't say which header it uses, so if tool calls fail with 401, switch to OAuth.</li>
+</ul>
+<p>Why MCP rather than letting the agent run <code>curl</code>: Bolt runs your project in StackBlitz WebContainers, inside your browser. The WebContainers docs describe requests from there failing on CORS, and AgentFirstStack's API doesn't send CORS headers, so API calls from Bolt's terminal may not get through. The connector calls the tools from Bolt's side.</p>
+
+<h2 id="prompt">2. Paste the prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into the Bolt chat</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this app with AgentFirstStack, using the AgentFirstStack MCP connector I added. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt first.
+
+1. Name the project after the app's domain (afs_update_project) if it has no name.
+
+2. Create an analytics site (analytics_create_site) for the domain the app is published on: the custom domain, or its bolt.host or netlify.app address.
+
+3. Get the install code (analytics_get_install_instructions). If the project has an index.html at its root (a Vite app), add the snippet inside &lt;head&gt; there. If it's Next.js or Astro, use that framework's layout. Never put an API key in .env or in frontend code: anything there ends up in the published site. Bolt's hosting can't proxy the tracker through our domain, so note in AGENTFIRSTSTACK.md that ad blockers block analytics here.
+
+4. Create goals for sign-ups, purchases and the main buttons (data-afsa-event attributes on buttons work without code).
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Tell me to publish (or click Update). After I say it's live, run analytics_verify_install, fix what it reports, then run afs_check_setup with services ["analytics"] and work through its next_steps until it says ready.
+
+Write the site id in AGENTFIRSTSTACK.md (never a key), and tell me what you set up and how you verified it.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="head">Where the tracker goes</h2>
+<p>Bolt's docs say it "focuses on JavaScript-based web technologies" and don't name one default stack, so the agent checks the project. In a Vite app, <code>index.html</code> at the project root is the page every route uses:</p>
+<pre><code>&lt;head&gt;
+  &lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_..."&gt;&lt;/script&gt;
+&lt;/head&gt;</code></pre>
+<p>Page changes inside the app count without more code: the tracker records a page view on every <code>history.pushState</code>, <code>replaceState</code> and back or forward navigation, which is how React Router and similar routers work. For a Next.js or Astro project, follow the <a href="/guides/nextjs-analytics">Next.js</a> or <a href="/guides/astro-analytics">Astro</a> guide instead. You can check the agent's edit in Bolt's code view, where you can open and edit files yourself.</p>
+
+<h2 id="secrets">Keys: not in .env</h2>
+<p>Bolt is direct about this: values in a project's ordinary environment variables can be read by browser code, and "that value ends up in what's sent to anyone visiting your published site." The tracker doesn't need a key, only the public site id, so the snippet is safe. An AgentFirstStack API key is different. If the app sends conversions from the server (a paid order, a verified sign-up), put the key in Bolt Cloud's Secrets, which "only work with server functions", and send the event from a server function with the visitor id the page passes along (<code>window.afsa.visitorId()</code>).</p>
+
+<h2 id="publish">Publish, then verify</h2>
+<p>Bolt publishes to an address ending in <code>bolt.host</code>, or your own domain on a paid plan. Later changes "aren't automatically applied to your published site": click <b>Update</b> after the agent's edits. Then ask the agent to verify. It runs <code>analytics_verify_install</code>, which fetches the live page, finds the tag, checks whether events arrived and lists fixes, and <code>afs_check_setup</code>, which lists what else the setup needs.</p>
+<p>Visit the published URL once yourself first, in a normal browser. Bolt's preview doesn't count: it runs on your own machine, inside the editor, and isn't on your app's domain, so its events are dropped. Bolt's docs also note that ad blockers and VPNs can break the preview itself.</p>
+
+<h2 id="netlify">On Netlify: serve it from your own domain</h2>
+<p>Bolt can still deploy to Netlify, at a <code>netlify.app</code> address or your own domain. If you host the project there from its GitHub repository, add a Netlify Edge Function on <code>/_a/*</code> that forwards to AgentFirstStack with the site's proxy key. The <a href="/guides/astro-analytics#static">Astro guide</a> has the full function; it doesn't depend on the framework. Put <code>first_party_proxy.proxy_key</code> from <code>GET /v1/sites/:id/install</code> in Netlify's environment variables as <code>AFS_PROXY_KEY</code> with the Functions scope, then change the snippet's src to <code>/_a/s.js</code>. The tracker and its events are then first-party, so visitors with ad blockers count too. The proxy key matters: the collector only trusts the forwarded visitor IP from requests that carry it, and without it every visitor looks like Netlify's one address.</p>
+
+<h2 id="pitfalls">Things that trip people up</h2>
+<ul>
+<li><b>Forgetting Update.</b> The agent's edit isn't live until you publish again; verify reports <code>snippet_present</code> failing until then.</li>
+<li><b>Shared suffixes.</b> <code>bolt.host</code> and <code>netlify.app</code> addresses are fine as site domains (<code>your-app.netlify.app</code>); <code>netlify.app</code> on its own is refused.</li>
+<li><b>Duplicated projects.</b> Bolt's docs say a duplicated project needs its custom domain re-pointed. The analytics site follows the domain, so the duplicate's events are dropped until its domain matches.</li>
+<li><b>Instructions for later chats.</b> Add a line to the project's Knowledge (project settings): "This app uses AgentFirstStack analytics; ids are in AGENTFIRSTSTACK.md; run afs_check_setup before changing tracking."</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Can Bolt's agent run the setup with curl?</h3>
+<p>Not reliably. Bolt's terminal runs in WebContainers inside your browser, where requests to APIs without CORS headers can fail, and AgentFirstStack's API doesn't send them. Use the MCP connector, or run the API side from a coding agent with a real terminal.</p>
+<h3>Why doesn't this guide use a first-party proxy on bolt.host?</h3>
+<p>Bolt's hosting docs describe no way to forward a path to another server with a header. On Netlify you can, with an Edge Function. Without a proxy, ad blockers block the tracker.</p>
+<h3>Does the API key end up in my app?</h3>
+<p>No. The tracker needs only the public site id. The key lives in the connector (or nowhere, with OAuth), and for server events in Bolt Cloud Secrets.</p>
+<h3>Will it count page changes in a single-page app?</h3>
+<p>Yes, every History API navigation is a page view. Hash routes (<code>#/page</code>) need <code>data-hash="true"</code> on the script tag.</p>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode.</p>
+
+<p class="meta">Bolt and StackBlitz belong to StackBlitz, Inc.; Netlify belongs to its owners. AgentFirstStack isn't affiliated with either. Bolt details come from its help center (<a href="https://support.bolt.new/integrations/mcp">MCP connectors</a>, <a href="https://support.bolt.new/reference/supported-technologies">supported technologies</a>, <a href="https://support.bolt.new/building/code-view">code view</a>, <a href="https://support.bolt.new/bolt-cloud/database/secrets">secrets</a>, <a href="https://support.bolt.new/bolt-cloud/database/server-functions">server functions</a>, <a href="https://support.bolt.new/bolt-cloud/hosting/publish">publishing</a>, <a href="https://support.bolt.new/integrations/netlify">Netlify</a>, <a href="https://support.bolt.new/settings/project-settings">project settings</a>, <a href="https://support.bolt.new/troubleshooting/preview-issues">preview issues</a>) and the <a href="https://webcontainers.io/guides/troubleshooting">WebContainers docs</a>, checked on 6 November 2026.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-lovable"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a Lovable app</b><span>index.html, Cloud secrets and the published URL.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-v0"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a v0 app</b><span>app/layout.tsx, Vercel env vars and previews.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-replit"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Replit Agent</b><span>Secrets, deployments and the .replit.app domain.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#connect">1. Connect AgentFirstStack to Bolt</a></li><li><a href="#prompt">2. Paste the prompt</a></li><li><a href="#head">Where the tracker goes</a></li><li><a href="#secrets">Keys: not in .env</a></li><li><a href="#publish">Publish, then verify</a></li><li><a href="#netlify">On Netlify: serve it from your own domain</a></li><li><a href="#pitfalls">Things that trip people up</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

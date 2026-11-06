@@ -54,7 +54,7 @@ const tombstone = (address: string) =>
     .first<{ account_id: string; deleted_at: number; permanent: number }>();
 
 describe("DELETE /v1/account", () => {
-  it("erases a deleted project's mail and reserves its addresses that received mail for good", async () => {
+  it("erases a deleted project's mail and reserves its addresses for good", async () => {
     const s = await signup();
     const acct = acctOf(s);
     const other = await signup();
@@ -62,7 +62,7 @@ describe("DELETE /v1/account", () => {
 
     // The project: a webhook, a list entry, a custom domain claim, an inbox that received mail, one
     // that didn't (plus the default inbox, which didn't either), and an address it deleted itself
-    // earlier (a 90-day tombstone).
+    // earlier (already retired).
     const hook = await call("POST", "/v1/webhooks", { key: s.key, body: { url: "https://hooks.example.com/purge" } });
     expect(hook.status).toBe(201);
     expect((await call("POST", "/v1/lists/receive/block", { key: s.key, body: { entry: "spam.example" } })).status).toBe(201);
@@ -72,7 +72,7 @@ describe("DELETE /v1/account", () => {
     const earlier = (await call("POST", "/v1/inboxes", { key: s.key, body: { username: uniq("earlier") } })).json.inbox;
     for (const a of [used.address, used.address, earlier.address]) await deliver("noreply@github.com", a, mail(a));
     const del = await call("DELETE", `/v1/inboxes/${earlier.id}`, { key: s.key });
-    expect(del.json.address_reserved_until).toBeGreaterThan(Date.now());
+    expect(del.json.address_reserved).toBe(true);
     // Rows the API creates only in passing: a wait slot and an Idempotency-Key replay.
     await E.DB.batch([
       E.DB.prepare("INSERT INTO active_waits (id, account_id, inbox_id, expires_at) VALUES (?, ?, ?, ?)").bind(
@@ -98,8 +98,8 @@ describe("DELETE /v1/account", () => {
       account_id: acct,
       done: true,
       deleted: { inboxes: 3, messages: 2, domains: 1, webhooks: 1, list_entries: 1, send_keys: 1, active_waits: 1 },
-      // used (deleted now) and earlier (its tombstone made permanent); fresh and the default never received mail.
-      addresses_reserved: 2,
+      // used, fresh and the default, retired now (earlier was retired when it was deleted).
+      addresses_reserved: 3,
     });
     expect(r.json.deleted.blobs).toBeGreaterThan(0);
     expect(r.json.deleted.webhook_deliveries).toBeGreaterThan(0);
@@ -126,22 +126,18 @@ describe("DELETE /v1/account", () => {
     expect(await count("SELECT count AS n FROM send_counters WHERE account_id = ?", acct)).toBe(3);
     expect(await count("SELECT COUNT(*) AS n FROM account_usage WHERE account_id = ?", acct)).toBe(1);
 
-    // The addresses that received mail are reserved for good: past the 90-day window, after the
-    // cron, another account still gets the same 409 as for a taken address.
-    for (const a of [used.address, earlier.address]) expect(await tombstone(a)).toMatchObject({ account_id: acct, permanent: 1 });
+    // Every address is reserved for good, mailed or not: a year later, after the cron, another
+    // account still gets the same 409 as for a taken address.
+    const all = [used.address, earlier.address, fresh.address, s.inbox.address];
+    for (const a of all) expect(await tombstone(a)).toMatchObject({ account_id: acct, permanent: 1 });
     await E.DB.prepare("UPDATE address_tombstones SET deleted_at = ? WHERE account_id = ?")
       .bind(Date.now() - 400 * DAY, acct)
       .run();
     await pruneCounters(E);
-    for (const inbox of [used, earlier]) {
-      const again = await call("POST", "/v1/inboxes", { key: other.key, body: { username: inbox.username } });
-      expect(again.status, inbox.address).toBe(409);
+    for (const address of all) {
+      const again = await call("POST", "/v1/inboxes", { key: other.key, body: { username: address.split("@")[0] } });
+      expect(again.status, address).toBe(409);
       expect(again.json.error.code).toBe("conflict");
-    }
-    // The ones that never received mail are free.
-    for (const address of [fresh.address, s.inbox.address]) {
-      const take = await call("POST", "/v1/inboxes", { key: other.key, body: { username: address.split("@")[0] } });
-      expect(take.status, address).toBe(201);
     }
 
     // Again: nothing left, nothing counted.
@@ -205,9 +201,10 @@ describe("DELETE /v1/account", () => {
   });
 });
 
-describe("tombstone expiry cron (pruneCounters)", () => {
-  it("prunes expired tombstones and never a permanent one; createInbox reads them the same way", async () => {
+describe("tombstones never lapse (migrations/0016)", () => {
+  it("a tombstone of any age or kind reserves its address, and the cron never prunes one", async () => {
     const owner = `acct_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    // Rows as the old code wrote them: permanent = 0 lapsed after 90 days (old) or not yet (live).
     const expired = `${uniq("expired")}@mail.example.com`;
     const live = `${uniq("live")}@mail.example.com`;
     const permanent = `${uniq("forever")}@mail.example.com`;
@@ -229,19 +226,13 @@ describe("tombstone expiry cron (pruneCounters)", () => {
         old,
       ),
     ]);
-    // Before the cron runs: an expired tombstone already frees its address, a permanent one never does.
     const s = await signup();
     const create = (address: string) => call("POST", "/v1/inboxes", { key: s.key, body: { username: address.split("@")[0] } });
-    expect((await create(permanent)).status).toBe(409);
-    expect((await create(live)).status).toBe(409);
-    expect((await create(expired)).status).toBe(201);
+    for (const a of [permanent, live, expired]) expect((await create(a)).status, a).toBe(409);
 
-    const r = await pruneCounters(E);
-    expect(r.tombstones_pruned).toBeGreaterThanOrEqual(1);
-    expect(await tombstone(expired)).toBeNull();
-    expect(await tombstone(live)).toMatchObject({ permanent: 0 });
-    expect(await tombstone(permanent)).toMatchObject({ permanent: 1, deleted_at: old });
-    expect((await create(permanent)).status).toBe(409);
+    await pruneCounters(E);
+    for (const a of [permanent, live, expired]) expect(await tombstone(a), a).not.toBeNull();
+    for (const a of [permanent, live, expired]) expect((await create(a)).status, a).toBe(409);
   });
 
   it("a permanent reservation is never downgraded by a later delete of the same address", async () => {

@@ -49,6 +49,8 @@ const FLUSH_MS = 5000;
 const MAX_BUFFER = 800;
 const BEACON_MAX = 63_000;
 const MAX_ERRORS_PER_PAGE = 50;
+/** New sessions per page load after `session_mismatch` answers; past it the refusal stops recording. */
+const MAX_ROTATIONS = 2;
 
 interface SNode {
   type: number;
@@ -223,10 +225,14 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
   // keepalive fetch is a CORS request, so it always carries the page's real Origin (a beacon can
   // send "Origin: null" under a no-referrer policy, and ingest refuses that).
   const KEEPALIVE = typeof Request !== "undefined" && "keepalive" in Request.prototype;
-  const post = (url: string, body: BodyInit, keepalive: boolean) =>
+  const post = (url: string, body: BodyInit, keepalive: boolean, sid: string) =>
     fetch(url, { method: "POST", body, keepalive, credentials: "omit", headers: { "content-type": "text/plain" } })
       .then((r) => r.json())
-      .then((j: { stop?: boolean; reason?: string }) => {
+      .then((j: { stop?: boolean; reason?: string; error?: string }) => {
+        // The session id belongs to a browser with another user agent (devtools device emulation
+        // changed it under this tab): go on as a new session instead of stopping. Answers for chunks
+        // of a session already replaced are ignored.
+        if (j && j.error === "session_mismatch") return void (sid === S.id && rotate());
         if (j && j.stop) finish(j.reason || "server", true);
       })
       .catch(() => {});
@@ -236,7 +242,8 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     if (flushTimer) clearTimeout(flushTimer);
     flushTimer = 0;
     if (!buffer.length && !end) return;
-    const env: Envelope = { v: 1, sid: S.id, seq: S.seq++, t: Date.now(), ev: buffer };
+    const sid = S.id;
+    const env: Envelope = { v: 1, sid, seq: S.seq++, t: Date.now(), ev: buffer };
     buffer = [];
     if (end) env.end = 1;
     if (S.uid) env.uid = S.uid;
@@ -258,15 +265,15 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
     S.last = Date.now();
     boot.save();
     const json = JSON.stringify(env);
-    const url = (z: 0 | 1) => `${api}?s=${C.site}&sid=${S.id}&q=${env.seq}&z=${z}`;
+    const url = (z: 0 | 1) => `${api}?s=${C.site}&sid=${sid}&q=${env.seq}&z=${z}`;
     if (unloading || typeof CompressionStream === "undefined") {
       if (json.length < BEACON_MAX && !KEEPALIVE && nav.sendBeacon && nav.sendBeacon(url(0), json)) return;
-      void post(url(0), json, json.length < BEACON_MAX);
+      void post(url(0), json, json.length < BEACON_MAX, sid);
       return;
     }
     sending = sending
       .then(() => gzip(json))
-      .then((body) => post(url(1), body, body.size < BEACON_MAX))
+      .then((body) => post(url(1), body, body.size < BEACON_MAX, sid))
       .catch(() => {});
   };
   const flushSoon = (ms: number) => {
@@ -745,6 +752,33 @@ type RREvent = { type: number; timestamp: number; data: Record<string, unknown> 
         .catch(() => {});
     boot.save();
     if (attrs && typeof attrs === "object") for (const [k, v] of Object.entries(attrs)) setTag(k, v);
+  };
+  // A new session for this tab after a session_mismatch answer: a fresh id (the loader's format),
+  // chunk and pageview counters from zero, a new full snapshot, the current page and the tab's tags,
+  // as when the tab started; identify and the sampling decision carry over. What the refused
+  // session had buffered is dropped. At most MAX_ROTATIONS per page load, then recording stops.
+  let rotations = 0;
+  const rotate = () => {
+    if (ended) return;
+    if (rotations++ >= MAX_ROTATIONS) return finish("session_mismatch", true);
+    if (stopRec) {
+      stopRec();
+      stopRec = null;
+    }
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = 0;
+    buffer = [];
+    let id = "rs_";
+    for (const b of crypto.getRandomValues(new Uint8Array(16))) id += "0123456789abcdefghjkmnpqrstvwxyz"[b & 31];
+    S.id = id;
+    S.t0 = S.last = Date.now();
+    S.seq = S.pv = 0;
+    boot.save();
+    paused = false;
+    curPath = null;
+    if (!excluded(loc.pathname)) start();
+    pageview(loadType());
+    for (const k in tags) sendTag(k);
   };
   const run = ([c, ...a]: Cmd) => {
     if (c === "identify") identify(a[0], a[1]);

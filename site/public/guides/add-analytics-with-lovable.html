@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics to a Lovable app with its AI agent</title>
+<meta name="description" content="Connect AgentFirstStack to Lovable as a custom MCP server, paste one prompt, publish, and Lovable's agent adds analytics and checks the live app.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-lovable">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics to a Lovable app with its AI agent">
+<meta property="og:description" content="Connect AgentFirstStack to Lovable as a custom MCP server, paste one prompt, publish, and Lovable's agent adds analytics and checks the live app.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-lovable">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics to a Lovable app with its AI agent">
+<meta name="twitter:description" content="Connect AgentFirstStack to Lovable as a custom MCP server, paste one prompt, publish, and Lovable's agent adds analytics and checks the live app.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-lovable#article",
+      "headline": "Add analytics to a Lovable app with its AI agent",
+      "description": "Connect AgentFirstStack to Lovable as a custom MCP server, paste one prompt, publish, and Lovable's agent adds analytics and checks the live app.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-lovable",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-lovable",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Lovable",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Add analytics to a Lovable app",
+          "item": "https://agentfirststack.com/guides/add-analytics-with-lovable"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-lovable#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can Lovable's agent set up analytics without an MCP server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Lovable's docs don't say its agent can make arbitrary API calls such as POST /v1/signup, so connect the MCP server. Alternatively, run the setup from a coding agent with a terminal (Claude Code, Cursor, Codex) on the GitHub copy of the project."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the API key end up in my app's code?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The tracker needs only the public site id. The key lives in the MCP connector (or nowhere, with OAuth) and, for server events, in Lovable's Secrets, which only Edge Functions read."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will it count page changes in a single-page app?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The tracker records a page view on every History API navigation, which covers React Router and TanStack Router. Hash routes (#/page) need data-hash=\"true\" on the script tag."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need a cookie banner for it?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The tracker sets no cookies and stores nothing in the browser by default. Whether your site needs a banner is a legal question; if a consent manager should decide, add data-require-consent=\"true\" and call afsa('consent', true) after consent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. Lovable's custom MCP servers are available on every plan; custom domains need a paid Lovable plan."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics to a Lovable app</span></nav>
+      <h1>Add analytics to a Lovable app with its AI agent</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics to a Lovable app, connect AgentFirstStack to Lovable as a custom MCP server, paste one prompt into the project chat, and publish. Lovable's agent then has AgentFirstStack's tools: it creates the site, adds the tracker to the app's document head, and after you publish it verifies the live app and runs the setup check. You never handle an API key in the browser, and the project lands in your own AgentFirstStack dashboard because you signed in to connect it. One limit: Lovable's hosting has no documented way to serve the tracker from your own domain, so it loads from <code>analytics.agentfirststack.com</code> and visitors with an ad blocker aren't counted. For other builders and editors, see <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="connect">1. Connect AgentFirstStack to Lovable</h2>
+<p>Lovable lets every plan add custom MCP servers: <b>Connectors &gt; Add custom &gt; MCP server</b>. Use this URL:</p>
+<pre><code>https://agentfirststack.com/mcp</code></pre>
+<p>Then pick one way to authenticate:</p>
+<ul>
+<li><b>OAuth (easiest).</b> Leave the token empty. AgentFirstStack's MCP server supports OAuth 2.1 with dynamic client registration: you sign in with Google, choose "Create a new project" (name it after your app's domain) and pick full access. The project is yours from the start, so there's no claim link to open later.</li>
+<li><b>Bearer token.</b> If you already have a key, or get one from any terminal with <code>curl -X POST https://agentfirststack.com/v1/signup</code>, paste it as the connector's bearer token. Keep a copy in your password manager: the key is the account.</li>
+</ul>
+<p>Two Lovable rules to know. Custom MCP servers "only give Lovable context in the project chat": the agent uses them while it builds, and your published app never calls them. And connections are per user, so a teammate who wants the agent to use AgentFirstStack connects it themselves.</p>
+
+<h2 id="prompt">2. Paste the prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into the Lovable project chat</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this app with AgentFirstStack, using the AgentFirstStack MCP server I connected. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt first.
+
+1. Name the project after the app's domain (afs_update_project) if it has no name.
+
+2. Create an analytics site (analytics_create_site) for the domain the app is published on: the custom domain if it has one, otherwise its .lovable.app address. If the app answers on both, set allowed_hostnames to the custom domain (*.example.com) plus the .lovable.app host.
+
+3. Get the install code (analytics_get_install_instructions) and add the tracker script to the document head so every page has it. If the app uses TanStack Start, add &lt;script async src="https://analytics.agentfirststack.com/s.js" data-site="SITE_ID"&gt; inside &lt;head&gt; in the root route's document, next to &lt;HeadContent /&gt;. If it's a React + Vite app, add the snippet to &lt;head&gt; in index.html. The site id is public; never put an API key in frontend code or in a VITE_ variable. Lovable's hosting can't proxy the tracker through the app's domain, so note in AGENTFIRSTSTACK.md that ad blockers block analytics here.
+
+4. Create goals for sign-ups, purchases and the main buttons (data-afsa-event attributes on buttons work without code).
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Tell me to publish. After I say it's published, run analytics_verify_install, fix what it reports, then run afs_check_setup with services ["analytics"] and work through its next_steps until it says ready.
+
+Write the site id in AGENTFIRSTSTACK.md (never a key), and tell me what you set up and how you verified it.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+<p>If you connected with a bearer token instead of OAuth, add a last line asking for a claim link (<code>afs_create_claim_link</code>), so you can see the project in the dashboard.</p>
+
+<h2 id="head">Where the tracker goes in a Lovable app</h2>
+<p>It depends on when the project was created. Lovable's docs say apps created from 13 May 2026 (22 June on Enterprise plans) use TanStack Start with server-side rendering. Older apps are React + Vite single-page apps.</p>
+<p><b>TanStack Start apps.</b> TanStack keeps the HTML document in the root route, <code>src/routes/__root.tsx</code>, where <code>&lt;HeadContent /&gt;</code> renders the head tags. Put the tracker next to it:</p>
+<pre><code>&lt;head&gt;
+  &lt;HeadContent /&gt;
+  &lt;script async src="https://analytics.agentfirststack.com/s.js" data-site="site_..." /&gt;
+&lt;/head&gt;</code></pre>
+<p>Rendered there, the tag is in the HTML the server sends, so verify can find it and the homepage proves your domain. <code>async</code> rather than <code>defer</code> because React streams the page; React's docs say <code>defer</code> doesn't work with streaming server rendering.</p>
+<p><b>React + Vite apps.</b> <code>index.html</code> is the one HTML file every route uses:</p>
+<pre><code>&lt;head&gt;
+  &lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_..."&gt;&lt;/script&gt;
+&lt;/head&gt;</code></pre>
+<p>Either way, page changes inside the app are counted: the tracker wraps <code>history.pushState</code> and listens for <code>popstate</code>, which is how both React Router and TanStack Router navigate. Don't add a page-view hook on top; that counts each page twice.</p>
+<p>On paid plans you can check or make the edit yourself in Lovable's code editor (it's read-only on the Free plan), or in GitHub through Lovable's two-way sync.</p>
+
+<h2 id="no-proxy">Why the direct snippet</h2>
+<p>Where the hosting allows it, AgentFirstStack's tracker is served from the site's own domain through a small proxy, because ad blockers block <code>analytics.agentfirststack.com</code>. That needs the host to forward a path such as <code>/_a/*</code> to another server with a secret header. Lovable's docs describe no such setting, so this guide uses the direct snippet and accepts that visitors with ad blockers aren't counted. If you deploy the app's code somewhere else from GitHub (Vercel, Netlify, Cloudflare), add that host's proxy from <code>GET /v1/sites/:id/install</code> and switch the src to <code>/_a/s.js</code>.</p>
+
+<h2 id="secrets">The API key and server events</h2>
+<p>The browser only needs the site id. The API key is only for the agent's tools and for server code, and Lovable keeps those apart for you. Its Secrets are "injected into your project's Edge Functions and server-side integrations at runtime", while anything in <code>.env</code> with a <code>VITE_</code> prefix is "embedded into the client bundle at build time". Lovable also refuses <code>VITE_</code> names in Secrets.</p>
+<p>So when a conversion happens on the server (a verified sign-up, a paid order through a payment webhook), send it from an Edge Function with the key from Secrets:</p>
+<pre><code>// in a Lovable Cloud Edge Function (Deno)
+await fetch(`https://analytics.agentfirststack.com/v1/sites/${Deno.env.get("AFS_SITE")}/events`, {
+  method: "POST",
+  headers: {
+    authorization: `Bearer ${Deno.env.get("AGENTFIRSTSTACK_API_KEY")}`,
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({ events: [{ name: "signup", visitor_id: visitorId, user_id: userId }] }),
+});</code></pre>
+<p>Get <code>visitorId</code> on the page with <code>window.afsa.visitorId()</code> and send it along with the sign-up or checkout request, so the event joins the visit that led to it. If you connected over OAuth, create the key for Secrets in the AgentFirstStack dashboard; OAuth sessions can't create API keys.</p>
+
+<h2 id="publish">Publish, then verify</h2>
+<p>Nothing reaches your visitors until you publish, and later edits stay in the editor until you click <b>Publish &gt; Publish changes</b>. The published app lives at <code>your-app.lovable.app</code>; on a paid plan you can connect your own domain. Then ask the agent to verify. It runs <code>analytics_verify_install</code>, which fetches the live page and checks the snippet, that the script loads, the Content-Security-Policy and whether events arrived, and <code>afs_check_setup</code>, which lists anything else the setup is missing.</p>
+<p>Visit the published URL once yourself before verifying. The editor preview doesn't count: the preview's "open in new tab" link needs a Lovable login, and it isn't on your app's domain, so its events are dropped.</p>
+
+<h2 id="pitfalls">Things that trip people up</h2>
+<ul>
+<li><b>Two addresses.</b> There's no way to remove the <code>.lovable.app</code> URL, even with a custom domain. A site accepts events only from its domain and subdomains, so if visitors can reach both, set <code>allowed_hostnames</code> to <code>["*.example.com", "your-app.lovable.app"]</code>. That list replaces the default, so include your own domain. <code>lovable.app</code> on its own is refused as a site domain, because it's a shared suffix; <code>your-app.lovable.app</code> is fine.</li>
+<li><b>Forgetting to publish.</b> The agent's edit is in the editor, not live. Verify reports <code>snippet_present</code> failing until you publish.</li>
+<li><b>Lovable's own analytics.</b> Lovable has built-in analytics with its own script. Both can run; they don't interfere.</li>
+<li><b>Instructions for later chats.</b> Lovable reads <code>AGENTS.md</code> or <code>CLAUDE.md</code> at the top level of the project with every message, and also has Project settings &gt; Instructions. Add a line there such as "This app uses AgentFirstStack analytics; ids are in AGENTFIRSTSTACK.md; run afs_check_setup before changing tracking."</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Can Lovable's agent set up analytics without an MCP server?</h3>
+<p>Lovable's docs don't say its agent can make arbitrary API calls such as <code>POST /v1/signup</code>, so connect the MCP server. Alternatively, run the setup from a coding agent with a terminal (Claude Code, Cursor, Codex) on the GitHub copy of the project.</p>
+<h3>Does the API key end up in my app's code?</h3>
+<p>No. The tracker needs only the public site id. The key lives in the MCP connector (or nowhere, with OAuth) and, for server events, in Lovable's Secrets, which only Edge Functions read.</p>
+<h3>Will it count page changes in a single-page app?</h3>
+<p>Yes. The tracker records a page view on every History API navigation, which covers React Router and TanStack Router. Hash routes (<code>#/page</code>) need <code>data-hash="true"</code> on the script tag.</p>
+<h3>Do I need a cookie banner for it?</h3>
+<p>The tracker sets no cookies and stores nothing in the browser by default. Whether your site needs a banner is a legal question; if a consent manager should decide, add <code>data-require-consent="true"</code> and call <code>afsa('consent', true)</code> after consent.</p>
+<h3>What does it cost?</h3>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. Lovable's custom MCP servers are available on every plan; custom domains need a paid Lovable plan.</p>
+
+<p class="meta">Lovable is a product of Lovable Labs. TanStack belongs to its owners. AgentFirstStack isn't affiliated with either. Lovable details come from its docs (<a href="https://docs.lovable.dev/integrations/custom-mcp">custom MCP servers</a>, <a href="https://docs.lovable.dev/features/seo-aeo">SEO and rendering</a>, <a href="https://docs.lovable.dev/features/secrets">secrets</a>, <a href="https://docs.lovable.dev/features/publish">publishing</a>, <a href="https://docs.lovable.dev/features/custom-domain">custom domains</a>, <a href="https://docs.lovable.dev/features/knowledge">instructions</a>, <a href="https://docs.lovable.dev/features/code-mode">code mode</a>), and TanStack details from the <a href="https://tanstack.com/router/latest/docs/framework/react/guide/document-head-management">TanStack Router docs</a>, checked on 6 November 2026.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-bolt"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a Bolt app</b><span>index.html, .env and publishing.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-v0"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a v0 app</b><span>app/layout.tsx, Vercel env vars and previews.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-replit"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Replit Agent</b><span>Secrets, deployments and the .replit.app domain.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#connect">1. Connect AgentFirstStack to Lovable</a></li><li><a href="#prompt">2. Paste the prompt</a></li><li><a href="#head">Where the tracker goes in a Lovable app</a></li><li><a href="#no-proxy">Why the direct snippet</a></li><li><a href="#secrets">The API key and server events</a></li><li><a href="#publish">Publish, then verify</a></li><li><a href="#pitfalls">Things that trip people up</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

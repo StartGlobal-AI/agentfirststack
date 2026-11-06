@@ -129,3 +129,44 @@ export function tcfConsent(td: { purpose?: { consents?: Record<string, boolean> 
   const g = (b: boolean) => (b ? ("granted" as const) : ("denied" as const));
   return { ad_storage: g(p(1)), analytics_storage: g(p(1) && p(8)), ad_user_data: g(p(1) && p(7)), ad_personalization: g(p(3) && p(4)) };
 }
+
+// ------------------------------------------------------------------ consent banner (consent_banner)
+
+/**
+ * Does the consent banner ask this visitor before anything needing consent runs? regions "all":
+ * everyone; "eea" (default): the EEA, the United Kingdom and Switzerland, and an unknown country
+ * (no Cloudflare country, "XX", Tor "T1"), the same countries as replay's require_consent "eea".
+ */
+export const bannerAsks = (b: { enabled?: boolean; regions?: string } | undefined, country?: string | null): boolean =>
+  !!b?.enabled &&
+  (b.regions === "all" ||
+    !country ||
+    !/^[A-Z]{2}$/.test(country) ||
+    country === "XX" ||
+    country === "GB" ||
+    country === "CH" ||
+    EEA.indexOf(country) !== -1);
+
+/** The banner's categories and the Consent Mode v2 types each one grants (necessary = security_storage, always granted). */
+export const BANNER_CATEGORIES = {
+  analytics: ["analytics_storage"],
+  ads: ["ad_storage", "ad_user_data"],
+  personalization: ["ad_personalization", "personalization_storage", "functionality_storage"],
+} as const satisfies Record<string, readonly ConsentType[]>;
+export type BannerCategory = keyof typeof BANNER_CATEGORIES;
+
+/** Consent state for a banner choice: bits "1"/"0" for analytics, ads, personalization (the _afst_cc cookie's last part). */
+export function bannerState(bits: string): ConsentState {
+  const g = (i: number) => (bits.charAt(i) === "1" ? ("granted" as const) : ("denied" as const));
+  return {
+    analytics_storage: g(0),
+    ad_storage: g(1),
+    ad_user_data: g(1),
+    ad_personalization: g(2),
+    personalization_storage: g(2),
+    functionality_storage: g(2),
+  };
+}
+
+/** The stored choice: `<consent id>.<banner version>.<unix seconds>.<bits>` (strictly necessary: it holds the choice itself). */
+export const BANNER_COOKIE = "_afst_cc";

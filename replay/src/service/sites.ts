@@ -33,6 +33,7 @@ import {
   type Framework,
   installInstructions,
   loadsWithAnalytics,
+  platformBase,
   scriptSnippet,
 } from "./install";
 
@@ -468,7 +469,12 @@ function nextSteps(ctx: Ctx, s: SiteRow, suggestion: AnalyticsSuggestion): strin
   const note = analyticsInstallNote(s, suggestion);
   const paste = `Add to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework and platform code: GET /v1/sites/${s.id}/install?framework=nextjs|react|astro|wordpress|gtm|shopify|webflow|wix|squarespace|framer).`;
   const homepage = s.analytics_site_id ? `this site's snippet or the analytics tracker for ${s.analytics_site_id}` : "the snippet";
+  const site = platformBase(ctx.env);
+  const firstParty = site
+    ? `First-party by default (ad blockers block third-party recorder hosts): with a first-party domain (one CNAME: POST ${site}/v1/first-party-domains {"hostname":"edge.${s.domain}"}, MCP afs_add_first_party_domain) the analytics tracker loaded from it loads this recorder from it too; pages without the tracker use <script defer src="https://edge.${s.domain}/_r/r/${s.id}.js"></script>. Order and snippets: install.first_party.`
+    : `First-party by default (ad blockers block third-party recorder hosts): proxy /_r/* on the site to ${ctx.baseUrl}/_r/* and use <script defer src="/_r/r/${s.id}.js"></script> (install.first_party).`;
   return [
+    firstParty,
     ...(note.paste ? (s.analytics_site_id || suggestion?.site ? [note.text, paste] : [paste]) : [note.text]),
     `Open https://${s.domain}/?afsr=1 once (records regardless of sampling), click around, then confirm: POST /v1/sites/${s.id}/verify (MCP: verify_install). Verify also proves the domain is yours (${homepage} on https://${s.domain}/, or DNS TXT ${verifyRecord(s).name} = "${verifyRecord(s).value}"): until then the site records a small trial quota with strict masking.`,
     `Text is masked by default (mask_mode strict). Show non-personal UI text with PATCH /v1/sites/${s.id} {"unmask_selectors":["nav","button","a","h1","h2","label"]} so transcripts name what was clicked.`,
@@ -525,7 +531,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
           }
         : {}),
       ...(notes.length ? { notes } : {}),
-      install: installInstructions(s, ctx.baseUrl, "html", suggestion),
+      install: installInstructions(s, ctx.baseUrl, "html", suggestion, platformBase(ctx.env)),
       next_steps: nextSteps(ctx, s, suggestion),
     };
   };
@@ -738,7 +744,7 @@ export async function deleteSite(ctx: Ctx, siteId: string) {
 
 export async function getInstall(ctx: Ctx, siteId: string, framework?: Framework) {
   const s = await loadSite(ctx, siteId);
-  return installInstructions(s, ctx.baseUrl, framework ?? "html", await suggestionFor(ctx, s));
+  return installInstructions(s, ctx.baseUrl, framework ?? "html", await suggestionFor(ctx, s), platformBase(ctx.env));
 }
 
 /** The IAB TCF v2 purposes recording needs consent for (consent_source tcf); default 1 and 8. */

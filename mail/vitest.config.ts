@@ -37,8 +37,12 @@ export default defineConfig({
                 MAX_WEBHOOKS_PER_ACCOUNT: "",
                 MAX_INBOX_CREATES_PER_DAY: "",
                 MAX_INBOX_DELETES_PER_DAY: "",
-                ADDRESS_TOMBSTONE_DAYS: "",
+                // Only the built-in reserved names (its tests set their own extras).
+                EXTRA_RESERVED_USERNAMES: "",
                 MAX_INBOUND_PER_SENDER_PER_DAY: "",
+                MAX_INBOUND_BYTES_PER_SENDER_PER_DAY: "",
+                // Unset: the default applies (25 MiB, 10 MiB unclaimed); its tests set their own.
+                MAX_INBOUND_MESSAGE_BYTES: "",
                 MAX_TEXT_BYTES_PER_ACCOUNT: "",
                 // Unset: the safe default applies (1 GiB, 256 MiB unclaimed); its tests set their own.
                 MAX_BLOB_BYTES_PER_ACCOUNT: "",
@@ -66,6 +70,8 @@ export default defineConfig({
                     "MAX_MESSAGES_PER_INBOX",
                     "MAX_INBOUND_PER_ACCOUNT_PER_DAY",
                     "MAX_INBOUND_PER_SENDER_PER_DAY",
+                    "MAX_INBOUND_BYTES_PER_SENDER_PER_DAY",
+                    "MAX_INBOUND_MESSAGE_BYTES",
                     "MAX_TEXT_BYTES_PER_ACCOUNT",
                     "MAX_BLOB_BYTES_PER_ACCOUNT",
                     "MAX_CONCURRENT_WAITS",

@@ -10,9 +10,13 @@ import {
   type AlertType,
   alertText,
   checkEveryMs,
+  DEFAULT_MIN_SAMPLES,
+  MIN_VITALS_WINDOW,
   decide,
+  vitalsThreshold,
   windowText,
 } from "../lib/alerts";
+import { VITAL_METRICS, VITAL_THRESHOLDS, type VitalMetric } from "../lib/vitals";
 import type { Fetcher } from "../lib/delivery";
 import { type Filter } from "../lib/filters";
 import { quotaExceeded, siteCap } from "../lib/limits";
@@ -22,7 +26,7 @@ import { deliver, eventJson } from "./notify";
 import { filtersField, filtersOf } from "./stats";
 
 /**
- * Alert rules (spike, drop, no data, goal threshold, payments), evaluated by the cron when due and
+ * Alert rules (spike, drop, no data, goal threshold, payments, Web Vitals), evaluated by the cron when due and
  * delivered to the site's destinations. Idempotent by name; capped per site.
  */
 
@@ -38,6 +42,9 @@ export interface AlertRow {
   goal: string | null;
   filters: string | null;
   min_visitors: number | null;
+  /** web_vitals: lcp | inp | cls (migration 0021) */
+  metric: VitalMetric | null;
+  min_samples: number | null;
   cooldown_minutes: number;
   destination_ids: string;
   enabled: number;
@@ -56,14 +63,16 @@ const ruleFields = {
     .min(5)
     .max(10_080)
     .optional()
-    .describe("Rolling window in minutes (default: spike 60, drop 360, no_data 720, goal 60; payment alerts check every 5 minutes)."),
+    .describe(
+      "Rolling window in minutes (default: spike 60, drop 360, no_data 720, goal 60, web_vitals 1440 = 1 day, at least 60; payment alerts check every 5 minutes).",
+    ),
   threshold: z
     .number()
     .min(0)
     .max(1e9)
     .optional()
     .describe(
-      "spike: factor over the usual (default 2); drop: % below the usual (default 50); goal: conversions (default 1); payment: minimum amount (default 0).",
+      "spike: factor over the usual (default 2); drop: % below the usual (default 50); goal: conversions (default 1); payment: minimum amount (default 0); web_vitals: the p75 above which it fires, ms for lcp and inp, unitless for cls (default Google's good limit: lcp 2500, inp 200, cls 0.1).",
     ),
   min_visitors: z
     .number()
@@ -73,14 +82,24 @@ const ruleFields = {
     .optional()
     .describe("spike and drop: ignore windows with fewer visitors (default 20)."),
   goal: z.string().max(120).optional().describe("goal alerts: the goal's name."),
-  filters: filtersField.describe("traffic and goal alerts: count only matching events (the stats filter grammar)."),
+  metric: z.enum(VITAL_METRICS).optional().describe("web_vitals alerts (required): lcp, inp or cls."),
+  min_samples: z
+    .number()
+    .int()
+    .min(1)
+    .max(10_000_000)
+    .optional()
+    .describe(`web_vitals: ignore windows with fewer page loads carrying the metric (default ${DEFAULT_MIN_SAMPLES}).`),
+  filters: filtersField.describe(
+    "traffic, goal and web_vitals alerts: count only matching events (the stats filter grammar, e.g. device==mobile or page==/checkout*).",
+  ),
   cooldown_minutes: z
     .number()
     .int()
     .min(0)
     .max(43_200)
     .optional()
-    .describe("After firing, stay quiet this long (default: spike and drop 720, goal 60, payment and no_data 0)."),
+    .describe("After firing, stay quiet this long (default: spike and drop 720, goal 60, web_vitals 1440, payment and no_data 0)."),
   destination_ids: z
     .array(z.string().max(40))
     .min(1)
@@ -95,7 +114,7 @@ export const createAlertInput = z.object({
   type: z
     .enum(ALERT_TYPES)
     .describe(
-      "traffic_spike: visitors in the window >= threshold x the usual (median of the same window on the 7 days before); traffic_drop: <= (100 - threshold)% of the usual; no_data: no events for the window; goal: conversions of `goal` >= threshold; payment: every new payment (batched every 5 minutes).",
+      "traffic_spike: visitors in the window >= threshold x the usual (median of the same window on the 7 days before); traffic_drop: <= (100 - threshold)% of the usual; no_data: no events for the window; goal: conversions of `goal` >= threshold; payment: every new payment (batched every 5 minutes); web_vitals: the p75 of `metric` (lcp, inp, cls) over the window is above threshold (default Google's good limit), with at least min_samples page loads.",
     ),
   ...ruleFields,
   destination_ids: ruleFields.destination_ids.unwrap(),
@@ -109,6 +128,8 @@ const ruleOf = (a: AlertRow): AlertRule & { name: string } => ({
   threshold: a.threshold,
   min_visitors: a.min_visitors,
   goal: a.goal,
+  metric: a.metric,
+  min_samples: a.min_samples,
 });
 
 const stateOf = (a: AlertRow): AlertState => (a.state ? (JSON.parse(a.state) as AlertState) : {});
@@ -120,9 +141,11 @@ export function alertJson(a: AlertRow) {
     name: a.name,
     type: a.type,
     window_minutes: a.window_minutes,
-    threshold: a.threshold ?? ALERT_DEFAULTS[a.type].threshold,
+    threshold: a.type === "web_vitals" ? vitalsThreshold(a) : (a.threshold ?? ALERT_DEFAULTS[a.type].threshold),
     min_visitors: a.type === "traffic_spike" || a.type === "traffic_drop" ? (a.min_visitors ?? 20) : null,
     goal: a.goal,
+    metric: a.type === "web_vitals" ? (a.metric ?? "lcp") : null,
+    min_samples: a.type === "web_vitals" ? (a.min_samples ?? DEFAULT_MIN_SAMPLES) : null,
     filters: a.filters,
     cooldown_minutes: a.cooldown_minutes,
     destination_ids: JSON.parse(a.destination_ids) as string[],
@@ -138,7 +161,15 @@ export function alertJson(a: AlertRow) {
 async function validRule(
   ctx: Ctx,
   site: SiteRow,
-  r: { type: AlertType; goal?: string | null; filters?: string | null; window_minutes?: number | null; destination_ids?: string[] },
+  r: {
+    type: AlertType;
+    goal?: string | null;
+    filters?: string | null;
+    window_minutes?: number | null;
+    metric?: string | null;
+    min_samples?: number | null;
+    destination_ids?: string[];
+  },
 ) {
   if (r.type === "goal") {
     if (!r.goal)
@@ -153,6 +184,18 @@ async function validRule(
         goals.length ? `Goals on this site: ${goals.map((g) => g.name).join(", ")}.` : `Create it first: POST /v1/sites/${site.id}/goals.`,
       );
   } else if (r.goal) throw badRequest("`goal` is only for goal alerts.");
+  if (r.type === "web_vitals") {
+    if (!r.metric)
+      throw badRequest(
+        "web_vitals alerts need `metric`: lcp, inp or cls.",
+        `Example: {"type":"web_vitals","metric":"lcp","window_minutes":1440,"destination_ids":["dst_..."]} fires when LCP's p75 over a day passes ${VITAL_THRESHOLDS.lcp.good} ms (pass threshold to change it). GET /v1/sites/${site.id}/web-vitals shows today's values.`,
+      );
+    if (r.window_minutes != null && r.window_minutes < MIN_VITALS_WINDOW)
+      throw badRequest(
+        `web_vitals alerts need a window of at least ${MIN_VITALS_WINDOW} minutes.`,
+        "A p75 needs page loads to mean anything; 1440 (a day) is the default, 10080 (7 days) suits quieter sites.",
+      );
+  } else if (r.metric || r.min_samples != null) throw badRequest("`metric` and `min_samples` are only for web_vitals alerts.");
   if (r.filters && (r.type === "no_data" || r.type === "payment")) throw badRequest(`${r.type} alerts take no filters.`);
   if (r.filters) filtersOf(r.filters);
   if (r.type === "no_data" && r.window_minutes != null && r.window_minutes < 30)
@@ -204,6 +247,8 @@ export async function createAlert(ctx: Ctx, siteId: string, raw: unknown) {
     goal: input.goal ?? null,
     filters: input.filters?.trim() || null,
     min_visitors: input.min_visitors ?? null,
+    metric: input.metric ?? null,
+    min_samples: input.min_samples ?? null,
     cooldown_minutes: input.cooldown_minutes ?? d.cooldown,
     destination_ids: JSON.stringify(destinationIds),
     enabled: input.enabled === false ? 0 : 1,
@@ -218,8 +263,8 @@ export async function createAlert(ctx: Ctx, siteId: string, raw: unknown) {
   try {
     await db
       .prepare(
-        `INSERT INTO alerts (id, site_id, name, type, window_minutes, threshold, goal, filters, min_visitors, cooldown_minutes, destination_ids,
-           enabled, state, next_check_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO alerts (id, site_id, name, type, window_minutes, threshold, goal, filters, min_visitors, metric, min_samples, cooldown_minutes,
+           destination_ids, enabled, state, next_check_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         row.id,
@@ -231,6 +276,8 @@ export async function createAlert(ctx: Ctx, siteId: string, raw: unknown) {
         row.goal,
         row.filters,
         row.min_visitors,
+        row.metric,
+        row.min_samples,
         row.cooldown_minutes,
         row.destination_ids,
         row.enabled,
@@ -269,6 +316,7 @@ const toCheck = (a: AlertRow) => ({
   filters: a.filters ? (filtersOf(a.filters) as Filter[]) : [],
   cursor: stateOf(a).cursor ?? null,
   threshold: a.threshold,
+  metric: a.metric,
 });
 
 export const getAlertInput = z.object({
@@ -295,7 +343,9 @@ export async function getAlert(ctx: Ctx, siteId: string, id: string, raw: unknow
       reason: d.reason,
       ...(n.baseline ? { baseline_days: n.baseline } : {}),
     };
-    if (n.top_sources || n.payments) out.untrusted = { top_sources: n.top_sources, payments: n.payments };
+    if (n.vitals) (out.evaluation as Record<string, unknown>).samples = n.vitals.samples;
+    if (n.top_sources || n.payments || n.top_pages?.length)
+      out.untrusted = { top_sources: n.top_sources, payments: n.payments, top_pages: n.top_pages };
   }
   return out;
 }
@@ -316,6 +366,8 @@ export async function updateAlert(ctx: Ctx, siteId: string, id: string, raw: unk
   if (input.threshold !== undefined) next.threshold = input.threshold;
   if (input.min_visitors !== undefined) next.min_visitors = input.min_visitors;
   if (input.goal !== undefined) next.goal = input.goal;
+  if (input.metric !== undefined) next.metric = input.metric;
+  if (input.min_samples !== undefined) next.min_samples = input.min_samples;
   if (input.filters !== undefined) next.filters = input.filters.trim() || null;
   if (input.cooldown_minutes !== undefined) next.cooldown_minutes = input.cooldown_minutes;
   if (input.enabled !== undefined) next.enabled = input.enabled ? 1 : 0;
@@ -323,8 +375,8 @@ export async function updateAlert(ctx: Ctx, siteId: string, id: string, raw: unk
   if (ids) next.destination_ids = JSON.stringify(ids);
   if (input.enabled && !cur.enabled) next.next_check_at = Date.now();
   await ctx.env.DB.prepare(
-    `UPDATE alerts SET name = ?, window_minutes = ?, threshold = ?, goal = ?, filters = ?, min_visitors = ?, cooldown_minutes = ?,
-       destination_ids = ?, enabled = ?, next_check_at = ?, updated_at = ? WHERE id = ? AND site_id = ?`,
+    `UPDATE alerts SET name = ?, window_minutes = ?, threshold = ?, goal = ?, filters = ?, min_visitors = ?, metric = ?, min_samples = ?,
+       cooldown_minutes = ?, destination_ids = ?, enabled = ?, next_check_at = ?, updated_at = ? WHERE id = ? AND site_id = ?`,
   )
     .bind(
       next.name,
@@ -333,6 +385,8 @@ export async function updateAlert(ctx: Ctx, siteId: string, id: string, raw: unk
       next.goal,
       next.filters,
       next.min_visitors,
+      next.metric,
+      next.min_samples,
       next.cooldown_minutes,
       next.destination_ids,
       next.enabled,
@@ -367,6 +421,13 @@ export async function testAlert(ctx: Ctx, siteId: string, id: string, opts: { fe
     last_event_at: Date.now() - 13 * 3_600_000,
   };
   const d = { value: a.type === "goal" ? 5 : a.type === "no_data" ? 0 : 120, baseline: 30, reason: "sample values, not real data" };
+  if (a.type === "web_vitals") {
+    const t = vitalsThreshold(a);
+    const metric = a.metric ?? "lcp";
+    sample.vitals = { metric, p75: metric === "cls" ? Math.round(t * 150) / 100 : Math.round(t * 1.5), samples: 120, good: 40, poor: 35 };
+    d.value = sample.vitals.p75!;
+    d.baseline = t;
+  }
   const text = alertText(rule, site.domain, d, sample);
   const sent = await deliver(
     ctx.env,
@@ -458,16 +519,19 @@ export async function checkAlert(env: Bindings, site: SiteRow, a: AlertRow, now:
           reason: d.reason,
           baseline_days: n.baseline ?? null,
           payment_count: n.payment_count ?? null,
+          ...(n.vitals ? { metric: n.vitals.metric, samples: n.vitals.samples, good: n.vitals.good, poor: n.vitals.poor } : {}),
         },
         untrusted: n.top_sources?.length
           ? { top_sources: n.top_sources }
-          : n.payments?.length
-            ? {
-                payments: n.payments.map(
-                  (p) => `${p.type} ${p.amount}${p.currency ? ` ${p.currency}` : ""} from ${p.source ?? p.channel ?? "Unattributed"}`,
-                ),
-              }
-            : undefined,
+          : n.top_pages?.length
+            ? { top_pages: n.top_pages.map((x) => `${x.value} (p75 ${x.p75}, ${x.samples} page loads)`) }
+            : n.payments?.length
+              ? {
+                  payments: n.payments.map(
+                    (p) => `${p.type} ${p.amount}${p.currency ? ` ${p.currency}` : ""} from ${p.source ?? p.channel ?? "Unattributed"}`,
+                  ),
+                }
+              : undefined,
         alert_id: a.id,
       },
       { fetcher, now },

@@ -43,6 +43,8 @@ export type Bindings = Env & {
   MAX_EVENTS_PER_NETWORK_PER_CONTAINER_PER_DAY?: string;
   MAX_QUARANTINED_EVENTS_PER_CONTAINER_PER_DAY?: string;
   SPIKE_MIN_EVENTS?: string;
+  /** Consent banner choices recorded (proof of consent) per container per UTC day; past it choices still apply but aren't kept. Unset = off. */
+  MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY?: string;
   /** Visitor rows kept per container (least recently seen evicted). Default 250000. */
   MAX_VISITORS_PER_CONTAINER?: string;
   /** A container's Durable Object database size above which /collect stops writing. Default 1 GiB. */

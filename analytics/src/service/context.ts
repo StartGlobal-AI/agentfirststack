@@ -141,6 +141,8 @@ export interface SiteStub {
     vars?: LimitVars,
   ): Promise<{ counted: number; refused: number; used_today: number; daily_budget: number | null } | DoError>;
   crawlers(q: Obj): Promise<Obj | DoError>;
+  aiSearch(q: Obj): Promise<Obj | DoError>;
+  webVitals(q: Obj): Promise<Obj | DoError>;
   saveImport(
     id: string,
     meta: Obj,
@@ -192,6 +194,16 @@ export interface SiteSummary {
   dropped_last_7d: Record<string, DropCount>;
   warnings_last_7d: Record<string, DropCount>;
   usage_today?: { day: string; events: number; bytes: number; refused: number };
+  /** how the last 7 days' browser events reached the collector (direct = blockable), and the first-party domains they came through */
+  collection_last_7d?: {
+    direct: number;
+    proxy: number;
+    edge: number;
+    edge_hosts: string[];
+    last_direct_at: number | null;
+    last_first_party_at: number | null;
+    since_day: string;
+  };
   database_bytes?: number;
   /** attack protection's state (the DO's view) */
   protection?: ProtectionView;

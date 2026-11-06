@@ -28,6 +28,8 @@ import { type DigestRequest, digest } from "./digest";
 import { type RetentionRequest, retention } from "./retention";
 import { type PathsRequest, paths } from "./paths";
 import { type AttributionRequest, attribution } from "./attribution";
+import { type AiSearchRequest, aiSearch } from "./ai-search";
+import { type VitalsRequest, webVitals } from "./vitals";
 import { err, guard, rangeFor, utcDay } from "./common";
 import type { SqlValue } from "../lib/query";
 import type { Breakdown } from "../lib/filters";
@@ -522,6 +524,16 @@ export class SiteDO extends DurableObject<Bindings> {
 
   crawlers(q: crawlers.CrawlersRequest) {
     return this.withSettings((s) => crawlers.crawlersReport(this.db, s, q, Date.now()));
+  }
+
+  /** AI crawlers next to visitors from AI assistants (read-only). */
+  aiSearch(q: AiSearchRequest) {
+    return this.withSettings((s) => aiSearch(this.db, s, q));
+  }
+
+  /** Real-visitor Core Web Vitals (read-only). */
+  webVitals(q: VitalsRequest) {
+    return this.withSettings((s) => webVitals(this.db, s, q));
   }
 
   realtimeMap(q: sessionsList.MapRequest) {

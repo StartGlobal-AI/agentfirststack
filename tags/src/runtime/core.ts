@@ -1,8 +1,11 @@
-import type { ContainerConfig, Conversion, Tag, Trigger, Variable } from "../config/schema";
+import type { ConsentBanner, ContainerConfig, Conversion, Tag, Trigger, Variable } from "../config/schema";
 import { CLICK_ID_DAYS, CLICK_IDS, CONSENT_COOKIE, clickCookieName, FIRST_TOUCH_COOKIE, UTM_KEYS, VISITOR_COOKIE } from "../lib/clickids";
 import { compileRegex, matchCondition, toComparable } from "../lib/conditions";
 import {
   applyConsentUpdate,
+  BANNER_COOKIE,
+  bannerAsks,
+  bannerState,
   CONSENT_TYPES,
   type ConsentState,
   type ConsentType,
@@ -35,6 +38,18 @@ import {
 import { type ConversionData, fireConversionOn, fireTag, uetOnLoad, type VendorHost, vendorConsent } from "./vendors";
 
 type W = Window & Record<string, unknown>;
+type Fn = ((...a: unknown[]) => unknown) & { q?: unknown[] };
+/** A queue stub like the analytics and replay snippets' own (window.afsa / window.afsr). */
+const stub = (w: W, k: string): Fn => {
+  if (typeof w[k] !== "function") {
+    const f: Fn = function () {
+      // eslint-disable-next-line prefer-rest-params
+      (f.q = f.q || []).push(arguments);
+    };
+    w[k] = f;
+  }
+  return w[k] as Fn;
+};
 
 const PLATFORM_TAG: Record<string, Tag["type"]> = {
   ga4: "ga4",
@@ -108,6 +123,13 @@ export class Runtime implements VendorHost {
   scripts: Record<string, "pending" | "loaded" | "error"> = {};
   vars: Record<string, Variable> = {};
   started = false;
+  /** consent_banner: the visitor's consent id, and the current choice ("101": analytics, ads, personalization; "" = none yet). */
+  cbId = "";
+  cbCur = "";
+  /** The banner asks this visitor (regions). */
+  private cbAsk = false;
+  /** Consent Mode v2 commands go to gtag (Google tags in the config, or a consent banner). */
+  private gcm = false;
   /** Tag types the page disallows (`data-afst-block` on the snippet's <script>). */
   blocked: Record<string, boolean> = {};
   private scriptEl: Element | null = null;
@@ -193,17 +215,24 @@ export class Runtime implements VendorHost {
       blocked: Object.keys(this.blocked),
     });
 
-    // Stored consent choice beats defaults.
-    const stored = readCookie(this.d, CONSENT_COOKIE);
-    if (stored) {
-      try {
-        const s = JSON.parse(stored) as ConsentState;
-        this.consent = applyConsentUpdate(this.consent, s);
-      } catch {
-        /* ignore */
+    const cb = this.cfg.consent_banner;
+    const on = !!cb && cb.enabled;
+    const asks = bannerAsks(cb, this.boot.geo?.country);
+    if (on) this.cbInit(cb, asks);
+    else {
+      // Stored consent choice beats defaults.
+      const stored = readCookie(this.d, CONSENT_COOKIE);
+      if (stored) {
+        try {
+          const s = JSON.parse(stored) as ConsentState;
+          this.consent = applyConsentUpdate(this.consent, s);
+        } catch {
+          /* ignore */
+        }
       }
     }
-    if (this.cfg.tags.some((t) => GOOGLE_TAGS[t.type])) {
+    this.gcm = on || this.cfg.tags.some((t) => GOOGLE_TAGS[t.type]);
+    if (this.gcm) {
       const def: Record<string, unknown> = {};
       for (const k of CONSENT_TYPES) def[k] = this.consent[k];
       if (this.cfg.consent?.wait_for_update_ms) def.wait_for_update = this.cfg.consent.wait_for_update_ms;
@@ -213,6 +242,22 @@ export class Runtime implements VendorHost {
     this.installApi();
     this.installDataLayer();
     this.installListeners();
+    if (on) {
+      // Pending (asked, no choice yet): replay waits; else everyone hears the stored choice or the default.
+      this.cbHooks(this.cbCur ? "stored" : asks ? "" : "default");
+      if ((asks && !this.cbCur) || /[?&]afst_consent=open\b/.test(w.location.search)) this.cbShow(0);
+      else if (cb.reopen_button) this.cbShow(-1);
+      this.d.addEventListener(
+        "click",
+        (e) => {
+          if (closest(e.target as Element, "[data-afst-consent-open]")) {
+            e.preventDefault();
+            this.cbShow(1);
+          }
+        },
+        true,
+      );
+    }
   }
 
   private resolveBase(): string {
@@ -512,7 +557,8 @@ export class Runtime implements VendorHost {
   }
 
   command(cmd: string, a: unknown, b: unknown) {
-    if (cmd === "consent" && isObj(b)) this.updateConsent(b as ConsentState, `afst('consent','${String(a)}')`);
+    if (cmd === "consent" && a === "open") this.cfg.consent_banner?.enabled && this.cbShow(1);
+    else if (cmd === "consent" && isObj(b)) this.updateConsent(b as ConsentState, `afst('consent','${String(a)}')`);
     else if (cmd === "consent" && isObj(a)) this.updateConsent(a as ConsentState, "afst('consent')");
     else if (cmd === "identify") {
       if (a != null && a !== "") this.identity.userId = String(a).slice(0, 200);
@@ -530,6 +576,7 @@ export class Runtime implements VendorHost {
     if (what === "test") return this.test;
     if (what === "visitor_id") return this.visitorId;
     if (what === "consent") return { ...this.consent };
+    if (what === "consent_id") return this.cbId;
     if (what === "click_ids") return { ...this.clickIds };
     if (what === "event_id") return this.lastEventId;
     if (what === "log") return (this.w.__afst_debug as unknown[]) ?? [];
@@ -553,7 +600,7 @@ export class Runtime implements VendorHost {
       /* ignore */
     }
     this.log("consent", `update from ${source}`, { changed, state: this.consent });
-    if (this.cfg.tags.some((t) => GOOGLE_TAGS[t.type]) && Object.keys(changed).length) this.gtag("consent", "update", changed);
+    if (this.gcm && Object.keys(changed).length) this.gtag("consent", "update", changed);
     vendorConsent(this, changed, this.consent, false);
     if (Object.keys(changed).length) this.persistIdentity();
     const still: Pending[] = [];
@@ -568,6 +615,80 @@ export class Runtime implements VendorHost {
       } else still.push(p);
     }
     this.pending = still;
+  }
+
+  // ------------------------------------------------------------------ consent banner (consent_banner)
+
+  /** The stored choice when it's for this banner version and not expired, else denied where the banner asks. */
+  private cbInit(b: ConsentBanner, asks: boolean) {
+    this.cbAsk = asks;
+    const s = (readCookie(this.d, BANNER_COOKIE) || "").split(".");
+    if (/^[0-9a-z]{16,32}$/.test(s[0]!)) this.cbId = s[0]!;
+    if (
+      s.length === 4 &&
+      /^[01]{3}$/.test(s[3]!) &&
+      +s[1]! === (b.version || 1) &&
+      (+s[2]! + (b.expiry_days || 180) * 86400) * 1e3 > Date.now()
+    )
+      this.cbCur = s[3]!;
+    if (this.cbCur || asks) this.consent = applyConsentUpdate(this.consent, bannerState(this.cbCur));
+  }
+
+  /**
+   * Tell everyone else: the dataLayer event afst_consent, replay (afsr('consent'), analytics
+   * category) and the analytics tracker when it waits for consent (data-require-consent="true").
+   * m "" = still pending: replay waits ("not yet"), nothing else is said.
+   */
+  private cbHooks(m: string) {
+    const w = this.w;
+    const c = this.consent;
+    const a = c.analytics_storage === "granted";
+    const replay = stub(w, "afsr");
+    if (!m) return void replay("consent", false, 1);
+    replay("consent", a);
+    if (this.d.querySelector('script[data-require-consent="true"]')) stub(w, "afsa")("consent", a);
+    ((w.dataLayer as unknown[]) = (w.dataLayer as unknown[]) || []).push({
+      event: "afst_consent",
+      afst_consent: { analytics: a, ads: c.ad_storage === "granted", personalization: c.ad_personalization === "granted", method: m },
+    });
+  }
+
+  /** Show the banner UI (src/runtime/banner.ts, its own script): l 0 = first layer, 1 = settings, -1 = only the reopen button. */
+  cbShow(l: number) {
+    const w = this.w;
+    const c = this.consent;
+    const h = (w.__afst_cbh = {
+      b: this.cfg.consent_banner,
+      l,
+      id: this.cbId,
+      // Asked and no choice yet: closing the settings goes back to the first layer.
+      p: this.cbAsk && !this.cbCur,
+      c: [c.analytics_storage, c.ad_storage, c.ad_personalization].map((x) => x === "granted"),
+      done: (a: boolean, d: boolean, p: boolean, m: string, lang?: string) => this.cbChoose(a, d, p, m, lang),
+    });
+    if (typeof w.__afst_ui === "function") (w.__afst_ui as Fn)(h);
+    else this.loadScript(`${this.base}/cb/${this.boot.ui || "0"}.js`);
+  }
+
+  /** A choice in the banner: stored, applied (Consent Mode update, tags released or held), told, and recorded as proof. */
+  cbChoose(a: boolean, d: boolean, p: boolean, m: string, lang?: string) {
+    const b = this.cfg.consent_banner || { enabled: true };
+    const v = b.version || 1;
+    const id = (this.cbId ||= rnd(20));
+    const dom = this.cookieDomain();
+    const sec = this.secure();
+    this.cbCur = `${+a}${+d}${+p}`;
+    writeCookie(this.d, BANNER_COOKIE, `${id}.${v}.${Math.floor(Date.now() / 1e3)}.${this.cbCur}`, b.expiry_days || 180, dom, sec);
+    this.updateConsent(bannerState(this.cbCur), "consent banner");
+    // Withdrawn: our own identity cookies go too.
+    const del = (n: string) => writeCookie(this.d, n, "", 0, dom, sec);
+    if (!this.canStore()) [VISITOR_COOKIE, FIRST_TOUCH_COOKIE].forEach(del);
+    if (!d) [...CLICK_IDS.map(clickCookieName), "_fbc", "_fbp"].forEach(del);
+    this.cbHooks(m);
+    this.send(
+      { type: "consent", consent_record: { id, version: v, analytics: a, ads: d, personalization: p, method: m, language: lang } },
+      true,
+    );
   }
 
   private gate(required: ConsentType[], label: string, run: () => void, bypass = false) {
@@ -1420,11 +1541,12 @@ export class Runtime implements VendorHost {
     this.send({ type: "visit", event_id: `v${Date.now().toString(36)}.${rnd(10)}`, new_visitor: this.newVisitor });
   }
 
-  send(body: Record<string, unknown>) {
+  /** lean: no identity at all (consent records are anonymous). */
+  send(body: Record<string, unknown>, lean?: boolean) {
     const w = this.w;
     const d = this.d;
-    const store = this.canStore();
-    const ads = this.consent.ad_storage === "granted";
+    const store = !lean && this.canStore();
+    const ads = !lean && this.consent.ad_storage === "granted";
     const ga = this.gaIds();
     // The analytics app's own visitor id (afsa.visitorId()), so its destination can join it.
     const afsa = w.afsa as { visitorId?: () => string } | undefined;

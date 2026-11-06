@@ -133,7 +133,18 @@ export function networkOperator(req: Request, trustedProxy: boolean, dev: boolea
     const h = req.headers.get("x-afs-dev-asn");
     if (h && /^\d{1,10}$/.test(h)) return { asn: Number(h), as_org: req.headers.get("x-afs-dev-as-org")?.slice(0, 100) || undefined };
   }
-  if (trustedProxy) return {};
+  if (trustedProxy) {
+    // The network a trusted proxy or the platform's edge forwarded (x-afs-geo-asn), else none: cf describes the proxy.
+    const asn = req.headers.get("x-afs-geo-asn");
+    if (!asn || !/^\d{1,10}$/.test(asn)) return {};
+    let org: string | undefined;
+    try {
+      org = decodeURIComponent(req.headers.get("x-afs-geo-as-org") ?? "").slice(0, 100) || undefined;
+    } catch {
+      org = undefined;
+    }
+    return { asn: Number(asn), as_org: org };
+  }
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf ?? {};
   return {
     asn: typeof cf.asn === "number" ? cf.asn : undefined,

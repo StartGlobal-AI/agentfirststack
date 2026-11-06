@@ -2578,3 +2578,218 @@ a.afa-site-card:hover {
     min-height: 0;
   }
 }
+
+/* ---------- AI search and page speed panels ----------
+   AI visitors wear the AI Assistants channel colour (#6250D6) beside the grey of the previous /
+   other series (#8F99AA). Page speed ratings use the status palette (good #0CA30C, needs
+   improvement #FAB219, poor #D03B3B), kept apart from the categorical series; each comes with a
+   shape (circle, square, triangle) and a word, so colour never carries the rating alone; the band
+   shares and the paired bars' values are printed as text (warning and the grey sit under 3:1). */
+.afa-panel-h {
+  margin: 0;
+  padding: 4px 2px;
+  font-size: 15px;
+  font-weight: 650;
+}
+.afa-panel-note {
+  margin: 10px 0 0;
+}
+.afa-kpis-panel {
+  margin: 2px 0 6px;
+}
+.afa-sub-h {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.afa-ai-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.afa-ai-cols .afa-rows {
+  max-height: 260px;
+  overflow: auto;
+}
+.afa-vs {
+  display: grid;
+  gap: 10px;
+}
+.afa-vs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.afa-vs-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.afa-vs-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.afa-vs-label {
+  color: var(--ink-2);
+}
+.afa-vs-bars {
+  display: grid;
+  gap: 2px;
+}
+.afa-vs-track {
+  display: block;
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  background: var(--ground);
+  overflow: hidden;
+}
+.afa-vs-fill {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  transition: width 320ms var(--ease);
+}
+.afa-vs-vals {
+  display: grid;
+  justify-items: end;
+  font-size: 12.5px;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+.afa-vs-vals b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.afa-plain-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-plain-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.afa-plain-list li b {
+  flex: none;
+  font-weight: 550;
+  color: var(--ink-2);
+}
+.afa-panel-body > div > .afa-askcard {
+  margin-top: 12px;
+}
+
+.afa-vitals-assess {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 0 10px;
+  font-size: 14px;
+}
+.afa-vitals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.afa-vital {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.afa-vital .afa-kpi-label b {
+  color: var(--ink);
+  font-weight: 650;
+}
+.afa-vital-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+.afa-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink-2);
+}
+.afa-rating.is-none {
+  color: var(--ink-3);
+  font-weight: 450;
+}
+.afa-rating-shape {
+  font-size: 11px;
+  line-height: 1;
+}
+/* good / needs improvement / poor, laid end to end with a 2px gap */
+.afa-dist {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--ground);
+  overflow: hidden;
+}
+.afa-dist-seg {
+  display: block;
+  height: 100%;
+  transition: width 320ms var(--ease);
+}
+.afa-dist-text {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.afa-vital-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.afa-vital-foot .afa-tag {
+  margin-left: 0;
+}
+.afa-vitals-worst {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.afa-vitals-worst b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .afa-ai-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 620px) {
+  .afa-vitals {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .afa-vs-row {
+    grid-template-columns: 96px minmax(0, 1fr) auto;
+  }
+}

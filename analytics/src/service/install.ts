@@ -30,8 +30,18 @@ export function scriptSnippet(baseUrl: string, siteId: string): string {
 /** Queue stub so afsa() calls made before the script loads are kept. */
 export const QUEUE_STUB = `<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>`;
 
-function frameworkCode(fw: Framework, baseUrl: string, siteId: string): { file?: string; language: string; code: string; notes: string[] } {
+interface FrameworkCode {
+  file?: string;
+  language: string;
+  code: string;
+  notes: string[];
+  /** more files the install needs (Next.js: the proxy that makes /_a/* first-party), or alternatives */
+  files?: { file: string; language: string; code: string; note: string }[];
+}
+
+function frameworkCode(fw: Framework, baseUrl: string, siteId: string, proxyKey: string | null): FrameworkCode {
   const src = `${baseUrl}/s.js`;
+  const proxied = `${PROXY_PATH}/s.js`;
   switch (fw) {
     case "html":
       return {
@@ -42,23 +52,53 @@ function frameworkCode(fw: Framework, baseUrl: string, siteId: string): { file?:
         ],
       };
     case "nextjs":
+      // A plain <script> in the root layout's <head> is in the server-rendered HTML, so verify finds
+      // it on the homepage. next/script (afterInteractive) is injected after hydration, so it isn't.
       return {
         file: "app/layout.tsx",
         language: "tsx",
-        code: `import Script from "next/script";
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+        code: `export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <Script src="${src}" data-site="${siteId}" strategy="afterInteractive" />
+        {/* first-party: proxy.ts forwards ${PROXY_PATH}/* to the collector (ad blockers block analytics.* hosts) */}
+        <script defer src="${proxied}" data-site="${siteId}" />
       </head>
       <body>{children}</body>
     </html>
   );
 }`,
+        files: [
+          {
+            file: "proxy.ts",
+            language: "ts",
+            code: nextProxyCode(baseUrl, proxyKey),
+            note: "Next.js 16+; on Next.js 13-15 name it middleware.ts and the function middleware. It makes the src above first-party. If the project already has one, merge: run this for paths under /_a/.",
+          },
+          {
+            file: "pages/_document.tsx",
+            language: "tsx",
+            code: `import { Head, Html, Main, NextScript } from "next/document";
+
+export default function Document() {
+  return (
+    <Html lang="en">
+      <Head>
+        <script defer src="${proxied}" data-site="${siteId}" />
+      </Head>
+      <body>
+        <Main />
+        <NextScript />
+      </body>
+    </Html>
+  );
+}`,
+            note: "Pages Router instead of app/layout.tsx: the same <script> inside <Head> of pages/_document.tsx (not pages/_app.tsx).",
+          },
+        ],
         notes: [
-          "Pages Router: put the same <Script> in pages/_app.tsx.",
+          "Use a plain <script defer>, not next/script: next/script with afterInteractive is added after hydration, so it isn't in the server HTML, and verify can't find it on the homepage (the domain then never verifies).",
+          `src="${proxied}" is first-party through proxy.ts (files). With a first-party domain (first_party.first_party_domain) use src="https://<hostname>/_a/s.js" instead and skip proxy.ts; the direct src (${src}) is the last resort, ad blockers block it.`,
           "Client-side route changes are tracked automatically (history API), no router hook needed.",
           "Custom events from client components: (window as any).afsa?.('event', 'signup', { plan: 'pro' }).",
         ],
@@ -123,17 +163,45 @@ ${QUEUE_STUB}`,
   }
 }
 
+const keyOrPlaceholder = (proxyKey: string | null) => proxyKey ?? "<unavailable: SALT_SECRET is not set on this deployment>";
+
+/** Next.js proxy.ts (middleware.ts before Next.js 16): /_a/* to the collector with the site's proxy key and Vercel's geo. */
+function nextProxyCode(baseUrl: string, proxyKey: string | null): string {
+  const key = keyOrPlaceholder(proxyKey);
+  return `import { NextResponse, type NextRequest } from "next/server";
+
+// Vercel's geo headers -> the collector's (other hosts: leave out or map your host's own)
+const GEO: Record<string, string> = { country: "x-vercel-ip-country", "region-code": "x-vercel-ip-country-region",
+  city: "x-vercel-ip-city", timezone: "x-vercel-ip-timezone", lat: "x-vercel-ip-latitude", lon: "x-vercel-ip-longitude" };
+
+export function proxy(request: NextRequest) {
+  const headers = new Headers(request.headers);
+  for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+  headers.set("${PROXY_KEY_HEADER}", "${key}"); // this site's secret: keep it server-side
+  headers.set("x-forwarded-for", (request.headers.get("x-forwarded-for") || "").split(",")[0].trim());
+  for (const [k, h] of Object.entries(GEO)) {
+    const v = request.headers.get(h);
+    if (v) headers.set("x-afs-geo-" + k, v);
+  }
+  headers.delete("cookie");
+  const dest = new URL(request.nextUrl.pathname + request.nextUrl.search, "${baseUrl}");
+  return NextResponse.rewrite(dest, { request: { headers } });
+}
+
+export const config = { matcher: "${PROXY_PATH}/:path*" };`;
+}
+
 export function proxyInstructions(baseUrl: string, siteId: string, proxyKey: string | null) {
   const host = new URL(baseUrl).host;
   const proxied = `<script defer src="${PROXY_PATH}/s.js" data-site="${siteId}"></script>`;
-  const key = proxyKey ?? "<unavailable: SALT_SECRET is not set on this deployment>";
+  const key = keyOrPlaceholder(proxyKey);
   return {
     why: "Serving the script and collection endpoint from your own domain makes them first-party: no third-party request for ad blockers to block, and no extra DNS/TLS handshake. The tracker posts to the origin and path prefix it was loaded from, so only the snippet's src changes.",
     path_prefix: PROXY_PATH,
     snippet: proxied,
     proxy_key: proxyKey,
     proxy_key_header: PROXY_KEY_HEADER,
-    visitor_ip_and_geo: `The collector trusts the visitor IP (first X-Forwarded-For hop) and geo (x-afs-geo-* headers, or Vercel's x-vercel-ip-*) only from a request carrying ${PROXY_KEY_HEADER}: ${key}. Every example sends it; keep it server-side (it is this site's secret, not for browser code). Without it the IP and geo are the proxy's own, so every visitor looks like one and verify reports proxy_key. Geo: the Cloudflare Worker sends exact country/region/city; Next.js on Vercel maps Vercel's geo headers; nginx behind Cloudflare sends the country; otherwise geo is Cloudflare's view of the proxy. Prefer the Cloudflare Worker route.`,
+    visitor_ip_and_geo: `The collector trusts the visitor IP (first X-Forwarded-For hop) and geo (x-afs-geo-* headers, or Vercel's x-vercel-ip-*) only from a request carrying ${PROXY_KEY_HEADER}: ${key}. Every example sends it; keep it server-side (it is this site's secret, not for browser code). Without it the IP and geo are the proxy's own, so every visitor looks like one and verify reports proxy_key. Geo: the Cloudflare Worker and the Netlify Edge Function send exact country/region/city; Next.js on Vercel maps Vercel's geo headers; nginx behind Cloudflare sends the country; otherwise geo is Cloudflare's view of the proxy. Prefer the Cloudflare Worker route. (A first-party domain, first_party.first_party_domain, needs none of this: the platform's edge sends the visitor's IP and geo itself.)`,
     cloudflare_worker: {
       route: `<your-domain>${PROXY_PATH}/*`,
       file: "src/index.js",
@@ -160,27 +228,7 @@ export default {
     },
     nextjs: {
       file: "proxy.ts (Next.js 16+; on Next.js 13-15 name it middleware.ts and the function middleware)",
-      code: `import { NextResponse, type NextRequest } from "next/server";
-
-// Vercel's geo headers -> the collector's (other hosts: leave out or map your host's own)
-const GEO: Record<string, string> = { country: "x-vercel-ip-country", "region-code": "x-vercel-ip-country-region",
-  city: "x-vercel-ip-city", timezone: "x-vercel-ip-timezone", lat: "x-vercel-ip-latitude", lon: "x-vercel-ip-longitude" };
-
-export function proxy(request: NextRequest) {
-  const headers = new Headers(request.headers);
-  for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
-  headers.set("${PROXY_KEY_HEADER}", "${key}"); // this site's secret: keep it server-side
-  headers.set("x-forwarded-for", (request.headers.get("x-forwarded-for") || "").split(",")[0].trim());
-  for (const [k, h] of Object.entries(GEO)) {
-    const v = request.headers.get(h);
-    if (v) headers.set("x-afs-geo-" + k, v);
-  }
-  headers.delete("cookie");
-  const dest = new URL(request.nextUrl.pathname + request.nextUrl.search, "${baseUrl}");
-  return NextResponse.rewrite(dest, { request: { headers } });
-}
-
-export const config = { matcher: "${PROXY_PATH}/:path*" };`,
+      code: nextProxyCode(baseUrl, proxyKey),
     },
     vercel: {
       file: "vercel.json (any framework; a route with a request-header transform)",
@@ -199,13 +247,29 @@ export const config = { matcher: "${PROXY_PATH}/:path*" };`,
       ),
     },
     netlify: {
-      file: "netlify.toml (the _redirects file can't add request headers)",
-      code: `[[redirects]]
-  from = "${PROXY_PATH}/*"
-  to = "${baseUrl}${PROXY_PATH}/:splat"
-  status = 200
-  force = true
-  headers = { X-Afs-Proxy-Key = "${key}" }`,
+      file: "netlify/edge-functions/afs-analytics.ts (a Netlify Edge Function: it sends the visitor's IP and geo, which a netlify.toml proxy redirect doesn't)",
+      code: `// Netlify Edge Function on ${PROXY_PATH}/*: forwards to the collector with the visitor's IP and geo
+import type { Config, Context } from "@netlify/edge-functions";
+
+export default async (request: Request, context: Context) => {
+  const url = new URL(request.url);
+  const headers = new Headers(request.headers);
+  for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+  headers.delete("cookie");
+  headers.set("${PROXY_KEY_HEADER}", "${key}"); // this site's secret: the collector trusts the IP and geo below only with it
+  headers.set("x-forwarded-for", context.ip);
+  const g = context.geo;
+  const geo = { country: g?.country?.code, "region-code": g?.subdivision?.code, region: g?.subdivision?.name, city: g?.city,
+    timezone: g?.timezone, lat: g?.latitude, lon: g?.longitude };
+  for (const [k, v] of Object.entries(geo)) if (v != null && v !== "") headers.set("x-afs-geo-" + k, encodeURIComponent(String(v)));
+  return fetch("${baseUrl}" + url.pathname + url.search, {
+    method: request.method,
+    headers,
+    body: request.method === "POST" ? request.body : undefined,
+  });
+};
+
+export const config: Config = { path: "${PROXY_PATH}/*" };`,
     },
     nginx: {
       file: "nginx server block",
@@ -233,10 +297,65 @@ export const config = { matcher: "${PROXY_PATH}/:path*" };`,
   };
 }
 
-/** `proxyKey`: the site's x-afs-proxy-key (proxyKeyFor), null when the deployment has no SALT_SECRET. */
-export function installInstructions(site: SiteLike, baseUrl: string, framework: Framework = "html", proxyKey: string | null = null) {
-  const fw = frameworkCode(framework, baseUrl, site.id);
+/** Where first-party domains are created: the platform site (AUTH_ISSUER), or null when this service runs alone. */
+export const platformBase = (env: { AUTH_ISSUER?: string }) => env.AUTH_ISSUER?.trim().replace(/\/+$/, "") || null;
+
+/**
+ * The three ways to install, best first: a first-party domain (one CNAME, no server code; created
+ * on the platform site), the path proxy (first_party_proxy), and the direct snippet, which ad
+ * blockers block. Every install answer leads with it.
+ */
+export function firstPartyBlock(baseUrl: string, siteId: string, siteBase: string | null) {
+  const endpoint = siteBase ? `${siteBase}/v1/first-party-domains` : null;
   return {
+    default: true,
+    why: "Ad blockers block requests to analytics.* hosts (their filter lists target them), so the direct snippet loses a share of visitors, most on technical audiences. Serve the tracker and its collection endpoint from the site's own domain: use the first of these that works for the site.",
+    order: ["first_party_domain", "path_proxy", "direct"],
+    first_party_domain: {
+      rank: 1,
+      what: "A subdomain of the site (e.g. edge.example.com) with one CNAME to this platform, no server code. It serves analytics (/_a), tags (/_t) and replay (/_r) for the whole project at once, with the visitor's IP and geo.",
+      when: "You can add a DNS record. If you can't, it's one record to hand the owner; use the path proxy (or the direct snippet) until it's active.",
+      create: endpoint
+        ? `POST ${endpoint} {"hostname":"edge.<the site's domain>"} (MCP afs_add_first_party_domain): returns the CNAME to add, the filled-in snippets and next_steps`
+        : "Not on this deployment (this analytics service runs without the platform site): use the path proxy.",
+      status: endpoint ? `GET ${endpoint} until status is "active", then swap the snippet` : null,
+      snippet: `<script defer src="https://<hostname>/_a/s.js" data-site="${siteId}"></script>`,
+      label:
+        "Pick a neutral label (edge, go, www2), not analytics, stats, track, metrics, pixel, tag or collect: filter lists target those names too.",
+    },
+    path_proxy: {
+      rank: 2,
+      what: `Forward ${PROXY_PATH}/* on the site's own server, edge or framework to this service with the site's proxy key. Ready code for a Cloudflare Worker, Next.js, Vercel, a Netlify Edge Function and nginx: first_party_proxy.`,
+      when: "DNS can't be changed, but the site's server or host can forward a path.",
+      snippet: `<script defer src="${PROXY_PATH}/s.js" data-site="${siteId}"></script>`,
+      configs: "first_party_proxy",
+    },
+    direct: {
+      rank: 3,
+      what: "The plain snippet, straight to this service's host. Last resort: ad blockers block it, and the setup check flags it (analytics.first_party).",
+      snippet: scriptSnippet(baseUrl, siteId),
+    },
+  };
+}
+
+const FIRST_PARTY_NOTE =
+  "First-party by default: swap this src for the one in first_party (https://<first-party domain>/_a/s.js, or /_a/s.js through the path proxy); the direct src here is the last resort, ad blockers block it.";
+
+/**
+ * `proxyKey`: the site's x-afs-proxy-key (proxyKeyFor), null when the deployment has no SALT_SECRET.
+ * `siteBase`: the platform site, where first-party domains are created (platformBase).
+ */
+export function installInstructions(
+  site: SiteLike,
+  baseUrl: string,
+  framework: Framework = "html",
+  proxyKey: string | null = null,
+  siteBase: string | null = null,
+) {
+  const fw = frameworkCode(framework, baseUrl, site.id, proxyKey);
+  if (framework !== "nextjs" && framework !== "tags") fw.notes = [...fw.notes, FIRST_PARTY_NOTE];
+  return {
+    first_party: firstPartyBlock(baseUrl, site.id, siteBase),
     site_id: site.id,
     framework,
     frameworks: FRAMEWORKS,

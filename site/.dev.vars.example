@@ -8,3 +8,9 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # Optional: shared with the services' .dev.vars so the dashboard can list a project's resources.
 INTERNAL_TOKEN=
+# Optional: first-party domains on Cloudflare for SaaS (POST /v1/first-party-domains). A token with
+# Zone > SSL and Certificates Edit and Zone > Workers Routes Edit on the SaaS zone; all four or none.
+CF_SAAS_API_TOKEN=
+CF_SAAS_ZONE_ID=
+CF_SAAS_FALLBACK_HOST=
+CF_SAAS_WORKER=

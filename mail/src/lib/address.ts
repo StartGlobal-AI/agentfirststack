@@ -12,30 +12,143 @@ import { randomString } from "@afs/shared";
 export const USERNAME_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
 
 /**
- * Local parts that must never be handed out on a shared domain. Certificate authorities send
- * domain-validation mail to admin@/administrator@/hostmaster@/postmaster@/webmaster@ (CA/B
- * Baseline Requirements 3.2.2.4.4), and abuse@/postmaster@ are RFC 2142 role addresses. Giving
- * them to an arbitrary account would let it obtain TLS certificates for the operator's domain.
+ * Local parts that must never be handed out on a shared domain.
+ *
+ *   - CA domain validation: certificate authorities send domain-validation mail to admin@,
+ *     administrator@, hostmaster@, postmaster@ and webmaster@ (CA/B Baseline Requirements
+ *     3.2.2.4.4). Giving them to an arbitrary account would let it obtain TLS certificates for the
+ *     operator's domain.
+ *   - RFC 2142 role mailboxes (abuse, noc, security, info, sales, ...), mail-system addresses
+ *     (mailer-daemon, bounces, dmarc reports) and the names a platform uses for itself (support,
+ *     billing, legal, privacy, notifications, verify, ...): mail from them reads as the operator's
+ *     own, so an account holding one could phish the operator's users or receive mail meant for it.
+ *
+ * Matching ignores ".", "_" and "-" (reservedKey): no-reply, no.reply and noreply are one name. The
+ * deployment's own brand names belong in EXTRA_RESERVED_USERNAMES (matched the same way). Inboxes
+ * created before a name became reserved keep working; src/service/reserved.ts lists them.
  */
 export const RESERVED_USERNAMES = new Set([
+  // CA validation (BR 3.2.2.4.4) and RFC 2142
   "admin",
   "administrator",
   "hostmaster",
   "postmaster",
   "webmaster",
   "abuse",
-  "root",
-  "security",
-  "ssl-admin",
-  "mailer-daemon",
   "noc",
+  "security",
   "info",
+  "marketing",
+  "sales",
   "support",
+  "usenet",
+  "news",
+  "uucp",
+  "ftp",
+  "www",
+  "root",
+  "ssl-admin",
+  // the mail system: senders, bounces, reports
+  "mailer-daemon",
+  "mailer",
+  "mail",
+  "email",
+  "daemon",
+  "nobody",
+  "system",
+  "sysadmin",
   "no-reply",
   "noreply",
+  "do-not-reply",
+  "donotreply",
+  "bounce",
+  "bounces",
+  "dmarc",
+  "dmarc-reports",
+  "rua",
+  "ruf",
+  "tls-reports",
+  "tlsrpt",
+  // what a platform uses for itself
+  "hello",
+  "help",
+  "helpdesk",
+  "contact",
+  "team",
+  "staff",
+  "owner",
+  "official",
+  "operator",
+  "operations",
+  "ops",
+  "billing",
+  "payments",
+  "invoices",
+  "receipts",
+  "legal",
+  "privacy",
+  "conduct",
+  "compliance",
+  "dpo",
+  "gdpr",
+  "trust",
+  "safety",
+  "notifications",
+  "notification",
+  "notify",
+  "alerts",
+  "alert",
+  "status",
+  "updates",
+  "newsletter",
+  "press",
+  "media",
+  "feedback",
+  "careers",
+  "jobs",
+  "verify",
+  "verification",
+  "confirm",
+  "account",
+  "accounts",
+  "login",
+  "signin",
+  "signup",
+  "signups",
+  "register",
+  "registration",
+  "password",
+  "reset",
+  "recovery",
+  "auth",
 ]);
 
-export type UsernameCheck = { ok: true; username: string } | { ok: false; reason: string };
+/** The form usernames are compared in against the reserved lists: lowercase, without ".", "_" and "-". Pure. */
+export function reservedKey(username: string): string {
+  return username.trim().toLowerCase().replace(/[._-]/g, "");
+}
+
+const BUILT_IN_RESERVED_KEYS = new Set([...RESERVED_USERNAMES].map(reservedKey));
+
+/** EXTRA_RESERVED_USERNAMES (comma-separated) as reserved keys. Pure. */
+export function extraReservedKeys(extra: string | undefined | null): string[] {
+  return (extra ?? "").split(",").map(reservedKey).filter(Boolean);
+}
+
+/** Every reserved key on the shared domain (built-in + extra), sorted and unique. Pure. */
+export function reservedKeys(extra: string | undefined | null): string[] {
+  return [...new Set([...BUILT_IN_RESERVED_KEYS, ...extraReservedKeys(extra)])].sort();
+}
+
+/** Why a username is reserved on the shared domain: "built_in", "extra", or null when it is not. Pure. */
+export function reservedReason(username: string, extra?: string | null): "built_in" | "extra" | null {
+  const k = reservedKey(username);
+  if (BUILT_IN_RESERVED_KEYS.has(k)) return "built_in";
+  if (extraReservedKeys(extra).includes(k)) return "extra";
+  return null;
+}
+
+export type UsernameCheck = { ok: true; username: string } | { ok: false; reason: string; reserved?: true; username?: string };
 
 export function normalizeUsername(input: string): string {
   return input.trim().toLowerCase();
@@ -52,16 +165,10 @@ export function checkUsername(input: string, opts: { sharedDomain: boolean; extr
     return { ok: false, reason: "Use a-z, 0-9, '.', '_' or '-', starting and ending with a letter or digit." };
   }
   if (username.includes("..")) return { ok: false, reason: "Username cannot contain '..'." };
-  if (opts.sharedDomain && RESERVED_USERNAMES.has(username)) {
-    return { ok: false, reason: `"${username}" is a reserved role address on the shared domain.` };
-  }
-  if (opts.sharedDomain && opts.extraReserved) {
-    const extra = opts.extraReserved
-      .split(",")
-      .map((u) => u.trim().toLowerCase())
-      .filter(Boolean);
-    if (extra.includes(username)) return { ok: false, reason: `"${username}" is reserved on the shared domain.` };
-  }
+  const reserved = opts.sharedDomain ? reservedReason(username, opts.extraReserved) : null;
+  if (reserved === "built_in")
+    return { ok: false, reserved: true, username, reason: `"${username}" is a reserved role address on the shared domain.` };
+  if (reserved === "extra") return { ok: false, reserved: true, username, reason: `"${username}" is reserved on the shared domain.` };
   return { ok: true, username };
 }
 

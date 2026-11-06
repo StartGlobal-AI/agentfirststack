@@ -10,6 +10,12 @@ import { groupSpecFor, groupedQuery } from "../lib/query";
 import type { SiteSettings } from "../lib/types";
 import { DAY, type Db, all, checkGoalFilters, ctxFor, guard, num, unknownGoals } from "./common";
 import { totals } from "./engine";
+import type { VitalMetric } from "../lib/vitals";
+import { vitalTotals, vitalsRows } from "./vitals";
+
+/** web_vitals: pages listed with a firing (the highest p75 among those with a few page loads). */
+const ALERT_PAGES = 3;
+const ALERT_PAGE_MIN_SAMPLES = 5;
 
 export interface AlertCheckRequest {
   type: AlertType;
@@ -21,6 +27,8 @@ export interface AlertCheckRequest {
   cursor?: number | null;
   /** payment: minimum amount (absolute) */
   threshold?: number | null;
+  /** web_vitals: lcp, inp or cls */
+  metric?: VitalMetric | null;
 }
 
 export function alertNumbers(
@@ -60,6 +68,19 @@ export function alertNumbers(
       case "goal": {
         const filters: Filter[] = [...q.filters, { key: "goal", op: "==", values: [q.goal ?? ""] }];
         return { conversions: Number(totals(db, ctxFor(db, range(now - w), { filters }), ["conversions"]).conversions ?? 0) };
+      }
+      case "web_vitals": {
+        const metric = q.metric ?? "lcp";
+        const ctx = ctxFor(db, range(now - w), q);
+        const t = vitalTotals(db, ctx)[metric];
+        const pages = t.samples
+          ? vitalsRows(db, ctx, groupSpecFor("page", ctx).key, 50)
+              .filter((r) => r[metric].samples >= ALERT_PAGE_MIN_SAMPLES && r[metric].p75 != null)
+              .sort((a, b) => (b[metric].p75 ?? 0) - (a[metric].p75 ?? 0))
+              .slice(0, ALERT_PAGES)
+              .map((r) => ({ value: r.value, p75: r[metric].p75, samples: r[metric].samples }))
+          : [];
+        return { vitals: { metric, p75: t.p75, samples: t.samples, good: t.good, poor: t.poor }, top_pages: pages };
       }
       case "payment": {
         const cursor = q.cursor ?? now;

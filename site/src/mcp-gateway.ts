@@ -12,6 +12,7 @@ import {
   renameProject,
 } from "@afs/shared";
 import { claimLinkResponse, createClaimLink } from "./claims";
+import { addFirstPartyDomain, getFirstPartyDomain, listFirstPartyDomains, removeFirstPartyDomain } from "./first-party-domains";
 import { deleteProject, deletionAnswer, isClaimed } from "./project-deletion";
 import { usageReport } from "./project-health";
 import type { Bindings } from "./env";
@@ -27,8 +28,8 @@ import { checkTestVisit, readSince, runSetupTest } from "./setup-test";
  * scoping, read-only keys and errors behave exactly as on the service itself.
  *
  * Tools prefixed `afs_` are the gateway's own (platform-wide, not one service's):
- * `afs_check_setup`, `afs_get_usage` and `afs_check_test_visit` (every key), `afs_test_setup` and `afs_update_project`
- * (keys that can write) and
+ * `afs_check_setup`, `afs_get_usage`, `afs_check_test_visit` and `afs_list_first_party_domains` (every key),
+ * `afs_test_setup`, `afs_update_project`, `afs_add_first_party_domain` and `afs_remove_first_party_domain` (keys that can write) and
  * `afs_create_claim_link` and `afs_delete_project` (full-access API keys only, not OAuth access tokens).
  *
  * Cost per HTTP request is bounded: a JSON-RPC batch holds at most MAX_BATCH messages (batching
@@ -176,6 +177,52 @@ const VISIT_TOOL: Tool = {
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
+const FP_ADD_TOOL: Tool = {
+  name: "afs_add_first_party_domain",
+  title: "Add a first-party domain (serve collection from the site's own domain)",
+  description:
+    "Makes a subdomain of the website (e.g. edge.example.com) serve this project's analytics, tags and replay collection, so ad blockers that block analytics.* hosts don't drop visitors: one CNAME to this platform, no server code. The default way to install. Returns the DNS record to add (CNAME <hostname> -> the fallback host; add it if you can change DNS, otherwise give it to the owner), the snippets that load from it, and next_steps: add the record, call afs_list_first_party_domains until status is active, swap the snippets, then afs_check_setup. Pick a neutral label (edge, go, www2), not analytics/stats/track/metrics/pixel/tag/collect: filter lists target those. The same hostname again returns it (existing: true). Same as POST /v1/first-party-domains.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      hostname: {
+        type: "string",
+        description: "A new subdomain of one of the project's websites, e.g. edge.example.com (not the website itself).",
+      },
+    },
+    required: ["hostname"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+};
+
+const FP_LIST_TOOL: Tool = {
+  name: "afs_list_first_party_domains",
+  title: "List this project's first-party domains and their status",
+  description:
+    "Each first-party domain with its status (pending until the CNAME is live and Cloudflare has issued the certificate, then active; failed with errors otherwise), the DNS records it needs and what it serves. With hostname: that one, plus the snippets that load from it and next_steps. Status is read from Cloudflare at most every 30 seconds per hostname. Same as GET /v1/first-party-domains[/:hostname].",
+  inputSchema: {
+    type: "object",
+    properties: { hostname: { type: "string", description: "Only this first-party domain, with its snippets (default: all)." } },
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+};
+
+const FP_REMOVE_TOOL: Tool = {
+  name: "afs_remove_first_party_domain",
+  title: "Remove a first-party domain",
+  description:
+    "Stops serving collection from the hostname and removes it from Cloudflare. Pages still loading scripts from it stop being tracked: switch them to another way first (analytics GET /v1/sites/:id/install, first_party). Then remove the CNAME from DNS. Same as DELETE /v1/first-party-domains/:hostname.",
+  inputSchema: {
+    type: "object",
+    properties: { hostname: { type: "string", description: "The first-party domain, e.g. edge.example.com." } },
+    required: ["hostname"],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+};
+
 interface Caller {
   authHeader: string;
   auth: AuthContext;
@@ -229,6 +276,8 @@ async function buildToolList(env: Bindings, caller: Caller): Promise<Tool[]> {
     ...(canWrite(caller.auth) ? [TEST_TOOL] : []),
     VISIT_TOOL,
     USAGE_TOOL,
+    FP_LIST_TOOL,
+    ...(canWrite(caller.auth) ? [FP_ADD_TOOL, FP_REMOVE_TOOL] : []),
     ...(offersClaimTool(caller.auth) ? [CLAIM_TOOL] : []),
     ...(canWrite(caller.auth) ? [RENAME_TOOL] : []),
     ...(offersClaimTool(caller.auth) ? [DELETE_TOOL] : []),
@@ -276,6 +325,24 @@ async function callGatewayTool(env: Bindings, caller: Caller, name: string, args
       if (args.services !== undefined && !services)
         return fail("`services` names a service that doesn't exist.", "Any of analytics, tags, mail, replay.");
       return toolResult(await runSetupTest(env, caller.auth.accountId, { base: caller.base, domain, services }));
+    } catch (err) {
+      const e = err as { toJSON?: () => unknown; message?: string };
+      return toolResult(e.toJSON ? e.toJSON() : { error: { code: "internal", message: e.message ?? String(err) } }, true);
+    }
+  }
+  if (name === FP_ADD_TOOL.name || name === FP_LIST_TOOL.name || name === FP_REMOVE_TOOL.name) {
+    const ctx = { env, accountId: caller.auth.accountId, base: caller.base };
+    try {
+      if (name === FP_LIST_TOOL.name)
+        return toolResult(
+          typeof args.hostname === "string" && args.hostname
+            ? await getFirstPartyDomain(ctx, args.hostname)
+            : await listFirstPartyDomains(ctx),
+        );
+      if (!canWrite(caller.auth))
+        throw new ApiError(403, "forbidden", "This is a read-only key.", 'First-party domains are changed with a key with scope "*".');
+      if (name === FP_ADD_TOOL.name) return toolResult((await addFirstPartyDomain(ctx, args)).body);
+      return toolResult(await removeFirstPartyDomain(ctx, typeof args.hostname === "string" ? args.hostname : ""));
     } catch (err) {
       const e = err as { toJSON?: () => unknown; message?: string };
       return toolResult(e.toJSON ? e.toJSON() : { error: { code: "internal", message: e.message ?? String(err) } }, true);

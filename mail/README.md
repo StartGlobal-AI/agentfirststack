@@ -13,9 +13,9 @@ Sections marked (v2) are deliberately not built yet. `GET /llms.txt` is the full
 curl -X POST $BASE/v1/signup                         # key + a ready default inbox
 curl -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -d '{"username":"acme-signups"}'
 #   -> { "inbox": { "id": "inb_...", "address": "acme-signups@MAIL_DOMAIN" }, ... }
-# ... agent fills a signup form on some website with that address ...
-curl "$BASE/v1/inboxes/$INBOX/latest-code?timeout=60" -H "Authorization: Bearer $KEY"
-#   -> { "code": "482913", "link": "https://...", "link_kind": "verify", "message_id": "msg_...", ... }
+# ... agent fills github.com's signup form with that address; always pass from=<that site's domain> ...
+curl "$BASE/v1/inboxes/$INBOX/latest-code?from=github.com&timeout=60" -H "Authorization: Bearer $KEY"
+#   -> { "sender_domain": "github.com", "code": "482913", "link": "https://...", "link_kind": "verify", ... }
 curl "$BASE/v1/inboxes/$INBOX/wait?from=facebookmail.com&timeout=60" -H "Authorization: Bearer $KEY"
 #   -> { "message": { "subject": "...", "code": "482913", "codes": ["482913"], "verify_link": "https://...", ... } }
 curl -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -d '{"text":"Thanks!"}'
@@ -26,8 +26,8 @@ curl -X POST $BASE/v1/messages/$MSG/reply -H "Authorization: Bearer $KEY" -d '{"
 ```
 internet ─ MX ─► Cloudflare Email Routing (catch-all) ─► Worker email() handler
                    recipient -> inbox (D1), else domain catch-all inbox, else setReject
-                   suspended account / daily limit / storage full -> setReject (before the body is read)
-                   parse the headers only: duplicate? per-sender daily cap -> setReject
+                   too large / suspended account / daily limit / storage full -> setReject (before the body is read)
+                   parse the headers only: duplicate? sender's storage share, per-sender daily caps -> setReject
                    parse the body (postal-mime), extract from its first 512 KB (linear scanners)
                                        ─► R2: raw .eml, HTML body (deleted again if the commit fails)
                                        ─► D1, one transaction: message row if the daily quota and stored
@@ -50,15 +50,19 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 `0009_abuse_controls.sql` (wait slots, sender keys and counters, daily budgets, text usage, cron state),
 `0010_blob_storage.sql` (stored bytes per message and account, attachments served from the raw MIME),
 `0014_forward_to_members.sql` (the inbox `forward_*` columns and `forward_queue`),
-`0015_permanent_tombstones.sql` (addresses of deleted projects reserved for good).
+`0015_permanent_tombstones.sql` (addresses of deleted projects reserved for good),
+`0016_retired_addresses_sender_bytes.sql` (every deleted shared-domain address retired for good,
+bytes per sender per day, stored bytes per sender).
 
 - **Receiving**: Email Routing's catch-all routes every address of a mail domain to this Worker.
   The envelope recipient is lowercased and its `+tag` stripped (`acme+meta@` delivers to `acme@`).
   Recipient address -> inbox (D1). Unknown address: delivered to the domain's catch-all inbox if one
   is set (custom domains only), else rejected with `setReject("Address does not exist")` before
   the body is read. Expired inboxes count as unknown, and so does every address on a custom domain
-  whose ownership challenge has not passed (see Domains). Messages over 25 MB are rejected (Email
-  Routing's limit). Also before the body is read: mail for a suspended account is refused with
+  whose ownership challenge has not passed (see Domains). Messages over `MAX_INBOUND_MESSAGE_BYTES`
+  are rejected from the SMTP size (`Message too large: <address> accepts messages up to ...`):
+  default 25 MiB, Email Routing's limit and the most it can be, and 10 MiB for unclaimed accounts,
+  so a few huge messages cannot fill an unclaimed account's storage. Also before the body is read: mail for a suspended account is refused with
   `Mailbox unavailable: <address> is not accepting mail` (polite, says nothing about why); with
   `MAX_INBOUND_PER_ACCOUNT_PER_DAY` set, once the account received N messages in the UTC day new
   mail is rejected with `Daily limit reached: ...; retry after 00:00 UTC`. The count
@@ -71,8 +75,16 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   per-sender cap are settled before the body is parsed or extracted, so the cost of a hostile body
   only ever spends its own sender's allowance. With `MAX_INBOUND_PER_SENDER_PER_DAY` set, one sender
   may send one inbox that many messages per UTC day (`Too much mail from <sender> to <address>
-  today (UTC)`), and with the daily account limit set one sender never gets more than half of it,
-  across inboxes (one atomic upsert in `sender_counters`). The sender is a key one party cannot
+  today (UTC)`), with the daily account limit set one sender never gets more than half of it,
+  across inboxes, and with `MAX_INBOUND_BYTES_PER_SENDER_PER_DAY` set one sender may send the
+  account that many bytes of raw mail per UTC day, across inboxes (`... at most <n> a day from one
+  sender`); all three in one atomic upsert in `sender_counters` (`count`, `bytes`), refunded when
+  the message is not stored. The byte budget is keyed by the sender key, not separately by the
+  envelope sender: services that send through a shared ESP have envelope senders on the ESP's
+  domain (amazonses.com, sendgrid.net), so a budget per envelope domain would let one ESP customer
+  block every other one, and a budget per full envelope address protects nothing (VERP addresses
+  change per message). Where only SPF vouches for the mail, the sender key already is the
+  envelope sender's domain. The sender is a key one party cannot
   multiply for free (`src/lib/sender.ts`): the registrable domain of whatever authentication
   vouches for (the From address when `auth.verdict` is `pass`, else the SPF-checked envelope
   sender, else the DKIM signing domain), or the full address on shared mailbox providers
@@ -104,7 +116,16 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   unclaimed accounts; `"0"` = off) caps it: inbound mail that does not fit is rejected at SMTP time
   (`Mailbox full: ...`; checked before the body is read and again, exactly, in the commit), and a
   sent message still goes out but its stored copy keeps only the text (`stored_copy: "text_only"`),
-  so mail others send in cannot block sending. `GET /v1/inboxes` reports `storage`
+  so mail others send in cannot block sending. A nearly full account still takes small mail
+  (`storageVerdict()` in `src/service/ingest.ts`, the same rule in the commit's SQL guard): a
+  message up to 256 KB fits until the storage is completely full; a larger one may not use the last
+  5% (`Mailbox nearly full: ... keeps its last ...`); and once the account is past 80%, a larger
+  one is refused from a sender key that already keeps 10% of the storage (`Mailbox nearly full:
+  much of what ... keeps is mail from <sender> ...`), so the senders that filled it are refused
+  first, not everyone, and verification codes keep arriving. What each sender keeps is
+  `sender_usage` (by account and sender key, kept by triggers like `account_usage`), read by
+  primary key after the headers are parsed, before the body. A wait that times out says when the
+  storage is nearly full. `GET /v1/inboxes` reports `storage`
   (`used_bytes`, `limit_bytes`). HTML is stored as received
   (not rewritten); the UI only renders it in a sandboxed iframe (see Human view). Plain text above
   64 KB (UTF-8) is cut in D1 and the message reports `text_truncated: true` (the raw MIME in R2
@@ -118,19 +139,33 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   triggers) counts the UTF-8 bytes of each account's stored text and links; past the budget new
   mail (in and out) keeps a 2 KB excerpt and 10 links (action links first) in D1, with
   `text_truncated: true`; codes and links are still extracted from the whole message.
-- **Addresses**: a shared-domain address that received mail (it may have been used to sign up
-  somewhere) is not handed to another account for a while. When such an inbox on `MAIL_DOMAIN` is
-  deleted (by its account or by ttl expiry) its address goes into `address_tombstones` for
-  `ADDRESS_TOMBSTONE_DAYS` (default 90; the cron prunes lapsed ones); only the account that owned
-  it may create it again meanwhile. For anyone else creating it answers exactly like an address
-  another account holds (409 `conflict`, same message), from one query either way, so the two
-  cannot be told apart. An address that never received mail is free again at once, so create/delete
-  loops reserve nothing; `MAX_INBOX_CREATES_PER_DAY` and `MAX_INBOX_DELETES_PER_DAY` (API deletes;
-  ttl expiry does not count) cap the churn per account (429 `daily_limit` with a hint; a create
-  that returns an address you already own is not counted). `DELETE` answers
-  `address_reserved_until`. When a deleted project's mail is erased, its addresses that ever
-  received mail are reserved permanently instead (`permanent = 1`, never pruned): they are often
-  the recovery email of accounts elsewhere, and the project can't come back for them.
+- **Addresses**: a shared-domain address is never handed to another account. It may be the
+  recovery email of accounts elsewhere (whether or not mail has reached it yet), and whoever gets
+  it could take those accounts over with password resets. When an inbox on `MAIL_DOMAIN` is deleted
+  (by its account, by ttl expiry, or with its project) its address goes into `address_tombstones`
+  for good (the address, the account that may create it again, and when; never pruned; older
+  rows were made permanent by migration 0016). Only that account may create it again. For anyone
+  else creating it answers exactly like an address another account holds (409 `conflict`, same
+  message), from one query either way, so polling tells nobody when or whether an address was
+  deleted. `DELETE` answers `address_reserved: true`. `MAX_INBOX_CREATES_PER_DAY` and
+  `MAX_INBOX_DELETES_PER_DAY` (API deletes; ttl expiry does not count) cap the churn per account
+  (429 `daily_limit` with a hint; a create that returns an address you already own is not
+  counted). Addresses on an account's own domain are not tombstoned: its domain owner controls them.
+  The tombstone keeps the plain address rather than a keyed hash: a hash would depend on
+  `ENCRYPTION_KEY` (optional, and rotating it would free every retired address at once) and could
+  not be computed for the existing rows in a SQL migration.
+- **Reserved usernames** (`src/lib/address.ts`): on the shared domain, CA-validation and RFC 2142
+  names (admin, postmaster, hostmaster, webmaster, abuse, security, ...), mail-system names
+  (mailer-daemon, bounces, dmarc, noreply variants, ...) and the names a platform uses for itself
+  (support, billing, legal, privacy, conduct, notifications, alerts, hello, help, contact, team,
+  staff, owner, official, operator, press, status, verify, account(s), login, register, signup(s),
+  ...) are refused (400), plus `EXTRA_RESERVED_USERNAMES` (the deployment's brand names). "." "_"
+  and "-" are ignored when comparing (`no.reply` = `noreply`). Inboxes created before a name became
+  reserved keep working and creating them again returns them (rule 7); nobody else can create
+  them. They are found, never deleted: the hourly cron re-scans the shared domain's inboxes when
+  the reserved list changed (its fingerprint is in `cron_state`) and logs `mail.reserved_conflicts`,
+  and `GET /v1/admin/reserved-inboxes?limit=` (any key plus `x-admin-token` = `ADMIN_TOKEN`) lists
+  them on demand (`src/service/reserved.ts`).
 - **Project deletion** (`accounts.deleted_at` in the identity DB): reads as suspended, so keys stop,
   inbound mail is refused at SMTP and forwarding stops at once. 7 days later the site's cron calls
   `DELETE /v1/account` (internal auth only, no MCP tool; API keys get `403 forbidden`;
@@ -162,7 +197,15 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   domain equals it or is a subdomain; a display name or `github.com.evil.example` never matches)
   or a full address (a bare word is a 400), and by default only mail with `auth.verdict: "pass"`
   counts (`allow_unauthenticated=true` opts out; a 408 hint names a match that was skipped for
-  failing authentication). `wait`'s `from` stays a loose substring filter.
+  failing authentication). `wait`'s `from` stays a loose substring filter. Every example, the
+  signup and create-inbox `next_steps`, the MCP instructions and the tool descriptions pass `from`:
+  inbox names are predictable, and anyone who owns a domain can send DKIM-valid mail, so without
+  `from` a stranger can win the race with a fake "verify your account" link. Without `from` it
+  still works, guarded: the answer starts with `sender_domain` (the registrable domain of the From
+  address) and carries `warning` and `hint`; and when code mail from two or more sender domains is
+  in the window (`after` .. now) it answers 409 `ambiguous_sender` with `details.candidates`
+  (sender_domain, from, message_id, received_at, auth_verdict, messages; at most 10) instead of
+  picking one.
 - **Extraction at ingest** (`src/extract/`, pure, tested against `test/fixtures/`):
   - `codes`: 4-10 digits, digit groups (`482 913`, `482-913` -> `482913`) or upper-case
     alphanumerics with a digit (`7Q9XLD`, `K7P-2QX`, dash kept). Reported only with positive
@@ -364,8 +407,9 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
   renders this deployment's configured limits per request.
 - **Cron** (hourly): sends forward digests (see Forward to the owner), deletes expired inboxes,
   shared-domain mail older than `SHARED_RETENTION_DAYS`, webhook delivery logs older than 7 days,
-  daily counters older than a week, expired wait slots, lapsed address tombstones and forward-queue
-  rows older than 30 days, and sweeps R2 for orphans: up to 5 list
+  daily counters older than a week, expired wait slots and forward-queue rows older than 30 days,
+  lists inboxes whose username became reserved (only when the reserved list changed; see Reserved
+  usernames), and sweeps R2 for orphans: up to 5 list
   pages of 1,000 objects per run, resuming from a cursor in `cron_state`, deleting objects older
   than an hour whose message id has no D1 row. Each purge loops in rounds (retention: 200 messages
   per round; expiry: 50 inboxes per round, each inbox's mail deleted in 500-row chunks) until
@@ -379,14 +423,15 @@ plus `0004_domain_ownership.sql`, `0005_inbound_limits.sql`, `0006_address_tombs
 | POST | `/signup` | account + key (`@afs/shared`); also creates and returns a default inbox |
 | GET | `/me`; GET, POST `/keys`; DELETE `/keys/:id` | `@afs/shared` |
 | DELETE | `/account` | the platform's own: erases a deleted project's mail (see Project deletion); API keys get 403 |
-| POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days?, forward? }` (`forward: { mode: each\|digest\|off, digest_hour, timezone }`, applied to a new inbox; every inbox JSON has `forward` with `recipients`, `waiting_for_owner`, `last_forwarded_at`, `last_digest_at`, `forwarded_today`, `daily_limit`, never the members' addresses); random username if omitted; same address returns existing (200); another account's address, or a recently deleted shared-domain address that received mail and was another account's, is 409; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
+| GET | `/admin/reserved-inboxes` | operator only (`x-admin-token`): shared-domain inboxes whose username is reserved now, `?limit=` (max 1000) -> `{ inboxes: [{ inbox_id, account_id, address, created_at, last_message_at }], truncated, reserved_names, shared_domain, next_steps }`; changes nothing; no MCP tool |
+| POST | `/inboxes` | `{ username?, domain?, display_name?, ttl_days?, forward? }` (`forward: { mode: each\|digest\|off, digest_hour, timezone }`, applied to a new inbox; every inbox JSON has `forward` with `recipients`, `waiting_for_owner`, `last_forwarded_at`, `last_digest_at`, `forwarded_today`, `daily_limit`, never the members' addresses); random username if omitted; same address returns existing (200); another account's address, or a deleted shared-domain address that was another account's (ever), is 409, the same answer; on a custom domain only once ownership is verified (else 403 `ownership_not_verified`); 429 `daily_limit` past `MAX_INBOX_CREATES_PER_DAY` |
 | GET | `/inboxes`, `/inboxes/:id` | list (`?limit=&domain=`); one with message/unread counts |
-| PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days?, forward? }` (null = forever; `forward` merges, a bad `timezone` is 400); delete removes all its mail and answers `address_reserved_until` (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |
+| PATCH, DELETE | `/inboxes/:id` | `{ display_name?, ttl_days?, forward? }` (null = forever; `forward` merges, a bad `timezone` is 400); delete removes all its mail and answers `address_reserved` (true on the shared domain: never given to another account) (429 `daily_limit` past `MAX_INBOX_DELETES_PER_DAY`) |
 | GET | `/inboxes/:id/messages` | `?unread=true&q=&from=&to=&subject=&direction=in\|out&tag=&has=code,link,attachments&auth=pass\|fail\|unknown&labels=&status=&after=&before=&order=asc\|desc&limit=` -> `{ messages, next_before }` (`next_after` with `order=asc`) |
 | DELETE | `/inboxes/:id/messages` | clear the inbox (`?before=`); `{ deleted, more }`; 429 past `MAX_INBOX_CLEARS_PER_DAY` |
 | GET | `/inboxes/:id/threads` | `?limit=&before=&after=&q=&labels=` |
 | GET | `/inboxes/:id/wait` | `?from=&subject=&contains=&tag=&after=&timeout=` -> newest matching message (with `reply_text`), or 408 `timeout`; 429 `too_many_waits` / `rate_limited` |
-| GET | `/inboxes/:id/latest-code` | same wait, only mail with a code or action link, `from` = sender domain or address, authenticated senders only unless `allow_unauthenticated=true` -> `{ code, codes, link, link_kind, message_id, from, subject, received_at, auth_verdict, auth_required, tag, waited_ms }` |
+| GET | `/inboxes/:id/latest-code` | same wait, only mail with a code or action link, `from` = sender domain or address (always pass it), authenticated senders only unless `allow_unauthenticated=true` -> `{ sender_domain, code, codes, link, link_kind, message_id, from, subject, received_at, auth_verdict, auth_required, tag, waited_ms }`, plus `warning` and `hint` without `from`; 409 `ambiguous_sender` without `from` when two or more sender domains sent code mail in the window |
 | POST | `/inboxes/:id/send` | `{ to, cc?, bcc?, subject, text?, html?, reply_to?, attachments?, headers?, send_at? }`; `Idempotency-Key` header; own inboxes delivered internally (`internal`); 202 when scheduled |
 | GET | `/messages/:id` | full message incl. `reply_text`, text (`text_truncated` when cut at 64 KB), html (`?html=false` to skip), codes, links, auth, tag, labels, calendar, attachments list; sent mail also `delivery` |
 | GET | `/messages/:id/raw` | original MIME (inbound only) |
@@ -464,7 +509,7 @@ served with a strict CSP.
 | `AUTH_ISSUER`, `INTERNAL_TOKEN` | `@afs/shared`: the OAuth server named in `/.well-known/oauth-protected-resource` (var; set by `pnpm afs`, unset = none listed; forwards to the owner also link to `<AUTH_ISSUER>/dashboard/projects/<account id>`, unset = no link), and the secret the site's dashboard uses for internal auth (unset = off) |
 | `SEND_DAILY_LIMIT` | var, default 200 recipients per account per UTC day |
 | `MAX_FORWARDS_PER_ACCOUNT_PER_DAY` | optional var; emails forwarded to the project's members (inbox `forward`: one per member per forward or digest) per account per UTC day, default 100, `"0"` = forwarding off. Never counts toward `SEND_DAILY_LIMIT` |
-| `UNCLAIMED_<name>` | optional vars; for `SEND_DAILY_LIMIT` and every per-account cap below (`MAX_INBOXES_PER_ACCOUNT`, `MAX_INBOX_CREATES_PER_DAY`, `MAX_INBOX_DELETES_PER_DAY`, `MAX_MESSAGES_PER_INBOX`, `MAX_INBOUND_PER_ACCOUNT_PER_DAY`, `MAX_INBOUND_PER_SENDER_PER_DAY`, `MAX_TEXT_BYTES_PER_ACCOUNT`, `MAX_BLOB_BYTES_PER_ACCOUNT`, `MAX_CONCURRENT_WAITS`, `MAX_CONCURRENT_WAITS_PER_INBOX`, `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_TESTS_PER_DAY`, `MAX_FORWARDS_PER_ACCOUNT_PER_DAY`): the value for accounts no person has claimed (`capFor` in `@afs/shared`). For any cap, `"0"` means none allowed (except `MAX_BLOB_BYTES_PER_ACCOUNT`, where it turns the cap off) and unset means the default (or no cap) |
+| `UNCLAIMED_<name>` | optional vars; for `SEND_DAILY_LIMIT` and every per-account cap below (`MAX_INBOXES_PER_ACCOUNT`, `MAX_INBOX_CREATES_PER_DAY`, `MAX_INBOX_DELETES_PER_DAY`, `MAX_MESSAGES_PER_INBOX`, `MAX_INBOUND_PER_ACCOUNT_PER_DAY`, `MAX_INBOUND_PER_SENDER_PER_DAY`, `MAX_INBOUND_BYTES_PER_SENDER_PER_DAY`, `MAX_INBOUND_MESSAGE_BYTES`, `MAX_TEXT_BYTES_PER_ACCOUNT`, `MAX_BLOB_BYTES_PER_ACCOUNT`, `MAX_CONCURRENT_WAITS`, `MAX_CONCURRENT_WAITS_PER_INBOX`, `MAX_WEBHOOKS_PER_ACCOUNT`, `MAX_WEBHOOK_TESTS_PER_DAY`, `MAX_FORWARDS_PER_ACCOUNT_PER_DAY`): the value for accounts no person has claimed (`capFor` in `@afs/shared`). For any cap, `"0"` means none allowed (except `MAX_BLOB_BYTES_PER_ACCOUNT`, where it turns the cap off) and unset means the default (or no cap) |
 | `WORKER_NAME` | var; must equal the Worker name (`sg-mail`); auto_configure points catch-alls at it |
 | `ENCRYPTION_KEY` | secret; 32-byte base64 (`openssl rand -base64 32`), seals webhook secrets and keys domain ownership challenges. Without it webhook secrets are stored unsealed (`plain:` prefix), and without it and `ADMIN_TOKEN` custom domains are refused. Changing it changes the challenge of domains whose ownership is still pending |
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID` | optional secrets; enable `auto_configure` (operator only). Token: Zone Read, Zone Settings Edit, Email Routing Rules Edit, Email Sending Edit on the zones it may configure |
@@ -473,11 +518,12 @@ served with a strict CSP.
 | `MAX_INBOXES_PER_ACCOUNT` | optional var; cap on inboxes per account (unset = none) |
 | `MAX_INBOX_CREATES_PER_DAY` | optional var; inbox creations per account per UTC day (unset = no cap) |
 | `MAX_INBOX_DELETES_PER_DAY` | optional var; inbox deletions through the API per account per UTC day (unset = no cap) |
-| `ADDRESS_TOMBSTONE_DAYS` | optional var; days a deleted shared-domain address that received mail stays reserved for its old account (default 90) |
-| `EXTRA_RESERVED_USERNAMES` | optional var; comma-separated usernames nobody may take on the shared domain, on top of the built-in role names |
+| `EXTRA_RESERVED_USERNAMES` | optional var; comma-separated usernames nobody may take on the shared domain, on top of the built-in role names (put the deployment's brand names here). Inboxes that already have one are listed (cron log, `GET /v1/admin/reserved-inboxes`), never deleted. (`ADDRESS_TOMBSTONE_DAYS` is gone: deleted addresses are retired for good) |
 | `MAX_MESSAGES_PER_INBOX` | optional var; inbound messages an inbox holds; beyond it the oldest mail of the sender holding the most is evicted (unset = no cap) |
 | `MAX_INBOUND_PER_ACCOUNT_PER_DAY` | optional var; inbound messages an account may receive per UTC day across its inboxes, more are rejected at SMTP time; one sender gets at most half of it (unset = no cap) |
 | `MAX_INBOUND_PER_SENDER_PER_DAY` | optional var; inbound messages one sender key may send one inbox per UTC day, more from it are rejected (unset = no cap) |
+| `MAX_INBOUND_BYTES_PER_SENDER_PER_DAY` | optional var; bytes of raw mail one sender key may send the account (all inboxes) per UTC day, more from it are rejected (unset = no cap) |
+| `MAX_INBOUND_MESSAGE_BYTES` | var; largest inbound message in bytes, rejected at SMTP from its size. Default 25 MiB (Email Routing's limit; higher values are cut to it), 10 MiB for unclaimed accounts (`UNCLAIMED_MAX_INBOUND_MESSAGE_BYTES` overrides that); `"0"` = 25 MiB |
 | `MAX_TEXT_BYTES_PER_ACCOUNT` | optional var; UTF-8 bytes of stored text and links per account; beyond it new mail keeps a 2 KB excerpt (unset = no budget) |
 | `MAX_BLOB_BYTES_PER_ACCOUNT` | var; bytes of mail an account keeps in R2 (raw MIME, HTML bodies, sent attachments); beyond it inbound mail is rejected (`Mailbox full`) and sent mail keeps a text-only copy. Default 1 GiB, 256 MiB for unclaimed accounts (`UNCLAIMED_MAX_BLOB_BYTES_PER_ACCOUNT` overrides that); `"0"` = off |
 | `MAX_CONCURRENT_WAITS` | optional var; parked waits per account (default 3) |
@@ -604,7 +650,7 @@ pnpm smoke                   # against BASE (default http://localhost:8789); nee
   header injection; `abuse.test.ts` (with `test/unit/abuse-pure.test.ts`), one group per finding
   of the abuse/cost review: concurrent-wait caps, the wait rate limit and hibernating waits,
   suspended accounts, long sender addresses and filters, blob cleanup on a failed commit, the
-  attachment cap and the orphan sweep, per-sender caps and eviction, tombstone expiry and daily
+  attachment cap and the orphan sweep, per-sender caps and eviction, permanent retirement and daily
   create/delete caps, strict latest-code, the text budget, delivery-log purge, webhook-test limits,
   scoped search, first-header-only auth trust, reply_only and automated mail, and the REST
   untrusted markers; `hardening.test.ts` (with `test/unit/hardening-pure.test.ts`), one group per
@@ -616,6 +662,14 @@ pnpm smoke                   # against BASE (default http://localhost:8789); nee
   from the raw MIME, text-only copies of sent mail over the budget, webhooks refused (and not
   delivered) to the platform's own hosts or plain http outside `DEV_MODE`, and OAuth access tokens
   refused for webhook creation.
+- `test/integration/takeover.test.ts` (with `test/unit/takeover-pure.test.ts`), one group per
+  finding of the account-takeover review: latest-code without `from` (a single sender still works,
+  with `sender_domain` and a warning; two sender domains are 409 `ambiguous_sender`, on REST and
+  MCP; `from` picks the right one), deleted addresses retired for good across accounts (never
+  mailed, ttl expiry, legacy tombstones, identical 409s), the reserved list (variants, extras,
+  grandfathered inboxes, the cron scan and the operator route), and storage that one sender
+  cannot fill (the per-sender byte budget with `UNCLAIMED_`, the unclaimed message size, and a
+  nearly full account refusing its heaviest sender while small mail still arrives).
 - `test/integration/features*.test.ts` (with `test/unit/features-pure.test.ts`,
   `features-p3-pure.test.ts`), the parity build (docs/parity/mail.md): idempotent sends,
   reply_only exemptions and internal delivery, plus-address tags, reply_text, forward, usage,

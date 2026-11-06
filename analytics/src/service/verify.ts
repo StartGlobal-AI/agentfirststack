@@ -217,6 +217,12 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
   );
 
   const checks: Check[] = [];
+  // The site's summary, read once: the script check may need it (first-party domains), the events checks do.
+  let summaryRead: Promise<SiteSummary | null> | null = null;
+  const summaryOnce = () =>
+    (summaryRead ??= (siteStub(ctx.env, site.id).summary() as Promise<SiteSummary | { error: unknown }>).then((r) =>
+      "error" in r ? null : r,
+    ));
   let scriptError: string | null = null;
   const snippet = scriptSnippet(ctx.baseUrl, site.id);
   let scripts: ReturnType<typeof findTrackerScripts> = [];
@@ -294,7 +300,16 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
           !scriptUrl || !scriptHostOk(scriptUrl)
             ? { error: `not fetched: the script is neither on ${ownHost} nor on https://${site.domain} or a subdomain` }
             : await fetchCapped(scriptUrl, { maxBytes: MAX_SCRIPT_BYTES, allowed: scriptHostOk });
-        if ("error" in js || js.status >= 400 || !js.text.includes(TRACKER_MARKER)) {
+        // A first-party domain is served by this platform's own edge, which a Worker of the same
+        // zone can't fetch: it counts when browser events arrived through that hostname.
+        const edgeHosts = scriptUrl && siteHost(scriptUrl) ? ((await summaryOnce())?.collection_last_7d?.edge_hosts ?? []) : [];
+        if (scriptUrl && edgeHosts.includes(scriptUrl.hostname) && isTrackerPath(scriptUrl.pathname)) {
+          checks.push({
+            id: "script_loads",
+            ok: true,
+            detail: `The script is on a first-party domain this platform serves (${scriptUrl.hostname}), and browser events arrived through it in the last 7 days.`,
+          });
+        } else if ("error" in js || js.status >= 400 || !js.text.includes(TRACKER_MARKER)) {
           // On the site's own hosts it is a first-party proxy: the proxy is what to fix, not the src.
           const proxied = !!scriptUrl && siteHost(scriptUrl);
           const asSnippet = !!scriptUrl && scriptUrl.href === snippetSrc;
@@ -308,7 +323,9 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
                   : "The script could not be fetched (details in untrusted.script_error)."
                 : `The script URL returned HTTP ${js.status}${js.status < 400 ? " but not the tracker" : ""}.`,
             fix: proxied
-              ? `Your first-party proxy does not reach ${ctx.baseUrl}. Apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy), so ${PROXY_PATH}/* (or the path your src uses) is forwarded.`
+              ? scriptUrl!.pathname.startsWith(`${PROXY_PATH}/`) && scriptUrl!.hostname !== new URL(page.finalUrl).hostname
+                ? `If ${scriptUrl!.hostname} is a first-party domain: GET /v1/first-party-domains/${scriptUrl!.hostname} on the platform site must say "active" (its CNAME is live); open a page once in a browser so events arrive through it, then verify again. Otherwise it is a first-party proxy that doesn't reach ${ctx.baseUrl}: apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy).`
+                : `Your first-party proxy does not reach ${ctx.baseUrl}. Apply one of the snippets in GET /v1/sites/${site.id}/install (first_party_proxy), so ${PROXY_PATH}/* (or the path your src uses) is forwarded.`
               : asSnippet
                 ? `The src already matches the snippet; ${scriptUrl!.host} did not serve the tracker this time (details in untrusted.script_error). Run verify again in a minute.`
                 : `Use the exact src from the snippet: ${snippet}`,
@@ -391,11 +408,7 @@ export async function verifyInstall(ctx: Ctx, siteId: string, raw: unknown) {
       detail: `${site.domain} is verified (${site.verify_method ?? "earlier"}${before ? "" : ", just now"}): share links can be created.`,
     });
 
-  const [summary, standing] = await Promise.all([
-    siteStub(ctx.env, site.id).summary() as Promise<SiteSummary | { error: unknown }>,
-    accountStanding(ctx.env, ctx.accountId),
-  ]);
-  const sum = "error" in summary ? null : summary;
+  const [sum, standing] = await Promise.all([summaryOnce(), accountStanding(ctx.env, ctx.accountId)]);
   const drops = sum?.dropped_last_7d ?? {};
   if (sum && sum.total_events > 0) {
     checks.push({

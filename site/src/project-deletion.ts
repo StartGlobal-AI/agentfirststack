@@ -13,6 +13,7 @@ import { z } from "zod";
 import { type Bindings, DAY, type SiteEnv } from "./env";
 import { siteBase } from "./google";
 import { emailProjectPurged, projectPeople } from "./email-messages";
+import { purgeFirstPartyDomains } from "./first-party-domains";
 import { noticeBase } from "./notices";
 import { type Service, callService } from "./services";
 
@@ -152,6 +153,8 @@ export async function purgeProject(env: Bindings, accountId: string, deadline: n
       return report;
     }
   }
+  // Its first-party domains leave Cloudflare (custom hostnames and Worker routes), best effort.
+  await purgeFirstPartyDomains(env, accountId);
   // Read before the memberships go: the owners hear it's done.
   const owners = (await projectPeople(env.DB, accountId)).filter((x) => x.role === "owner");
   const name = (await deletionState(env.DB, accountId))?.name ?? null;

@@ -479,7 +479,11 @@ describe("MCP", () => {
     expect((await tool(key, "delete_session", { site_id: site, session_id: sid })).data.deleted).toBe(sid);
     expect((await tool(key, "delete_visitor_data", { site_id: site, user_id: "nobody" })).data.deleted_sessions).toBe(0);
     expect((await tool(key, "update_replay_site", { site_id: site, sample_rate: 0.5 })).data.site.sample_rate).toBe(0.5);
-    expect((await tool(key, "get_install_snippet", { site_id: site, framework: "nextjs" })).data.code).toContain("next/script");
+    // Next.js: a plain <script> in the layout's <head> (server HTML, so verify finds it), not next/script
+    const next = (await tool(key, "get_install_snippet", { site_id: site, framework: "nextjs" })).data;
+    expect(next.code).toContain(`<script defer src=`);
+    expect(next.code).not.toContain("import Script");
+    expect(next.first_party.order[0]).toBe("first_party_domain");
     expect((await tool(key, "get_replay_site", { site_id: site })).data.site.id).toBe(site);
     expect((await tool(key, "list_replay_sites", {})).data.sites).toHaveLength(1);
     expect((await tool(key, "delete_replay_site", { site_id: site })).data.deleted).toBe(site);

@@ -1,7 +1,7 @@
 import { ApiError } from "@afs/shared";
 import { type AppEnv, standingOf } from "../env";
 import { deleteDomain } from "./domains";
-import { PURGE_BUDGET_MS, deleteInbox, deleteInboxMessages, tombstoneDays } from "./inboxes";
+import { PURGE_BUDGET_MS, deleteInbox, deleteInboxMessages } from "./inboxes";
 
 /**
  * Erasing a deleted project's mail (DELETE /v1/account; the platform's site calls it over a
@@ -13,18 +13,15 @@ import { PURGE_BUDGET_MS, deleteInbox, deleteInboxMessages, tombstoneDays } from
  *
  * Kept: the bare `accounts` mirror row; the fair-use counters (send_counters, inbound_counters,
  * sender_counters, account_daily, account_usage), which must never go down and age out by
- * themselves; and address_tombstones. The project's shared-domain addresses that ever received mail
- * are reserved for good (migrations/0015): they are often the recovery email of accounts elsewhere,
- * and the project can never come back to claim them. That covers its inboxes deleted here and the
- * tombstones of inboxes it deleted earlier that are still within ADDRESS_TOMBSTONE_DAYS. Addresses
- * that never received mail are free.
+ * themselves; and address_tombstones. Like every deleted shared-domain address, the project's are
+ * never given to another account (migrations/0015, 0016): they are often the recovery email of
+ * accounts elsewhere. `addresses_reserved` counts the ones retired by this call.
  *
  * Works within `budgetMs` of wall time and answers `done: false` when work is left; the caller calls
  * again. Idempotent: on an emptied account it answers `done: true` with zero counts. A live account
  * (its identity row has no deleted_at) is never erased: 409 not_deleted, before anything changes.
  */
 
-const DAY = 86_400_000;
 const INBOX_PAGE = 50;
 const ROW_CHUNK = 1000;
 
@@ -96,16 +93,8 @@ export async function purgeAccount(env: AppEnv, accountId: string, opts: { budge
     }
   };
 
-  // 1. Addresses the project deleted itself and still holds: reserved for good now.
-  const upgraded = await env.DB.prepare(
-    "UPDATE address_tombstones SET permanent = 1 WHERE account_id = ? AND permanent = 0 AND deleted_at > ?",
-  )
-    .bind(accountId, now - tombstoneDays(env) * DAY)
-    .run();
-  reserved += upgraded.meta.changes ?? 0;
-
-  // 2. Inboxes, on every domain. Messages first, under the budget (an inbox can be large), then
-  //    deleteInbox: threads, list entries, R2 blobs and the permanent tombstone.
+  // 1. Inboxes, on every domain. Messages first, under the budget (an inbox can be large), then
+  //    deleteInbox: threads, list entries, R2 blobs and (shared domain) the address's tombstone.
   for (;;) {
     const { results } = await env.DB.prepare("SELECT id FROM inboxes WHERE account_id = ? ORDER BY created_at LIMIT ?")
       .bind(accountId, INBOX_PAGE)
@@ -116,19 +105,19 @@ export async function purgeAccount(env: AppEnv, accountId: string, opts: { budge
       const msgs = await deleteInboxMessages(env, id, deadline);
       deleted.messages += msgs.deleted;
       if (msgs.more) return result(false);
-      const r = await deleteInbox(env, accountId, id, now, { reserve: "permanent" }).catch((e: unknown) => {
+      const r = await deleteInbox(env, accountId, id, now).catch((e: unknown) => {
         if (e instanceof ApiError && e.status === 404) return null; // gone meanwhile (a concurrent call)
         throw e;
       });
       if (!r) continue;
       deleted.inboxes++;
       deleted.blobs += r.blobs_deleted;
-      if (r.address_reserved_permanently) reserved++;
+      if (r.address_reserved) reserved++;
     }
     if (results.length < INBOX_PAGE) break;
   }
 
-  // 3. Custom domains. deleteDomain only removes the row: it changes nothing in Cloudflare (the
+  // 2. Custom domains. deleteDomain only removes the row: it changes nothing in Cloudflare (the
   //    zone's Email Routing and Email Sending stay as its owner set them, and mail to the domain is
   //    rejected once no account owns it). Another account can take the domain only by passing the
   //    ownership challenge, which needs control of its DNS.
@@ -145,7 +134,7 @@ export async function purgeAccount(env: AppEnv, accountId: string, opts: { budge
     if (results.length < INBOX_PAGE) break;
   }
 
-  // 4. Webhooks: delivery logs in chunks, then the webhooks (a handful per account, one statement).
+  // 3. Webhooks: delivery logs in chunks, then the webhooks (a handful per account, one statement).
   //    Queued jobs of a deleted webhook are dropped by the consumer.
   if (
     !(await chunked(
@@ -156,7 +145,7 @@ export async function purgeAccount(env: AppEnv, accountId: string, opts: { budge
     return result(false);
   deleted.webhooks += (await env.DB.prepare("DELETE FROM webhooks WHERE account_id = ?").bind(accountId).run()).meta.changes ?? 0;
 
-  // 5. Everything else keyed by the account. Most went with the messages already (deliveries and
+  // 4. Everything else keyed by the account. Most went with the messages already (deliveries and
   //    forward_queue cascade); this catches the rest.
   for (const table of ACCOUNT_TABLES) {
     if (!(await chunked(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE account_id = ?1 LIMIT ?2)`, table)))

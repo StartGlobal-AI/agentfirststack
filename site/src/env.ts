@@ -36,6 +36,19 @@ export type Bindings = Env & {
   /** Proxy keys of our own analytics site and tags container: our pages use /_a/* and /_t/* (src/first-party.ts). Secrets. */
   OWN_ANALYTICS_PROXY_KEY?: string;
   OWN_TAGS_PROXY_KEY?: string;
+  /**
+   * First-party domains on Cloudflare for SaaS (src/first-party-domains.ts): a token with Zone > SSL
+   * and Certificates Edit and Zone > Workers Routes Edit (secret), the SaaS zone, the originless
+   * fallback host customers CNAME to (fp.example.com) and this Worker's name, which serves them.
+   * Off (503 not_configured) unless all four are set.
+   */
+  CF_SAAS_API_TOKEN?: string;
+  CF_SAAS_ZONE_ID?: string;
+  CF_SAAS_FALLBACK_HOST?: string;
+  CF_SAAS_WORKER?: string;
+  /** First-party domains per project (unset = no cap), and the cap for projects nobody claimed. */
+  MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT?: string;
+  UNCLAIMED_MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT?: string;
   /** The emails the platform sends people (src/email.ts): the EMAIL binding and this sender. */
   EMAIL?: SendEmail;
   NOTIFY_EMAIL_FROM?: string;

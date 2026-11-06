@@ -44,11 +44,30 @@ export type TraceEntryPayload = z.infer<typeof traceEntrySchema>;
 /** test_skipped: an ad or vendor pixel that would have fired, on test traffic (it doesn't run there). */
 export const TAG_FIRE_STATUSES = ["fired", "blocked", "error", "skipped", "excluded", "test_skipped"] as const;
 
+export const CONSENT_METHODS = ["accept_all", "reject_all", "custom"] as const;
+
+/** A choice made in the consent banner (proof of consent): anonymous, no visitor id, IP or user agent is kept. */
+export const consentRecordSchema = z.strictObject({
+  id: z.string().regex(/^[0-9a-z]{16,32}$/, "The consent id the runtime made (afst('get','consent_id'))."),
+  version: z.number().int().min(1).max(1_000_000),
+  analytics: z.boolean(),
+  ads: z.boolean(),
+  personalization: z.boolean(),
+  method: z.enum(CONSENT_METHODS),
+  /** The consent_banner.languages key whose text was shown (absent: the default text). */
+  language: z
+    .string()
+    .regex(/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/)
+    .optional(),
+});
+export type ConsentRecordPayload = z.infer<typeof consentRecordSchema>;
+
 /** What the browser runtime POSTs to /collect (text/plain JSON, no preflight). */
 export const collectSchema = z.object({
   container_id: z.string().regex(/^ctr_[a-z0-9]{8,32}$/),
-  /** visit / conversion; debug = preview log entries; tags = settings.report_tag_fires counts. */
-  type: z.enum(["visit", "conversion", "debug", "tags"]),
+  /** visit / conversion; debug = preview log entries; tags = settings.report_tag_fires counts; consent = a banner choice. */
+  type: z.enum(["visit", "conversion", "debug", "tags", "consent"]),
+  consent_record: consentRecordSchema.optional(),
   entries: z.array(traceEntrySchema).max(50).optional(),
   fires: z
     .array(

@@ -86,6 +86,7 @@ app's `GET /v1/usage` (MCP `get_usage`) shows the ones it enforces, with what an
 | `DELIVERY_EVENTS_QUEUE` | mail | Turns on delivery status: the queue your Email Sending event subscriptions publish to (see the mail README, "Delivery status") |
 | `MAX_EVENTS_PER_ACCOUNT_PER_DAY` / `MAX_EVENTS_PER_DAY` | tags | Browser hits and backend events per account, and for the whole deployment, per UTC day |
 | `PROJECTS_PER_USER_DAILY_LIMIT` | site | New projects one signed-in person may create a day while connecting an app (default 5) |
+| `MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT` | site | First-party domains per project (with `UNCLAIMED_`; see [First-party domains](#first-party-domains-optional)) |
 | `OWN_ANALYTICS_ACCOUNT_ID` / `OWN_ANALYTICS_SITE_ID` | site | Your own project (`acct_...`) and analytics site (`site_...`): each signup and project claim on the apex is sent there as a server event (`signup`, `project_claimed`); off unless both are set |
 | `MAX_HEATMAP_IMAGES_PER_SITE_PER_DAY` / `MAX_HEATMAP_IMAGES_PER_ACCOUNT_PER_DAY` / `MAX_PLATFORM_HEATMAP_IMAGES_PER_DAY` | replay | Heatmap images rendered with Browser Rendering per UTC day (on by default: 10 / 30 / 300; cached images are free) |
 | `MAX_TAGS_EVENTS_PER_SITE_PER_DAY` | replay | Signals and survey scores sent to a linked tags container per site per day (default 500) |
@@ -206,6 +207,36 @@ deletes expired OAuth tokens, codes, sessions and claim links, writes setup noti
 whose agent hasn't seen new setup items, and erases deleted projects 7 days after deletion in
 every service. The privacy and terms pages in `site/public/` describe the hosted service; edit
 them for your deployment.
+
+## First-party domains (optional)
+
+Ad blockers block requests to `analytics.<your domain>`. A first-party domain lets a customer serve
+their project's collection from a subdomain of their own site (`edge.shop.com/_a/*`, `/_t/*`,
+`/_r/*`) with one CNAME and no server code: `POST https://<domain>/v1/first-party-domains`
+(llms.txt, "Serve from the site's own domain"). It runs on Cloudflare for SaaS on your zone; the
+site Worker serves the hostnames. Without it the API answers `503 not_configured` and sites use
+the path proxy, which needs nothing from you.
+
+1. Turn on Cloudflare for SaaS on the zone (dashboard: SSL/TLS > Custom Hostnames; the plan
+   decides how many custom hostnames are included).
+2. Create the fallback origin: a DNS record `fp.<domain>` `AAAA 100::`, **proxied** (orange
+   cloud). It's originless: no request ever reaches an origin, the site Worker answers them. Set
+   it as the zone's fallback origin under Custom Hostnames.
+3. Create an API token (My Profile > API Tokens) with, on that zone: **Zone > SSL and
+   Certificates > Edit** (custom hostnames) and **Zone > Workers Routes > Edit** (one route
+   `<hostname>/*` per first-party domain). Put it in your secrets file under
+   `"site": {"CF_SAAS_API_TOKEN": "<token>"}`.
+4. Add the zone id under `vars.site.CF_SAAS_ZONE_ID` in your profile and `pnpm afs deploy mystack site`.
+
+`pnpm afs config` derives the other two vars: `CF_SAAS_FALLBACK_HOST` (`fp.<domain>`, the CNAME
+target customers are told to use) and `CF_SAAS_WORKER` (the site Worker's name, which the routes
+point at); set them under `vars.site` to change them. Fair use: `MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT`
+(and `UNCLAIMED_MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT`). For each hostname the site creates a custom
+hostname (HTTP DCV, issued once the customer's CNAME is live) and the Worker route, and deletes
+both when the hostname is removed or its project is erased. The site Worker forwards
+`<hostname>/_a/*`, `/_t/*` and `/_r/*` to the services over their bindings with the visitor's IP
+and geo and `INTERNAL_TOKEN` (so it must be set on every Worker); anything else on such a host is
+a 404.
 
 ## Remove a deployment
 

@@ -79,7 +79,7 @@
           "name": "Do I still need the browser pixel?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Meta recommends running the Conversions API alongside the pixel, with deduplication. The pixel sees on-page activity; the server copy survives ad blockers and adds what only your backend knows. AgentFirstStack sends both with one event id."
+            "text": "Meta recommends running the Conversions API alongside the pixel, with deduplication. The pixel sees on-page activity; the server copy adds what only your backend knows, and conversions your backend reports reach Meta even when an ad blocker stopped the pixel. Browser conversions reach AgentFirstStack only when the site serves its scripts from its own domain (the first-party proxy), since ad blockers block third-party collectors. AgentFirstStack sends both with one event id."
           }
         },
         {
@@ -224,7 +224,7 @@ curl -s "$T/v1/containers/$C/events?since=1h" -H "$H"</code></pre>
 <li><b>Meta</b> matches the pixel's <code>eventID</code> to the Conversions API's <code>event_id</code>, and the pixel's event to <code>event_name</code>, within 48 hours. Meta recommends running the Conversions API alongside the pixel (<a href="https://developers.facebook.com/docs/marketing-api/conversions-api/deduplicate-pixel-and-server-events">Meta's dedup guide</a>).</li>
 <li><b>TikTok</b> deduplicates pixel and Events API events with the same event and <code>event_id</code>, within 48 hours, and records the first one it receives (<a href="https://ads.tiktok.com/help/article/event-deduplication?lang=en">TikTok's help article</a>).</li>
 <li><b>Google Ads</b> counts a second conversion with the same transaction ID for the same action as a duplicate (<a href="https://support.google.com/google-ads/answer/6386790">Google Ads help</a>). The service sends your order id as the transaction ID, or the <code>event_id</code> when there is none.</li>
-<li><b>GA4</b> doesn't deduplicate by event id, so the service skips a browser conversion's server copy when the browser tag already sent it. The server copy covers browsers that blocked the tag.</li>
+<li><b>GA4</b> doesn't deduplicate by event id, so the service skips a browser conversion's server copy when the browser tag already sent it. The server copy covers browsers that blocked the GA4 tag, as long as the site serves AgentFirstStack from its own domain.</li>
 </ul>
 <p>Backend events need one step from you. Read <code>afst('get','event_id')</code> on the page, pass it with the checkout or signup request, and send it as <code>event_id</code>:</p>
 <pre><code>curl -s -X POST $T/v1/containers/$C/events -H "$H" -H "$J" -d '{"events":[{
@@ -251,7 +251,7 @@ curl -s "$T/v1/containers/$C/events?since=1h" -H "$H"</code></pre>
 
 <h2 id="faq">FAQ</h2>
 <h3>Do I still need the browser pixel?</h3>
-<p>Meta recommends running the Conversions API alongside the pixel, with deduplication. The pixel sees on-page activity; the server copy survives ad blockers and adds what only your backend knows. AgentFirstStack sends both with one event id.</p>
+<p>Meta recommends running the Conversions API alongside the pixel, with deduplication. The pixel sees on-page activity; the server copy adds what only your backend knows, and conversions your backend reports reach Meta even when an ad blocker stopped the pixel. Browser conversions reach AgentFirstStack only when the site serves its scripts from its own domain (the first-party proxy), since ad blockers block third-party collectors. AgentFirstStack sends both with one event id.</p>
 <h3>Do I need server-side GTM to use the Meta Conversions API?</h3>
 <p>No. The Conversions API is an HTTP API your own server can call. Server-side GTM is one way to call it, your backend is another, and AgentFirstStack Tags is a third.</p>
 <h3>Does it handle consent?</h3>

@@ -110,6 +110,8 @@ describe("dashboard: projects, tabs and the views' data", () => {
 
     const ok = [
       `analytics/rollup`,
+      `analytics/sites/${ids.site}/ai-search?period=30d&compare=previous`,
+      `analytics/sites/${ids.site}/web-vitals?breakdown=page`,
       `tags/containers/${ids.container}/tag-stats?since=7d`,
       `tags/containers/${ids.container}/events?status=failed`,
       `replay/sites/${ids.replay}/sessions?sort=frustration`,
@@ -129,6 +131,7 @@ describe("dashboard: projects, tabs and the views' data", () => {
     const refused = [
       `analytics/sites/${ids.site}/sql`,
       `analytics/sites/${ids.site}/export`,
+      `analytics/sites/${ids.site}/web-vitals/lab?url=https://example.com/`,
       `analytics/keys`,
       `tags/containers/${ids.container}/install`,
       `tags/containers/${ids.container}/visitors/v1`,

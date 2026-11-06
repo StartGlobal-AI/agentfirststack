@@ -80,6 +80,7 @@ import type {
   EnrichedEvent,
   FunnelRequest,
   IngestOutcome,
+  IngestPath,
   IngestResponse,
   QuarantineReason,
   SiteSettings,
@@ -124,7 +125,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const ATTR_COLS = [
   "referrer",
@@ -384,7 +385,22 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
       db.run(NET_DAILY_SQL);
     },
   },
+  {
+    // First-party by default: how each day's browser events reached the collector (straight to the
+    // analytics host, through the site's own proxy, or through a first-party domain on the edge) and
+    // the last first-party domain seen, counted in the usage upsert every ingest already makes.
+    version: 13,
+    up: (db) => {
+      for (const c of VIA_COLS) addColumn(db, "usage", c, "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "usage", "edge_host", "TEXT");
+      // when the day's last direct and last first-party (proxy or edge) browser event arrived
+      addColumn(db, "usage", "last_direct_at", "INTEGER");
+      addColumn(db, "usage", "last_first_party_at", "INTEGER");
+    },
+  },
 ];
+
+const VIA_COLS = ["via_direct", "via_proxy", "via_edge"] as const;
 
 /** Columns and their meaning, for llms.txt / the query_sql tool description. */
 export const SCHEMA_DOC = `events(id, ts unix ms, name ['pageview', 'engagement' never stored, custom names, 'site_search', and from payments 'payment' | 'renewal' | 'refund'], visitor_id, session_id, user_id, origin [browser|server|payment],
@@ -517,18 +533,66 @@ export function usageOn(db: Db, day: string): UsageDay {
   };
 }
 
-export function addUsage(db: Db, day: string, delta: { events?: number; bytes?: number; refused?: number; quarantined?: number }): void {
+export interface UsageDelta {
+  events?: number;
+  bytes?: number;
+  refused?: number;
+  quarantined?: number;
+  /** browser events by how they reached the collector, and the last first-party domain among them */
+  via?: Partial<Record<IngestPath, number>>;
+  edge_host?: string | null;
+  /** when (unix ms) this batch's browser events arrived, for last_direct_at / last_first_party_at */
+  at?: number;
+}
+
+export function addUsage(db: Db, day: string, delta: UsageDelta): void {
   const e = delta.events ?? 0;
   const b = delta.bytes ?? 0;
   const r = delta.refused ?? 0;
   const q = delta.quarantined ?? 0;
-  if (!e && !b && !r && !q) return;
+  const vd = delta.via?.direct ?? 0;
+  const vp = delta.via?.proxy ?? 0;
+  const ve = delta.via?.edge ?? 0;
+  if (!e && !b && !r && !q && !vd && !vp && !ve) return;
+  const at = delta.at ?? Date.now();
   db.run(
-    `INSERT INTO usage (day, events, bytes, refused, quarantined) VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO usage (day, events, bytes, refused, quarantined, via_direct, via_proxy, via_edge, edge_host, last_direct_at, last_first_party_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(day) DO UPDATE SET events = events + excluded.events, bytes = bytes + excluded.bytes, refused = refused + excluded.refused,
-       quarantined = quarantined + excluded.quarantined`,
-    [day, e, b, r, q],
+       quarantined = quarantined + excluded.quarantined, via_direct = via_direct + excluded.via_direct, via_proxy = via_proxy + excluded.via_proxy,
+       via_edge = via_edge + excluded.via_edge, edge_host = COALESCE(excluded.edge_host, edge_host),
+       last_direct_at = MAX(COALESCE(last_direct_at, 0), COALESCE(excluded.last_direct_at, 0)),
+       last_first_party_at = MAX(COALESCE(last_first_party_at, 0), COALESCE(excluded.last_first_party_at, 0))`,
+    [day, e, b, r, q, vd, vp, ve, delta.edge_host ?? null, vd ? at : null, vp || ve ? at : null],
   );
+}
+
+/** How the last 7 days' (UTC, today included) browser events reached the collector, from the usage rows. */
+export function collectionPaths(db: Db, now = Date.now()) {
+  const rows = db.all(
+    "SELECT day, via_direct, via_proxy, via_edge, edge_host, last_direct_at, last_first_party_at FROM usage WHERE day >= ? ORDER BY day DESC",
+    [utcDay(now - 6 * DAY)],
+  );
+  const out = {
+    direct: 0,
+    proxy: 0,
+    edge: 0,
+    edge_hosts: [] as string[],
+    /** the latest direct and first-party (proxy or edge) browser event: which way the site collects now */
+    last_direct_at: null as number | null,
+    last_first_party_at: null as number | null,
+    since_day: utcDay(now - 6 * DAY),
+  };
+  const later = (a: number | null, b: SqlValue | undefined) => (num(b) > (a ?? 0) ? num(b) : a);
+  for (const r of rows) {
+    out.direct += num(r.via_direct);
+    out.proxy += num(r.via_proxy);
+    out.edge += num(r.via_edge);
+    if (r.edge_host && !out.edge_hosts.includes(String(r.edge_host))) out.edge_hosts.push(String(r.edge_host));
+    out.last_direct_at = later(out.last_direct_at, r.last_direct_at);
+    out.last_first_party_at = later(out.last_first_party_at, r.last_first_party_at);
+  }
+  return out;
 }
 
 export function setUsageFlushed(db: Db, day: string, flushed: number): void {
@@ -682,6 +746,9 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
       const reason = opts.quarantine(ev);
       return reason && quarantinedUsed >= qCap ? "full" : reason;
     };
+    // How browser events reached the collector (kept ones only, engagement beacons included).
+    const via: Partial<Record<IngestPath, number>> = {};
+    let edgeHost: string | null = null;
     for (const ev of events) {
       warnings = [];
       const refusal: string | null = opts.storageFull ? "storage_full" : capRefusal(opts, used);
@@ -712,6 +779,10 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
           r.stored = r.engagement ? null : storedEventOut(db.all("SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 1", [before])[0]);
       }
       results.push(r);
+      if (r.ok && ev.origin === "browser" && ev.via) {
+        via[ev.via] = (via[ev.via] ?? 0) + 1;
+        if (ev.via === "edge" && ev.edge_host) edgeHost = ev.edge_host;
+      }
       if (r.ok && r.quarantined && !r.engagement) {
         const n = 1 + (r.extra_events ?? 0);
         quarantinedUsed += n;
@@ -723,7 +794,7 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
         bytes += size * n;
       }
     }
-    if (!dry) addUsage(db, day, { events: accepted, bytes, quarantined });
+    if (!dry) addUsage(db, day, { events: accepted, bytes, quarantined, via, edge_host: edgeHost, at: now });
   };
   if (dry) {
     try {
@@ -2255,6 +2326,9 @@ export function summary(db: Db, now = Date.now()) {
     // without a valid x-afs-proxy-key, so their IP and geo are the proxy's.
     warnings_last_7d: warnings,
     usage_today: { day, events: usage.events, bytes: usage.bytes, refused: usage.refused },
+    // How browser events reached the collector in the last 7 days: direct (to the analytics host,
+    // which ad blockers block), proxy (the site's own path proxy) or edge (a first-party domain).
+    collection_last_7d: collectionPaths(db, now),
     // Everything a visitor (or anyone with the public site id) chose: never mixed into the fields above.
     untrusted: {
       notice: UNTRUSTED_NOTICE,

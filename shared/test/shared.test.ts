@@ -6,6 +6,7 @@ import {
   cleanName,
   clientAsn,
   decryptSecret,
+  edgeHost,
   encryptSecret,
   extractKey,
   hmacSha256Hex,
@@ -58,6 +59,20 @@ describe("auth helpers", () => {
     expect(extractKey(new Request("http://x", { headers: { authorization: "bearer   k_2 " } }))).toBe("k_2");
     expect(extractKey(new Request("http://x", { headers: { "x-api-key": "k_3" } }))).toBe("k_3");
     expect(extractKey(new Request("http://x"))).toBeNull();
+  });
+
+  it("edgeHost: only the site's edge, over a service binding with INTERNAL_TOKEN, names a first-party domain", () => {
+    const env = { INTERNAL_TOKEN: "t0ken-0123456789" };
+    const req = (url: string, h: Record<string, string>) => new Request(url, { headers: h });
+    const good = { "x-afs-internal": "t0ken-0123456789", "x-afs-edge-host": "Edge.Shop.Example.com" };
+    expect(edgeHost(env, req("https://analytics.internal/_a/e", good))).toBe("edge.shop.example.com");
+    // from the internet (a routable host), a wrong token, no token configured, no or a bad hostname
+    expect(edgeHost(env, req("https://analytics.example.com/_a/e", good))).toBeNull();
+    expect(edgeHost(env, req("https://analytics.internal/_a/e", { ...good, "x-afs-internal": "t0ken-0123456780" }))).toBeNull();
+    expect(edgeHost({}, req("https://analytics.internal/_a/e", good))).toBeNull();
+    expect(edgeHost(env, req("https://analytics.internal/_a/e", { "x-afs-internal": good["x-afs-internal"] }))).toBeNull();
+    expect(edgeHost(env, req("https://analytics.internal/_a/e", { ...good, "x-afs-edge-host": "not a host/../x" }))).toBeNull();
+    expect(edgeHost(env, req("https://analytics.internal/_a/e", { "x-afs-edge-host": "edge.shop.example.com" }))).toBeNull();
   });
 });
 

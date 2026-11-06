@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics with Cursor in one prompt</title>
+<meta name="description" content="Paste one prompt into Cursor's agent: it gets a key, adds the tracker to your layout, verifies the live site, and answers traffic questions over MCP.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-cursor">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics with Cursor">
+<meta property="og:description" content="Paste one prompt into Cursor's agent: it gets a key, adds the tracker to your layout, verifies the live site, and answers traffic questions over MCP.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-cursor">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics with Cursor">
+<meta name="twitter:description" content="Paste one prompt into Cursor's agent: it gets a key, adds the tracker to your layout, verifies the live site, and answers traffic questions over MCP.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-cursor#article",
+      "headline": "Add analytics with Cursor",
+      "description": "Paste one prompt into Cursor's agent: it gets a key, adds the tracker to your layout, verifies the live site, and answers traffic questions over MCP.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-cursor",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-cursor",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Cursor",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Add analytics with Cursor",
+          "item": "https://agentfirststack.com/guides/add-analytics-with-cursor"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-cursor#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Why does the agent keep asking to run curl?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Cursor's sandbox blocks network access to hosts that aren't allowed. Approve the calls, or add *.agentfirststack.com to networkPolicy.allow in .cursor/sandbox.json."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "The agent says there's no .env. Is the key lost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Probably not. Cursor hides .env* files from the agent's file tools by default. Ask it to check with a terminal command such as grep AGENTFIRSTSTACK_API_KEY .env. If the key really is gone, a person who claimed the project can make a new one in the dashboard."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I have to use MCP?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The setup works with curl alone. MCP is for afterwards, when you want to ask about traffic in chat without the agent writing requests."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can Cursor's MCP config read the key from the project's .env?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not for a remote server. Cursor expands ${env:NAME} from your shell profile or system environment. Export the variable there, or use OAuth and skip the key."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode, which keeps a random id in localStorage."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics with Cursor</span></nav>
+      <h1>Add analytics with Cursor</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics with Cursor, open the project, start the agent and paste the prompt below. Cursor's agent runs the <code>curl</code> calls itself, so it can get an AgentFirstStack key, create the site, serve the tracker from your own domain through a small proxy, add it to your root layout and check the live site without you opening a dashboard. Two Cursor defaults change how that goes: the agent's file tools can't see <code>.env</code>, and sandboxed commands can't reach the network until you allow it. Both are covered below. Other tools and platforms are in <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into Cursor's agent</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this project with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. Cursor hides .env from your file tools, so check it from the terminal. If it already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Append api_key to .env as AGENTFIRSTSTACK_API_KEY from the terminal, make sure .env is in .gitignore, and add it to the production environment's secrets (or tell me where). Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the production domain and read GET /v1/sites/:id/install?framework=... for this project's framework. Serve the tracker from the site's own domain with the first-party proxy that fits this project's host (Next.js proxy.ts, a Cloudflare Worker route, a Netlify Edge Function, vercel.json or nginx). Keep first_party_proxy.proxy_key in a server-only env var (AFS_PROXY_KEY), never in page code. Then put the proxied snippet (/_a/s.js) in the &lt;head&gt; of the root layout. Only if the host can't proxy, use the direct snippet and note in AGENTFIRSTSTACK.md that ad blockers block it.
+
+4. Create goals for sign-ups, purchases and the main buttons. Send conversions only the server knows about (a paid order, a verified account) as server events.
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Deploy (or tell me to), open the site once, then run verify and fix what it reports.
+
+7. Write the site id and the env var names (never the values) in AGENTFIRSTSTACK.md, add the AgentFirstStack block from the manual to AGENTS.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+8. Run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+<p>Use the agent, not Ask mode: Ask mode doesn't edit files or run commands.</p>
+
+<h2 id="network">Let the agent reach the API</h2>
+<p>Every step is an HTTPS call to <code>agentfirststack.com</code> or <code>analytics.agentfirststack.com</code>. How Cursor treats those calls depends on its run mode (Settings &gt; Agents &gt; Approvals &amp; Execution): Auto-review, Allowlist or Run Everything. Cursor's sandbox blocks network access by default and opens only what your network mode and <code>sandbox.json</code> allow; the default allowance covers package managers, not arbitrary APIs. A command that needs network outside the sandbox goes to the reviewer or to you for approval.</p>
+<p>So you'll either approve the first few <code>curl</code> calls, or allow the two hosts for this project in <code>.cursor/sandbox.json</code>:</p>
+<pre><code>{
+  "networkPolicy": {
+    "allow": ["*.agentfirststack.com"]
+  }
+}</code></pre>
+<p>In Cursor's pattern syntax, <code>*.agentfirststack.com</code> matches the subdomains and <code>agentfirststack.com</code> itself.</p>
+
+<h2 id="env">The key and .env</h2>
+<p>Cursor ignores <code>.env*</code> files by default, on top of whatever is in <code>.gitignore</code>, so the agent can't open or edit <code>.env</code> with its file tools. That's a good default for a secret. The ignore rules don't apply to terminal commands, though, so the agent reads and appends to <code>.env</code> from the terminal. That's why the prompt says so; without the hint, some runs conclude there's no key and sign up again.</p>
+<p>The key never belongs in browser code. The tracker snippet only carries the site id (<code>data-site="site_..."</code>), which is public. The key is for server code and for the agent's own calls: goals, verify, server events, crawler reports. The proxy key is server-only too. In a Next.js app that means no <code>NEXT_PUBLIC_</code> prefix on either; in Vite, no <code>VITE_</code> prefix.</p>
+
+<h2 id="mcp">Add the MCP server</h2>
+<p>With the MCP server, the agent calls tools like <code>analytics_get_stats</code> and <code>afs_check_setup</code> instead of composing <code>curl</code> commands, and you can ask "where did sign-ups come from this week?" in chat. Cursor reads remote servers from <code>.cursor/mcp.json</code> (this project) or <code>~/.cursor/mcp.json</code> (every project), and expands <code>${env:NAME}</code> in the URL and headers:</p>
+<pre><code>{
+  "mcpServers": {
+    "afs": {
+      "url": "https://agentfirststack.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:AGENTFIRSTSTACK_API_KEY}" }
+    }
+  }
+}</code></pre>
+<p>That file names the variable, not the key, so it's safe to commit. The catch: for remote servers Cursor doesn't read <code>envFile</code>, so the variable has to come from your shell profile or system environment, not from the project's <code>.env</code>. Export it in <code>~/.zshrc</code> (or your shell's equivalent) and restart Cursor.</p>
+<p>No key at hand? Leave out <code>headers</code>. AgentFirstStack's MCP server supports OAuth 2.1 sign-in, and Cursor runs the authorization code flow with PKCE: you sign in with Google, pick a project (or create one) and choose full or read-only access. OAuth tokens can do everything except create API keys or claim links, which you don't need once you're signed in.</p>
+
+<h2 id="snippet">Where the proxy and the snippet go</h2>
+<p>Ad blockers block requests to <code>analytics.agentfirststack.com</code>, so the prompt has Cursor serve the tracker from your own domain: a small proxy forwards <code>/_a/*</code> to AgentFirstStack, and the page loads <code>/_a/s.js</code>. <code>GET /v1/sites/:id/install</code> returns the proxy code (<code>first_party_proxy</code>) for a Cloudflare Worker route, Next.js, <code>vercel.json</code>, <code>netlify.toml</code> and nginx, plus framework code for <code>html</code>, <code>nextjs</code>, <code>astro</code>, <code>react</code> and <code>wordpress</code>. Each proxy sends the site's <code>x-afs-proxy-key</code>, a secret that belongs in a server-side env var such as <code>AFS_PROXY_KEY</code>; without it every visitor looks like the proxy's one address.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Project</th><th>Proxy</th><th>Snippet</th></tr></thead>
+<tbody>
+<tr><th scope="row">Next.js</th><td><code>proxy.ts</code> (<code>middleware.ts</code> before 16)</td><td><code>&lt;script async&gt;</code> in <code>app/layout.tsx</code>; see the <a href="/guides/nextjs-analytics">Next.js guide</a></td></tr>
+<tr><th scope="row">Vite, React, Vue, Svelte SPA</th><td>The host: Cloudflare Worker route, Netlify Edge Function, <code>vercel.json</code></td><td><code>index.html</code>; route changes are tracked through the History API</td></tr>
+<tr><th scope="row">Astro</th><td>An on-demand endpoint, or the host</td><td><code>src/layouts/Layout.astro</code> with <code>is:inline</code>; see the <a href="/guides/astro-analytics">Astro guide</a></td></tr>
+<tr><th scope="row">WordPress</th><td>Cloudflare Worker, nginx, or a must-use plugin</td><td>A <code>wp_head</code> hook; see the <a href="/guides/wordpress-analytics">WordPress guide</a></td></tr>
+<tr><th scope="row">Shopify, Webflow</th><td>Not possible on their hosting</td><td>The direct snippet; ad blockers block it (<a href="/guides/shopify-analytics">Shopify</a>, <a href="/guides/webflow-analytics">Webflow</a>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Before deploying, make sure <code>AFS_PROXY_KEY</code> is set in the production environment too. A proxy without it still forwards events, and verify then reports <code>proxy_key</code>.</p>
+
+<h2 id="rules">Keep later sessions in the loop</h2>
+<p>The prompt ends by adding a short AgentFirstStack block to <code>AGENTS.md</code>. Cursor reads <code>AGENTS.md</code> in the project root, so later agent sessions know analytics exists, where the ids are, and to run the setup check before they touch tracking. If you keep project rules in <code>.cursor/rules</code> instead, remember they must be <code>.mdc</code> files; Cursor ignores a plain <code>.md</code> there.</p>
+<p><b>Cloud agents</b> have internet access by default. Add <code>AGENTFIRSTSTACK_API_KEY</code> as a secret in the cloud agent settings and it reaches the agent as an environment variable; a Build Secret doesn't reach the running agent. The snippet only goes live once the agent's branch is merged and deployed, so run verify and the setup check after that deploy, from a local session or a follow-up run.</p>
+
+<h2 id="verify">Check it worked</h2>
+<p>After the deploy, the agent runs three checks, and you can run them yourself:</p>
+<pre><code>K=$AGENTFIRSTSTACK_API_KEY
+# 1. the snippet, the script, your CSP and whether events arrived, with fixes
+curl -s -X POST https://analytics.agentfirststack.com/v1/sites/$SITE/verify -H "Authorization: Bearer $K"
+# 2. everything an analytics setup should have, until "ready": true
+curl -s "https://agentfirststack.com/v1/setup?services=analytics" -H "Authorization: Bearer $K"
+# 3. numbers
+curl -s "https://analytics.agentfirststack.com/v1/sites/$SITE/stats?period=today" -H "Authorization: Bearer $K"</code></pre>
+<p>Verify fetches <code>/_a/s.js</code> through your proxy to check it serves the tracker, and only counts events from a real browser: open the production URL yourself once, or have a headless browser open it with <code>?afsa_debug=1</code>, which keeps the visit as test traffic out of your reports. Events from <code>localhost</code> and preview hosts are dropped on purpose, because a site accepts events only from its own domain and subdomains.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Why does the agent keep asking to run curl?</h3>
+<p>Cursor's sandbox blocks network access to hosts that aren't allowed. Approve the calls, or add <code>*.agentfirststack.com</code> to <code>networkPolicy.allow</code> in <code>.cursor/sandbox.json</code>.</p>
+<h3>The agent says there's no .env. Is the key lost?</h3>
+<p>Probably not. Cursor hides <code>.env*</code> files from the agent's file tools by default. Ask it to check with a terminal command such as <code>grep AGENTFIRSTSTACK_API_KEY .env</code>. If the key really is gone, a person who claimed the project can make a new one in the dashboard.</p>
+<h3>Do I have to use MCP?</h3>
+<p>No. The setup works with <code>curl</code> alone. MCP is for afterwards, when you want to ask about traffic in chat without the agent writing requests.</p>
+<h3>Can Cursor's MCP config read the key from the project's .env?</h3>
+<p>Not for a remote server. Cursor expands <code>${env:NAME}</code> from your shell profile or system environment. Export the variable there, or use OAuth and skip the key.</p>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode, which keeps a random id in localStorage.</p>
+
+<p class="meta">Cursor is a product of Anysphere. AgentFirstStack isn't affiliated with Anysphere. Cursor details come from its docs (<a href="https://cursor.com/docs/mcp">MCP</a>, <a href="https://cursor.com/docs/agent/security/run-modes">run modes</a>, <a href="https://cursor.com/docs/reference/sandbox">sandbox.json</a>, <a href="https://cursor.com/docs/reference/ignore-file">ignore file</a>, <a href="https://cursor.com/docs/rules">rules</a>, <a href="https://cursor.com/docs/cloud-agent/security-network">cloud agents</a>), checked on 6 November 2026.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-codex"><span class="svc svc-analytics">Analytics</span><b>Add analytics with OpenAI Codex</b><span>CLI, IDE or cloud, with network access sorted.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-windsurf"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Windsurf</b><span>Cascade, mcp_config.json and the setup check.</span></a></li>
+        <li><a class="card" href="/guides/nextjs-analytics"><span class="svc svc-analytics">Analytics</span><b>Next.js analytics in one prompt</b><span>App Router, Pages Router, proxy.ts and Vercel.</span></a></li>
+        <li><a class="card" href="/guides/astro-analytics"><span class="svc svc-analytics">Analytics</span><b>Astro analytics in one prompt</b><span>Layouts, is:inline and the ClientRouter.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#network">Let the agent reach the API</a></li><li><a href="#env">The key and .env</a></li><li><a href="#mcp">Add the MCP server</a></li><li><a href="#snippet">Where the proxy and the snippet go</a></li><li><a href="#rules">Keep later sessions in the loop</a></li><li><a href="#verify">Check it worked</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

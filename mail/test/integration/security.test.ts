@@ -410,11 +410,10 @@ describe("5. shared-domain addresses are never recycled", () => {
     const gone = uniq("gone");
     expect((await call("POST", "/v1/inboxes", { key: a.key, body: { username: live } })).status).toBe(201);
     const g = await call("POST", "/v1/inboxes", { key: a.key, body: { username: gone } });
-    // Only addresses that received mail are reserved (they may have been used to sign up somewhere).
     await deliver("x@sender.example", g.json.inbox.address, note("x@sender.example", g.json.inbox.address));
     const del = await call("DELETE", `/v1/inboxes/${g.json.inbox.id}`, { key: a.key });
     expect(del.status).toBe(200);
-    expect(del.json.address_reserved_until).toBeGreaterThan(Date.now() + 89 * 86_400_000);
+    expect(del.json.address_reserved).toBe(true);
 
     const taken = await call("POST", "/v1/inboxes", { key: b.key, body: { username: live } });
     const recycled = await call("POST", "/v1/inboxes", { key: b.key, body: { username: gone } });

@@ -24,6 +24,9 @@ export const DEFAULT_MAX_LOOKUPS_PER_CONTAINER = 10;
 export const DEFAULT_MAX_LOOKUP_ROWS = 10_000;
 export const DEFAULT_MAX_LOOKUP_BYTES = 1024 * 1024;
 
+/** Consent banner records (proof of consent) are kept 12 months. */
+export const CONSENT_RETENTION_DAYS = 365;
+
 /** A claimed account (or a deployment without the people tables): the plain caps apply. */
 export const CLAIMED: Standing = { suspended: false, claimed: true };
 
@@ -90,6 +93,8 @@ export function containerCaps(env: object, standing: Standing = CLAIMED) {
     deliveriesPerDay: cap("MAX_DELIVERIES_PER_CONTAINER_PER_DAY", Number.POSITIVE_INFINITY),
     visitors: cap("MAX_VISITORS_PER_CONTAINER", DEFAULT_MAX_VISITORS_PER_CONTAINER),
     dbBytes: cap("MAX_CONTAINER_DB_BYTES", DEFAULT_MAX_CONTAINER_DB_BYTES),
+    /** Consent banner choices recorded as proof of consent (the rest still apply in the browser, unrecorded). Unset = off. */
+    consentRecordsPerDay: cap("MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY", Number.POSITIVE_INFINITY),
   };
 }
 

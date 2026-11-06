@@ -382,27 +382,32 @@ describe("3. one outsider cannot block an inbox or an account", () => {
   });
 });
 
-describe("4. usernames cannot be squatted with create/delete loops", () => {
-  it("an address that never received mail is free again at once; one that did is reserved for ADDRESS_TOMBSTONE_DAYS", async () => {
+describe("4. deleted addresses are never handed to another account", () => {
+  it("mailed or not, a deleted address stays its account's for good; churn is capped per day", async () => {
     const a = await signup();
     const b = await signup();
     const fresh = uniq("fresh");
     const used = uniq("used");
     const f = await call("POST", "/v1/inboxes", { key: a.key, body: { username: fresh } });
     const fd = await call("DELETE", `/v1/inboxes/${f.json.inbox.id}`, { key: a.key });
-    expect(fd.json.address_reserved_until).toBeNull();
-    expect((await call("POST", "/v1/inboxes", { key: b.key, body: { username: fresh } })).status).toBe(201);
+    expect(fd.json.address_reserved).toBe(true);
+    expect(fd.json).not.toHaveProperty("address_reserved_until");
+    expect((await call("POST", "/v1/inboxes", { key: b.key, body: { username: fresh } })).status).toBe(409);
 
     const u = await call("POST", "/v1/inboxes", { key: a.key, body: { username: used } });
     await deliver("x@sender.example", u.json.inbox.address, note("x@sender.example", u.json.inbox.address));
     await call("DELETE", `/v1/inboxes/${u.json.inbox.id}`, { key: a.key });
     expect((await call("POST", "/v1/inboxes", { key: b.key, body: { username: used } })).status).toBe(409);
-    // 91 days later the tombstone has lapsed (and the cron prunes it).
-    await E.DB.prepare("UPDATE address_tombstones SET deleted_at = ? WHERE address = ?")
-      .bind(Date.now() - 91 * 86_400_000, u.json.inbox.address)
+    // A year later, after the cron: still reserved (tombstones never lapse and are never pruned).
+    await E.DB.prepare("UPDATE address_tombstones SET deleted_at = ? WHERE address IN (?, ?)")
+      .bind(Date.now() - 400 * 86_400_000, u.json.inbox.address, f.json.inbox.address)
       .run();
-    expect((await pruneCounters(E)).tombstones_pruned).toBeGreaterThanOrEqual(1);
-    expect((await call("POST", "/v1/inboxes", { key: b.key, body: { username: used } })).status).toBe(201);
+    expect(await pruneCounters(E)).not.toHaveProperty("tombstones_pruned");
+    for (const name of [used, fresh])
+      expect((await call("POST", "/v1/inboxes", { key: b.key, body: { username: name } })).status).toBe(409);
+    // The account that had them can have them back.
+    for (const name of [used, fresh])
+      expect((await call("POST", "/v1/inboxes", { key: a.key, body: { username: name } })).status).toBe(201);
   });
 
   it("MAX_INBOX_CREATES_PER_DAY and MAX_INBOX_DELETES_PER_DAY (REST and MCP), with UNCLAIMED_ variants", async () => {

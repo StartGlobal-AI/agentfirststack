@@ -1,5 +1,5 @@
 import { ECOMMERCE_SET, MAX_ITEMS_READ, cleanItems } from "../lib/items";
-import { ApiError, accountSuspended, networkKey, parse, randomString, timingSafeEqual } from "@afs/shared";
+import { ApiError, accountSuspended, edgeHost, networkKey, parse, randomString, timingSafeEqual } from "@afs/shared";
 import { z } from "zod";
 import { type Bindings, isDev } from "../env";
 import { classifyChannel, type ClickIdType, CLICK_ID_PARAMS } from "../lib/channel";
@@ -228,13 +228,17 @@ export const REPLAY_SITE_RE = /^rsite_[0-9a-z]{16}$/;
 /**
  * `r` for the tracker: the linked replay site's loader, which it injects once per page load. Only
  * with REPLAY_BASE_URL set. The loader makes its own sampling, bot, DNT and consent decisions, so
- * this rides on drops too.
+ * this rides on drops too. An event that came through a first-party domain (`edge`, the platform's
+ * edge) gets the loader from that same hostname (/_r/*), so replay is first-party too.
  */
-export function replayField(env: Bindings, replaySiteId: string | null | undefined): { r?: string } {
+export function replayField(env: Bindings, replaySiteId: string | null | undefined, edge: string | null = null): { r?: string } {
   const base = env.REPLAY_BASE_URL?.trim().replace(/\/+$/, "");
   if (!base || !replaySiteId || !REPLAY_SITE_RE.test(replaySiteId)) return {};
-  return { r: `${base}/r/${replaySiteId}.js` };
+  return { r: edge ? `https://${edge}${EDGE_REPLAY_PATH}/r/${replaySiteId}.js` : `${base}/r/${replaySiteId}.js` };
 }
+
+/** Where a first-party domain serves replay (the site's edge: /_a analytics, /_t tags, /_r replay). */
+export const EDGE_REPLAY_PATH = "/_r";
 
 export async function ingestBrowser(
   env: Bindings,
@@ -264,11 +268,14 @@ export async function ingestBrowser(
   } catch {
     return { status: 503, body: { ok: false, error: "not_configured", hint: "SALT_SECRET is not set on this deployment." } };
   }
-  // Forwarded IP / geo headers are trusted only with the site's proxy key (anyone can set them).
-  // A request under a path prefix (/_a/e) came through a first-party proxy: without a valid key its
-  // IP and geo are the proxy's, which the DO counts as a warning that verify reports.
+  // Forwarded IP / geo headers are trusted only with the site's proxy key (anyone can set them), or
+  // from the platform's own edge serving a first-party domain (edge.example.com/_a/e, over a service
+  // binding with INTERNAL_TOKEN: @afs/shared edgeHost). A request under a path prefix (/_a/e) came
+  // through a first-party proxy: without either its IP and geo are the proxy's, which the DO counts
+  // as a warning that verify reports.
+  const edge = edgeHost(env, req);
   const presented = req.headers.get(PROXY_KEY_HEADER);
-  const trusted = !!presented && timingSafeEqual(presented, await proxyKey(salt, siteId));
+  const trusted = !!edge || (!!presented && timingSafeEqual(presented, await proxyKey(salt, siteId)));
   const ip = requestIp(req, trusted);
   // Edge rate limits before any storage: per client network (behind a keyed proxy, the visitor's),
   // then per site.
@@ -293,7 +300,7 @@ export async function ingestBrowser(
     waitUntil(drop);
     // Waited for only when replay loading is on: the answer names the site's replay link.
     const link = env.REPLAY_BASE_URL ? await drop : null;
-    return { status: 202, body: { ok: false, dropped: "bot", reason: bot, ...replayField(env, link?.replay_site_id) } };
+    return { status: 202, body: { ok: false, dropped: "bot", reason: bot, ...replayField(env, link?.replay_site_id, edge) } };
   }
   const now = Date.now();
   // ?afsa_debug=1 in the page URL: test traffic (the tracker keeps it for the tab), never stored.
@@ -334,6 +341,9 @@ export async function ingestBrowser(
     // Read by the DO for the site's search_params only, then dropped.
     search_query: name === "pageview" ? queryOf(flagged.url) || null : null,
     proxy_warning: viaProxy && !trusted ? (presented ? "proxy_key_invalid" : "proxy_key_missing") : null,
+    // Counted per day (first-party by default: the setup check flags direct collection).
+    via: edge ? "edge" : trusted || viaProxy ? "proxy" : "direct",
+    edge_host: edge,
     // Only for exclusions.ips, compared in the DO's memory; never stored.
     ip,
     // The network's daily share (attack protection): a hash that rotates daily, never the network.
@@ -351,7 +361,7 @@ export async function ingestBrowser(
     };
   }
   // A suspended account's site gets no replay link (its loader is refused anyway).
-  const replay = res.refused === "account_suspended" ? {} : replayField(env, res.replay_site_id);
+  const replay = res.refused === "account_suspended" ? {} : replayField(env, res.replay_site_id, edge);
   if (res.refused) {
     const e = refusalError(env, res.refused);
     return { status: REFUSAL_STATUS[res.refused], body: { ok: false, error: e.code, hint: e.hint, ...replay } };

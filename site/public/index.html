@@ -467,6 +467,7 @@ First, look at what this site uses today (Google Analytics, Google Tag Manager, 
    - Analytics: the site, a goal for each conversion and main action, server events for what only the backend knows, AI crawler and search bot visits reported from the server (if the site has one), payments if the business takes them, and a weekly email report and alerts for me.
    - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
    - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
+   - Serve all of it first-party, from the site's own domain, because ad blockers block third-party analytics hosts: a first-party domain (one DNS record: add it yourself if you can change the DNS, otherwise give it to me) or, until then or instead, the path proxy. The direct snippets only as a last resort.
 
 4. Deploy, then test it end to end (the manual's step 8): run the setup test (POST https://agentfirststack.com/v1/setup/test, or afs_test_setup), do its browser plan in a real browser and check that visit (afs_check_test_visit), then run the setup check (GET https://agentfirststack.com/v1/setup, or afs_check_setup) until it says ready. Fix what fails and test again.
 

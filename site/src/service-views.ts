@@ -23,8 +23,9 @@ export const serviceViews = new Hono<SiteEnv>();
 
 /** What the dashboard may read, per service. Nothing here writes or returns a secret. */
 const ALLOW: Record<Service, RegExp> = {
+  // Not /web-vitals/lab: it makes an outbound PageSpeed run on the project's behalf.
   analytics:
-    /^(?:rollup|sites|sites\/site_[0-9a-z]{1,64}(?:\/(?:stats|timeseries|breakdown|realtime|insights|crawlers|funnels|funnels\/fnl_[0-9a-z]{1,64}|goals|visitors|journeys))?)$/,
+    /^(?:rollup|sites|sites\/site_[0-9a-z]{1,64}(?:\/(?:stats|timeseries|breakdown|realtime|insights|crawlers|ai-search|web-vitals|funnels|funnels\/fnl_[0-9a-z]{1,64}|goals|visitors|journeys))?)$/,
   // Not /install (it can carry the first-party proxy key) and not /visitors/:id (stored identity).
   tags: /^(?:containers|containers\/ctr_[0-9a-z]{1,64}(?:\/(?:tag-stats|destinations|events|versions|coverage))?)$/,
   replay: /^(?:sites|sites\/rsite_[0-9a-z]{1,64}(?:\/(?:sessions|summary|errors|metrics))?)$/,

@@ -41,7 +41,7 @@ describe("catalog", () => {
   it("serves JSON Schema with every top-level section", () => {
     const doc = schemaDocument();
     const props = (doc.json_schema as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(props).sort()).toEqual(["consent", "conversions", "settings", "tags", "triggers", "variables"]);
+    expect(Object.keys(props).sort()).toEqual(["consent", "consent_banner", "conversions", "settings", "tags", "triggers", "variables"]);
     expect(Object.keys(doc.destinations).sort()).toEqual([
       "analytics",
       "ga4",

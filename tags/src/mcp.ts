@@ -3,6 +3,7 @@ import type { McpOptions, ToolRegistrar } from "@afs/shared/mcp";
 import { z } from "zod";
 import { ITEM_KINDS } from "./config/diff";
 import {
+  consentRecordsQuery,
   containerInput,
   containerPatch,
   destinationInput,
@@ -31,6 +32,8 @@ Typical flow for "set up conversion tracking on example.com":
 6. create_preview -> open preview_url to try the draft on the live site; get_preview_log shows which triggers matched and which tags fired (or why not); get_event_log shows what arrived server-side. To click through the live config like a visitor, open the first page with ?afsa_debug=1: the tab is test traffic (ad pixels don't fire, conversions reach platforms only in test mode, events are logged with test: true).
 7. publish -> immutable version goes live (or create_version to save one, environments to stage it). rollback undoes.
 8. Backends report purchases/signups with send_server_events (pass the browser's visitor_id so the original gclid/fbclid is used; user_id/email join only visitors your backend linked before). Backend events are the source of truth: nothing posted to /collect can suppress or change them.
+
+Consent banner (a Cookiebot replacement): patch_draft { "consent_banner": { "enabled": true, "privacy_url": "https://example.com/privacy" } } then publish. Visitors in the EEA, UK and Switzerland are asked first (regions "all": everyone); tags, Google Consent Mode v2, replay and the analytics tracker follow the choice; get_consent shows rates and the exact next step, list_consent_records the proof of consent per visitor.
 
 Attack protection (per container, protection: auto | strict | off on create_container / update_container): one network's browser hits past its daily share are quarantined, and during a detected attack data-centre traffic is quarantined and browser conversions aren't forwarded to ad platforms. Backend events (send_server_events) always flow. get_container -> protection shows the state; get_quarantine shows what was set aside.
 
@@ -454,6 +457,26 @@ function registerTools(t: ToolRegistrar, o: OpCtx) {
       input: { container_id: id, since: z.string().max(40).optional().describe('e.g. "24h", "7d", unix ms or ISO') },
     },
     async (a) => ops.quarantine(o, a.container_id, a.since),
+  );
+  t.read(
+    "get_consent",
+    {
+      title: "Consent banner status and rates",
+      description:
+        'The built-in consent banner (consent_banner in the config): status on | draft_only | off, the live and draft settings with defaults filled in, and over a period (since, default 30d, at most 365d) how many visitors chose: totals and rates of accept_all, reject_all and custom (the settings layer), how often each category (analytics, ads, personalization) was granted, per day, and the records today against MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY. next_steps has the exact call to turn it on. Turn it on with patch_draft { "consent_banner": { "enabled": true, "privacy_url": "https://example.com/privacy" } }, then publish.',
+      input: { container_id: id, since: z.string().max(40).optional().describe('e.g. "7d", "30d", unix ms or ISO') },
+    },
+    async (a) => ops.consent(o, a.container_id, a.since),
+  );
+  t.read(
+    "list_consent_records",
+    {
+      title: "Consent records (proof of consent)",
+      description:
+        "Proof of consent: one anonymous record per banner choice, newest first: consent_id, time, banner version, method (accept_all | reject_all | custom), choice per category, country, text language and container version (never IP, user agent or visitor id; kept 12 months; test traffic isn't recorded). Pass consent_id (a visitor finds it in the banner's settings layer, or the page's afst('get','consent_id')) to show what that visitor agreed to and when, e.g. to answer their request.",
+      input: { container_id: id, ...consentRecordsQuery.shape },
+    },
+    async ({ container_id, ...q }) => ops.consentRecords(o, container_id, q),
   );
   t.read(
     "list_versions",

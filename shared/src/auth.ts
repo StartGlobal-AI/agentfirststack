@@ -263,6 +263,30 @@ export async function internalAuth(env: AuthBindings, req: Request): Promise<Aut
   return { accountId, keyId: INTERNAL_KEY_ID, scopes: ["*"] };
 }
 
+/** Header the site's edge sets on requests it dispatches for a first-party domain: that hostname. */
+export const EDGE_HOST_HEADER = "x-afs-edge-host";
+
+const HOSTNAME = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+
+/**
+ * The first-party domain a public request came through, when the site's edge dispatched it: a
+ * customer's CNAME on Cloudflare for SaaS (shop.example.com/_a/e) that the site Worker forwarded
+ * over a service binding (see viaServiceBinding) with `x-afs-internal` equal to INTERNAL_TOKEN
+ * (constant-time) and `x-afs-edge-host` naming the hostname. Such a request is trusted like one
+ * with a valid proxy key: its X-Forwarded-For and x-afs-geo-* are the visitor's. No account is
+ * involved (the edge forwards public collection, nothing else). Returns the hostname, or null for
+ * any other request (direct, a customer's own proxy, a wrong token, or INTERNAL_TOKEN unset).
+ */
+export function edgeHost(env: Pick<AuthBindings, "INTERNAL_TOKEN">, req: Request): string | null {
+  const secret = env.INTERNAL_TOKEN;
+  const presented = req.headers.get("x-afs-internal");
+  const host = req.headers.get(EDGE_HOST_HEADER)?.trim().toLowerCase();
+  if (!secret || presented === null || !host) return null;
+  if (!viaServiceBinding(req)) return null;
+  if (!timingSafeEqual(presented, secret)) return null;
+  return HOSTNAME.test(host) ? host : null;
+}
+
 function waitUntilOf(c: { executionCtx: { waitUntil(p: Promise<unknown>): void } }): ((p: Promise<unknown>) => void) | undefined {
   try {
     const ctx = c.executionCtx;

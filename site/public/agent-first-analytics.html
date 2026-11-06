@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent-first analytics: what it is, and what to ask of any tool</title>
+<meta name="description" content="Agent-first analytics is analytics an AI agent sets up, verifies and queries on its own: one request to an account, REST and MCP, a manual, and checks it can run.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/agent-first-analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Agent-first analytics: what it is, and what to ask of any tool">
+<meta property="og:description" content="Agent-first analytics is analytics an AI agent sets up, verifies and queries on its own: one request to an account, REST and MCP, a manual, and checks it can run.">
+<meta property="og:url" content="https://agentfirststack.com/agent-first-analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/agent-first-analytics.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Agent-first analytics: what it is, and what to ask of any tool">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Agent-first analytics: what it is, and what to ask of any tool">
+<meta name="twitter:description" content="Agent-first analytics is analytics an AI agent sets up, verifies and queries on its own: one request to an account, REST and MCP, a manual, and checks it can run.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/agent-first-analytics.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "DefinedTerm",
+      "@id": "https://agentfirststack.com/agent-first-analytics#term",
+      "name": "Agent-first analytics",
+      "description": "Web analytics built so an AI agent can create the account, install tracking, confirm that events arrive and answer questions through a documented API and an MCP server, with no person signing up, verifying an email or clicking through setup screens.",
+      "url": "https://agentfirststack.com/agent-first-analytics"
+    },
+    {
+      "@type": "Article",
+      "@id": "https://agentfirststack.com/agent-first-analytics#article",
+      "headline": "Agent-first analytics: what it is, and what to ask of any tool",
+      "description": "Agent-first analytics is analytics an AI agent sets up, verifies and queries on its own: one request to an account, REST and MCP, a manual, and checks it can run.",
+      "url": "https://agentfirststack.com/agent-first-analytics",
+      "image": "https://agentfirststack.com/og/agent-first-analytics.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "about": { "@id": "https://agentfirststack.com/agent-first-analytics#term" },
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/agent-first-analytics"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Agent-first analytics", "item": "https://agentfirststack.com/agent-first-analytics" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/agent-first-analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is agent-first analytics?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Web analytics built so an AI agent can do the whole job on its own: create the account with one request, install the tracking code, confirm events arrive and answer questions, through a documented REST API and an MCP server. A person comes in afterwards to see the numbers and own the account."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is agent-first analytics the same as AI analytics?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. AI analytics usually means a tool that writes summaries or insights for a person. Agent-first is about who operates the tool: an agent can set it up, check it and query it without a person doing the signup or the setup screens. A tool can be one without the other."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does an MCP server make an analytics tool agent-first?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not on its own. If a person still has to create the account, accept terms, create the property and paste a key into the agent, the agent only takes over after setup. Agent-first means the agent can also create and configure everything, and check that it works."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do people still get a dashboard?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. In AgentFirstStack the agent finishes by creating a claim link. The person opens it, signs in with Google and sees everything the agent set up in a dashboard, where they can also manage keys, invite teammates and connect chat apps. The agent's key keeps working."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it safe to let an agent create the account?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The account holds no payment details, and the key only reaches this project. Keys can be read-only, MCP hides write tools from read keys, tools that return visitor-sent or fetched content mark it as untrusted, and once a person claims a project only its owner can delete it."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Agent-first analytics</span></nav>
+      <h1>Agent-first analytics: what it is, and what to ask of any tool</h1>
+      <p class="lede">Agent-first analytics is web analytics built so an AI agent can do the whole job on its own: create the account with one request, install the tracking code, confirm that events arrive, and answer questions, all through a documented API and an MCP server. A person comes in at the end to see the numbers and own the account, not to sign up, verify an email or click through setup screens.</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<h2 id="definition">The definition</h2>
+<p>Most analytics tools were designed for a person in a browser. The account needs an email to verify, the property needs a form, the tracking code is copied from a settings page, and "is it working?" is answered by watching a realtime report. An agent can help with parts of that, but a person has to do the steps in between.</p>
+<p>An agent-first tool turns each of those steps into a call the agent can make and a result it can check. We use seven properties to decide whether a tool qualifies. They're the rules every AgentFirstStack service is built to, and they apply to any tool you're evaluating.</p>
+
+<h2 id="properties">The seven properties</h2>
+<ol>
+<li><b>One request to an account.</b> The agent gets a working API key from a single call. No email to verify, no captcha, no form. If a person has to sign up first, the agent can't start a project on its own.</li>
+<li><b>Everything over REST and MCP.</b> Every feature, including the ones that change things (create a site, add a goal, connect payments), exists as an API route and as an MCP tool. A read-only MCP server added to a tool built for people doesn't count.</li>
+<li><b>A manual the agent reads in one fetch.</b> One plain-text file, conventionally at <code>/llms.txt</code>, with a quickstart, every endpoint, every tool and every config field. The agent shouldn't have to crawl a docs site or guess.</li>
+<li><b>Answers say what to do next.</b> Creating a site returns the snippet, the install code for the framework and the next call to make. The agent doesn't have to know the order in advance.</li>
+<li><b>Errors carry hints.</b> A failed call says what went wrong and how to recover, in words the agent can act on.</li>
+<li><b>Setup the agent can verify itself.</b> Every setup step has a check the agent runs: verify the install, see its own test event, run a setup check that says ready or lists what's missing. Without this, the agent reports success it hasn't confirmed.</li>
+<li><b>Retries are safe.</b> Creating something that already exists returns the existing one instead of an error or a duplicate. Agents retry, restart and run twice; the tool has to tolerate it.</li>
+</ol>
+<p>Two more things keep this safe once an agent operates the tool. Content that comes from outside (what visitors typed, pages the tool fetched, email bodies) is marked as untrusted, so an agent doesn't follow instructions hidden in it. And keys have scopes, so a read-only key can answer questions without being able to change anything.</p>
+
+<h2 id="mcp">Agent-first is more than an MCP server</h2>
+<p>An MCP server is how an agent calls a tool. It says nothing about what the agent can do with it. If a person still has to create the account, accept terms, create the property and paste a key into the agent's config, the agent only starts after setup is done, which is the part it could have done for you.</p>
+<p>So the useful question isn't "does it have an MCP server?" but "can an agent start from nothing, get to working tracking and prove it?" Our comparisons of the <a href="/google-analytics-mcp">Google Analytics</a>, <a href="/posthog-mcp">PostHog</a> and <a href="/mixpanel-mcp">Mixpanel</a> MCP servers go through what each can and can't do, and the <a href="/easiest-platform-for-ai-agents">benchmark</a> counts the steps for GA4, PostHog and Plausible from their own docs.</p>
+
+<h2 id="teams">What it changes for teams</h2>
+<ul>
+<li><b>Analytics ships with the code.</b> The agent that builds the sign-up form adds the goal and the server event in the same change. What it set up is written down in the repo (in AgentFirstStack, <code>AGENTFIRSTSTACK.md</code>: ids and the names of the env vars that hold keys, never the keys).</li>
+<li><b>No shared logins.</b> The key lives in <code>.env</code> and the production secrets. People get access through a claim link and their own Google sign-in, not by passing a password around.</li>
+<li><b>Questions get answered where the work happens.</b> "Which sources bring sign-ups?" is a question to the agent in the terminal or a chat app, answered from the API.</li>
+<li><b>Checks replace "looks right to me".</b> A setup check returns <code>"ready": true</code> or a list of fixes. Any key can run it, read-only ones too, so a later session or a CI job can confirm nothing broke.</li>
+<li><b>Later sessions keep it current.</b> When the platform adds a setup item, answers to the project's key carry a notice (at most once a day), and the next agent session runs the setup check and applies it.</li>
+</ul>
+
+<h2 id="checklist">What to ask of any analytics tool</h2>
+<p>Ten questions, in the order an agent would hit them. Ask them of any tool, including this one.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Ask</th><th>A good answer</th></tr></thead>
+<tbody>
+<tr><th scope="row">Can an agent create the account without a person?</th><td>One unauthenticated request returns a key. No email, captcha or phone.</td></tr>
+<tr><th scope="row">Can it create the property and get the tracking code by API?</th><td>One call with the domain returns the snippet, ideally per framework.</td></tr>
+<tr><th scope="row">Is every feature available to the agent, writes included?</th><td>Every capability is a REST route and an MCP tool, not only reports.</td></tr>
+<tr><th scope="row">Where is the manual?</th><td>One plain-text file the agent can fetch and read in full.</td></tr>
+<tr><th scope="row">Does each answer say what to do next?</th><td>Create calls return what the agent needs next and a <code>next_steps</code> list.</td></tr>
+<tr><th scope="row">What does an error look like?</th><td>A code, a message and a hint that says how to recover.</td></tr>
+<tr><th scope="row">How does the agent know tracking works?</th><td>It can send a test event, see it within seconds and run a check that says ready, without a person watching a report.</td></tr>
+<tr><th scope="row">What happens if the agent runs setup twice?</th><td>The same site comes back (<code>"existing": true</code>), not a duplicate or an error.</td></tr>
+<tr><th scope="row">Can I give an agent read-only access?</th><td>Read keys, with write tools hidden from them over MCP.</td></tr>
+<tr><th scope="row">How does a person get in afterwards?</th><td>A handover link to a dashboard, with their own sign-in, that doesn't stop the agent's key.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="agentfirststack">How AgentFirstStack does each</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Property</th><th>What AgentFirstStack does</th></tr></thead>
+<tbody>
+<tr><th scope="row">One request</th><td><code>POST https://agentfirststack.com/v1/signup</code> returns <code>api_key</code>, <code>account_id</code>, the MCP config and <code>next_steps</code>. No body is needed. The same key works on analytics, tags, mail and replay.</td></tr>
+<tr><th scope="row">REST and MCP</th><td>Each REST route and its MCP tool call the same service function. One MCP server at <code>https://agentfirststack.com/mcp</code> carries 250 tools; chat apps such as claude.ai connect over OAuth 2.1.</td></tr>
+<tr><th scope="row">Manual</th><td><a href="/llms.txt">/llms.txt</a> is the overview and the full setup procedure; each service has its own complete manual, such as <a href="https://analytics.agentfirststack.com/llms.txt">analytics.agentfirststack.com/llms.txt</a>.</td></tr>
+<tr><th scope="row">Next steps</th><td><code>POST /v1/sites</code> returns the site, its snippet, install code for html, nextjs, astro, react, wordpress, gtm and tags, and <code>next_steps</code> such as "Open the site in a browser, then confirm: POST /v1/sites/:id/verify".</td></tr>
+<tr><th scope="row">Errors with hints</th><td>Every error is <code>{"error":{"code","message","hint"}}</code>. Without a key: <code>"hint": "Send `Authorization: Bearer &lt;api_key&gt;`. No key yet? POST /v1/signup returns one instantly."</code></td></tr>
+<tr><th scope="row">Verifiable</th><td><code>verify</code> fetches the live page and checks the snippet, the script, the Content-Security-Policy and whether events arrived. <code>?afsa_debug=1</code> marks a visit as test traffic, visible in <code>realtime?debug=only</code> and kept out of reports. <code>GET /v1/setup</code> is the setup check; <code>POST /v1/setup/test</code> sends test traffic through everything.</td></tr>
+<tr><th scope="row">Safe retries</th><td>A second <code>POST /v1/sites</code> with the same domain returns the same site with <code>"existing": true</code>. The same holds for containers, inbox addresses and destinations.</td></tr>
+<tr><th scope="row">Untrusted content</th><td>Tools that return visitor-sent values (breakdowns, sessions, SQL rows) say so, and <code>verify</code> returns anything copied from the fetched page only under <code>untrusted</code>, with a notice.</td></tr>
+<tr><th scope="row">Scopes</th><td>Keys are full (<code>*</code>) or <code>read</code>. Read keys can't make changes over REST, and MCP doesn't list write tools to them.</td></tr>
+<tr><th scope="row">Handover</th><td><code>POST /v1/claim-link</code> returns a single-use link, valid for 7 days. The person signs in with Google and sees the project in the dashboard.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Measured from a clean shell against production, an agent goes from no account to a site whose test pageview shows in realtime, confirmed by the setup check, in 6 HTTP requests. Two runs took 5.9 and 7.3 seconds. The <a href="/easiest-platform-for-ai-agents">benchmark page</a> has the method and the script, so you can repeat it.</p>
+
+<h2 id="try">Try it</h2>
+<p>Paste the setup prompt from the <a href="/#setup">home page</a> into Claude Code, Cursor, Codex or any agent that can make HTTP requests, or read <a href="/add-analytics-with-ai-agent">the easiest way to add analytics with an AI agent</a> for what the agent does at each step and what's left for you.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>What is agent-first analytics?</h3>
+<p>Web analytics built so an AI agent can do the whole job on its own: create the account with one request, install the tracking code, confirm events arrive and answer questions, through a documented REST API and an MCP server. A person comes in afterwards to see the numbers and own the account.</p>
+<h3>Is agent-first analytics the same as AI analytics?</h3>
+<p>No. AI analytics usually means a tool that writes summaries or insights for a person. Agent-first is about who operates the tool: an agent can set it up, check it and query it without a person doing the signup or the setup screens. A tool can be one without the other.</p>
+<h3>Does an MCP server make an analytics tool agent-first?</h3>
+<p>Not on its own. If a person still has to create the account, accept terms, create the property and paste a key into the agent, the agent only takes over after setup. Agent-first means the agent can also create and configure everything, and check that it works.</p>
+<h3>Do people still get a dashboard?</h3>
+<p>Yes. In AgentFirstStack the agent finishes by creating a claim link. The person opens it, signs in with Google and sees everything the agent set up in a dashboard, where they can also manage keys, invite teammates and connect chat apps. The agent's key keeps working.</p>
+<h3>Is it safe to let an agent create the account?</h3>
+<p>The account holds no payment details, and the key only reaches this project. Keys can be read-only, MCP hides write tools from read keys, tools that return visitor-sent or fetched content mark it as untrusted, and once a person claims a project only its owner can delete it.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, PostHog, Mixpanel or Plausible.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/easiest-platform-for-ai-agents"><span class="svc">All services</span><b>The easiest platform for AI agents</b><span>Requests and seconds from nothing to tracking, measured.</span></a></li>
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>One prompt, every step, and what's left for you.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/posthog-mcp"><span class="svc svc-analytics">Analytics</span><b>PostHog MCP compared</b><span>A product platform, or web analytics an agent sets up alone.</span></a></li>
+        <li><a class="card" href="/umami-alternative"><span class="svc svc-analytics">Analytics</span><b>Umami alternative</b><span>Two open-source analytics tools, compared.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#definition">The definition</a></li><li><a href="#properties">The seven properties</a></li><li><a href="#mcp">More than an MCP server</a></li><li><a href="#teams">What it changes for teams</a></li><li><a href="#checklist">What to ask of any tool</a></li><li><a href="#agentfirststack">How AgentFirstStack does each</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

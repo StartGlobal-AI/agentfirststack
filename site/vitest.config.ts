@@ -45,6 +45,13 @@ export default defineConfig({
           NOTIFY_REPLY_TO: "",
           OPERATOR_EMAIL: "",
           MAX_EMAILS_PER_PERSON_PER_DAY: "",
+          // First-party domains: off unless a test turns Cloudflare for SaaS on (test/first-party-domains.test.ts).
+          CF_SAAS_API_TOKEN: "",
+          CF_SAAS_ZONE_ID: "",
+          CF_SAAS_FALLBACK_HOST: "",
+          CF_SAAS_WORKER: "",
+          MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT: "",
+          UNCLAIMED_MAX_FIRST_PARTY_DOMAINS_PER_ACCOUNT: "",
           GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",
           GOOGLE_CLIENT_SECRET: "test-google-secret",
         },

@@ -10,6 +10,7 @@ import { api } from "./routes/api";
 import { createDefaultInbox, pruneCounters, purgeExpiredInboxes, purgeOldSharedMessages, sharedDomain } from "./service/inboxes";
 import { forwardEach, runForwards } from "./service/forward";
 import { purgeSendKeys } from "./service/idempotency";
+import { checkReservedNames } from "./service/reserved";
 import { runScheduled } from "./service/send";
 import { handleEmail } from "./service/ingest";
 import { sweepOrphanBlobs } from "./service/sweep";
@@ -100,7 +101,7 @@ app.route(
     onSignup: async (env, accountId) => ({ inbox: await createDefaultInbox(env, accountId) }),
     nextSteps: (base) => [
       "Your default inbox is in `inbox`. Use inbox.address in a signup form, then:",
-      `curl -H "Authorization: Bearer $KEY" "${base}/v1/inboxes/<inbox.id>/latest-code?timeout=60"  # blocks until the code arrives`,
+      `curl -H "Authorization: Bearer $KEY" "${base}/v1/inboxes/<inbox.id>/latest-code?from=<the site's domain, e.g. github.com>&timeout=60"  # blocks until that site's code arrives; always pass from: anyone can email the inbox`,
       `POST ${base}/v1/inboxes {"username":"acme-signups"} creates more addresses.`,
       `Manual: ${base}/llms.txt`,
     ],
@@ -159,6 +160,8 @@ export default {
         // Digests to the project's members (digest hour, catch-up after a claim, what mode each left).
         run("forward", runForwards(env, _controller.scheduledTime || Date.now())),
         run("sweep", sweepOrphanBlobs(env)),
+        // Inboxes whose username became reserved (only when the reserved list changed; log only).
+        run("reserved", checkReservedNames(env)),
       ]).then((parts) => console.log(JSON.stringify(Object.assign({ event: "cron.purge" }, ...parts)))),
     );
   },

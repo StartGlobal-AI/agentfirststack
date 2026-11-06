@@ -72,7 +72,14 @@ describe("storage and fan-out caps", () => {
       deliveriesPerDay: Number.POSITIVE_INFINITY,
       visitors: 250_000,
       dbBytes: 1024 * 1024 * 1024,
+      consentRecordsPerDay: Number.POSITIVE_INFINITY,
     });
+    expect(
+      containerCaps(
+        { MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY: "1000", UNCLAIMED_MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY: "50" },
+        unclaimed,
+      ).consentRecordsPerDay,
+    ).toBe(50);
     expect(deliveryBudgets({ MAX_DELIVERIES_PER_DAY: "1000", UNCLAIMED_MAX_DELIVERIES_PER_DAY: "10" }, unclaimed)).toEqual({
       perAccount: Number.POSITIVE_INFINITY,
       platform: 10,

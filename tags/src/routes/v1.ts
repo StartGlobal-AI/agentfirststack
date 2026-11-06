@@ -4,6 +4,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import {
+  consentQuery,
+  consentRecordsQuery,
   containerInput,
   containerPatch,
   destinationInput,
@@ -182,6 +184,10 @@ v1.get("/containers/:id/quarantine", async (c) => {
   const q = readQuery(c, quarantineQuery);
   return c.json(await ops.quarantine(opCtx(c), c.req.param("id"), q.since ?? q.period));
 });
+v1.get("/containers/:id/consent", async (c) => c.json(await ops.consent(opCtx(c), c.req.param("id"), readQuery(c, consentQuery).since)));
+v1.get("/containers/:id/consent/records", async (c) =>
+  c.json(await ops.consentRecords(opCtx(c), c.req.param("id"), readQuery(c, consentRecordsQuery))),
+);
 v1.get("/containers/:id/versions", async (c) => c.json(await ops.versions(opCtx(c), c.req.param("id"))));
 v1.get("/containers/:id/versions/:n", async (c) => c.json(await ops.version(opCtx(c), c.req.param("id"), parseVersion(c.req.param("n")))));
 v1.post("/containers/:id/rollback", async (c) =>

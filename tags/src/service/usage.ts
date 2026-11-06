@@ -227,6 +227,7 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
   const dbBytes = per(fromDO("db_bytes"), cc.dbBytes);
   const perNetwork = per(fromDO("network_max"), protect.perNetwork);
   const quarantined = per(fromDO("quarantined"), protect.quarantinedPerDay);
+  const consentRecords = per(fromDO("consent_records"), cc.consentRecordsPerDay);
   const storage = rows.reduce((n, r) => n + r.draft_bytes + r.version_bytes + r.lookup_bytes, 0);
 
   const limitsOut = {
@@ -367,6 +368,19 @@ export async function getUsage(env: Bindings, accountId: string, now = Date.now(
       {
         note: "Past it further quarantined hits are counted but not logged. They were never going to be delivered, so nothing from real visitors is lost; GET /v1/containers/:id/quarantine shows what was set aside.",
         per: quarantined.per,
+      },
+    ),
+    consent_records_per_container_per_day: item(
+      "Consent records a day in one container",
+      consentRecords.used,
+      cc.consentRecordsPerDay,
+      "consent banner choices recorded as proof of consent in one container today (used = the container with the most)",
+      "MAX_CONSENT_RECORDS_PER_CONTAINER_PER_DAY",
+      resets,
+      {
+        note: "Past it visitors' choices still apply in their browsers, but aren't recorded (no proof of consent for them) until 00:00 UTC. GET /v1/containers/:id/consent shows today's count.",
+        drops_data: true,
+        per: consentRecords.per,
       },
     ),
     destinations_per_container: item(

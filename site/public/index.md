@@ -115,6 +115,7 @@ First, look at what this site uses today (Google Analytics, Google Tag Manager, 
    - Analytics: the site, a goal for each conversion and main action, server events for what only the backend knows, AI crawler and search bot visits reported from the server (if the site has one), payments if the business takes them, and a weekly email report and alerts for me.
    - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
    - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
+   - Serve all of it first-party, from the site's own domain, because ad blockers block third-party analytics hosts: a first-party domain (one DNS record: add it yourself if you can change the DNS, otherwise give it to me) or, until then or instead, the path proxy. The direct snippets only as a last resort.
 
 4. Deploy, then test it end to end (the manual's step 8): run the setup test (POST https://agentfirststack.com/v1/setup/test, or afs_test_setup), do its browser plan in a real browser and check that visit (afs_check_test_visit), then run the setup check (GET https://agentfirststack.com/v1/setup, or afs_check_setup) until it says ready. Fix what fails and test again.
 
@@ -140,6 +141,26 @@ All of them: https://agentfirststack.com/guides
 - Server-side conversion tracking for Meta, Google Ads, TikTok and GA4: https://agentfirststack.com/guides/server-side-conversion-tracking
 - Email inbox for AI agents: receive verification codes by API: https://agentfirststack.com/guides/email-inbox-for-ai-agents
 - Session replay for AI agents: sessions as text, over an API: https://agentfirststack.com/guides/session-replay-for-ai-agents
+- Agent-first analytics: what it is, and what to ask of any tool: https://agentfirststack.com/agent-first-analytics
+- The easiest way to add analytics to your app with an AI agent: https://agentfirststack.com/add-analytics-with-ai-agent
+- The easiest platform for AI agents to use, measured: https://agentfirststack.com/easiest-platform-for-ai-agents
+- Add analytics with Cursor: https://agentfirststack.com/guides/add-analytics-with-cursor
+- Add analytics with OpenAI Codex: https://agentfirststack.com/guides/add-analytics-with-codex
+- Add analytics with Windsurf (now Devin Desktop): https://agentfirststack.com/guides/add-analytics-with-windsurf
+- Add analytics to a Lovable app with its AI agent: https://agentfirststack.com/guides/add-analytics-with-lovable
+- Add analytics to a Replit app with Replit Agent: https://agentfirststack.com/guides/add-analytics-with-replit
+- Add analytics to a v0 app with its AI agent: https://agentfirststack.com/guides/add-analytics-with-v0
+- Add analytics to a Bolt app with its AI agent: https://agentfirststack.com/guides/add-analytics-with-bolt
+- Next.js analytics in one prompt: https://agentfirststack.com/guides/nextjs-analytics
+- Astro analytics in one prompt: https://agentfirststack.com/guides/astro-analytics
+- WordPress analytics in one prompt: https://agentfirststack.com/guides/wordpress-analytics
+- Shopify analytics in one prompt: https://agentfirststack.com/guides/shopify-analytics
+- Webflow analytics in one prompt: https://agentfirststack.com/guides/webflow-analytics
+- Google Ads conversion tracking with AgentFirstStack: https://agentfirststack.com/guides/google-ads-conversion-tracking
+- Meta Conversions API with AgentFirstStack: https://agentfirststack.com/guides/meta-conversions-api
+- Stape alternative: server-side conversion APIs without hosting server-side GTM: https://agentfirststack.com/stape-alternative
+- Hotjar alternative: Contentsquare (formerly Hotjar) and AgentFirstStack Replay: https://agentfirststack.com/hotjar-alternative
+- Umami alternative: open-source analytics an AI agent sets up: https://agentfirststack.com/umami-alternative
 - AgentFirstStack MCP servers and tools: https://agentfirststack.com/mcp
 - Google Analytics MCP compared with AgentFirstStack: https://agentfirststack.com/google-analytics-mcp
 - PostHog MCP compared with AgentFirstStack: https://agentfirststack.com/posthog-mcp

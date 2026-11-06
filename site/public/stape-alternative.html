@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stape alternative: server-side conversion APIs without hosting sGTM</title>
+<meta name="description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/stape-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Stape alternative: server-side conversion APIs without hosting sGTM">
+<meta property="og:description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.">
+<meta property="og:url" content="https://agentfirststack.com/stape-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/stape-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Stape alternative: server-side conversion APIs without hosting sGTM">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Stape alternative: server-side conversion APIs without hosting sGTM">
+<meta name="twitter:description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/stape-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/stape-alternative#article",
+      "headline": "Stape alternative: server-side conversion APIs without hosting sGTM",
+      "description": "Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.",
+      "url": "https://agentfirststack.com/stape-alternative",
+      "image": "https://agentfirststack.com/og/stape-alternative.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/stape-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Stape alternative", "item": "https://agentfirststack.com/stape-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/stape-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is AgentFirstStack a server-side GTM host like Stape?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It doesn't run GTM server containers. It's a tag manager whose service calls the ad platforms' conversion APIs itself: you define a conversion once, and it goes out as the browser pixel and server-side with the same event id."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can AgentFirstStack serve tracking from my own domain like Stape's custom domain?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not with a custom domain or CNAME yet; that's being built. Today the first-party route is a path proxy: your site forwards a path such as /_a/* to the service with the site's proxy key, using the configs from the install endpoints. Without it, the snippet loads from agentfirststack.com subdomains, which ad blockers can block."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I import my server-side GTM container?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Only the web container. draft/import maps a web GTM container's tags, triggers and variables; server-container clients aren't imported. You recreate the server side as destinations, which takes each platform's credentials."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does Stape cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "As of 6 November 2026, Stape's sGTM hosting is free up to 10K requests a month, then $17 a month billed annually ($20 monthly) for 500K, $83 ($100) for 5M and $167 ($200) for 20M, with custom plans above that. AgentFirstStack's hosted service is free with fair-use limits."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Stape have an API or MCP server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Stape has a REST API and an MCP server for managing a Stape account with a Stape API key, and it maintains a separate MCP server for editing Google Tag Manager with Google sign-in. A person creates the Stape account and the GTM server container first."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Stape alternative</span></nav>
+      <h1>Stape alternative: server-side conversion APIs without hosting server-side GTM</h1>
+      <p class="lede">Stape hosts server-side Google Tag Manager: you build a server container in GTM and Stape runs it, free up to 10,000 requests a month and from $17 a month on paid plans (as of 6 November 2026). AgentFirstStack Tags gets conversions to the ad platforms without a GTM server container: one snippet on the site, and the service itself calls the conversion APIs of GA4, Meta, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap and X, with the browser and server copies sharing one event id. An agent can set it up from nothing. Stape is the better choice if your team works in GTM, needs its template gallery, or needs a custom tracking domain, which we don't offer yet.</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It looks at what the site runs first, so an existing GTM or Stape setup isn't overwritten blind.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up server-side conversion tracking for this project with AgentFirstStack Tags. It's a free, open-source tag manager that calls the ad platforms' conversion APIs itself, built for agents, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Create a tags container for the production domain. Serve it through a first-party proxy on our own domain (the configs from GET /v1/containers/:id/install?proxy=1; keep the proxy key server-side), put the proxied snippet in the head of every page, deploy, and run scan.
+
+4. If the site loads a Google Tag Manager web container or sends to a server-side GTM endpoint (Stape or another host), tell me what it fires before you change anything. Import the web container (draft/import with format "gtm", dry run first) and list what didn't map.
+
+5. Run setup with the conversions that matter here (sign-ups, purchases, leads) and the platforms this business uses. If you have tools for those platforms, use them to find the IDs; otherwise ask me for exactly the IDs and tokens setup reports as missing, and where I find each.
+
+6. Validate, test every destination and show me each platform's answer, open a preview and read its log, then publish. Don't remove GTM or the old server-side setup until I say so.
+
+7. Write the container id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what each test returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="stape">What Stape is</h2>
+<p><a href="https://stape.io/">Stape</a> sells two things: Server GTM Hosting, "From $17/month", and Dedicated Gateways, "From $8/month" (<a href="https://stape.io/">stape.io</a>, as of 6 Nov 2026). The hosting runs your server-side GTM container; Google's own docs say a server container runs on a server you control, such as your own Google Cloud project (<a href="https://developers.google.com/tag-platform/tag-manager/server-side/intro">server-side tagging intro</a>), and Stape is that server, managed for you.</p>
+<p>Setting it up is mostly in GTM. Stape's guide: "Select Admin, then in the container column, choose +", "choose Server, and click Create", then "Select Manually provision tagging server, then copy your container configuration", and paste it into Stape's Container configuration field (<a href="https://stape.io/helpdesk/documentation/configure-sgtm-container">Configure the sGTM container</a>, as of 6 Nov 2026). The tags in that server container are GTM templates, many of them published by Stape; its <a href="https://stape.io/solutions/category/gtm-templates">template gallery</a> includes Meta (Facebook CAPI), TikTok, LinkedIn, Snapchat, Reddit and Google Ads tags, and affiliate and email tools such as Awin, Impact, Klaviyo and Mailchimp (as of 6 Nov 2026).</p>
+<p>Stape's plans for sGTM hosting (<a href="https://stape.io/price">stape.io/price</a>, as of 6 Nov 2026):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Plan</th><th>Price (billed annually / monthly)</th><th>Requests</th><th>Logs</th></tr></thead>
+<tbody>
+<tr><th scope="row">Free</th><td>$0, "No credit card required"</td><td>Up to 10K</td><td>Not listed</td></tr>
+<tr><th scope="row">Pro</th><td>$17 / $20 a month</td><td>500K</td><td>3 days</td></tr>
+<tr><th scope="row">Business</th><td>$83 / $100 a month</td><td>5M</td><td>10 days</td></tr>
+<tr><th scope="row">Enterprise</th><td>$167 / $200 a month</td><td>20M</td><td>Export to S3 or GCS</td></tr>
+<tr><th scope="row">Custom</th><td>"Let's Talk"</td><td>Unlimited</td><td>Custom retention</td></tr>
+</tbody>
+</table>
+</div>
+<p>Stape also has agent access for an account a person has set up: a REST API and the <a href="https://github.com/stape-io/stape-mcp-server">Stape MCP server</a>, which work with a Stape API key, and a separate <a href="https://github.com/stape-io/google-tag-manager-mcp-server">GTM MCP server</a> that edits GTM with Google sign-in (both Apache-2.0). Our <a href="/google-tag-manager-mcp">GTM MCP comparison</a> covers those.</p>
+
+<h2 id="agentfirststack">How AgentFirstStack Tags does server-side</h2>
+<p>There's no server container to build or host. You define a conversion once, in plain terms or in the container's config, and the service delivers it.</p>
+<ol>
+<li><b>One snippet</b> loads the container. When a conversion fires (a dataLayer event, a thank-you page, a form submit, a click), the runtime creates one <code>event_id</code>, fires the browser pixels with it, and posts the event to <code>/collect</code>.</li>
+<li><b>The service calls each platform's conversion API</b> with the owner's credentials and the same <code>event_id</code>, so platforms that deduplicate count it once. Ad click ids from the landing URL are stored with the visitor, so a purchase your backend reports days later still credits the click.</li>
+<li><b>Your backend reports what the browser can't see</b> with <code>POST /v1/containers/:id/events</code>. Those go server to server, so a browser can't block them.</li>
+<li><b>Every delivery is logged</b> for 7 days with the platform's answer: <code>GET /v1/containers/:id/events</code>.</li>
+</ol>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Destination</th><th>API</th><th>Test mode</th></tr></thead>
+<tbody>
+<tr><th scope="row">GA4</th><td>Measurement Protocol</td><td>Validation server</td></tr>
+<tr><th scope="row">Meta</th><td>Conversions API</td><td>Your <code>test_event_code</code></td></tr>
+<tr><th scope="row">Google Ads</th><td>Data Manager API (or Google Ads API), click conversions</td><td><code>validateOnly</code></td></tr>
+<tr><th scope="row">TikTok</th><td>Events API</td><td>Your <code>test_event_code</code></td></tr>
+<tr><th scope="row">LinkedIn</th><td>Conversions API</td><td>None: test traffic is skipped</td></tr>
+<tr><th scope="row">Pinterest</th><td>Conversions API</td><td><code>?test=true</code></td></tr>
+<tr><th scope="row">Reddit</th><td>Conversions API</td><td>Your <code>test_id</code></td></tr>
+<tr><th scope="row">Snap</th><td>Conversions API</td><td><code>/events/validate</code></td></tr>
+<tr><th scope="row">X</th><td>Ads API conversions</td><td>None: test traffic is skipped</td></tr>
+</tbody>
+</table>
+</div>
+<p>Plus AgentFirstStack analytics and signed webhooks. Microsoft Advertising is browser-only for now (its UET tag); server-side for it isn't built. The <a href="/guides/server-side-conversion-tracking">server-side conversion guide</a> explains dedup per platform, and there are deeper guides for <a href="/guides/google-ads-conversion-tracking">Google Ads</a> and the <a href="/guides/meta-conversions-api">Meta Conversions API</a>.</p>
+
+<h2 id="first-party">First-party serving and ad blockers</h2>
+<p>This is where Stape is ahead today. Stape lets you add a custom domain so the tagging server answers on a subdomain of your own site: "Use a custom tagging server URL, also called a custom domain, to set first-party cookies", on the same root domain, such as <code>ss.example.com</code> (<a href="https://stape.io/helpdesk/documentation/add-custom-domain-in-stape">Add a custom domain</a>, as of 6 Nov 2026). AgentFirstStack doesn't offer a custom domain or CNAME yet; it's being built.</p>
+<p>What we have now is a path proxy. Your site forwards a path on its own domain to the service: <code>/_a/*</code> for analytics, a prefix of your choice for tags and replay. The configs (a Cloudflare Worker route, Next.js, Vercel, Netlify, nginx) come from <code>GET /v1/sites/:id/install</code> for analytics and <code>GET /v1/containers/:id/install?proxy=1</code> for tags, and send the site's <code>x-afs-proxy-key</code> so the service can trust the visitor's IP and location. We recommend it on every install.</p>
+<p>Without the proxy, the default snippets load from <code>analytics.agentfirststack.com</code> and <code>tags.agentfirststack.com</code>, and ad blockers' filter lists block hosts like those. "Server-side" in AgentFirstStack means enrichment on our edge and conversions sent from our servers to the platforms; the browser's hit to us can still be blocked unless it's proxied. Backend-reported conversions can't be.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Stape (server-side GTM hosting)</th><th>AgentFirstStack Tags</th></tr></thead>
+<tbody>
+<tr><th scope="row">What runs server-side</th><td>Your GTM server container, on Stape's servers</td><td>The service itself; no container to host</td></tr>
+<tr><th scope="row">Setup</th><td>A Stape account, a GTM server container, its config pasted into Stape, then tags in GTM</td><td><code>POST /v1/signup</code>, a container, the snippet, <code>setup</code> with the platforms and conversions</td></tr>
+<tr><th scope="row">Platforms</th><td>Any GTM server template: Stape's gallery and the community's</td><td>GA4, Meta, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap, X, analytics, webhooks</td></tr>
+<tr><th scope="row">Browser and server dedup</th><td>Your web and server tags have to carry the same event id; you set that up in GTM</td><td>One <code>event_id</code> per conversion, used by the pixel and the API</td></tr>
+<tr><th scope="row">Testing</th><td>GTM's preview mode; Stape logs from the Pro plan</td><td>Each platform's test mode, and a test call that returns its answer; test traffic never sent as a real conversion</td></tr>
+<tr><th scope="row">Custom domain (first-party)</th><td>Yes: a subdomain of your site, such as <code>ss.example.com</code></td><td>Not yet: a path proxy on your domain instead</td></tr>
+<tr><th scope="row">Delivery log</th><td>3 days (Pro), 10 days (Business)</td><td>7 days, with each platform's answer</td></tr>
+<tr><th scope="row">Agent access</th><td>REST API and MCP for an existing account; GTM through its MCP server</td><td>Signup, setup, test and publish over REST and MCP</td></tr>
+<tr><th scope="row">Price</th><td>Free to 10K requests, then from $17 a month</td><td>Free hosted service with fair-use limits (10 containers, 5 destinations each)</td></tr>
+<tr><th scope="row">Source</th><td>Hosted service; its MCP servers are Apache-2.0</td><td>AGPL-3.0, self-hostable on Cloudflare Workers; browser scripts MIT</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use Stape if</h3>
+<ul>
+<li>Your team builds tracking in Google Tag Manager and wants server-side to work the same way.</li>
+<li>You need a platform or template AgentFirstStack doesn't have: affiliate networks such as Awin, Impact and Rakuten, email tools such as Klaviyo and Mailchimp, and the rest of the GTM template gallery.</li>
+<li>You want the tagging server on your own subdomain today.</li>
+<li>You need what Stape's Custom plan lists: a BAA for HIPAA compliance, single sign-on, a dedicated IP or a private cluster.</li>
+</ul>
+<h3>Use AgentFirstStack Tags if</h3>
+<ul>
+<li>You want server-side conversion APIs without building or hosting a GTM server container.</li>
+<li>An agent should set it up and keep it working: create, test against each platform, publish and read the delivery log, all over the API.</li>
+<li>You want the pixel and the API to share one event id without wiring it yourself.</li>
+<li>You want the whole thing open source, or self-hosted on your own Cloudflare account.</li>
+</ul>
+
+<h2 id="moving">Moving from GTM and Stape</h2>
+<p><code>POST /v1/containers/:id/draft/import</code> with <code>format: "gtm"</code> takes a web container's export (or the Tag Manager API's lists), with a dry run first. Google tag and GA4, Google Ads, custom HTML and image tags, the common ad platform templates and nearly every trigger and variable map. Server-container clients don't: the server side becomes destinations, which need each platform's credentials. Keep the old setup running until the new event log shows the same conversions arriving, then remove it in the same change that publishes the container, or conversions count twice.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is AgentFirstStack a server-side GTM host like Stape?</h3>
+<p>No. It doesn't run GTM server containers. It's a tag manager whose service calls the ad platforms' conversion APIs itself: you define a conversion once, and it goes out as the browser pixel and server-side with the same event id.</p>
+<h3>Can AgentFirstStack serve tracking from my own domain like Stape's custom domain?</h3>
+<p>Not with a custom domain or CNAME yet; that's being built. Today the first-party route is a path proxy: your site forwards a path such as <code>/_a/*</code> to the service with the site's proxy key, using the configs from the install endpoints. Without it, the snippet loads from agentfirststack.com subdomains, which ad blockers can block.</p>
+<h3>Can I import my server-side GTM container?</h3>
+<p>Only the web container. <code>draft/import</code> maps a web GTM container's tags, triggers and variables; server-container clients aren't imported. You recreate the server side as destinations, which takes each platform's credentials.</p>
+<h3>What does Stape cost?</h3>
+<p>As of 6 November 2026, Stape's sGTM hosting is free up to 10K requests a month, then $17 a month billed annually ($20 monthly) for 500K, $83 ($100) for 5M and $167 ($200) for 20M, with custom plans above that (<a href="https://stape.io/price">stape.io/price</a>). AgentFirstStack's hosted service is free with fair-use limits.</p>
+<h3>Does Stape have an API or MCP server?</h3>
+<p>Yes. Stape has a REST API and an MCP server for managing a Stape account with a Stape API key, and it maintains a separate MCP server for editing Google Tag Manager with Google sign-in. A person creates the Stape account and the GTM server container first.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Stape or Google.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/guides/google-ads-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Google Ads conversion tracking</b><span>Browser tag and server upload, tested before it counts.</span></a></li>
+        <li><a class="card" href="/guides/meta-conversions-api"><span class="svc svc-tags">Tags</span><b>Meta Conversions API</b><span>Pixel and server, deduplicated by event id.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/agent-first-analytics"><span class="svc svc-analytics">Analytics</span><b>Agent-first analytics</b><span>What it is, and what to ask of any tool.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#stape">What Stape is</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#first-party">First-party serving</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from GTM and Stape</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -203,7 +203,15 @@ describe("loading with analytics (no second snippet)", () => {
     expect(created.json.site).toMatchObject({ analytics_site_id: A1, loads_with_analytics: true });
     expect(created.json.install.nothing_to_paste).toContain(A1);
     expect(created.json.install.code).toContain(`/r/${site}.js`); // the snippet stays the alternative
-    expect(created.json.next_steps[0]).toContain("Nothing to paste");
+    // first-party first (install.first_party), then how the recorder gets onto pages
+    expect(created.json.next_steps[0]).toContain("First-party by default");
+    expect(Object.keys(created.json.install)[0]).toBe("first_party");
+    expect(created.json.install.first_party.order).toEqual(["first_party_domain", "path_proxy", "direct"]);
+    expect(created.json.install.first_party.path_proxy.snippet).toBe(`<script defer src="/_r/r/${site}.js"></script>`);
+    expect(created.json.install.first_party.first_party_domain.snippet).toBe(
+      `<script defer src="https://<hostname>/_r/r/${site}.js"></script>`,
+    );
+    expect(created.json.next_steps[1]).toContain("Nothing to paste");
     expect(created.json.site.verification.how[0]).toContain(`analytics tracker for ${A1}`);
     await markVerified(site);
     expect((await call("GET", `/v1/sites/${site}`, { key })).json.site.loads_with_analytics).toBe(true);
@@ -278,7 +286,7 @@ describe("loading with analytics (no second snippet)", () => {
     const c = await call("POST", "/v1/sites", { key, body: { domain: "www.suggest.test" }, env: a.env });
     expect(c.json.install).toMatchObject({ loads_with_analytics: false, suggested_analytics_site_id: A2 });
     expect(c.json.install.with_analytics).toContain(`{"analytics_site_id": "${A2}"}`);
-    expect(c.json.next_steps[0]).toContain("instead of pasting a second snippet");
+    expect(c.json.next_steps[1]).toContain("instead of pasting a second snippet");
     const i = await call("GET", `/v1/sites/${c.json.site.id}/install?framework=nextjs`, { key, env: a.env });
     expect(i.json.suggested_analytics_site_id).toBe(A2);
     // no analytics on this deployment: the generic hint

@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics to a Replit app with Replit Agent</title>
+<meta name="description" content="Paste one prompt into Replit Agent: it gets a key, proxies the tracker through your app's backend, sets production secrets, republishes and verifies.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-replit">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics to a Replit app with Replit Agent">
+<meta property="og:description" content="Paste one prompt into Replit Agent: it gets a key, proxies the tracker through your app's backend, sets production secrets, republishes and verifies.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-replit">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics to a Replit app with Replit Agent">
+<meta name="twitter:description" content="Paste one prompt into Replit Agent: it gets a key, proxies the tracker through your app's backend, sets production secrets, republishes and verifies.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-replit#article",
+      "headline": "Add analytics to a Replit app with Replit Agent",
+      "description": "Paste one prompt into Replit Agent: it gets a key, proxies the tracker through your app's backend, sets production secrets, republishes and verifies.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-replit",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-replit",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Replit",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Add analytics with Replit",
+          "item": "https://agentfirststack.com/guides/add-analytics-with-replit"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-replit#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Why does verify pass in the workspace but events never show up?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Probably the dev URL. Events from *.replit.dev aren't your site's domain, so they're dropped. Republish and test on the published address."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Server events return 401 in the published app only. Why?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Workspace secrets don't carry over to the published app. Add the key under Production app secrets and republish."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why do all visitors show the same country?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "That's the first-party proxy: your backend doesn't know visitor locations, so the collector sees your server's. Counts are right. Switch to the direct snippet if location matters more than visitors with ad blockers."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker count page changes in a single-page app?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. It records a page view on every History API navigation (pushState, replaceState, back and forward), so React Router and similar routers need nothing extra."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can run it yourself on Cloudflare Workers."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics with Replit</span></nav>
+      <h1>Add analytics to a Replit app with Replit Agent</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics to a Replit app, paste the prompt below into Replit Agent. Replit Agent edits files and runs commands in its workspace, so it can get an AgentFirstStack key, create the site, and add a small route to your app's backend that serves the tracker from your own domain. Then come the two Replit steps people miss: secrets you set in the workspace don't reach the published app on their own, and edits aren't live until you republish. Other tools and platforms: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into Replit Agent</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this app with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If the AGENTFIRSTSTACK_API_KEY secret exists, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Store api_key as the Replit secret AGENTFIRSTSTACK_API_KEY (never in code or in the frontend). Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the published domain (the custom domain, or the .replit.app address). Read GET /v1/sites/:id/install, and store first_party_proxy.proxy_key as the secret AFS_PROXY_KEY.
+
+4. In the backend, add a route for /_a/* that forwards to https://analytics.agentfirststack.com with the x-afs-proxy-key header, the visitor's IP (first X-Forwarded-For entry) as X-Forwarded-For, and the visitor's user agent. Register it before any static-file or SPA fallback route. Then add &lt;script defer src="/_a/s.js" data-site="..."&gt; to the &lt;head&gt; of the frontend's HTML.
+
+5. Create goals for sign-ups, purchases and the main buttons, and send conversions only the server knows about from the backend as server events.
+
+6. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+7. Tell me to add AGENTFIRSTSTACK_API_KEY and AFS_PROXY_KEY under Production app secrets and to republish. After I have, open the published URL, run verify and fix what it reports.
+
+8. Write the site id and the secret names (never the values) in AGENTFIRSTSTACK.md, create a claim link with POST https://agentfirststack.com/v1/claim-link, then run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="proxy">Serve the tracker from your app</h2>
+<p>Ad blockers block requests to <code>analytics.agentfirststack.com</code>. Replit says every web app it builds "includes a frontend and backend", so the backend can serve the tracker under your own domain instead, and those visitors count too. The tracker posts to the path it was loaded from, so <code>/_a/s.js</code> sends its events to <code>/_a/e</code>. In an Express backend:</p>
+<pre><code>// Before express.static and any SPA fallback route
+app.use("/_a", express.text({ type: "*/*" }), async (req, res) =&gt; {
+  const ip = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "";
+  const r = await fetch("https://analytics.agentfirststack.com" + req.originalUrl, {
+    method: req.method,
+    headers: {
+      "x-afs-proxy-key": process.env.AFS_PROXY_KEY,
+      "x-forwarded-for": ip,
+      "user-agent": req.get("user-agent") || "",
+      "accept-language": req.get("accept-language") || "",
+      "content-type": "text/plain",
+    },
+    body: req.method === "POST" ? req.body : undefined,
+  });
+  res.status(r.status);
+  for (const h of ["content-type", "cache-control"]) if (r.headers.get(h)) res.set(h, r.headers.get(h));
+  res.send(Buffer.from(await r.arrayBuffer()));
+});</code></pre>
+<p>A Flask or FastAPI backend does the same in a few lines: forward the path, the query string, the body, the user agent and those two headers. <code>app.use("/_a", ...)</code> matches the prefix in both Express 4 and 5.</p>
+<p><b>The proxy key is what makes this work.</b> The collector trusts a forwarded visitor IP only from requests carrying <code>x-afs-proxy-key</code>, the site's own secret. Without it every visitor arrives with your Replit server's address and merges into one, and verify reports <code>proxy_key</code>. Replit's docs don't say which header carries the visitor's address in a published app; the route above takes the first <code>X-Forwarded-For</code> entry, the common convention. If verify passes but the visitor count looks far too low, that's the thing to check.</p>
+<p><b>One trade-off: location.</b> Your backend can't see where visitors are, so the collector falls back to its view of your server, and country and city show your server's location. Visitor counts, pages, sources and devices are right. If location matters more to you than visitors with ad blockers, use the direct snippet instead (<code>src="https://analytics.agentfirststack.com/s.js"</code>), which gets the location from the visitor's own request.</p>
+
+<h2 id="secrets">Secrets: workspace and production</h2>
+<p>Replit stores secrets encrypted and gives them to your app as environment variables. The catch is in Replit's troubleshooting docs: "Secrets you set in the Project Editor do not automatically carry over to your published app." Add <code>AGENTFIRSTSTACK_API_KEY</code> and <code>AFS_PROXY_KEY</code> again under Publishing &gt; Adjust settings &gt; Production app secrets. Until you do, the published proxy sends no key and server events fail with 401.</p>
+<p>Neither value belongs in the frontend. The tracker tag carries only the site id, which is public.</p>
+
+<h2 id="mcp">Connect the MCP server (optional)</h2>
+<p>Replit Agent can use remote MCP servers: <b>+ Add MCP server</b>, paste the HTTPS endpoint, and add headers under Advanced settings. Use <code>https://agentfirststack.com/mcp</code> with the header <code>X-API-Key</code> set to your key; AgentFirstStack accepts it as well as <code>Authorization: Bearer</code>. The agent then calls tools like <code>analytics_verify_install</code> and <code>afs_check_setup</code> directly, and you can ask it about traffic in chat.</p>
+
+<h2 id="publish">Publish, then verify</h2>
+<p>Replit is clear that "changes in the Project Editor do not automatically replace the live release", so republish after the agent's edits. Agent-built apps publish as Autoscale or Reserved VM deployments (Static deployments aren't compatible with them), at <code>your-app.replit.app</code> or your own domain. Then open the published URL once in a normal browser and run the checks:</p>
+<pre><code>K=$AGENTFIRSTSTACK_API_KEY
+curl -s -X POST https://analytics.agentfirststack.com/v1/sites/$SITE/verify -H "Authorization: Bearer $K"
+curl -s "https://agentfirststack.com/v1/setup?services=analytics" -H "Authorization: Bearer $K"</code></pre>
+<p>Verify fetches your published page, finds the tag, fetches <code>/_a/s.js</code> through your route to make sure it serves the tracker, checks whether events arrived with the proxy key, and lists fixes.</p>
+<p><b>The dev URL doesn't count.</b> The workspace preview runs at <code>UUID.servername.replit.dev</code>, which is private by default and only live while you work. A site accepts events only from its own domain and subdomains, so preview visits are dropped and stay out of your numbers. <code>replit.app</code> and <code>replit.dev</code> on their own are refused as site domains (shared suffixes); <code>your-app.replit.app</code> is fine.</p>
+<p><b>Custom domains:</b> Replit asks for an A record and a <code>replit-verify</code> TXT record, with Cloudflare's proxy turned off ("DNS only"). That rules out a Cloudflare Worker route on a Replit-hosted domain, which is why the proxy lives in your backend.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Why does verify pass in the workspace but events never show up?</h3>
+<p>Probably the dev URL. Events from <code>*.replit.dev</code> aren't your site's domain, so they're dropped. Republish and test on the published address.</p>
+<h3>Server events return 401 in the published app only. Why?</h3>
+<p>Workspace secrets don't carry over to the published app. Add the key under Production app secrets and republish.</p>
+<h3>Why do all visitors show the same country?</h3>
+<p>That's the first-party proxy: your backend doesn't know visitor locations, so the collector sees your server's. Counts are right. Switch to the direct snippet if location matters more than visitors with ad blockers.</p>
+<h3>Does the tracker count page changes in a single-page app?</h3>
+<p>Yes. It records a page view on every History API navigation (<code>pushState</code>, <code>replaceState</code>, back and forward), so React Router and similar routers need nothing extra.</p>
+<h3>What does it cost?</h3>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can run it yourself on Cloudflare Workers.</p>
+
+<p class="meta">Replit is a trademark of Replit, Inc. AgentFirstStack isn't affiliated with Replit. Replit details come from its docs (<a href="https://docs.replit.com/build/code/security">Agent security</a>, <a href="https://docs.replit.com/features/artifact-types/web-apps">web apps</a>, <a href="https://docs.replit.com/core-concepts/project-editor/app-setup/secrets">secrets</a>, <a href="https://docs.replit.com/build/troubleshooting">troubleshooting</a>, <a href="https://docs.replit.com/features/publishing/deployment-types">deployment types</a>, <a href="https://docs.replit.com/build/publish-your-app">publishing</a>, <a href="https://docs.replit.com/core-concepts/project-editor/app-setup/development-urls">development URLs</a>, <a href="https://docs.replit.com/features/publishing/custom-domains">custom domains</a>, <a href="https://docs.replit.com/build/connect-via-mcp">MCP</a>), checked on 6 November 2026.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-lovable"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a Lovable app</b><span>index.html, Cloud secrets and the published URL.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-bolt"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a Bolt app</b><span>index.html, .env and publishing.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-v0"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a v0 app</b><span>app/layout.tsx, Vercel env vars and previews.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#proxy">Serve the tracker from your app</a></li><li><a href="#secrets">Secrets: workspace and production</a></li><li><a href="#mcp">Connect the MCP server (optional)</a></li><li><a href="#publish">Publish, then verify</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

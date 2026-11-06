@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Next.js analytics in one prompt</title>
+<meta name="description" content="Add cookieless analytics to a Next.js app with one prompt: a first-party proxy in proxy.ts, the tracker in app/layout.tsx, route changes counted.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/nextjs-analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Next.js analytics in one prompt">
+<meta property="og:description" content="Add cookieless analytics to a Next.js app with one prompt: a first-party proxy in proxy.ts, the tracker in app/layout.tsx, route changes counted.">
+<meta property="og:url" content="https://agentfirststack.com/guides/nextjs-analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Next.js analytics in one prompt">
+<meta name="twitter:description" content="Add cookieless analytics to a Next.js app with one prompt: a first-party proxy in proxy.ts, the tracker in app/layout.tsx, route changes counted.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/nextjs-analytics#article",
+      "headline": "Next.js analytics in one prompt",
+      "description": "Add cookieless analytics to a Next.js app with one prompt: a first-party proxy in proxy.ts, the tracker in app/layout.tsx, route changes counted.",
+      "url": "https://agentfirststack.com/guides/nextjs-analytics",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/nextjs-analytics",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Next.js",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Next.js analytics",
+          "item": "https://agentfirststack.com/guides/nextjs-analytics"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/nextjs-analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Do I need a router hook for App Router navigation?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The tracker counts every History API navigation, which is what the App Router and Pages Router both use. A usePathname effect that sends page views would count each page twice."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does verify say snippet_present failed when events are arriving?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You're probably using next/script with afterInteractive. Next.js adds that script in the browser after hydration, so it isn't in the HTML verify reads. Tracking works either way; switch to a plain \u003cscript async> in the root layout, or add the _afs-verify DNS TXT record, so the domain can be verified."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work with output: \"export\"?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Proxy, rewrites and Route Handlers that read the request don't run in a static export, so put the first-party proxy in the host instead (a Cloudflare Worker route, a Netlify Edge Function, vercel.json or nginx) and send server events from wherever your backend runs."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I skip the proxy and load the script from analytics.agentfirststack.com?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, the direct snippet works anywhere. But ad blockers block that host, so visitors who use one won't be counted. Through /_a/ on your own domain they are."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it need a cookie banner?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The tracker sets no cookies and stores nothing in the browser by default: a visitor is a daily-salted hash of the IP address and user agent. Whether you need a banner is a legal question for your site. If your consent manager should decide, add data-require-consent=\"true\" and call afsa('consent', true) after consent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I keep Vercel Web Analytics or GA4 running too?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. They don't interact. Keep the old tool for a week, import its history, and compare the daily visitors with GET /v1/sites/:id/imports/compare before you remove anything."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Next.js analytics</span></nav>
+      <h1>Next.js analytics in one prompt</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>Paste the prompt below into your coding agent (Claude Code, Cursor, Codex or any agent that can make HTTP requests) inside your Next.js project. It gets a key with one request, creates the site, serves the tracker from your own domain through <code>proxy.ts</code>, puts it in the root layout, deploys, and checks the live site until the setup check passes. The steps after the prompt are what it does, so you can check its work or do it by hand. For other tools and platforms, start at <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into your coding agent, in the Next.js project</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this Next.js app with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If .env.local already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env.local as AGENTFIRSTSTACK_API_KEY (never with a NEXT_PUBLIC_ prefix) and in the host's production environment variables. Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the production domain and read GET /v1/sites/:id/install?framework=nextjs. Serve the tracker from this app's own domain: add the first-party proxy from first_party_proxy.nextjs as proxy.ts (middleware.ts before Next.js 16), reading the proxy key from the server-only env var AFS_PROXY_KEY (set it in .env.local and in production). Then add &lt;script async src="/_a/s.js" data-site="..."&gt; inside &lt;head&gt; in app/layout.tsx, so it's in the server-rendered HTML (Pages Router: with defer in pages/_document.tsx).
+
+4. Create goals for sign-ups, purchases and the main buttons. Send conversions only the server knows about (a paid order, a verified account) as server events from a Route Handler or Server Action, with afsa.visitorId() passed from the page.
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Deploy (or tell me to), open the production site once, then run verify and fix what it reports.
+
+7. Write the site id and the env var names (never the values) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+8. Run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="proxy">First, a proxy on your own domain</h2>
+<p>Ad blockers block requests to <code>analytics.agentfirststack.com</code>. So the tracker is served from your own domain: <code>proxy.ts</code> forwards <code>/_a/*</code> to AgentFirstStack, and the page loads <code>/_a/s.js</code>. The tracker posts to the path it was loaded from (<code>/_a/e</code>), so the script and its events are both first-party, and visitors with ad blockers are counted too.</p>
+<p>The proxy has to send one header: <code>x-afs-proxy-key</code>, the site's own secret (<code>first_party_proxy.proxy_key</code> in the install answer). The collector only trusts the visitor IP in <code>X-Forwarded-For</code> and the geo headers from a request that carries it, because anyone can send those headers. Without it, every request comes from your server's address: all visitors merge into a few, the country is your server's, and attack protection can set real visitors aside as one network over its daily share. Verify reports it as <code>proxy_key</code>, and the setup check shows <code>analytics.proxy_key</code> failing.</p>
+<p>On Next.js 16 the file is <code>proxy.ts</code>; on 13 to 15 it's <code>middleware.ts</code> and the function is named <code>middleware</code> (<a href="https://nextjs.org/docs/app/api-reference/file-conventions/proxy">Next.js proxy docs</a>). <code>first_party_proxy.nextjs</code> in the install answer has the proxy part, with the key written in; this version reads the key from an environment variable instead and also reports AI crawlers, since a project gets one proxy file:</p>
+<pre><code>// proxy.ts (Next.js 16+; on 13-15: middleware.ts with "export function middleware")
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
+
+const A = "https://analytics.agentfirststack.com";
+// Vercel's geo headers, mapped to the collector's. On other hosts, map yours or leave this out.
+const GEO: Record&lt;string, string&gt; = { country: "x-vercel-ip-country", "region-code": "x-vercel-ip-country-region",
+  city: "x-vercel-ip-city", timezone: "x-vercel-ip-timezone", lat: "x-vercel-ip-latitude", lon: "x-vercel-ip-longitude" };
+// Or fetch the current list: GET https://analytics.agentfirststack.com/v1/crawlers (prefilter)
+const BOTS = /gptbot|oai-searchbot|chatgpt-user|claudebot|claude-user|claude-searchbot|perplexity|googlebot|bingbot|applebot|ccbot|bytespider|amazonbot|meta-external|bot\b|bot\/|crawl|spider/i;
+
+export function proxy(request: NextRequest, event: NextFetchEvent) {
+  const { pathname, search } = request.nextUrl;
+
+  // 1. First-party analytics: /_a/s.js and /_a/e
+  if (pathname.startsWith("/_a/")) {
+    const headers = new Headers(request.headers);
+    for (const k of [...headers.keys()]) if (k.startsWith("x-afs-")) headers.delete(k); // never pass on visitor-sent values
+    headers.set("x-afs-proxy-key", process.env.AFS_PROXY_KEY!);
+    headers.set("x-forwarded-for", (request.headers.get("x-forwarded-for") || "").split(",")[0].trim());
+    for (const [k, h] of Object.entries(GEO)) {
+      const v = request.headers.get(h);
+      if (v) headers.set("x-afs-geo-" + k, v);
+    }
+    headers.delete("cookie");
+    return NextResponse.rewrite(new URL(pathname + search, A), { request: { headers } });
+  }
+
+  // 2. Bots don't run the tracker: report them, without waiting for the answer
+  const ua = request.headers.get("user-agent") || "";
+  if (BOTS.test(ua))
+    event.waitUntil(
+      fetch(`${A}/v1/sites/${process.env.AFS_SITE}/crawls`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.AGENTFIRSTSTACK_API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({ user_agent: ua, path: pathname }),
+      }).catch(() =&gt; {}),
+    );
+  return NextResponse.next();
+}
+
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };</code></pre>
+<p>Proxy doesn't run in a static export (<code>output: "export"</code>); the <a href="https://nextjs.org/docs/app/guides/static-exports">static exports page</a> lists it as unsupported, along with rewrites. There, proxy at the host. <code>GET /v1/sites/:id/install</code> returns configs filled in with the proxy key for a Cloudflare Worker route, a <code>vercel.json</code> route with a request-header transform, <code>netlify.toml</code> and nginx; on Netlify, the Edge Function in the <a href="/guides/astro-analytics#static">Astro guide</a> also passes Netlify's location data. The Cloudflare Worker sends the most exact location (country, region and city from Cloudflare's edge), so prefer it when your domain is on Cloudflare.</p>
+<p><b>Location on other hosts.</b> On Vercel, the proxy maps Vercel's <code>x-vercel-ip-*</code> headers. On a host without location headers, the collector only sees your server, so country and city show your server's location; visitor counts stay right. If you add the tag manager too, proxy it the same way under <code>/_t/*</code> with the configs and its own key from <code>GET /v1/containers/:id/install?proxy=1</code>.</p>
+<p><b>Don't</b> try a Route Handler at <code>app/_a/...</code>: Next.js treats folders starting with an underscore as private and doesn't route them.</p>
+
+
+<h2 id="layout">Then, the tag in the root layout</h2>
+<p><b>App Router.</b> The root layout, <code>app/layout.tsx</code>, wraps every page, so one tag there covers the whole app:</p>
+<pre><code>// app/layout.tsx
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    &lt;html lang="en"&gt;
+      &lt;head&gt;
+        &lt;script async src="/_a/s.js" data-site="site_..." /&gt;
+      &lt;/head&gt;
+      &lt;body&gt;{children}&lt;/body&gt;
+    &lt;/html&gt;
+  );
+}</code></pre>
+<p>Why a plain <code>&lt;script async&gt;</code> and not <code>next/script</code>? <code>GET /v1/sites/:id/install?framework=nextjs</code> returns a <code>&lt;Script strategy="afterInteractive"&gt;</code> for the direct snippet, and that tracks fine. But the <a href="https://nextjs.org/docs/app/api-reference/components/script">Next.js docs</a> say afterInteractive scripts are injected on the client after hydration, and in the App Router the server HTML only carries a preload hint for them. <code>verify</code> reads the server HTML, so it reports <code>snippet_present</code> as failing and passes on events alone. It also can't prove the domain from the homepage, which the setup check wants. React renders <code>&lt;script async src&gt;</code> into the server HTML and <a href="https://react.dev/reference/react-dom/components/script">moves it into <code>&lt;head&gt;</code></a>, so verify finds it. Use <code>async</code> rather than <code>defer</code> here: React's docs say <code>defer</code> isn't compatible with streaming server rendering.</p>
+<p>If you'd rather keep <code>next/script</code>, prove the domain with a DNS TXT record instead: <code>_afs-verify.example.com</code> with the value <code>afs-analytics-site=site_...</code>, then run verify again.</p>
+<p><b>Pages Router.</b> Put the tag in <code>pages/_document.tsx</code>, which only renders on the server:</p>
+<pre><code>// pages/_document.tsx
+import { Html, Head, Main, NextScript } from "next/document";
+
+export default function Document() {
+  return (
+    &lt;Html lang="en"&gt;
+      &lt;Head&gt;
+        &lt;script defer src="/_a/s.js" data-site="site_..." /&gt;
+      &lt;/Head&gt;
+      &lt;body&gt;
+        &lt;Main /&gt;
+        &lt;NextScript /&gt;
+      &lt;/body&gt;
+    &lt;/Html&gt;
+  );
+}</code></pre>
+<p>The site id in <code>data-site</code> is public: it only lets a browser send page views for your domain. It doesn't need an environment variable.</p>
+
+<h2 id="routes">Route changes and custom events</h2>
+<p>The tracker wraps <code>history.pushState</code> and <code>replaceState</code> and listens for <code>popstate</code>, so every <code>&lt;Link&gt;</code> click and <code>router.push</code> is a page view. You don't need a <code>usePathname</code> effect, and adding one would count pages twice.</p>
+<p>The tracker keys a page on its path plus query string. If a page keeps UI state in the query (filters, tabs, a search box), each change is a new page view of the same path. Usually that's what you want; if it's noise, drop those page views with <code>data-before-send</code> (in the <a href="https://analytics.agentfirststack.com/llms.txt">analytics manual</a>).</p>
+<p>Events need no JavaScript for buttons and links:</p>
+<pre><code>&lt;button data-afsa-event="signup" data-afsa-prop-plan="pro"&gt;Start free&lt;/button&gt;</code></pre>
+<p>From a client component, call the global the tracker defines:</p>
+<pre><code>"use client";
+declare global { interface Window { afsa?: (...a: unknown[]) =&gt; void } }
+
+export function BuyButton() {
+  return &lt;button onClick={() =&gt; window.afsa?.("event", "begin_checkout", { plan: "pro" })}&gt;Buy&lt;/button&gt;;
+}</code></pre>
+
+<h2 id="env">Keep the key on the server</h2>
+<p>The browser only ever sees the site id. The API key (<code>AGENTFIRSTSTACK_API_KEY</code>) is for server code: creating goals, verify, server events, crawler reports. Next.js keeps variables without the <code>NEXT_PUBLIC_</code> prefix out of the browser; <a href="https://nextjs.org/docs/app/guides/environment-variables">its docs</a> say prefixed ones are inlined "into any JavaScript sent to the browser". So never rename it <code>NEXT_PUBLIC_AGENTFIRSTSTACK_API_KEY</code> to make an error go away. If a client component needs something from AgentFirstStack, add a Route Handler that calls the API.</p>
+<p>The proxy adds two more, also server-only: <code>AFS_PROXY_KEY</code> (the site's proxy key, a secret) and <code>AFS_SITE</code> (the site id, for crawler reports). On Vercel, add all three under the project's Environment Variables for Production and Preview. A missing <code>AFS_PROXY_KEY</code> doesn't break the page: events still arrive, but without the key, and verify reports <code>proxy_key</code>.</p>
+
+<h2 id="server">Server events and revenue</h2>
+<p>The browser can't see a verified account or a paid order. Pass the visitor id from the page with the request that causes it, then send the event from the server:</p>
+<pre><code>// in the browser, with the sign-up form
+body: JSON.stringify({ email, visitorId: window.afsa?.visitorId?.() })
+
+// app/api/signup/route.ts (or a Server Action)
+await fetch(`https://analytics.agentfirststack.com/v1/sites/${process.env.AFS_SITE}/events`, {
+  method: "POST",
+  headers: { authorization: `Bearer ${process.env.AGENTFIRSTSTACK_API_KEY}`, "content-type": "application/json" },
+  body: JSON.stringify({ events: [{ name: "signup", visitor_id: visitorId, user_id: user.id }] }),
+});</code></pre>
+<p>With a <code>visitor_id</code>, the event joins that visit, so the sign-up counts for the source and page that brought the visitor. For Stripe, put the same id in the Checkout Session's <code>metadata.afs_visitor_id</code> and connect Stripe once (<code>POST /v1/sites/:id/integrations/stripe/connect</code> with a restricted key); every payment then lands on its source.</p>
+
+<h2 id="verify">Check it on the live site</h2>
+<ol>
+<li><b>Open the production URL once</b> in a normal browser. Headless browsers are filtered out unless the visit is marked as test traffic (<code>?afsa_debug=1</code>).</li>
+<li><b>Run verify:</b> <code>POST https://analytics.agentfirststack.com/v1/sites/:id/verify</code>. It fetches the page and checks the snippet, that <code>/_a/s.js</code> really serves the tracker through your proxy, your Content-Security-Policy, whether events arrived and whether they carried the proxy key, and it returns fixes.</li>
+<li><b>Run the setup check:</b> <code>GET https://agentfirststack.com/v1/setup?services=analytics</code> until <code>"ready": true</code>. It covers what verify can't see: goals that have never counted, the owner's email and weekly report, alerts and the claim link.</li>
+</ol>
+<p>If you set a Content-Security-Policy, the proxied tracker only needs <code>'self'</code> in <code>script-src</code> and <code>connect-src</code>. Verify names the directive that blocks it.</p>
+<p><b>Vercel preview deployments</b> run on their own <code>*.vercel.app</code> hosts. A site accepts browser events only from its domain and its subdomains, so preview traffic is dropped as <code>hostname_not_allowed</code> and stays out of your numbers; verify lists the hosts it dropped. If the app has no custom domain yet, create the site for its own hostname (<code>myapp.vercel.app</code>); <code>vercel.app</code> on its own is refused because it's a shared suffix.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Do I need a router hook for App Router navigation?</h3>
+<p>No. The tracker counts every History API navigation, which is what the App Router and Pages Router both use. A <code>usePathname</code> effect that sends page views would count each page twice.</p>
+<h3>Why does verify say snippet_present failed when events are arriving?</h3>
+<p>You're probably using <code>next/script</code> with <code>afterInteractive</code>. Next.js adds that script in the browser after hydration, so it isn't in the HTML verify reads. Tracking works either way; switch to a plain <code>&lt;script async&gt;</code> in the root layout, or add the <code>_afs-verify</code> DNS TXT record, so the domain can be verified.</p>
+<h3>Does it work with output: "export"?</h3>
+<p>Yes. Proxy, rewrites and Route Handlers that read the request don't run in a static export, so put the first-party proxy in the host instead (a Cloudflare Worker route, a Netlify Edge Function, <code>vercel.json</code> or nginx) and send server events from wherever your backend runs.</p>
+<h3>Can I skip the proxy and load the script from analytics.agentfirststack.com?</h3>
+<p>Yes, the direct snippet works anywhere. But ad blockers block that host, so visitors who use one won't be counted. Through <code>/_a/</code> on your own domain they are.</p>
+<h3>Does it need a cookie banner?</h3>
+<p>The tracker sets no cookies and stores nothing in the browser by default: a visitor is a daily-salted hash of the IP address and user agent. Whether you need a banner is a legal question for your site. If your consent manager should decide, add <code>data-require-consent="true"</code> and call <code>afsa('consent', true)</code> after consent.</p>
+<h3>Can I keep Vercel Web Analytics or GA4 running too?</h3>
+<p>Yes. They don't interact. Keep the old tool for a week, import its history, and compare the daily visitors with <code>GET /v1/sites/:id/imports/compare</code> before you remove anything.</p>
+
+<p class="meta">Next.js and Vercel are trademarks of Vercel, Inc. AgentFirstStack isn't affiliated with Vercel or Meta. Next.js, React and Vercel details come from their docs, checked on 6 November 2026; the <code>next/script</code> behaviour was also read in the Next.js 16.2.6 source.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-v0"><span class="svc svc-analytics">Analytics</span><b>Add analytics to a v0 app</b><span>app/layout.tsx, Vercel env vars and previews.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-cursor"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Cursor</b><span>Agent mode, .cursor/mcp.json and the setup check.</span></a></li>
+        <li><a class="card" href="/guides/astro-analytics"><span class="svc svc-analytics">Analytics</span><b>Astro analytics in one prompt</b><span>Layouts, is:inline and the ClientRouter.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#proxy">First, a proxy on your own domain</a></li><li><a href="#layout">Then, the tag in the root layout</a></li><li><a href="#routes">Route changes and custom events</a></li><li><a href="#env">Keep the key on the server</a></li><li><a href="#server">Server events and revenue</a></li><li><a href="#verify">Check it on the live site</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

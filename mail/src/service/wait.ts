@@ -2,10 +2,11 @@ import { ApiError, badRequest, newId } from "@afs/shared";
 import { type AppEnv, type Standing, cap, standingOf } from "../env";
 import { normalizeDomain, splitAddress } from "../lib/address";
 import { parkOnInbox } from "../lib/park";
-import { assertActive, rateLimit } from "./budgets";
+import { registrableDomain } from "../lib/sender";
+import { assertActive, maxBlobBytes, rateLimit } from "./budgets";
 import { type InboxRow, type MessageRow, messageSummary, replyTextOf, utcDay } from "./format";
 import { getInboxRow } from "./inboxes";
-import { maxInboundPerDay } from "./ingest";
+import { NEAR_FULL, SMALL_MESSAGE_BYTES, formatBytes, maxInboundPerDay } from "./ingest";
 
 /**
  * wait_for_email: return the newest inbound message that matches, received after `after`.
@@ -98,7 +99,8 @@ export function senderCondition(f: SenderFilter): { sql: string; binds: unknown[
   return { sql: "substr('.' || substr(from_address, instr(from_address, '@') + 1), -?) = ?", binds: [dotted.length, dotted] };
 }
 
-async function findMatch(env: AppEnv, inboxId: string, after: number, f: WaitFilters): Promise<MessageRow | null> {
+/** The WHERE clause (and binds) of a wait's filters. */
+function matchWhere(inboxId: string, after: number, f: WaitFilters): { where: string[]; binds: unknown[] } {
   const where = ["inbox_id = ?", "direction = 'in'", "received_at > ?"];
   const binds: unknown[] = [inboxId, after];
   // instr(), not LIKE: D1 refuses LIKE patterns over 50 bytes, and filters may be up to 500 characters.
@@ -127,9 +129,77 @@ async function findMatch(env: AppEnv, inboxId: string, after: number, f: WaitFil
   }
   if (f.requireAuth) where.push("json_extract(auth_json, '$.verdict') = 'pass'");
   if (f.requireCodeOrLink) where.push("(code IS NOT NULL OR verify_link IS NOT NULL)");
+  return { where, binds };
+}
+
+async function findMatch(env: AppEnv, inboxId: string, after: number, f: WaitFilters): Promise<MessageRow | null> {
+  const { where, binds } = matchWhere(inboxId, after, f);
   return env.DB.prepare(`SELECT * FROM messages WHERE ${where.join(" AND ")} ORDER BY received_at DESC, seq DESC LIMIT 1`)
     .bind(...binds)
     .first<MessageRow>();
+}
+
+/** The domain latest-code reports and groups senders by: the registrable domain of the From address ("github.com" for noreply@mail.github.com). Pure. */
+export function senderDomainOf(address: string | null | undefined): string | null {
+  const a = (address ?? "").trim().toLowerCase();
+  const at = a.lastIndexOf("@");
+  return at > 0 && at < a.length - 1 ? registrableDomain(a.slice(at + 1)) : null;
+}
+
+/** One sender domain that sent matching code mail in a latest-code window (its newest message). */
+export interface CodeSender {
+  sender_domain: string | null;
+  from: string | null;
+  message_id: string;
+  received_at: number;
+  auth_verdict: string | null;
+  messages: number;
+}
+
+/** How many recent matches the ambiguity check reads, and how many sender domains it reports. */
+const SENDER_SCAN = 50;
+const SENDER_REPORT = 10;
+
+/** Group matches (newest first) by sender domain, keeping each domain's newest. Pure. */
+export function groupBySenderDomain(
+  rows: { id: string; from_address: string | null; received_at: number; auth_json: string | null }[],
+): CodeSender[] {
+  const out = new Map<string, CodeSender>();
+  for (const r of rows) {
+    const d = senderDomainOf(r.from_address);
+    const k = d ?? `?${r.from_address ?? ""}`;
+    const seen = out.get(k);
+    if (seen) {
+      seen.messages++;
+      continue;
+    }
+    let verdict: string | null = null;
+    try {
+      verdict = r.auth_json ? ((JSON.parse(r.auth_json) as { verdict?: string }).verdict ?? null) : null;
+    } catch {
+      verdict = null;
+    }
+    out.set(k, {
+      sender_domain: d,
+      from: r.from_address,
+      message_id: r.id,
+      received_at: r.received_at,
+      auth_verdict: verdict,
+      messages: 1,
+    });
+  }
+  return [...out.values()];
+}
+
+/** Every sender domain with matching mail in the window (newest first): latest-code's guard when no `from` is given. */
+async function codeSenders(env: AppEnv, inboxId: string, after: number, f: WaitFilters): Promise<CodeSender[]> {
+  const { where, binds } = matchWhere(inboxId, after, f);
+  const { results } = await env.DB.prepare(
+    `SELECT id, from_address, received_at, auth_json FROM messages WHERE ${where.join(" AND ")} ORDER BY received_at DESC, seq DESC LIMIT ${SENDER_SCAN}`,
+  )
+    .bind(...binds)
+    .all<{ id: string; from_address: string | null; received_at: number; auth_json: string | null }>();
+  return groupBySenderDomain(results);
 }
 
 /** What a wait parks on: an inbox, or a pseudo-inbox for account-wide waits (events, delivery). */
@@ -286,16 +356,22 @@ export async function waitForEmail(
   );
 }
 
-/** On timeout: say so if new mail is being refused because the account's daily limit is reached. */
+/** On timeout: say so if new mail is being refused because the account's daily limit is reached or its storage is (nearly) full. */
 async function limitNote(env: AppEnv, standing: Standing, inbox: InboxRow): Promise<string> {
   const perDay = maxInboundPerDay(env, standing);
-  if (Number.isFinite(perDay)) {
-    const r = await env.DB.prepare("SELECT count FROM inbound_counters WHERE account_id = ? AND day = ?")
-      .bind(inbox.account_id, utcDay(Date.now()))
-      .first<{ count: number }>();
-    if ((r?.count ?? 0) >= perDay)
-      return ` NOTE: this account has received its maximum of ${perDay} messages today (UTC), so new mail is rejected until 00:00 UTC.`;
-  }
+  const blobCap = maxBlobBytes(env, standing);
+  if (!Number.isFinite(perDay) && !Number.isFinite(blobCap)) return "";
+  const r = await env.DB.prepare(
+    `SELECT (SELECT count FROM inbound_counters WHERE account_id = ?1 AND day = ?2) AS today,
+            (SELECT blob_bytes FROM account_usage WHERE account_id = ?1) AS stored`,
+  )
+    .bind(inbox.account_id, utcDay(Date.now()))
+    .first<{ today: number | null; stored: number | null }>();
+  if ((r?.today ?? 0) >= perDay)
+    return ` NOTE: this account has received its maximum of ${perDay} messages today (UTC), so new mail is rejected until 00:00 UTC.`;
+  const stored = r?.stored ?? 0;
+  if (Number.isFinite(blobCap) && stored >= blobCap * NEAR_FULL)
+    return ` NOTE: this account keeps ${formatBytes(stored)} of its ${formatBytes(blobCap)} of mail storage, so larger mail (over ${formatBytes(SMALL_MESSAGE_BYTES)}) may be refused; delete old mail (DELETE /v1/messages/:id, DELETE /v1/inboxes/:id/messages) to make room.`;
   return "";
 }
 
@@ -318,13 +394,41 @@ export interface LatestCodeFilters {
   tag?: string;
 }
 
+/**
+ * latest-code. With `from` only that sender's mail counts. Without it, any sender's does, and since
+ * anyone who can send authenticated mail (from a domain of their own) can email a predictable
+ * address, the answer is guarded: it names the sender's domain first (`sender_domain`) with a
+ * `warning`, and when code mail from more than one sender domain arrived in the window (after ..
+ * now) it refuses to pick (409 ambiguous_sender, with the candidates and the fix).
+ */
 export async function latestCode(env: AppEnv, accountId: string, inboxId: string, filters: LatestCodeFilters, timeoutS?: number) {
   const { from, allow_unauthenticated, ...rest } = filters;
   const sender = from ? parseSenderFilter(from) : undefined;
   const requireAuth = !allow_unauthenticated;
-  const r = await waitForEmail(env, accountId, inboxId, { ...rest, sender, requireAuth, requireCodeOrLink: true }, timeoutS);
+  const wf: WaitFilters = { ...rest, sender, requireAuth, requireCodeOrLink: true };
+  const r = await waitForEmail(env, accountId, inboxId, wf, timeoutS);
   const m = r.message;
+  const senderDomain = senderDomainOf(m.from.address);
+  let guard: { warning: string; hint: string } | null = null;
+  if (!sender) {
+    const senders = await codeSenders(env, r.row.inbox_id, r.after, wf);
+    if (senders.length > 1) {
+      const names = senders.map((s) => s.sender_domain ?? s.from ?? "?");
+      throw new ApiError(
+        409,
+        "ambiguous_sender",
+        `Mail with a code or link from ${senders.length} different senders (${names.slice(0, 5).join(", ")}${senders.length > 5 ? ", ..." : ""}) arrived since ${new Date(r.after).toISOString()}, and no \`from\` says which one you are waiting for, so latest-code will not pick one.`,
+        `Call again with from=<the domain of the site you are signing up to> (e.g. from=github.com; pick it from what you signed up for, not from the candidates): only its mail counts then. Anyone can send mail to this address, and a code or link from a site you did not sign up to may be an attempt to take over your signup. To skip older mail, also pass after=<unix ms>.`,
+        { after: r.after, candidates: senders.slice(0, SENDER_REPORT) },
+      );
+    }
+    guard = {
+      warning: `No \`from\` was given, so this is the newest code from any sender: it came from ${senderDomain ?? m.from.address}. Use it only if that is the site you are signing up to; anyone can email this address.`,
+      hint: `Pass from=${senderDomain ?? "<the site's domain>"} (its subdomains match too) so mail from other senders is ignored; without it, latest-code answers 409 ambiguous_sender when more than one sender's code mail is in the window.`,
+    };
+  }
   return {
+    sender_domain: senderDomain,
     code: m.code,
     codes: m.codes,
     link: m.verify_link,
@@ -337,5 +441,6 @@ export async function latestCode(env: AppEnv, accountId: string, inboxId: string
     auth_required: requireAuth,
     tag: m.tag,
     waited_ms: r.waited_ms,
+    ...(guard ?? {}),
   };
 }

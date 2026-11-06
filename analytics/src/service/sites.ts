@@ -33,7 +33,7 @@ import { MAX_PATH_RULES, normalizePathRules } from "../lib/pathrules";
 import { type Ctx, type SiteRow, isVerified, jsonList, loadSite, parseExclusions, pushSettings, siteStub } from "./context";
 import { REPLAY_SITE_RE, proxyKeyFor } from "./ingest";
 import { protectionField, protectionJson } from "./quarantine";
-import { type Framework, installInstructions, scriptSnippet } from "./install";
+import { type Framework, PROXY_PATH, installInstructions, platformBase, scriptSnippet } from "./install";
 
 const hostnamePattern = z
   .string()
@@ -377,10 +377,18 @@ function checkTimezone(tz: string | undefined) {
     throw badRequest(`Unknown timezone "${tz}".`, 'Use an IANA name such as "UTC", "America/New_York" or "Asia/Kolkata".');
 }
 
+/** The install answer for a site: its proxy key and where first-party domains are created filled in. */
+async function installFor(ctx: Ctx, s: SiteRow, framework: Framework = "html") {
+  return installInstructions(s, ctx.baseUrl, framework, await proxyKeyFor(ctx.env, s.id), platformBase(ctx.env));
+}
+
 function nextSteps(ctx: Ctx, s: SiteRow): string[] {
+  const site = platformBase(ctx.env);
   return [
-    `Add the snippet to every page's <head>: ${scriptSnippet(ctx.baseUrl, s.id)} (framework-specific code: GET /v1/sites/${s.id}/install?framework=nextjs|astro|react|wordpress|gtm|tags).`,
-    `Optional but recommended: proxy ${"/_a/*"} on your domain to ${ctx.baseUrl} so tracking is first-party (snippets in install.first_party_proxy).`,
+    site
+      ? `Serve it first-party (the default; ad blockers block analytics.* hosts): a first-party domain is one CNAME, POST ${site}/v1/first-party-domains {"hostname":"edge.${s.domain}"} (MCP afs_add_first_party_domain), then <script defer src="https://edge.${s.domain}/_a/s.js" data-site="${s.id}"></script>. Can't change DNS: the path proxy (${PROXY_PATH}/*, install.first_party_proxy). Order and snippets: install.first_party.`
+      : `Serve it first-party (the default; ad blockers block analytics.* hosts): proxy ${PROXY_PATH}/* on your domain to ${ctx.baseUrl} and use <script defer src="${PROXY_PATH}/s.js" data-site="${s.id}"></script> (code in install.first_party_proxy).`,
+    `Add the snippet to every page's <head> (framework-specific code: GET /v1/sites/${s.id}/install?framework=nextjs|astro|react|wordpress|gtm|tags). The direct one, ${scriptSnippet(ctx.baseUrl, s.id)}, is the last resort.`,
     `Open the site in a browser, then confirm: POST /v1/sites/${s.id}/verify (MCP: verify_install).`,
     `Browser events are accepted from ${s.domain} and its subdomains only; other hostnames (a preview or staging domain) go in allowed_hostnames (PATCH /v1/sites/${s.id}).`,
     `Revenue from the browser tracker (afsa('revenue')) counts only with browser_revenue: true; prefer server events, POST /v1/sites/${s.id}/payments or Stripe.`,
@@ -403,7 +411,7 @@ export async function createSite(ctx: Ctx, raw: unknown) {
       site: siteJson(existing, ctx.baseUrl),
       existing: true,
       note: "A site for this domain already exists on your account; returned unchanged. Use PATCH /v1/sites/:id to change settings.",
-      install: installInstructions(existing, ctx.baseUrl, "html", await proxyKeyFor(ctx.env, existing.id)),
+      install: await installFor(ctx, existing),
       next_steps: nextSteps(ctx, existing),
     };
   }
@@ -460,13 +468,13 @@ export async function createSite(ctx: Ctx, raw: unknown) {
     // Concurrent create of the same domain: the unique index wins, return the other one.
     const other = await find();
     if (other) {
-      const install = installInstructions(other, ctx.baseUrl, "html", await proxyKeyFor(ctx.env, other.id));
+      const install = await installFor(ctx, other);
       return { site: siteJson(other, ctx.baseUrl), existing: true, install, next_steps: nextSteps(ctx, other) };
     }
     throw e;
   }
   await pushSettings(ctx.env, row);
-  const install = installInstructions(row, ctx.baseUrl, "html", await proxyKeyFor(ctx.env, row.id));
+  const install = await installFor(ctx, row);
   return { site: siteJson(row, ctx.baseUrl), existing: false, install, next_steps: nextSteps(ctx, row) };
 }
 
@@ -620,7 +628,7 @@ export async function deleteSite(ctx: Ctx, siteId: string, opts: { fetcher?: Fet
 
 export async function getInstall(ctx: Ctx, siteId: string, framework?: Framework) {
   const s = await loadSite(ctx, siteId);
-  return installInstructions(s, ctx.baseUrl, framework ?? "html", await proxyKeyFor(ctx.env, s.id));
+  return installFor(ctx, s, framework ?? "html");
 }
 
 // ------------------------------------------------------------------ exclusions

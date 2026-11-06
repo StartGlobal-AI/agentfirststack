@@ -244,6 +244,7 @@ pnpm afs restore hosted acct_...
 | Emails to people | D1 `email_outbox` | 30 days, deleted with the person's account |
 | Alert state | D1 `project_health`, `limit_warnings` | Warnings kept 30 days; both erased with the project |
 | Quarantine | analytics events `debug = 2`; tags event log `status: quarantined` | 7 days (with the test traffic purge), then deleted; never in reports |
+| Consent records | tags ContainerDO `consent_records`, `consent_daily` | 12 months; consent id, time, banner version, choices, country (no IP, user agent or visitor id) |
 
 ## Dependencies and runtime
 

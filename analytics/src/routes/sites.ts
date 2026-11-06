@@ -11,6 +11,8 @@ import { getMrr, listSubscriptions, recordSubscriptions } from "../service/subsc
 import { getItems } from "../service/items";
 import { getRealtimeMap, listSessions } from "../service/reads";
 import { getCrawlers, recordCrawls } from "../service/crawlers";
+import { getAiSearch } from "../service/ai-search";
+import { getWebVitals, getWebVitalsLab } from "../service/vitals";
 import { exportBody, exportEvents } from "../service/export";
 import { MAX_IMPORT_BYTES, compareImport, deleteImport, importData, listImports } from "../service/imports";
 import { MAX_COST_CSV_BYTES, deleteCosts, listCosts, recordCosts } from "../service/costs";
@@ -160,6 +162,9 @@ r.get("/:id/imports/compare", async (c) => c.json(await compareImport(ctxOf(c), 
 r.delete("/:id/imports/:import_id", async (c) => c.json(await deleteImport(ctxOf(c), c.req.param("id"), c.req.param("import_id"))));
 r.post("/:id/crawls", async (c) => c.json(await recordCrawls(ctxOf(c), c.req.param("id"), await body(c)), 202));
 r.get("/:id/crawlers", async (c) => c.json(await getCrawlers(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/ai-search", async (c) => c.json(await getAiSearch(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/web-vitals", async (c) => c.json(await getWebVitals(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/web-vitals/lab", async (c) => c.json(await getWebVitalsLab(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/user-props", async (c) => c.json(await listUserProps(ctxOf(c), c.req.param("id"))));
 r.get("/:id/items", async (c) => c.json(await getItems(ctxOf(c), c.req.param("id"), c.req.query())));
 // Ad spend: JSON {costs:[...]} / {csv}, or a text/csv body.

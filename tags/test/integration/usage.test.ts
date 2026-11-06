@@ -121,6 +121,7 @@ const PER_CONTAINER = [
   "container_db_bytes",
   "events_per_network_per_container_per_day",
   "quarantined_events_per_container_per_day",
+  "consent_records_per_container_per_day",
   "destinations_per_container",
   "versions_per_container",
   "draft_bytes",
@@ -139,6 +140,7 @@ const DROPS_DATA = [
   "deliveries_per_container_per_day",
   "visitors_per_container",
   "container_db_bytes",
+  "consent_records_per_container_per_day",
 ];
 // Attack protection's caps reset daily but lose nothing from real visitors (quarantine, not drops).
 const DAILY = [

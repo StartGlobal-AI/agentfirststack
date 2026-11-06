@@ -102,6 +102,8 @@ export interface Attribution {
   click_id: string | null;
 }
 
+export type IngestPath = "direct" | "proxy" | "edge";
+
 /** An event after Worker-side enrichment, as handed to SiteDO.ingest(). */
 export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   ts: number;
@@ -128,6 +130,13 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   dnt: boolean;
   /** browser: came through a first-party proxy without a valid x-afs-proxy-key (counted as a warning) */
   proxy_warning?: "proxy_key_missing" | "proxy_key_invalid" | null;
+  /**
+   * browser: how it reached the collector, counted per day (usage.via_*): straight to the analytics
+   * host (which ad blockers block), through the site's own proxy (a path prefix or its proxy key),
+   * or through a first-party domain on the platform's edge (then `edge_host` is that hostname)
+   */
+  via?: IngestPath;
+  edge_host?: string | null;
   /**
    * Visitor IP, only so the DO can test it against exclusions.ips in memory. Never stored, never
    * logged, never used as a drop sample.

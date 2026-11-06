@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopify analytics in one prompt</title>
+<meta name="description" content="Add cookieless analytics to a Shopify store with one prompt: the tracker in theme.liquid, checkout events from a custom pixel, revenue from order webhooks.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/shopify-analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Shopify analytics in one prompt">
+<meta property="og:description" content="Add cookieless analytics to a Shopify store with one prompt: the tracker in theme.liquid, checkout events from a custom pixel, revenue from order webhooks.">
+<meta property="og:url" content="https://agentfirststack.com/guides/shopify-analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Shopify analytics in one prompt">
+<meta name="twitter:description" content="Add cookieless analytics to a Shopify store with one prompt: the tracker in theme.liquid, checkout events from a custom pixel, revenue from order webhooks.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/shopify-analytics#article",
+      "headline": "Shopify analytics in one prompt",
+      "description": "Add cookieless analytics to a Shopify store with one prompt: the tracker in theme.liquid, checkout events from a custom pixel, revenue from order webhooks.",
+      "url": "https://agentfirststack.com/guides/shopify-analytics",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/shopify-analytics",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Shopify",
+        "applicationCategory": "BusinessApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Shopify analytics",
+          "item": "https://agentfirststack.com/guides/shopify-analytics"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/shopify-analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can I track the thank-you page with the theme snippet?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Theme code doesn't run in checkout, thank-you or order status pages. Use a custom pixel for those events and the order webhook for revenue."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I serve the tracker from my store's domain to get past ad blockers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not on Shopify. Theme files can't proxy, app proxies need an app and only live under /apps/ and similar prefixes, and Shopify doesn't support a Cloudflare proxy in front of the store. Page views from visitors with ad blockers are lost; paid orders still arrive through the webhook."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why not send revenue from the pixel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Anyone can send browser events, so browser revenue is ignored unless a site turns on browser_revenue. The webhook is signed by Shopify, retried until it lands, and recorded once."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What happens to orders from visitors whose id never reached the cart?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "They're still recorded with their revenue, under the channel Unattributed, so your totals stay right; only the source is unknown. That happens when the shopper blocked the tracker or checked out before the cart attribute was saved."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Shopify analytics</span></nav>
+      <h1>Shopify analytics in one prompt</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics to a Shopify store, an agent puts the tracker in your theme's <code>layout/theme.liquid</code>, tracks checkout steps with a custom pixel (theme code doesn't run in checkout), and records revenue from Shopify's order webhook, so every order lands on the source that brought the buyer. Paste the prompt below into a coding agent working on your theme with Shopify CLI. A few steps happen in the Shopify admin; the agent tells you exactly which. One honest limit up front: Shopify gives you no way to serve the tracker from your store's own domain, so visitors with an ad blocker aren't counted on Shopify pages. Other platforms: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into your coding agent, in the theme folder</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this Shopify store with AgentFirstStack. It's free, open-source analytics built for agents, and you can do the API side yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save it in .env as AGENTFIRSTSTACK_API_KEY (never in theme files: everything in a theme is public). Name the project after the store's domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the store's primary domain (or its .myshopify.com address if it has no custom domain). Shopify can't proxy a path to another server, so use the direct snippet: add it to layout/theme.liquid just before &lt;/head&gt;, after {{ content_for_header }}, plus a small script that stores afsa.visitorId() as the private cart attribute __afs_visitor_id. Push the theme with Shopify CLI (or tell me to). Note in AGENTFIRSTSTACK.md that ad blockers block analytics on this store.
+
+4. Give me the code for a custom pixel (Settings &gt; Customer events) that sends begin_checkout and checkout_completed to the collector, and a path rule so checkout URLs are stored as /checkout.
+
+5. Write a Cloudflare Worker that receives Shopify's "Order payment" webhook, checks its HMAC and records each order with POST /v1/sites/:id/payments (provider "shopify", the order id, total, currency, and the visitor id from the cart attribute). Tell me how to deploy it and where to paste its URL and signing key.
+
+6. Create goals for the main actions (add to cart, sign up for the newsletter, contact), an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+7. After the theme is live, open the store once, then run verify and fix what it reports.
+
+8. Write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md, create a claim link with POST https://agentfirststack.com/v1/claim-link, then run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, what I still have to click in the Shopify admin, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="theme">The tracker in theme.liquid</h2>
+<p>Shopify's general layout, <code>layout/theme.liquid</code>, wraps every storefront page that isn't checkout, and <code>{{ content_for_header }}</code> must sit inside its <code>&lt;head&gt;</code>. Add the tag right after it. An agent works on a local copy of the theme with Shopify CLI (<code>shopify theme pull</code>, then <code>shopify theme push</code>); by hand it's Online Store &gt; Themes &gt; Edit code. Shopify's own advice is to duplicate the theme first as a backup.</p>
+<pre><code>{{ content_for_header }}
+&lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_..."&gt;&lt;/script&gt;
+&lt;script&gt;
+  // Put the visitor id on the cart, so the order webhook knows who bought
+  (function attach(tries) {
+    var vid = window.afsa &amp;&amp; afsa.visitorId &amp;&amp; afsa.visitorId();
+    if (!vid) { if (tries &gt; 0) setTimeout(function () { attach(tries - 1); }, 1000); return; }
+    if (sessionStorage.getItem("afs_cart_vid") === vid) return;
+    var root = (window.Shopify &amp;&amp; Shopify.routes &amp;&amp; Shopify.routes.root) || "/";
+    fetch(root + "cart/update.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attributes: { __afs_visitor_id: vid } }),
+    }).then(function () { sessionStorage.setItem("afs_cart_vid", vid); });
+  })(10);
+&lt;/script&gt;</code></pre>
+<p><code>afsa.visitorId()</code> returns the id once the first page view has been answered, hence the short retry. The double underscore makes the cart attribute private: it isn't shown to the buyer, but it's on the order in the admin and in the webhook's <code>note_attributes</code>.</p>
+<p>Themes using an app embed block for analytics are the other route: Shopify injects app embed blocks before <code>&lt;/head&gt;</code>, but that needs an app, and the merchant has to switch the embed on. For one store, theme code is simpler.</p>
+
+<h2 id="no-proxy">Why there's no first-party option on Shopify</h2>
+<p>On most platforms, AgentFirstStack's tracker is served from the site's own domain through a small proxy, because ad blockers block <code>analytics.agentfirststack.com</code>. Shopify leaves no place for that proxy. Theme files can't forward requests. App proxies only exist under <code>/apps/</code> (or <code>/a/</code>, <code>/community/</code>, <code>/tools/</code>) for an installed app, and Shopify routes the request through its own servers. And Shopify doesn't support putting Cloudflare's proxy in front of a store: its docs say to set every record that points to Shopify to "DNS only". So the theme uses the direct snippet, and visitors who block it aren't counted in page views. The order webhook below still records every paid order, blocked or not; those orders just show as Unattributed when the visitor id never reached the cart.</p>
+
+<h2 id="checkout">Checkout: a custom pixel</h2>
+<p>Theme scripts don't run in checkout. <code>checkout.liquid</code> is no longer supported for the information, shipping and payment steps, and Shopify retired it for the thank-you and order status pages on 28 August 2025. What runs there now is pixels, set up in Settings &gt; Customer events. A custom pixel runs in a sandboxed iframe, where <code>window.location</code> is the sandbox's URL, not the page's, so don't load <code>s.js</code> in it. Send the events straight to the collector instead, with the page address Shopify gives each event:</p>
+<pre><code>// Settings &gt; Customer events &gt; Add custom pixel
+const SITE = "site_...";
+function send(name, event) {
+  fetch("https://analytics.agentfirststack.com/e", {
+    method: "POST",
+    keepalive: true,
+    body: JSON.stringify({ s: SITE, n: name, u: event.context.document.location.href }),
+  });
+}
+analytics.subscribe("checkout_started", (event) =&gt; send("begin_checkout", event));
+analytics.subscribe("checkout_completed", (event) =&gt; send("checkout_completed", event));</code></pre>
+<p>The request comes from the shopper's own browser, so in the default cookieless mode it gets the same visitor id as their storefront page views and joins the same visit. Checkout URLs carry a token per checkout; store them as one page with a path rule: <code>PATCH /v1/sites/:id {"path_rules":[{"match":"/checkouts/**","replace":"/checkout"}]}</code>. If your checkout runs on a host that isn't your domain or a subdomain of it, verify lists those events as dropped (<code>hostname_not_allowed</code>).</p>
+
+<h2 id="orders">Revenue: the order webhook</h2>
+<p>Browser revenue can be faked, so AgentFirstStack counts revenue from your server or your payment data. On Shopify that's the order webhook. In the admin: Settings &gt; Notifications &gt; Webhooks, event "Order payment", format JSON, and the URL of a small Worker. The page shows the key every webhook is signed with; the Worker checks it against the <code>X-Shopify-Hmac-SHA256</code> header:</p>
+<pre><code>// Cloudflare Worker. Secrets: SHOPIFY_WEBHOOK_SECRET, AGENTFIRSTSTACK_API_KEY; var: AFS_SITE
+export default {
+  async fetch(request, env, ctx) {
+    const body = await request.text();
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.SHOPIFY_WEBHOOK_SECRET),
+      { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const sig = Uint8Array.from(atob(request.headers.get("x-shopify-hmac-sha256") || ""), (c) =&gt; c.charCodeAt(0));
+    if (!(await crypto.subtle.verify("HMAC", key, sig, new TextEncoder().encode(body))))
+      return new Response("bad signature", { status: 401 });
+
+    const order = JSON.parse(body);
+    const vid = (order.note_attributes || []).find((a) =&gt; a.name === "__afs_visitor_id")?.value;
+    ctx.waitUntil(fetch(`https://analytics.agentfirststack.com/v1/sites/${env.AFS_SITE}/payments`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.AGENTFIRSTSTACK_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ payments: [{
+        id: String(order.id), provider: "shopify",
+        amount: Number(order.total_price), currency: order.currency,
+        visitor_id: vid, customer_id: order.customer ? String(order.customer.id) : undefined,
+      }] }),
+    }));
+    return new Response("ok");
+  },
+};</code></pre>
+<p>Shopify's webhook docs say a failed delivery is retried 8 times over the next 4 hours, and payments are idempotent by provider and id, so a retried order is recorded once. Revenue, purchases and purchase rate then split by source, page and country like any other metric, with no goal needed. The key lives only in the Worker's secrets; nothing in the theme can read it.</p>
+
+<h2 id="verify">Check it on the live store</h2>
+<ol>
+<li>Open the store once in a normal browser. Headless browsers are filtered out unless the visit is marked with <code>?afsa_debug=1</code>.</li>
+<li><code>POST https://analytics.agentfirststack.com/v1/sites/:id/verify</code> fetches your homepage, finds the tag, checks whether events arrived and lists fixes.</li>
+<li><code>GET https://agentfirststack.com/v1/setup?services=analytics</code> until <code>"ready": true</code>.</li>
+</ol>
+<p><b>Password-protected stores.</b> New stores start in private mode, and development stores are always password protected. Verify fetches the password page, which doesn't use <code>theme.liquid</code>, so it can't find the tag. Your own visits after entering the password still count, so <code>events_received</code> can pass. To verify the domain before launch, add the DNS TXT record <code>_afs-verify.yourdomain.com</code> with the value <code>afs-analytics-site=site_...</code>.</p>
+<p><b>The .myshopify.com address.</b> Every store has one. A site accepts events from its domain and subdomains only, so if shoppers reach both, set <code>allowed_hostnames</code> to <code>["*.yourdomain.com", "yourstore.myshopify.com"]</code>. <code>myshopify.com</code> on its own is refused as a site domain because it's a shared suffix.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Can I track the thank-you page with the theme snippet?</h3>
+<p>No. Theme code doesn't run in checkout, thank-you or order status pages. Use a custom pixel for those events and the order webhook for revenue.</p>
+<h3>Can I serve the tracker from my store's domain to get past ad blockers?</h3>
+<p>Not on Shopify. Theme files can't proxy, app proxies need an app and only live under <code>/apps/</code> and similar prefixes, and Shopify doesn't support a Cloudflare proxy in front of the store. Page views from visitors with ad blockers are lost; paid orders still arrive through the webhook.</p>
+<h3>Why not send revenue from the pixel?</h3>
+<p>Anyone can send browser events, so browser revenue is ignored unless a site turns on <code>browser_revenue</code>. The webhook is signed by Shopify, retried until it lands, and recorded once.</p>
+<h3>What happens to orders from visitors whose id never reached the cart?</h3>
+<p>They're still recorded with their revenue, under the channel Unattributed, so your totals stay right; only the source is unknown. That happens when the shopper blocked the tracker or checked out before the cart attribute was saved.</p>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode.</p>
+
+<p class="meta">Shopify is a trademark of Shopify Inc. AgentFirstStack isn't affiliated with Shopify. Shopify details come from its docs (<a href="https://shopify.dev/docs/storefronts/themes/architecture/layouts">layouts</a>, <a href="https://help.shopify.com/en/manual/online-store/themes/theme-structure/extend/edit-theme-code">editing theme code</a>, <a href="https://shopify.dev/docs/apps/build/marketing-analytics/pixels">web pixels</a>, <a href="https://shopify.dev/docs/api/web-pixels-api">Web Pixels API</a>, <a href="https://help.shopify.com/en/manual/promoting-marketing/pixels/custom-pixels/code">custom pixel code</a>, <a href="https://help.shopify.com/en/manual/fulfillment/setup/notifications/webhooks">admin webhooks</a>, <a href="https://shopify.dev/docs/apps/build/webhooks/subscribe/https">HTTPS webhooks</a>, <a href="https://shopify.dev/docs/api/ajax/reference/cart">Cart API</a>, <a href="https://shopify.dev/docs/api/admin-rest/latest/resources/order">Order resource</a>, <a href="https://shopify.dev/docs/apps/build/online-store/app-proxies">app proxies</a>, <a href="https://help.shopify.com/en/manual/domains/add-a-domain/connecting-domains/connecting-to-cloudflare">Cloudflare</a>, <a href="https://shopify.dev/docs/apps/build/dev-dashboard/development-stores">development stores</a>), checked on 6 November 2026.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/guides/wordpress-analytics"><span class="svc svc-analytics">Analytics</span><b>WordPress analytics in one prompt</b><span>functions.php, header plugins and form hooks.</span></a></li>
+        <li><a class="card" href="/guides/webflow-analytics"><span class="svc svc-analytics">Analytics</span><b>Webflow analytics in one prompt</b><span>Head code, publishing and form webhooks.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#theme">The tracker in theme.liquid</a></li><li><a href="#no-proxy">Why there's no first-party option on Shopify</a></li><li><a href="#checkout">Checkout: a custom pixel</a></li><li><a href="#orders">Revenue: the order webhook</a></li><li><a href="#verify">Check it on the live store</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,8 +1,8 @@
-import { clientIp, networkKey, publicBaseUrl } from "@afs/shared";
+import { networkKey, publicBaseUrl } from "@afs/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AppEnv, isDev } from "../env";
 import { expiredPage, PLAYER_HEADERS, playerHeaders, playerPage } from "../player-page";
-import { geo, ingestChunk } from "../service/ingest";
+import { geo, ingestChunk, visitorIp } from "../service/ingest";
 import { playerChunk, playerData, recordView, resolveToken, siteHostsForCsp } from "../service/links";
 import { playerHash, servePlayerAsset, serveLoader, serveRecorder } from "../service/scripts";
 import { serveSurveyScript, submitSurvey } from "../service/survey-ingest";
@@ -30,7 +30,7 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
     const limiter = c.env.INGEST_IP_LIMITER;
     if (
       limiter &&
-      !(await limiter.limit({ key: `l:${networkKey(clientIp(c.req.raw))}` }).then(
+      !(await limiter.limit({ key: `l:${networkKey(visitorIp(c.req.raw, c.env))}` }).then(
         (r) => r.success,
         () => true,
       ))
@@ -44,7 +44,7 @@ export const browserRoutes: MiddlewareHandler<AppEnv> = async (c, next) => {
       loader[1]!,
       publicBaseUrl(c),
       c.req.header("if-none-match") ?? null,
-      geo(c.req.raw, isDev(c.env)).country,
+      geo(c.req.raw, isDev(c.env), c.env).country,
     );
     return method === "HEAD" ? new Response(null, { status: res.status, headers: res.headers }) : res;
   }

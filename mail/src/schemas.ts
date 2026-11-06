@@ -85,7 +85,7 @@ export const latestCodeShape = {
     .max(320)
     .optional()
     .describe(
-      'The sender\'s domain, e.g. "github.com" (mail from its subdomains matches too; "github.com.evil.example" and display names never do), or a full address. Not a bare word.',
+      'Strongly recommended: the domain of the site you are signing up to, e.g. "github.com" (mail from its subdomains matches too; "github.com.evil.example" and display names never do), or its full sender address. Not a bare word. Without it any sender\'s code counts: the result then carries a warning, and two or more sender domains in the window are refused (ambiguous_sender).',
     ),
   allow_unauthenticated: z
     .boolean()

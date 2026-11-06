@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics with Windsurf (Devin Desktop)</title>
+<meta name="description" content="Windsurf is now Devin Desktop. Paste one prompt into its agent: it gets a key, adds the tracker, verifies the live site and connects over MCP.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-windsurf">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics with Windsurf, now Devin Desktop">
+<meta property="og:description" content="Windsurf is now Devin Desktop. Paste one prompt into its agent: it gets a key, adds the tracker, verifies the live site and connects over MCP.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-windsurf">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics with Windsurf, now Devin Desktop">
+<meta name="twitter:description" content="Windsurf is now Devin Desktop. Paste one prompt into its agent: it gets a key, adds the tracker, verifies the live site and connects over MCP.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-windsurf#article",
+      "headline": "Add analytics with Windsurf (now Devin Desktop)",
+      "description": "Windsurf is now Devin Desktop. Paste one prompt into its agent: it gets a key, adds the tracker, verifies the live site and connects over MCP.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-windsurf",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-windsurf",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Windsurf (Devin Desktop)",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Add analytics with Windsurf",
+          "item": "https://agentfirststack.com/guides/add-analytics-with-windsurf"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-windsurf#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Windsurf gone?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Devin Desktop is the same editor under a new name, delivered as an update on 2 June 2026, and existing Windsurf settings carry over. The agent you chat with is now Devin Local instead of Cascade."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why can't the agent write the key to .env?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Devin Desktop won't let the agent edit files matched by .gitignore unless you turn on Gitignore access. Have it append to .env from the terminal instead, and leave the setting off."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where should the MCP bearer token go?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "In .devin/mcp_config.local.json, which is gitignored, or in your user config. Never in .devin/mcp_config.json, which is meant to be committed."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it count visitors who arrive from ChatGPT or Perplexity?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Visits referred by chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com and similar sites get their own channel, AI Assistants."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics with Windsurf</span></nav>
+      <h1>Add analytics with Windsurf (now Devin Desktop)</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>Windsurf became Devin Desktop on 2 June 2026, as an over-the-air update: same editor, new name, and a new local agent, Devin Local, in place of Cascade. To add analytics with it, paste the prompt below into Devin Local in your project. It gets an AgentFirstStack key, creates the site, serves the tracker from your own domain through a small proxy, adds it to your layout and checks the live site after the deploy. Two Devin Desktop defaults matter here: it asks before shell commands and web fetches, and it can't edit files your <code>.gitignore</code> covers, such as <code>.env</code>. Other tools and platforms: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into Devin Local (Code mode)</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this project with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. .env is gitignored, so you can't edit it with your file tools: read and append to it from the terminal. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Append api_key to .env as AGENTFIRSTSTACK_API_KEY and tell me to add it to the production secrets. Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the production domain and read GET /v1/sites/:id/install?framework=... for this project's framework. Serve the tracker from the site's own domain with the first-party proxy that fits this project's host (Next.js proxy.ts, a Cloudflare Worker route, a Netlify Edge Function, vercel.json or nginx). Keep first_party_proxy.proxy_key in a server-only env var (AFS_PROXY_KEY), never in page code. Then put the proxied snippet (/_a/s.js) in the &lt;head&gt; of the root layout. Only if the host can't proxy, use the direct snippet and note in AGENTFIRSTSTACK.md that ad blockers block it.
+
+4. Create goals for sign-ups, purchases and the main buttons. Send conversions only the server knows about as server events.
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Deploy (or tell me to), open the site once, then run verify and fix what it reports.
+
+7. Write the site id and the env var names (never the values) in AGENTFIRSTSTACK.md, add the AgentFirstStack block from the manual to AGENTS.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+8. Run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="modes">Approvals: which mode to use</h2>
+<p>Devin Local has five modes. In Code mode, the default, edits inside the workspace are approved automatically, but "shell commands, web fetches, and MCP tools prompt for approval unless an allow rule covers them." The setup is about a dozen <code>curl</code> calls, so you'll click Approve a few times, or add an allow rule for them. Smart mode lets a fast model approve what it judges safe and still asks for the rest. Plan mode only reads and writes a plan, so switch out of it before you paste the prompt. You don't need Bypass Permissions for this.</p>
+
+<h2 id="env">.env and the gitignore rule</h2>
+<p>Devin Desktop doesn't index paths in <code>.gitignore</code>, and "files matched by <code>.gitignore</code> also cannot be edited by the agent." Your <code>.env</code> should be gitignored, so the agent can't create or change it with its edit tool. That's why the prompt tells it to use the terminal. If you'd rather it edit gitignored files directly, the switch is Devin Settings &gt; Devin Local &gt; Configuration &gt; Gitignore access, off by default. For a file that holds keys, leave it off.</p>
+<p>The key stays out of browser code either way. The tracker snippet carries only the site id (<code>data-site="site_..."</code>), which is public; the key is for server code and the agent's own API calls.</p>
+
+<h2 id="mcp">Add the MCP server</h2>
+<p>Devin Local reads MCP servers from three files: <code>.devin/mcp_config.json</code> (the project, committed), <code>.devin/mcp_config.local.json</code> (the project, gitignored) and <code>~/.config/devin/mcp_config.json</code> (you). The Devin docs say to keep secrets in the local file, which suits a bearer token. In <code>.devin/mcp_config.local.json</code>:</p>
+<pre><code>{
+  "mcpServers": {
+    "afs": {
+      "url": "https://agentfirststack.com/mcp",
+      "transport": "http",
+      "headers": { "Authorization": "Bearer afs_..." }
+    }
+  }
+}</code></pre>
+<p>The <code>devin mcp add afs https://agentfirststack.com/mcp</code> command saves to that local file by default, but the docs show no flag for headers, so add <code>headers</code> by hand afterwards. Or skip the key: Devin Local supports OAuth for remote servers, and AgentFirstStack's MCP server supports OAuth 2.1 with dynamic client registration. You sign in with Google and pick or create a project. By default Devin asks before each MCP tool call; allow the server's read tools if the prompts get in the way.</p>
+<p><b>Still on the Windsurf plugin</b> for JetBrains, or the older Cascade setup? That configuration uses <code>serverUrl</code> and expands <code>${env:NAME}</code> in headers:</p>
+<pre><code>{
+  "mcpServers": {
+    "afs": {
+      "serverUrl": "https://agentfirststack.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:AGENTFIRSTSTACK_API_KEY}" }
+    }
+  }
+}</code></pre>
+
+<h2 id="rules">Rules carry over</h2>
+<p>Devin Local reads <code>AGENTS.md</code> at the workspace root (and in subdirectories) as always-on rules, so the AgentFirstStack block the prompt adds reaches every later session. Old Windsurf rules still load: <code>.windsurfrules</code>, <code>.windsurf/rules/*.md</code> and <code>.windsurf/global_rules.md</code> are imported by default, next to the new <code>.devin/rules/</code>. You don't need to copy the block into a rules file.</p>
+
+<h2 id="snippet">The proxy and the snippet</h2>
+<p>Both depend on the framework and the host, not the editor. Ad blockers block requests to <code>analytics.agentfirststack.com</code>, so the tracker is served from your own domain: a proxy forwards <code>/_a/*</code> to AgentFirstStack and the page loads <code>/_a/s.js</code>. <code>GET /v1/sites/:id/install</code> returns the proxy code for Next.js, a Cloudflare Worker route, <code>vercel.json</code>, <code>netlify.toml</code> and nginx, each sending the site's <code>x-afs-proxy-key</code>. That key is a secret, so it goes in a server-side env var, not in a file the agent commits. Since <code>.env</code> is gitignored, Devin Local adds it from the terminal, like the API key.</p>
+<p>The guides for <a href="/guides/nextjs-analytics">Next.js</a>, <a href="/guides/astro-analytics">Astro</a> and <a href="/guides/wordpress-analytics">WordPress</a> cover each in detail. On <a href="/guides/shopify-analytics">Shopify</a> and <a href="/guides/webflow-analytics">Webflow</a> the hosting can't proxy, so they use the direct snippet, which ad blockers block.</p>
+
+<h2 id="verify">Check it worked</h2>
+<pre><code>K=$AGENTFIRSTSTACK_API_KEY
+curl -s -X POST https://analytics.agentfirststack.com/v1/sites/$SITE/verify -H "Authorization: Bearer $K"
+curl -s "https://agentfirststack.com/v1/setup?services=analytics" -H "Authorization: Bearer $K"</code></pre>
+<p>Verify fetches the live page, checks the snippet, that <code>/_a/s.js</code> serves the tracker through your proxy, your Content-Security-Policy, whether events arrived and whether they carried the proxy key, and returns fixes. Open the production URL once in a normal browser first: headless browsers are filtered out unless the visit is marked as test traffic with <code>?afsa_debug=1</code>. The setup check then lists anything else an analytics setup should have, in the order to fix it.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is Windsurf gone?</h3>
+<p>No. Devin Desktop is the same editor under a new name, delivered as an update on 2 June 2026, and existing Windsurf settings carry over. The agent you chat with is now Devin Local instead of Cascade.</p>
+<h3>Why can't the agent write the key to .env?</h3>
+<p>Devin Desktop won't let the agent edit files matched by <code>.gitignore</code> unless you turn on Gitignore access. Have it append to <code>.env</code> from the terminal instead, and leave the setting off.</p>
+<h3>Where should the MCP bearer token go?</h3>
+<p>In <code>.devin/mcp_config.local.json</code>, which is gitignored, or in your user config. Never in <code>.devin/mcp_config.json</code>, which is meant to be committed.</p>
+<h3>Does it count visitors who arrive from ChatGPT or Perplexity?</h3>
+<p>Yes. Visits referred by chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com and similar sites get their own channel, AI Assistants.</p>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode.</p>
+
+<p class="meta">Windsurf, Devin and Devin Desktop are products of Cognition. AgentFirstStack isn't affiliated with Cognition. Details come from the Devin docs (<a href="https://docs.devin.ai/desktop/devin-desktop-faq">Devin Desktop FAQ</a>, <a href="https://docs.devin.ai/desktop/devin-local/customizations">customizations</a>, <a href="https://docs.devin.ai/cli/extensibility/mcp/configuration">MCP configuration</a>, <a href="https://docs.devin.ai/desktop/devin-local/modes">modes</a>, <a href="https://docs.devin.ai/desktop/context-awareness/devin-ignore">.devinignore</a>, <a href="https://docs.devin.ai/desktop/advanced">advanced settings</a>, <a href="https://docs.devin.ai/windsurf/plugins/cascade/mcp">Windsurf plugin MCP</a>), checked on 6 November 2026. docs.windsurf.com now redirects to docs.devin.ai.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-cursor"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Cursor</b><span>Agent mode, .cursor/mcp.json and the setup check.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-codex"><span class="svc svc-analytics">Analytics</span><b>Add analytics with OpenAI Codex</b><span>CLI, IDE or cloud, with network access sorted.</span></a></li>
+        <li><a class="card" href="/guides/nextjs-analytics"><span class="svc svc-analytics">Analytics</span><b>Next.js analytics in one prompt</b><span>App Router, Pages Router, proxy.ts and Vercel.</span></a></li>
+        <li><a class="card" href="/guides/astro-analytics"><span class="svc svc-analytics">Analytics</span><b>Astro analytics in one prompt</b><span>Layouts, is:inline and the ClientRouter.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#modes">Approvals: which mode to use</a></li><li><a href="#env">.env and the gitignore rule</a></li><li><a href="#mcp">Add the MCP server</a></li><li><a href="#rules">Rules carry over</a></li><li><a href="#snippet">The proxy and the snippet</a></li><li><a href="#verify">Check it worked</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

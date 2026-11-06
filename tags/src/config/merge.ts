@@ -7,7 +7,7 @@ import type { ContainerConfig } from "./schema";
  * - mode "merge": items are matched by key (tags/triggers: id; variables/conversions: name).
  *   New keys are added; an identical item is unchanged; on a conflict, on_conflict decides:
  *   "overwrite" (the import's wins), "skip" (the draft's stays) or "rename" (the import's is
- *   added as <key>_2, and the import's own references to it are rewritten). consent and settings
+ *   added as <key>_2, and the import's own references to it are rewritten). consent, consent_banner and settings
  *   merge key by key (the import wins on overwrite, the draft otherwise).
  * Re-running the same import changes nothing, whatever on_conflict is.
  */
@@ -136,7 +136,7 @@ export function mergeConfigs(
     });
     if (list.length || out[kind]) out[kind] = list;
   }
-  for (const s of ["consent", "settings"] as const) {
+  for (const s of ["consent", "consent_banner", "settings"] as const) {
     const a = (base[s] ?? {}) as Item;
     const b = (incoming[s] ?? {}) as Item;
     if (!incoming[s]) continue;

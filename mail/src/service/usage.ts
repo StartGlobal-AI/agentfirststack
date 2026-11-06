@@ -6,7 +6,7 @@ import { maxForwardsPerDay } from "./forward-settings";
 import { attachmentTextPerDay } from "./attachment-text";
 import { maxListEntries } from "./lists";
 import { utcDay } from "./format";
-import { maxInboundPerDay } from "./ingest";
+import { SMALL_MESSAGE_BYTES, formatBytes, maxInboundBytesPerSender, maxInboundMessageBytes, maxInboundPerDay } from "./ingest";
 import { dailyLimit, maxScheduled } from "./send";
 import { DEFAULT_MAX_CONCURRENT_WAITS, DEFAULT_MAX_CONCURRENT_WAITS_PER_INBOX } from "./wait";
 import { maxWebhooks } from "./webhooks";
@@ -95,6 +95,7 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
        (SELECT count FROM send_counters WHERE account_id = ?1 AND day = ?2) AS sends,
        (SELECT count FROM inbound_counters WHERE account_id = ?1 AND day = ?2) AS inbound,
        (SELECT MAX(count) FROM sender_counters WHERE account_id = ?1 AND day = ?2) AS top_sender,
+       (SELECT MAX(b) FROM (SELECT SUM(bytes) AS b FROM sender_counters WHERE account_id = ?1 AND day = ?2 GROUP BY sender)) AS top_sender_bytes,
        (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'inbox_create' AND day = ?2) AS inbox_creates,
        (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'inbox_delete' AND day = ?2) AS inbox_deletes,
        (SELECT count FROM account_daily WHERE account_id = ?1 AND kind = 'webhook_test' AND day = ?2) AS webhook_tests,
@@ -159,6 +160,24 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
       "messages from one sender to one inbox (used = the busiest sender today)",
       "MAX_INBOUND_PER_SENDER_PER_DAY",
       resets,
+    ),
+    inbound_bytes_per_sender_per_day: item(
+      "Inbound bytes from one sender a day",
+      v("top_sender_bytes"),
+      maxInboundBytesPerSender(env, standing),
+      "bytes of raw mail from one sender, across inboxes (used = the busiest sender today)",
+      "MAX_INBOUND_BYTES_PER_SENDER_PER_DAY",
+      resets,
+      { note: "Beyond it that sender's mail is rejected at SMTP time until 00:00 UTC; other senders are not affected." },
+    ),
+    inbound_message_bytes: item(
+      "Largest inbound message",
+      null,
+      maxInboundMessageBytes(env, standing),
+      "bytes of one received message (raw MIME)",
+      "MAX_INBOUND_MESSAGE_BYTES",
+      null,
+      { note: "Larger messages are rejected at SMTP time." },
     ),
     inbox_creates_per_day: item(
       "Inboxes created a day",
@@ -234,7 +253,10 @@ export async function getUsage(env: AppEnv, accountId: string, opts: { days?: nu
       "bytes of mail kept (raw messages, HTML bodies, sent attachments)",
       "MAX_BLOB_BYTES_PER_ACCOUNT",
       null,
-      { note: "When full, new mail is rejected (Mailbox full) until old mail is deleted.", drops_data: true },
+      {
+        note: `When full, new mail is rejected (Mailbox full) until old mail is deleted. Past 80% the senders that keep the most of it can't send messages over ${formatBytes(SMALL_MESSAGE_BYTES)}, and the last 5% is kept for messages up to ${formatBytes(SMALL_MESSAGE_BYTES)} (verification codes still arrive).`,
+        drops_data: true,
+      },
     ),
     text_bytes: item(
       "Stored text",

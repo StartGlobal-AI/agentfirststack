@@ -1,6 +1,7 @@
 import { accountStanding, sha256Hex } from "@afs/shared";
 import type { ContainerConfig } from "../config/schema";
 import type { Bindings } from "../env";
+import { bannerAsks } from "../lib/consent";
 import type { BootConfig } from "../runtime/types";
 import { environmentByToken } from "./environments";
 import { customCodeProblem, stripCustomCode } from "./verify";
@@ -9,7 +10,9 @@ import { previewConfig, previewToken } from "./versions";
 /**
  * /c/:id.js = `(function(){var __AFST__=<boot config>;__AFST__.geo=<visitor geo>;<runtime>})();`
  * The boot config (live version + domain) is cached at the edge per container; the visitor's
- * country/region is added per request so consent regions work without varying the cache.
+ * country/region is added per request so consent regions work without varying the cache. When
+ * the config depends on the country (consent regions, a consent banner asking only in the EEA),
+ * the browser may cache it but shared caches may not (cache-control: private).
  */
 export const EDGE_TTL_SECONDS = 60;
 export const BROWSER_TTL_SECONDS = 300;
@@ -24,7 +27,19 @@ const safeJson = (v: unknown) =>
 export interface Runtimes {
   core: string;
   ext: string;
+  /** The consent banner UI (served at /cb/<version>.js, loaded by the runtime only when it shows). */
+  ui?: string;
 }
+
+/** Does the script's behaviour depend on the visitor's country? (Then shared caches may not keep it.) */
+export function dependsOnCountry(cfg: ContainerConfig | null | undefined): boolean {
+  const b = cfg?.consent_banner;
+  return (!!b?.enabled && b.regions !== "all") || Object.keys(cfg?.consent?.regions ?? {}).length > 0;
+}
+
+/** For agents checking with curl: x-afs-consent-banner ask (this visitor sees it) or default (they get the defaults). */
+const bannerHeader = (cfg: ContainerConfig | null | undefined, geo: BootConfig["geo"]): Record<string, string> =>
+  cfg?.consent_banner?.enabled ? { "x-afs-consent-banner": bannerAsks(cfg.consent_banner, geo?.country) ? "ask" : "default" } : {};
 
 /** Features that live in the extension bundle (src/runtime/ext.ts). */
 export function needsExt(cfg: ContainerConfig | null | undefined): boolean {
@@ -52,7 +67,7 @@ export function compileScript(runtime: string, boot: BootConfig, geo?: BootConfi
 }
 
 const runtimeHashes = new Map<string, string>();
-async function runtimeVersion(runtime: string) {
+export async function runtimeVersion(runtime: string) {
   let h = runtimeHashes.get(runtime);
   if (!h) runtimeHashes.set(runtime, (h = (await sha256Hex(runtime)).slice(0, 10)));
   return h;
@@ -84,6 +99,8 @@ export async function purgeScriptCache(id: string, origins: string[]) {
   if (!cache) return;
   await Promise.all([...new Set(origins.filter(Boolean))].map((o) => cache.delete(cacheKey(o, id)).catch(() => false)));
 }
+
+const bannerOn = (b: Pick<BootConfig, "cfg">) => !!b.cfg?.consent_banner?.enabled;
 
 async function loadBoot(env: Bindings, id: string): Promise<CachedBoot | null> {
   const row = await env.DB.prepare(
@@ -117,6 +134,24 @@ const JS_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
+/** The banner UI's version for boot.ui (absent when this deployment has no UI bundle, e.g. a string runtime in tests). */
+const uiVersion = async (r: Runtimes | string) => (typeof r === "string" || !r.ui ? undefined : runtimeVersion(r.ui));
+
+/**
+ * /cb/<version>.js: the consent banner UI. The current version is immutable (a year in any cache);
+ * another version (an old page, a stale boot config) gets the current UI for 5 minutes.
+ */
+export async function serveBannerUi(ui: string, version: string): Promise<Response> {
+  const current = await runtimeVersion(ui);
+  return new Response(ui, {
+    headers: {
+      ...JS_HEADERS,
+      "cache-control": version === current ? "public, max-age=31536000, immutable" : "public, max-age=300",
+      etag: `W/"cb-${current}"`,
+    },
+  });
+}
+
 export async function serveScript(
   env: Bindings,
   runtime: Runtimes | string,
@@ -124,6 +159,7 @@ export async function serveScript(
   ctx: { waitUntil(p: Promise<unknown>): void },
 ): Promise<Response> {
   const id = req.id;
+  const ui = await uiVersion(runtime);
   /** Draft or pinned-version builds: custom code only where publish would allow it. */
   const gated = async (cfg: ContainerConfig, label: string) => {
     const row = await env.DB.prepare("SELECT id, account_id, domain, verified_at FROM containers WHERE id = ?")
@@ -154,14 +190,20 @@ export async function serveScript(
           env: { name: e.name, token: req.env },
           ab: env.ANALYTICS_BASE_URL || undefined,
           base: req.origin,
+          ...(ui && bannerOn(g) ? { ui } : {}),
         };
         // Not edge cached (it's per environment): a minute in the browser.
         return new Response(compileScript(pickRuntime(runtime, g.cfg), boot, req.geo, g.prelude), {
-          headers: { ...JS_HEADERS, "cache-control": "private, max-age=60", "x-afs-version": String(e.version ?? "draft") },
+          headers: {
+            ...JS_HEADERS,
+            "cache-control": "private, max-age=60",
+            "x-afs-version": String(e.version ?? "draft"),
+            ...bannerHeader(g.cfg, req.geo),
+          },
         });
       }
     }
-    const live = await serveLive(env, runtime, req, ctx);
+    const live = await serveLive(env, runtime, req, ctx, ui);
     if (live.status !== 200) return live;
     const warn = `console.warn("[afst] environment snippet token is invalid or was reauthorized; loading the live container. GET /v1/containers/${id}/environments has the current snippet.");\n`;
     return new Response(warn + (await live.text()), { headers: { ...JS_HEADERS, "cache-control": "no-store" } });
@@ -181,9 +223,10 @@ export async function serveScript(
           preview: req.preview,
           ab: env.ANALYTICS_BASE_URL || undefined,
           base: req.origin,
+          ...(ui && bannerOn(g) ? { ui } : {}),
         };
         return new Response(compileScript(pickRuntime(runtime, g.cfg), boot, req.geo, g.prelude), {
-          headers: { ...JS_HEADERS, "cache-control": "no-store" },
+          headers: { ...JS_HEADERS, "cache-control": "no-store", ...bannerHeader(g.cfg, req.geo) },
         });
       }
     }
@@ -191,11 +234,11 @@ export async function serveScript(
     // was previewing, so it stays test traffic (sessionStorage afsa_debug, the flag the runtime and
     // the analytics tracker share): its clicks never become real conversions.
     const prelude = `try{sessionStorage.removeItem(${JSON.stringify(`_afst_preview_${id}`)});sessionStorage.setItem("afsa_debug","1")}catch(e){}console.warn("[afst] preview link expired or invalid; loading the live container as test traffic for this tab (?afsa_debug=0 ends that). Create a new link with POST /v1/containers/${id}/preview.");\n`;
-    const live = await serveLive(env, runtime, req, ctx);
+    const live = await serveLive(env, runtime, req, ctx, ui);
     if (live.status !== 200) return live;
     return new Response(prelude + (await live.text()), { headers: { ...JS_HEADERS, "cache-control": "no-store" } });
   }
-  return serveLive(env, runtime, req, ctx);
+  return serveLive(env, runtime, req, ctx, ui);
 }
 
 async function serveLive(
@@ -203,6 +246,7 @@ async function serveLive(
   runtimes: Runtimes | string,
   req: ScriptRequest,
   ctx: { waitUntil(p: Promise<unknown>): void },
+  ui?: string,
 ): Promise<Response> {
   const cache = defaultCache();
   const key = cacheKey(req.cacheOrigin, req.id);
@@ -228,14 +272,15 @@ async function serveLive(
     }
   }
   if (cached.account_id && (await accountStanding(env, cached.account_id)).suspended) return suspendedScript();
-  const boot = { ...cached.boot, base: req.origin };
+  const boot: BootConfig = { ...cached.boot, base: req.origin, ...(ui && bannerOn(cached.boot) ? { ui } : {}) };
   const runtime = pickRuntime(runtimes, boot.cfg);
-  const etag = `W/"${req.id}-v${cached.live_version}-${await runtimeVersion(runtime)}-${req.geo?.country ?? "xx"}${req.geo?.region ? `-${req.geo.region}` : ""}"`;
+  const etag = `W/"${req.id}-v${cached.live_version}-${await runtimeVersion(runtime)}${boot.ui ? `-${boot.ui}` : ""}-${req.geo?.country ?? "xx"}${req.geo?.region ? `-${req.geo.region}` : ""}"`;
   const headers = {
     ...JS_HEADERS,
-    "cache-control": `public, max-age=${BROWSER_TTL_SECONDS}`,
+    "cache-control": `${dependsOnCountry(boot.cfg) ? "private" : "public"}, max-age=${BROWSER_TTL_SECONDS}`,
     etag,
     "x-afs-version": String(cached.live_version),
+    ...bannerHeader(boot.cfg, req.geo),
   };
   if (req.ifNoneMatch && req.ifNoneMatch.split(/\s*,\s*/).includes(etag)) return new Response(null, { status: 304, headers });
   return new Response(compileScript(runtime, boot, req.geo), { headers });

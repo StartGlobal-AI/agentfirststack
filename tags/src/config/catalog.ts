@@ -2,7 +2,8 @@ import { z } from "zod";
 import { CONNECTORS } from "../destinations";
 import { CONDITION_OPS } from "../lib/conditions";
 import { CLICK_IDS } from "../lib/clickids";
-import { CONSENT_TYPES, DEFAULT_TAG_CONSENT } from "../lib/consent";
+import { DEFAULT_BANNER_TEXT } from "../lib/banner-text";
+import { BANNER_CATEGORIES, CONSENT_TYPES, DEFAULT_TAG_CONSENT } from "../lib/consent";
 import { BUILTIN_VARIABLES, configJsonSchema, type ContainerConfig, type Tag, type Trigger, type Variable } from "./schema";
 
 /** One example per type. Every example is checked against the schema in tests. */
@@ -232,6 +233,27 @@ export const CONSENT_EXAMPLE = {
   google_consent_mode: "basic",
 } satisfies NonNullable<ContainerConfig["consent"]>;
 
+export const CONSENT_BANNER_EXAMPLE = {
+  enabled: true,
+  regions: "eea",
+  categories: ["analytics", "ads", "personalization"],
+  privacy_url: "https://example.com/privacy",
+  position: "bottom",
+  colors: { background: "#ffffff", text: "#1f2328", accent: "#1a56db", accent_text: "#ffffff" },
+  expiry_days: 180,
+  version: 1,
+  languages: {
+    de: {
+      title: "Ihre Privatsphäre",
+      body: "Wir verwenden Cookies und ähnliche Technologien, um die Nutzung unserer Website zu verstehen und Werbung zu messen und zu personalisieren. Sie entscheiden, welche wir verwenden dürfen.",
+      accept: "Alle akzeptieren",
+      reject: "Alle ablehnen",
+      settings: "Anpassen",
+      save: "Auswahl speichern",
+    },
+  },
+} satisfies NonNullable<ContainerConfig["consent_banner"]>;
+
 export const FULL_EXAMPLE: ContainerConfig = {
   variables: [
     { name: "order_value", type: "data_layer", key: "ecommerce.value" },
@@ -387,6 +409,21 @@ export function schemaDocument() {
         standard_events: STANDARD_EVENTS,
       },
       consent: { description: "Consent state with Google Consent Mode v2 passthrough.", types: CONSENT_TYPES, example: CONSENT_EXAMPLE },
+      consent_banner: {
+        description:
+          'The built-in consent banner (replaces Cookiebot and other CMPs). { "enabled": true } is complete: it asks visitors in the EEA, UK and Switzerland (regions "all": everyone) with "Reject all" as prominent as "Accept all", a settings layer per category, and records each choice as proof of consent (GET /v1/containers/:id/consent).',
+        defaults: {
+          regions: "eea",
+          categories: Object.keys(BANNER_CATEGORIES),
+          position: "bottom",
+          expiry_days: 180,
+          version: 1,
+          reopen_button: false,
+        },
+        categories: { necessary: ["security_storage"], ...BANNER_CATEGORIES },
+        text_defaults: DEFAULT_BANNER_TEXT,
+        example: CONSENT_BANNER_EXAMPLE,
+      },
       settings: {
         example: { phone_country_code: "1", send_page_views: true, cross_domain: ["checkout.example.net"], report_tag_fires: true },
       },

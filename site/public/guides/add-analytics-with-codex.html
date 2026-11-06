@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add analytics with OpenAI Codex in one prompt</title>
+<meta name="description" content="Paste one prompt into OpenAI Codex (CLI, IDE or cloud): it gets a key, adds the tracker, verifies the live site. How to give it network access and MCP.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/add-analytics-with-codex">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Add analytics with OpenAI Codex">
+<meta property="og:description" content="Paste one prompt into OpenAI Codex (CLI, IDE or cloud): it gets a key, adds the tracker, verifies the live site. How to give it network access and MCP.">
+<meta property="og:url" content="https://agentfirststack.com/guides/add-analytics-with-codex">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add analytics with OpenAI Codex">
+<meta name="twitter:description" content="Paste one prompt into OpenAI Codex (CLI, IDE or cloud): it gets a key, adds the tracker, verifies the live site. How to give it network access and MCP.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-codex#article",
+      "headline": "Add analytics with OpenAI Codex",
+      "description": "Paste one prompt into OpenAI Codex (CLI, IDE or cloud): it gets a key, adds the tracker, verifies the live site. How to give it network access and MCP.",
+      "url": "https://agentfirststack.com/guides/add-analytics-with-codex",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/add-analytics-with-codex",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "OpenAI Codex",
+        "applicationCategory": "DeveloperApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Add analytics with Codex",
+          "item": "https://agentfirststack.com/guides/add-analytics-with-codex"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/add-analytics-with-codex#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Why does Codex stop and ask before every curl?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The default workspace-write sandbox has network access off, and the Auto preset asks before commands that need it. Approve them, or set network_access = true under [sandbox_workspace_write] in config.toml for the duration of the setup."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can a Codex cloud task do the whole setup?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Everything except checking the live site. Give the environment internet access to the two AgentFirstStack hosts and the key as a network secret; the task creates the site and edits the code. Verify and the setup check need the deployed snippet, so run them after you merge and deploy."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where does Codex keep the MCP key?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Nowhere: config.toml holds only the name of the environment variable (bearer_token_env_var). The value comes from the environment Codex starts in."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work with the ChatGPT app too?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The ChatGPT desktop app shares Codex's MCP configuration. ChatGPT chat apps without a key connect over OAuth: add https://agentfirststack.com/mcp as a custom connector and sign in."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can run it yourself on Cloudflare Workers."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Add analytics with Codex</span></nav>
+      <h1>Add analytics with OpenAI Codex</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics with OpenAI Codex, paste the prompt below into a Codex session in your project. Codex gets an AgentFirstStack key with one request, creates the site, serves the tracker from your own domain through a small proxy, adds it to your root layout and runs verify after the deploy. The part that trips people up is the network: by default the Codex CLI and IDE extension run commands with network access turned off, and cloud tasks only reach the hosts their environment allows. Here's how to set that up for each surface. Other tools and platforms: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into Codex, in your project</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to this project with AgentFirstStack. It's free, open-source analytics built for agents, and you can do all of it yourself: there is no signup form, and no email or verification is needed. Every step is an HTTPS call to agentfirststack.com or analytics.agentfirststack.com; ask me for network access if your sandbox blocks it.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If AGENTFIRSTSTACK_API_KEY is set in the environment or in .env, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY (check .env is in .gitignore) and tell me to add it to the production secrets. Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the production domain and read GET /v1/sites/:id/install?framework=... for this project's framework. Serve the tracker from the site's own domain with the first-party proxy that fits this project's host (Next.js proxy.ts, a Cloudflare Worker route, a Netlify Edge Function, vercel.json or nginx). Keep first_party_proxy.proxy_key in a server-only env var (AFS_PROXY_KEY), never in page code. Then put the proxied snippet (/_a/s.js) in the &lt;head&gt; of the root layout. Only if the host can't proxy, use the direct snippet and note in AGENTFIRSTSTACK.md that ad blockers block it.
+
+4. Create goals for sign-ups, purchases and the main buttons. Send conversions only the server knows about as server events.
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. Deploy (or tell me to), open the site once, then run verify and fix what it reports.
+
+7. Write the site id and the env var names (never the values) in AGENTFIRSTSTACK.md, add the AgentFirstStack block from the manual to AGENTS.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+8. Run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="network">CLI and IDE: turn on network access</h2>
+<p>OpenAI's docs are explicit: "By default, the agent runs with network access turned off." In the default Auto preset (<code>--sandbox workspace-write --ask-for-approval on-request</code>), Codex edits and runs commands in your project on its own, but asks before a command that needs the network. So the first <code>curl</code> to <code>agentfirststack.com</code> stops for your approval.</p>
+<p>That's fine for a one-off setup: approve the calls as they come. If you'd rather not, enable network for the workspace sandbox in <code>~/.codex/config.toml</code> (or the project's <code>.codex/config.toml</code>, for trusted projects):</p>
+<pre><code>[sandbox_workspace_write]
+network_access = true</code></pre>
+<p>That opens the network for every command in the sandbox, not just these two hosts, so turn it back off afterwards if you keep it closed normally. Avoid <code>--yolo</code> for this; it drops the sandbox and approvals entirely, and nothing here needs that.</p>
+
+<h2 id="mcp">Add the MCP server</h2>
+<p>The CLI, the IDE extension and the ChatGPT desktop app share one MCP configuration. Codex doesn't interpolate <code>${VAR}</code> in config; instead you name the environment variable that holds the bearer token:</p>
+<pre><code>codex mcp add afs --url https://agentfirststack.com/mcp --bearer-token-env-var AGENTFIRSTSTACK_API_KEY</code></pre>
+<p>which writes this to <code>~/.codex/config.toml</code>:</p>
+<pre><code>[mcp_servers.afs]
+url = "https://agentfirststack.com/mcp"
+bearer_token_env_var = "AGENTFIRSTSTACK_API_KEY"</code></pre>
+<p>Codex reads the variable from its own environment when it starts, not from your project's <code>.env</code>. Export it in your shell before running <code>codex</code>. OpenAI's docs warn that desktop apps and IDE extensions may not inherit your shell's variables; if the IDE extension can't authenticate, that's the likely reason.</p>
+<p>The server also supports OAuth: leave out the bearer token and run <code>codex mcp login afs</code>. You sign in with Google and pick or create a project. OAuth tokens can do everything except create API keys and claim links.</p>
+<p>Once it's connected, ask in plain words: "Which sources brought sign-ups this week?" calls <code>analytics_get_breakdown</code>; "Is the setup complete?" calls <code>afs_check_setup</code>.</p>
+
+<h2 id="cloud">Codex cloud tasks</h2>
+<p>A cloud task runs in a VM from your cloud environment and ends with changes for you to review. Three things differ from a local run:</p>
+<ul>
+<li><b>Internet access is a setting of the environment.</b> Turn on "Enable all public internet access", or keep it off and add <code>agentfirststack.com</code> and <code>analytics.agentfirststack.com</code> under "Additional allowed domains".</li>
+<li><b>Give it the key as a network secret.</b> Get the key once from your own terminal (<code>curl -X POST https://agentfirststack.com/v1/signup</code>), then add it to the environment as a network secret named <code>AGENTFIRSTSTACK_API_KEY</code> with those two allowed domains. Programs in the task see a placeholder, and Codex's proxy swaps in the real value only for requests to those hosts, so the raw key never sits in the VM. A key the task creates itself would vanish with the VM.</li>
+<li><b>It can't verify before you deploy.</b> The task edits the layout, but the snippet is live only after you merge and deploy. Run verify and the setup check afterwards, from the CLI or a follow-up task.</li>
+</ul>
+<p>The legacy Codex cloud, which still runs Code Review and the GitHub and Linear integrations, works differently: internet access is blocked during the agent phase by default, and its secrets exist only for setup scripts. Do the API calls from the CLI there.</p>
+
+<h2 id="agents-md">AGENTS.md does the remembering</h2>
+<p>Codex reads <code>AGENTS.md</code> natively, from <code>~/.codex/AGENTS.md</code> and from the repo root down to the directory it's working in. The block the prompt adds tells every later session that the project uses AgentFirstStack, that the ids are in <code>AGENTFIRSTSTACK.md</code>, and to run the setup check before changing tracking. Codex caps the combined instruction files at 32 KiB by default, and the block is a few hundred bytes.</p>
+
+<h2 id="proxy">The proxy Codex adds</h2>
+<p>Ad blockers block requests to <code>analytics.agentfirststack.com</code>, so the prompt asks for a first-party proxy: a few lines that forward <code>/_a/*</code> on your domain to AgentFirstStack, with the page loading <code>/_a/s.js</code>. The install answer's <code>first_party_proxy</code> has ready code for Next.js (<code>proxy.ts</code>), a Cloudflare Worker route, <code>vercel.json</code>, <code>netlify.toml</code> and nginx. Each adds the header <code>x-afs-proxy-key</code>, the site's secret: the collector trusts the forwarded visitor IP only with it. Codex should put it in an env var such as <code>AFS_PROXY_KEY</code>, set wherever production runs, not in a committed file. Hosts that can't proxy (Shopify, Webflow) get the direct snippet, and ad blockers block it there.</p>
+<p>Framework details, including where each proxy lives: <a href="/guides/nextjs-analytics">Next.js</a>, <a href="/guides/astro-analytics">Astro</a>, <a href="/guides/wordpress-analytics">WordPress</a>.</p>
+
+<h2 id="verify">Check it worked</h2>
+<p>After the deploy, Codex runs these, and you can too:</p>
+<pre><code>K=$AGENTFIRSTSTACK_API_KEY
+curl -s -X POST https://analytics.agentfirststack.com/v1/sites/$SITE/verify -H "Authorization: Bearer $K"
+curl -s "https://agentfirststack.com/v1/setup?services=analytics" -H "Authorization: Bearer $K"</code></pre>
+<p>Verify fetches the live page and checks the snippet, that <code>/_a/s.js</code> serves the tracker through your proxy, your Content-Security-Policy, whether events arrived and whether they carried the proxy key, then lists fixes. It only counts visits from a real browser, so open the production site once yourself. The setup check covers the rest: goals that never counted, the owner's email, the weekly report, alerts and the claim link.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Why does Codex stop and ask before every curl?</h3>
+<p>The default workspace-write sandbox has network access off, and the Auto preset asks before commands that need it. Approve them, or set <code>network_access = true</code> under <code>[sandbox_workspace_write]</code> in <code>config.toml</code> for the duration of the setup.</p>
+<h3>Can a Codex cloud task do the whole setup?</h3>
+<p>Everything except checking the live site. Give the environment internet access to the two AgentFirstStack hosts and the key as a network secret; the task creates the site and edits the code. Verify and the setup check need the deployed snippet, so run them after you merge and deploy.</p>
+<h3>Where does Codex keep the MCP key?</h3>
+<p>Nowhere: <code>config.toml</code> holds only the name of the environment variable (<code>bearer_token_env_var</code>). The value comes from the environment Codex starts in.</p>
+<h3>Does it work with the ChatGPT app too?</h3>
+<p>The ChatGPT desktop app shares Codex's MCP configuration. ChatGPT chat apps without a key connect over OAuth: add <code>https://agentfirststack.com/mcp</code> as a custom connector and sign in.</p>
+<h3>What does it cost?</h3>
+<p>The hosted service is free, with fair-use limits such as 10 analytics sites per account. The code is open source (AGPL-3.0), so you can run it yourself on Cloudflare Workers.</p>
+
+<p class="meta">Codex and ChatGPT are products of OpenAI. AgentFirstStack isn't affiliated with OpenAI. Codex details come from OpenAI's docs (<a href="https://learn.chatgpt.com/docs/agent-approvals-security">approvals and security</a>, <a href="https://learn.chatgpt.com/docs/extend/mcp">MCP</a>, <a href="https://learn.chatgpt.com/docs/developer-commands?surface=cli">CLI commands</a>, <a href="https://learn.chatgpt.com/docs/agent-configuration/agents-md">AGENTS.md</a>, <a href="https://learn.chatgpt.com/docs/environments/cloud-environments">cloud environments</a>, <a href="https://learn.chatgpt.com/docs/cloud/internet-access">legacy cloud internet access</a>, <a href="https://learn.chatgpt.com/docs/amazon-bedrock">Bedrock setup</a>), checked on 6 November 2026. developers.openai.com/codex now redirects to learn.chatgpt.com.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-cursor"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Cursor</b><span>Agent mode, .cursor/mcp.json and the setup check.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-windsurf"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Windsurf</b><span>Cascade, mcp_config.json and the setup check.</span></a></li>
+        <li><a class="card" href="/guides/nextjs-analytics"><span class="svc svc-analytics">Analytics</span><b>Next.js analytics in one prompt</b><span>App Router, Pages Router, proxy.ts and Vercel.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#network">CLI and IDE: turn on network access</a></li><li><a href="#mcp">Add the MCP server</a></li><li><a href="#cloud">Codex cloud tasks</a></li><li><a href="#agents-md">AGENTS.md does the remembering</a></li><li><a href="#proxy">The proxy Codex adds</a></li><li><a href="#verify">Check it worked</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

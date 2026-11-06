@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CONDITION_OPS } from "../lib/conditions";
+import { BANNER_TEXT_KEYS, type BannerText } from "../lib/banner-text";
 import { CONSENT_TYPES } from "../lib/consent";
 
 /**
@@ -685,6 +686,92 @@ export const consentSchema = z.strictObject({
 });
 export type ConsentConfig = z.infer<typeof consentSchema>;
 
+const TEXT_MAX: Partial<Record<keyof BannerText, number>> = { title: 200, body: 2000, settings_title: 200 };
+const bannerTextSchema = z.strictObject(
+  Object.fromEntries(
+    BANNER_TEXT_KEYS.map((k) => [
+      k,
+      z
+        .string()
+        .min(1)
+        .max(TEXT_MAX[k] ?? (k.endsWith("_desc") ? 500 : 80))
+        .optional(),
+    ]),
+  ) as Record<keyof BannerText, z.ZodOptional<z.ZodString>>,
+);
+export type BannerTextConfig = z.infer<typeof bannerTextSchema>;
+const hexColor = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'A hex color like "#1a56db".');
+export const BANNER_CATEGORY_NAMES = ["analytics", "ads", "personalization"] as const;
+export const BANNER_POSITIONS = ["bottom", "top", "bottom-left", "bottom-right", "center"] as const;
+export const MAX_BANNER_LANGUAGES = 30;
+export const MAX_BANNER_EXPIRY_DAYS = 395;
+
+/** The built-in consent banner (a Cookiebot replacement): see llms.txt "Consent banner". */
+export const consentBannerSchema = z.strictObject({
+  enabled: z.boolean().describe("true shows the banner where regions says and makes tags, Consent Mode, analytics and replay follow it."),
+  regions: z
+    .enum(["eea", "all"])
+    .optional()
+    .describe(
+      'Who is asked: "eea" (default) the EEA, UK and Switzerland (and an unknown country), from Cloudflare\'s country of the script request; "all" everyone. Visitors outside get the consent block\'s defaults (granted with mode none) and can still open the banner.',
+    ),
+  categories: z
+    .array(z.enum(BANNER_CATEGORY_NAMES))
+    .max(3)
+    .refine((a) => new Set(a).size === a.length, "Each category once.")
+    .optional()
+    .describe(
+      "Categories shown besides necessary (default all three): analytics -> analytics_storage; ads -> ad_storage, ad_user_data; personalization -> ad_personalization, personalization_storage, functionality_storage. A category not shown is never granted.",
+    ),
+  text: bannerTextSchema
+    .optional()
+    .describe("English text overrides (plain text); every key has a default (GET /v1/schema -> catalog.consent_banner)."),
+  languages: z
+    .record(z.string().regex(/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/, 'Lowercase language tags like "de" or "pt-br".'), bannerTextSchema)
+    .refine((o) => Object.keys(o).length <= MAX_BANNER_LANGUAGES, `At most ${MAX_BANNER_LANGUAGES} languages.`)
+    .optional()
+    .describe(
+      'Per-language overrides chosen by <html lang>, then the browser\'s languages ("de-AT" falls back to "de"); missing keys fall back to text, then the English default.',
+    ),
+  privacy_url: z
+    .string()
+    .max(500)
+    .regex(/^(https:\/\/[^\s"'<>\\]+|\/[^\s"'<>\\]*)$/, "An https URL or a path starting with /.")
+    .optional()
+    .describe("Your privacy or cookie policy, linked from the banner (https URL or a /path)."),
+  position: z.enum(BANNER_POSITIONS).optional().describe("Default bottom (a full-width bar); center is a modal dialog."),
+  colors: z
+    .strictObject({
+      background: hexColor.optional(),
+      text: hexColor.optional(),
+      accent: hexColor.optional(),
+      accent_text: hexColor.optional(),
+    })
+    .optional()
+    .describe("accent / accent_text color both Accept all and Reject all (equally prominent)."),
+  expiry_days: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_BANNER_EXPIRY_DAYS)
+    .optional()
+    .describe(`Days a choice is kept before the banner asks again (default 180, at most ${MAX_BANNER_EXPIRY_DAYS}: 13 months).`),
+  version: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_000_000)
+    .optional()
+    .describe("Default 1. Raise it (e.g. after adding a category or a new ad platform) to ask every visitor again."),
+  reopen_button: z
+    .boolean()
+    .optional()
+    .describe(
+      'A small floating "Privacy choices" button on every page that reopens the settings (default false; a link with data-afst-consent-open or afst("consent","open") does the same).',
+    ),
+});
+export type ConsentBanner = z.infer<typeof consentBannerSchema>;
+
 export const settingsSchema = z.strictObject({
   phone_country_code: z
     .string()
@@ -727,6 +814,7 @@ export const containerConfigSchema = z.strictObject({
   tags: z.array(tagSchema).max(200).optional(),
   conversions: z.array(conversionSchema).max(100).optional(),
   consent: consentSchema.optional(),
+  consent_banner: consentBannerSchema.optional(),
   settings: settingsSchema.optional(),
 });
 export type ContainerConfig = z.infer<typeof containerConfigSchema>;

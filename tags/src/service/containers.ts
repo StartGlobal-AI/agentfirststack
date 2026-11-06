@@ -215,12 +215,59 @@ export async function resyncById(env: Bindings, id: string): Promise<boolean> {
 export const proxySetupHow = (id: string) =>
   `GET /v1/containers/${id}/install?proxy=1 (MCP get_install_instructions { "proxy": true }, full-access key) returns the proxy configs with this container's proxy key. Ask for it only when you set up the proxy, and keep the key server-side: in the proxy config or an env var, never in page HTML or chat.`;
 
+/** Where first-party domains are created: the platform site (AUTH_ISSUER), or null when this service runs alone. */
+export const platformBase = (env: { AUTH_ISSUER?: string }) => env.AUTH_ISSUER?.trim().replace(/\/+$/, "") || null;
+
+/**
+ * The three ways to install, best first: a first-party domain (one CNAME, no server code; created
+ * on the platform site), the path proxy (first_party_proxy), and the direct snippet, which ad
+ * blockers block. Every install answer leads with it.
+ */
+export function firstPartyBlock(base: string, id: string, siteBase: string | null) {
+  const endpoint = siteBase ? `${siteBase}/v1/first-party-domains` : null;
+  return {
+    default: true,
+    why: "Ad blockers block the tag runtime and /collect on a third-party host, so their conversions are lost. Serve them from the site's own domain: use the first of these that works for the site. (Only the path proxy, on the page's own host, also lets /collect re-set click-id cookies server-side.)",
+    order: ["first_party_domain", "path_proxy", "direct"],
+    first_party_domain: {
+      rank: 1,
+      what: "A subdomain of the site (e.g. edge.example.com) with one CNAME to this platform, no server code. It serves tags (/_t), analytics (/_a) and replay (/_r) for the whole project at once, with the visitor's IP and geo.",
+      when: "You can add a DNS record. If you can't, it's one record to hand the owner; use the path proxy (or the direct snippet) until it's active.",
+      create: endpoint
+        ? `POST ${endpoint} {"hostname":"edge.<the site's domain>"} (MCP afs_add_first_party_domain): returns the CNAME to add, the filled-in snippets and next_steps`
+        : "Not on this deployment (this tags service runs without the platform site): use the path proxy.",
+      status: endpoint ? `GET ${endpoint} until status is "active", then swap the snippet` : null,
+      snippet: `<script async src="https://<hostname>/_t/c/${id}.js"></script>`,
+      label:
+        "Pick a neutral label (edge, go, www2), not analytics, stats, track, metrics, pixel, tag or collect: filter lists target those names too.",
+    },
+    path_proxy: {
+      rank: 2,
+      what: "Forward /_t/* on the site's own server, edge or framework to this service with the container's proxy key. Ready configs: first_party_proxy (with ?proxy=1).",
+      when: "DNS can't be changed, but the site's server or host can forward a path.",
+      snippet: `<script async src="/_t/c/${id}.js"></script>`,
+      configs: proxySetupHow(id),
+    },
+    direct: {
+      rank: 3,
+      what: "The plain snippet, straight to this service's host. Last resort: ad blockers block it.",
+      snippet: snippet(base, id),
+    },
+  };
+}
+
 /**
  * Snippet + first-party proxy instructions. The proxy configs embed the container's proxy key
  * (src/service/proxy.ts), which must stay server-side, so they're only included when `proxyKey`
  * is passed (GET /install?proxy=1); otherwise first_party_proxy says how to ask for them.
+ * `siteBase`: the platform site, where first-party domains are created (platformBase).
  */
-export function installInstructions(base: string, row: Pick<ContainerRow, "id" | "domain">, proxy: { key: string | null } | null = null) {
+export function installInstructions(
+  base: string,
+  row: Pick<ContainerRow, "id" | "domain">,
+  proxy: { key: string | null } | null = null,
+  siteBase: string | null = null,
+) {
   const id = row.id;
   const origin = base;
   const why =
@@ -242,15 +289,16 @@ export function installInstructions(base: string, row: Pick<ContainerRow, "id" |
       proxy_key_header: PROXY_KEY_HEADER,
       warning:
         "proxy_key is a secret: it lets a request set the visitor IP /collect sends on. Put it only in the proxy config or a server env var; don't print it, commit it or put it in page HTML.",
-      cloudflare_worker: `// Worker route: ${row.domain}/_t/*\nexport default { async fetch(req) { const u = new URL(req.url); const h = new Headers(req.headers); h.set("x-forwarded-for", req.headers.get("cf-connecting-ip") || ""); h.set("${PROXY_KEY_HEADER}", "${key}"); return fetch("${origin}" + u.pathname.replace(/^\\/_t/, "") + u.search, { method: req.method, headers: h, body: req.body }); } };`,
+      cloudflare_worker: `// Worker route: ${row.domain}/_t/*\nexport default { async fetch(req) { const u = new URL(req.url); const h = new Headers(req.headers); for (const k of [...h.keys()]) if (k.startsWith("x-afs-")) h.delete(k); h.delete("cookie"); h.set("x-forwarded-for", req.headers.get("cf-connecting-ip") || ""); h.set("${PROXY_KEY_HEADER}", "${key}"); const cf = req.cf || {}; for (const [k, v] of Object.entries({ country: cf.country, region: cf.region, "region-code": cf.regionCode, city: cf.city, "postal-code": cf.postalCode })) if (v != null) h.set("x-afs-geo-" + k, encodeURIComponent(String(v))); return fetch("${origin}" + u.pathname.replace(/^\\/_t/, "") + u.search, { method: req.method, headers: h, body: req.body }); } };`,
       nextjs: `// middleware.js (Next.js): Vercel sets x-forwarded-for to the visitor's IP; this adds the key.\nimport { NextResponse } from "next/server";\nexport const config = { matcher: "/_t/:path*" };\nexport function middleware(req) { const h = new Headers(req.headers); h.set("${PROXY_KEY_HEADER}", "${key}"); return NextResponse.rewrite(new URL(req.nextUrl.pathname.replace(/^\\/_t/, "") + req.nextUrl.search, "${origin}"), { request: { headers: h } }); }`,
-      vercel: `// vercel.json rewrites can't add request headers, so /collect gets Vercel's IP, not the visitor's. For the visitor's IP use the Next.js middleware above (or Vercel Routing Middleware doing the same).\n{ "rewrites": [{ "source": "/_t/:path*", "destination": "${origin}/:path*" }] }`,
-      netlify: `# netlify.toml\n[[redirects]]\n  from = "/_t/*"\n  to = "${origin}/:splat"\n  status = 200\n  force = true\n  headers = { ${PROXY_KEY_HEADER} = "${key}" }`,
+      vercel: `// vercel.json (any framework): a route with a request-header transform adds the key; Vercel forwards the visitor's IP (x-forwarded-for) and geo (x-vercel-ip-*) to the destination.\n${JSON.stringify({ routes: [{ src: "/_t/(.*)", dest: `${origin}/_t/$1`, transforms: [{ type: "request.headers", op: "set", target: { key: PROXY_KEY_HEADER }, args: key }] }] })}`,
+      netlify: `// netlify/edge-functions/afs-tags.ts: a Netlify Edge Function sends the visitor's IP and geo, which a netlify.toml proxy redirect doesn't.\nimport type { Config, Context } from "@netlify/edge-functions";\nexport default async (req: Request, context: Context) => { const u = new URL(req.url); const h = new Headers(req.headers); for (const k of [...h.keys()]) if (k.startsWith("x-afs-")) h.delete(k); h.delete("cookie"); h.set("${PROXY_KEY_HEADER}", "${key}"); h.set("x-forwarded-for", context.ip); const g = context.geo; for (const [k, v] of Object.entries({ country: g?.country?.code, "region-code": g?.subdivision?.code, region: g?.subdivision?.name, city: g?.city, "postal-code": g?.postalCode })) if (v != null && v !== "") h.set("x-afs-geo-" + k, encodeURIComponent(String(v))); return fetch("${origin}" + u.pathname + u.search, { method: req.method, headers: h, body: req.method === "POST" ? req.body : undefined }); };\nexport const config: Config = { path: "/_t/*" };`,
       nginx: `location /_t/ { proxy_pass ${origin}/; proxy_set_header Host ${new URL(origin).host}; proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header ${PROXY_KEY_HEADER} "${key}"; }`,
-      note: `/collect trusts X-Forwarded-For (the visitor's IP, sent on to the conversion APIs) only from requests that carry ${PROXY_KEY_HEADER}: ${proxyKey ? "this container's key" : "unavailable here"}. Keep it server-side (proxy config or env var), never in page HTML. Without it, or behind a proxy that doesn't add it, the IP sent on is the proxy's. The proxy must set X-Forwarded-For to the visitor's IP itself (the Cloudflare Worker and nginx configs above do), not append to what the browser sent.`,
+      note: `/collect trusts X-Forwarded-For (the visitor's IP, sent on to the conversion APIs) and x-afs-geo-* (the visitor's country, region and city) only from requests that carry ${PROXY_KEY_HEADER}: ${proxyKey ? "this container's key" : "unavailable here"}. Keep it server-side (proxy config or env var), never in page HTML. Without it, or behind a proxy that doesn't add it, the IP sent on is the proxy's. The proxy must set X-Forwarded-For to the visitor's IP itself (the Cloudflare Worker, Netlify Edge Function and nginx configs above do), not append to what the browser sent. A first-party domain (first_party.first_party_domain) needs none of this: the platform's edge sends the visitor's IP and geo itself.`,
     };
   }
   return {
+    first_party: firstPartyBlock(base, id, siteBase),
     snippet: snippet(base, id),
     where:
       "Paste into <head> on every page, as early as possible. One snippet loads all tags; change tags via the API, never by editing the site.",
@@ -284,16 +332,26 @@ export function installInstructions(base: string, row: Pick<ContainerRow, "id" |
   };
 }
 
-export function containerNextSteps(id: string, existing: boolean, published: boolean) {
+export function containerNextSteps(
+  id: string,
+  existing: boolean,
+  published: boolean,
+  siteBase: string | null = null,
+  domain = "example.com",
+) {
   const steps = [
     existing
       ? "This domain already had a container; it was returned unchanged."
-      : "Install the snippet (install.snippet) in <head> on every page.",
+      : `Install the snippet in <head> on every page, first-party (the default; ad blockers block third-party tag hosts): ${
+          siteBase
+            ? `a first-party domain is one CNAME (POST ${siteBase}/v1/first-party-domains {"hostname":"edge.${domain}"}, MCP afs_add_first_party_domain), then <script async src="https://edge.${domain}/_t/c/${id}.js"></script>; can't change DNS: the path proxy /_t/*`
+            : "the path proxy /_t/*"
+        }. Order and snippets: install.first_party; install.snippet (direct) is the last resort.`,
     `POST /v1/containers/${id}/scan to see which tags and forms the site has today and get a suggested config.`,
     `Fastest: MCP setup_conversion_tracking, or PUT /v1/containers/${id}/draft with tags, triggers and conversions (GET /v1/schema for the format).`,
     `POST /v1/containers/${id}/destinations to add server-side conversion APIs (meta, ga4, google_ads, tiktok, analytics, webhook).`,
     `POST /v1/containers/${id}/draft/validate, then POST /v1/containers/${id}/preview to test, then POST /v1/containers/${id}/publish.`,
-    `Optional first-party proxy (serve the snippet and /collect from your own domain): ${proxySetupHow(id)}`,
+    `Path proxy configs (serve the snippet and /collect from your own domain without a first-party domain): ${proxySetupHow(id)}`,
   ];
   if (published) steps.splice(1, 0, `Live version is published; GET /v1/containers/${id}/events shows traffic.`);
   return steps;

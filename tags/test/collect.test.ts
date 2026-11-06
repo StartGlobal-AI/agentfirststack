@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { automatedBrowser, clientIpFrom, deviceFrom, identityCookies, isTestHit } from "../src/service/collect";
+import { automatedBrowser, clientIpFrom, deviceFrom, geoFrom, identityCookies, isTestHit, requestCountry } from "../src/service/collect";
 import { installInstructions } from "../src/service/containers";
+import { networkOperator } from "../src/service/protection";
 import { fromTrustedProxy, PROXY_KEY_HEADER, proxyKey } from "../src/service/proxy";
 import { collectSchema } from "../src/service/ingest-schema";
 import { compileScript } from "../src/service/script";
@@ -58,7 +59,70 @@ describe("/collect helpers", () => {
       expect(p[k]).toContain(`x-afs-proxy-key`), expect(p[k]).toContain("k".repeat(64));
     expect(i.snippet).not.toContain("k".repeat(10));
     expect(p.snippet).not.toContain("k".repeat(10));
-    expect(p.vercel).toMatch(/can't add request headers/);
+    // vercel.json: a route whose request-header transform adds the key (Vercel forwards the visitor's IP and geo)
+    const vercel = JSON.parse(p.vercel.slice(p.vercel.indexOf("{")));
+    expect(vercel.routes[0]).toMatchObject({ src: "/_t/(.*)", dest: "https://tags.example.net/_t/$1" });
+    expect(vercel.routes[0].transforms[0]).toMatchObject({
+      type: "request.headers",
+      op: "set",
+      target: { key: "x-afs-proxy-key" },
+      args: "k".repeat(64),
+    });
+    // Netlify: an Edge Function (it has the visitor's IP and geo), not a netlify.toml redirect (it doesn't pass them)
+    expect(p.netlify).toContain("netlify/edge-functions/");
+    expect(p.netlify).toContain('h.set("x-forwarded-for", context.ip)');
+    expect(p.netlify).toContain("context.geo");
+    expect(p.netlify).not.toContain("[[redirects]]");
+    // the Cloudflare Worker drops visitor-sent x-afs-* headers and cookies, and sends the geo
+    expect(p.cloudflare_worker).toContain('k.startsWith("x-afs-")');
+    expect(p.cloudflare_worker).toContain('h.delete("cookie")');
+    expect(p.cloudflare_worker).toContain('"x-afs-geo-"');
+  });
+  it("install leads with first_party: a first-party domain, the path proxy, then the direct snippet", () => {
+    const i = installInstructions(
+      "https://tags.example.net",
+      { id: "ctr_abcdefgh12345678", domain: "shop.test" },
+      null,
+      "https://platform.test",
+    );
+    expect(Object.keys(i)[0]).toBe("first_party");
+    expect(i.first_party.order).toEqual(["first_party_domain", "path_proxy", "direct"]);
+    expect(i.first_party.first_party_domain.create).toContain("POST https://platform.test/v1/first-party-domains");
+    expect(i.first_party.first_party_domain.snippet).toBe('<script async src="https://<hostname>/_t/c/ctr_abcdefgh12345678.js"></script>');
+    expect(i.first_party.path_proxy.snippet).toBe('<script async src="/_t/c/ctr_abcdefgh12345678.js"></script>');
+    expect(i.first_party.direct.snippet).toBe(i.snippet);
+    const alone = installInstructions("https://tags.example.net", { id: "ctr_abcdefgh12345678", domain: "shop.test" });
+    expect(alone.first_party.first_party_domain.status).toBeNull();
+    expect(alone.first_party.first_party_domain.create).toContain("path proxy");
+  });
+  it("forwarded geo and network count only from a trusted proxy or the platform's edge", () => {
+    const req = new Request("https://tags.internal/_t/collect", {
+      headers: {
+        "x-afs-geo-country": "fr",
+        "x-afs-geo-city": "Saint-%C3%89tienne",
+        "x-afs-geo-region-code": "ARA",
+        "x-afs-geo-asn": "3215",
+        "x-afs-geo-as-org": "Orange%20SA",
+      },
+    });
+    expect(geoFrom(req, true)).toEqual({
+      country: "FR",
+      region: undefined,
+      region_code: "ARA",
+      city: "Saint-Étienne",
+      postal_code: undefined,
+    });
+    expect(geoFrom(req, false)).toEqual({
+      country: undefined,
+      region: undefined,
+      region_code: undefined,
+      city: undefined,
+      postal_code: undefined,
+    });
+    expect(requestCountry({}, req, true)).toBe("FR");
+    expect(requestCountry({}, req)).toBeUndefined();
+    expect(networkOperator(req, true, false)).toEqual({ asn: 3215, as_org: "Orange SA" });
+    expect(networkOperator(new Request("https://x/"), true, false)).toEqual({});
   });
   it("install instructions leave the proxy key and configs out unless asked for", () => {
     const i = installInstructions("https://tags.example.net", { id: "ctr_abcdefgh12345678", domain: "shop.test" });

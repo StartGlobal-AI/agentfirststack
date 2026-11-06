@@ -1,4 +1,4 @@
-import { accountStanding, clientIp, networkKey, sha256Hex } from "@afs/shared";
+import { accountStanding, clientIp, edgeHost, networkKey, sha256Hex } from "@afs/shared";
 import { chunkKey, type IngestResult } from "../do/engine";
 import { type Bindings, isDev } from "../env";
 import { gunzipCapped, gzip, readCapped } from "../lib/body";
@@ -63,7 +63,31 @@ const DAY = 86_400_000;
 const SKEW_MIN_MS = 60_000;
 const BUSY_MS = 60_000;
 
-export function geo(req: Request, dev: boolean) {
+/**
+ * The visitor's IP: cf-connecting-ip, or, behind the platform's edge serving a first-party domain
+ * (edge.example.com/_r/*, over a service binding with INTERNAL_TOKEN: @afs/shared edgeHost), the
+ * first X-Forwarded-For hop the edge sets. Anyone else's X-Forwarded-For is ignored.
+ */
+export function visitorIp(req: Request, env: { INTERNAL_TOKEN?: string }): string | null {
+  if (edgeHost(env, req)) {
+    const first = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    if (first && /^[0-9a-fA-F:.]{3,45}$/.test(first)) return first;
+  }
+  return clientIp(req);
+}
+
+const forwarded = (req: Request, name: string, n: number) => {
+  const raw = req.headers.get(`x-afs-geo-${name}`);
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw).slice(0, n) || null;
+  } catch {
+    return raw.slice(0, n) || null;
+  }
+};
+
+/** The visitor's country, region and city: Cloudflare's, or the edge's forwarded ones (x-afs-geo-*) for a first-party domain. */
+export function geo(req: Request, dev: boolean, env: { INTERNAL_TOKEN?: string } = {}) {
   const cf = (req as unknown as { cf?: Record<string, unknown> }).cf ?? {};
   const s = (v: unknown, n: number) => (typeof v === "string" && v ? v.slice(0, n) : null);
   if (dev) {
@@ -75,6 +99,9 @@ export function geo(req: Request, dev: boolean) {
         city: s(req.headers.get("x-dev-geo-city"), 100),
       };
   }
+  const country = forwarded(req, "country", 2);
+  if (country && edgeHost(env, req))
+    return { country: country.toUpperCase(), region: forwarded(req, "region", 100), city: forwarded(req, "city", 100) };
   return { country: s(cf.country, 2)?.toUpperCase() ?? null, region: s(cf.region, 100), city: s(cf.city, 100) };
 }
 
@@ -158,7 +185,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   if (!SESSION_ID_RE.test(sid)) return fail(400, "bad_session_id", "?sid= must be rs_ + 16 base32 characters (the recorder generates it).");
   if (!/^\d{1,6}$/.test(seqRaw)) return fail(400, "bad_seq", "?q= must be the chunk number (0, 1, 2, ...).");
   const seq = Number(seqRaw);
-  const net = networkKey(clientIp(req));
+  const net = networkKey(visitorIp(req, env));
   // Before any D1 read: a flood of random site ids from one network stops here.
   if (!(await allowed(env.INGEST_IP_LIMITER, `i:${net}`))) return fail(429, "rate_limited", HINTS.rate_limited!);
   const site = await siteById(env, siteId);
@@ -219,7 +246,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
   }
 
   // exclude_ip_ranges (an office, a QA network): checked here, the address is never stored.
-  if (site.exclude_ip_ranges && ipInRanges(clientIp(req), rangesOf(site.exclude_ip_ranges))) {
+  if (site.exclude_ip_ranges && ipInRanges(visitorIp(req, env), rangesOf(site.exclude_ip_ranges))) {
     drop("ip_excluded", null);
     return fail(403, "ip_excluded", "This network is in the site's exclude_ip_ranges; it isn't recorded.", true);
   }
@@ -304,7 +331,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
     skew_ms: shift,
     meta: {
       ...device,
-      ...geo(req, dev),
+      ...geo(req, dev, env),
       ua_hash: ua ? (await sha256Hex(ua)).slice(0, 16) : null,
       user_id: envl.uid ?? null,
       analytics_visitor_id: envl.avid ?? null,
@@ -364,7 +391,7 @@ export async function ingestChunk(env: Bindings, req: Request, waitUntil: (p: Pr
         env,
         site,
         result.forward,
-        { ip: req.headers.get("cf-connecting-ip"), user_agent: ua, analytics_visitor_id: envl.avid ?? null },
+        { ip: visitorIp(req, env), user_agent: ua, analytics_visitor_id: envl.avid ?? null },
         result.test,
       ),
     );

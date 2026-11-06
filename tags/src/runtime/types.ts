@@ -19,6 +19,8 @@ export interface BootConfig {
   geo?: { country?: string; region?: string };
   /** Fallback base URL if document.currentScript is unavailable. */
   base?: string;
+  /** consent_banner: the banner UI script's version (<base>/cb/<ui>.js), added per request. */
+  ui?: string;
 }
 
 export interface EventCtx {

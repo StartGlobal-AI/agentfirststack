@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Ads conversion tracking with AgentFirstStack</title>
+<meta name="description" content="Track Google Ads conversions with a browser tag and server-side uploads, with enhanced conversions and gclid joins. Test traffic is never imported. An agent sets it up.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/google-ads-conversion-tracking">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Google Ads conversion tracking with AgentFirstStack">
+<meta property="og:description" content="Track Google Ads conversions with a browser tag and server-side uploads, with enhanced conversions and gclid joins. Test traffic is never imported. An agent sets it up.">
+<meta property="og:url" content="https://agentfirststack.com/guides/google-ads-conversion-tracking">
+<meta property="og:image" content="https://agentfirststack.com/og/guides-google-ads-conversion-tracking.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Google Ads conversion tracking with AgentFirstStack">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Google Ads conversion tracking with AgentFirstStack">
+<meta name="twitter:description" content="Track Google Ads conversions with a browser tag and server-side uploads, with enhanced conversions and gclid joins. Test traffic is never imported. An agent sets it up.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides-google-ads-conversion-tracking.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/google-ads-conversion-tracking#article",
+      "headline": "Google Ads conversion tracking with AgentFirstStack",
+      "description": "Track Google Ads conversions with a browser tag and server-side uploads, with enhanced conversions and gclid joins. Test traffic is never imported. An agent sets it up.",
+      "url": "https://agentfirststack.com/guides/google-ads-conversion-tracking",
+      "image": "https://agentfirststack.com/og/guides-google-ads-conversion-tracking.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/google-ads-conversion-tracking"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Google Ads conversion tracking", "item": "https://agentfirststack.com/guides/google-ads-conversion-tracking" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/google-ads-conversion-tracking#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack support Google Ads enhanced conversions?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, on both sides. The browser tag loads with allow_enhanced_conversions and sets user_data with SHA-256 hashed email, phone and address fields. The server upload sends hashed email, phone and address as user identifiers next to the gclid. You turn enhanced conversions on in Google Ads and accept its customer data terms."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will a conversion count twice if I use the tag and the upload?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It can. The tag reports to a website conversion action and the upload to an Import from clicks action, and Google Ads counts each action separately. The validator warns (google_ads_double_count) when one conversion does both: keep one action as primary in Google Ads, or drop one side."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need Google Tag Manager or a developer token?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The container replaces the web container, and server uploads go through Google's Data Manager API, which needs no developer token. The older Google Ads API path is available with api set to google_ads_api, and that one needs a developer token."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can test traffic end up as a conversion in Google Ads?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. In test traffic (a preview link, ?afsa_debug=1 or afst('test', true)) the Google Ads tag doesn't fire in the browser, and server uploads are sent with validateOnly, which Google validates without ingesting any data. Backend events sent with \"test\": true are handled the same way."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What if a visitor has no gclid?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The upload still goes out if the conversion carries a hashed email or phone. With no click id (gclid, gbraid or wbraid) and no hashed email or phone, the delivery is logged as skipped with that reason."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Google Ads conversion tracking</span></nav>
+      <h1>Google Ads conversion tracking with AgentFirstStack</h1>
+      <p class="lede">To track Google Ads conversions with AgentFirstStack, an agent adds one container snippet to your site and runs <code>setup</code> with your conversion ID and labels. The browser tag then reports each conversion with enhanced conversions data, and, if you add server credentials, the service also uploads click conversions through Google's Data Manager API with the stored gclid and hashed email or phone. Test traffic is never imported into Google Ads, and a test call returns Google's own answer.</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+      <h2 id="prompt">The prompt</h2>
+<p>Paste this into your coding agent. It finishes everything it can, then asks only for the Google Ads values it couldn't find.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up Google Ads conversion tracking for this project with AgentFirstStack Tags. It's a free, open-source tag manager with server-side conversion APIs, built for agents, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Create a tags container for the production domain, put its snippet in the head of every page, and serve it through a first-party proxy on our own domain (the configs from GET /v1/containers/:id/install?proxy=1, with the proxy key kept server-side), so ad blockers don't drop the conversion hits. Deploy, and run scan. If the site already has Google Tag Manager or a hard-coded AW- tag, tell me what it fires before you change anything.
+
+4. Find the conversions that matter here (purchases, sign-ups, leads) and run setup with platforms.google_ads: the AW- conversion ID and a label per conversion for the browser tag, and, if I have them, server credentials for an Import from clicks conversion action. Map the visitor's email or phone where the page has it, for enhanced conversions. If you have Google Ads tools, use them to find the IDs; otherwise ask me for exactly what setup lists as missing.
+
+5. Validate the draft and fix every error. If it warns google_ads_double_count, tell me which conversion action to keep as primary. Test the google_ads destination and show me Google's answer, open a preview on the conversion pages and read its log, then publish.
+
+6. If the backend knows about conversions the browser doesn't (paid orders), send them to POST /v1/containers/:id/events with the visitor_id and event_id from the page.
+
+7. Write the container id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what each test returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="two-ways">Two ways Google Ads hears about a conversion</h2>
+<p>A conversion can reach Google Ads from the browser, from the server, or both. They use different kinds of conversion action in Google Ads, so decide which one counts.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Browser tag</th><th>Server upload</th></tr></thead>
+<tbody>
+<tr><th scope="row">Conversion action in Google Ads</th><td>A website action, with a tag: <code>AW-</code> conversion ID and a label</td><td>An "Import from clicks" action (type <code>UPLOAD_CLICKS</code>)</td></tr>
+<tr><th scope="row">What it sends</th><td><code>gtag('event', 'conversion', {send_to, value, currency, transaction_id})</code>, with hashed <code>user_data</code></td><td>The visitor's <code>gclid</code>, <code>gbraid</code> or <code>wbraid</code>, value, currency, transaction ID and hashed email, phone or address</td></tr>
+<tr><th scope="row">From you</th><td>The conversion ID and labels (IDs only)</td><td><code>customer_id</code>, <code>conversion_action_id</code>, and an OAuth client id, secret and refresh token</td></tr>
+<tr><th scope="row">Covers</th><td>Conversions that happen on a page, when the browser loads Google's tag</td><td>Conversions only your backend knows, even days after the click; and page conversions whose Google tag was blocked, if the hit still reached the service (see below)</td></tr>
+</tbody>
+</table>
+</div>
+<p>If one conversion goes through both, Google Ads records it once per action. <code>draft/validate</code> warns <code>google_ads_double_count</code> in that case: keep only one of the two actions as a primary conversion in Google Ads, or drop one side. Many sites start with the tag and add the upload for purchases the backend confirms.</p>
+<p><b>About ad blockers.</b> Conversions your backend sends with <code>POST /v1/containers/:id/events</code> go from your server to ours to Google, so a browser can't block them. Browser hits are different: the default snippet loads from <code>tags.agentfirststack.com</code> and posts to it, and ad blockers can block that host. Serve the container through a path on your own domain with the proxy configs from <code>GET /v1/containers/:id/install?proxy=1</code> (a Cloudflare Worker, Next.js, Vercel, Netlify or nginx; each sends the container's <code>x-afs-proxy-key</code>). There's no custom-domain (CNAME) option yet.</p>
+
+<h2 id="ids">What the owner provides</h2>
+<p>AgentFirstStack never creates ad accounts or conversion actions; it sends to yours. An agent with Google Ads tools can look these up. Otherwise <code>setup</code> lists what's missing and where to find it:</p>
+<ul>
+<li><b>Conversion ID and labels</b> (browser): Google Ads &gt; Goals &gt; Conversions &gt; the action &gt; Tag setup &gt; Install the tag yourself. The ID is <code>AW-...</code>; the label is the part after the slash in <code>send_to</code>.</li>
+<li><b>Server upload:</b> an Import from clicks conversion action and its numeric id (<code>ctId=</code> in the action's URL), the account's <code>customer_id</code>, and an OAuth client from the Google Cloud console with a refresh token for the scope <code>https://www.googleapis.com/auth/datamanager</code>. Add <code>login_customer_id</code> when access goes through a manager account.</li>
+</ul>
+<p>Credentials are sealed at rest and never returned; responses show <code>"configured": true</code>.</p>
+
+<h2 id="setup">Set it up by API</h2>
+<pre><code>T=https://tags.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+J="content-type: application/json"
+curl -s -X POST $T/v1/containers -H "$H" -H "$J" -d '{"domain":"example.com"}'
+curl -s "$T/v1/containers/$C/install?proxy=1" -H "$H"   # first-party proxy configs (keep the key server-side)
+# add the proxy and the proxied &lt;script&gt; to &lt;head&gt;, deploy, then:
+curl -s -X POST $T/v1/containers/$C/scan -H "$H"
+curl -s -X POST $T/v1/containers/$C/setup -H "$H" -H "$J" -d '{
+  "platforms": {
+    "google_ads": {
+      "conversion_id": "AW-123456789",
+      "labels": { "purchase": "AbCdEfGhIj" },
+      "server": {
+        "customer_id": "123-456-7890", "conversion_action_id": "987654321",
+        "client_id": "...apps.googleusercontent.com", "client_secret": "...", "refresh_token": "1//..."
+      }
+    }
+  },
+  "conversions": [{
+    "name": "purchase", "when": { "data_layer_event": "purchase" },
+    "value": { "data_layer": "ecommerce.value" }, "currency": "USD",
+    "transaction_id": { "data_layer": "ecommerce.transaction_id" },
+    "email": { "data_layer": "customer.email" }
+  }]
+}'
+# -&gt; draft, validation, destinations, missing[] (what's still needed, and where)
+curl -s -X POST $T/v1/containers/$C/draft/validate -H "$H"
+curl -s -X POST $T/v1/containers/$C/destinations/$D/test -H "$H"    # Google's answer, validateOnly
+curl -s -X POST $T/v1/containers/$C/preview -H "$H"                  # preview_url on the live site
+curl -s -X POST $T/v1/containers/$C/publish -H "$H" -H "$J" -d '{"note":"google ads purchase"}'</code></pre>
+<p>Leave out <code>server</code> to start with the browser tag only, and run <code>setup</code> again when the credentials arrive: it merges into the draft. Conversions can also fire on a thank-you page (<code>thank_you_path</code>), a form submit (<code>form_selector</code>) or a click (<code>click_selector</code>). Over MCP the same calls are <code>tags_setup_conversion_tracking</code>, <code>tags_validate_draft</code>, <code>tags_test_destination</code> and <code>tags_publish</code>.</p>
+
+<h2 id="enhanced">Enhanced conversions</h2>
+<p>Enhanced conversions send hashed customer data with a conversion. Google's help describes the feature as sending "hashed first-party, user-provided data from your website when a user converts", hashed with SHA-256 (<a href="https://support.google.com/google-ads/answer/9888656">About enhanced conversions</a>, as of 6 Nov 2026).</p>
+<ul>
+<li><b>In the browser,</b> the Google Ads tag is configured with <code>allow_enhanced_conversions: true</code>. When a conversion has an email or phone mapped (or <code>user_data: "auto"</code>, which takes the submitted form's first email and phone field), the runtime hashes them with SHA-256 in the browser and calls <code>gtag('set', 'user_data', ...)</code> with <code>sha256_email_address</code>, <code>sha256_phone_number</code> and, when known, hashed first and last name with the postal code and country. That happens only when the visitor's <code>ad_user_data</code> consent is granted.</li>
+<li><b>On the server,</b> each upload carries the same hashed email and phone as user identifiers next to the click id (through the Data Manager API, also an address when first name, last name, country and postal code are all known). Google's Data Manager guide covers this as "sending Google Ads offline conversions or enhanced conversions for leads" (<a href="https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/send-events">Send offline conversions</a>, as of 6 Nov 2026).</li>
+<li><b>In Google Ads, you turn it on:</b> Goals &gt; Settings, expand "Enhanced conversions", check "Turn on enhanced conversions", agree to the customer data terms and choose "Google tag" as the method (<a href="https://support.google.com/google-ads/answer/9888145">Set up enhanced conversions for web using the Google tag</a>, as of 6 Nov 2026). This is a person's decision in their account, so the agent lists it as waiting on you.</li>
+</ul>
+
+<h2 id="backend">Conversions from your backend</h2>
+<p>For a purchase the browser can't see (a paid invoice, an order confirmed by a webhook), the backend reports it and the service joins it to the visitor's stored click id. Click ids from the landing URL are kept for 90 days.</p>
+<pre><code>curl -s -X POST $T/v1/containers/$C/events -H "$H" -H "$J" -d '{"events":[{
+  "name": "purchase", "visitor_id": "'$VISITOR_ID'", "event_id": "'$EVENT_ID'",
+  "order_id": "T1001", "value": 49, "currency": "USD", "email": "jane@example.com"
+}]}'</code></pre>
+<ul>
+<li><code>visitor_id</code> comes from <code>afst('get','visitor_id')</code> on the page, passed along with the checkout request. Pass the browser conversion's <code>afst('get','event_id')</code> as <code>event_id</code> if the page also tracked it.</li>
+<li>The upload uses your <code>order_id</code> as the transaction ID, or the <code>event_id</code> when there's none. Google Ads uses the transaction ID to catch duplicates for the same conversion action (<a href="https://support.google.com/google-ads/answer/6386790">Use a transaction ID to minimize duplicate conversions</a>, as of 6 Nov 2026); in the Data Manager API, an event whose transaction ID already exists is handled as an adjustment (<a href="https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/upgrade">upgrade guide</a>, as of 6 Nov 2026).</li>
+<li>Emails and phones are normalised and hashed before anything is sent. With no click id and no hashed email or phone, the delivery is skipped and the event log says why. Without <code>ad_user_data</code> consent it's skipped too.</li>
+</ul>
+
+<h2 id="test">Test traffic never becomes a conversion</h2>
+<p>An agent checking your setup clicks through the site like a visitor. None of that may count in Google Ads:</p>
+<ul>
+<li><b>In the browser:</b> a tab opened with <code>?afsa_debug=1</code>, through a preview link, or after <code>afst('test', true)</code> is test traffic. The Google Ads tag doesn't fire there; the preview log shows it as <code>test_skipped</code> ("ad pixels don't fire in the browser; the server-side conversion is sent in test mode").</li>
+<li><b>On the server:</b> test conversions, backend events sent with <code>"test": true</code> and destination tests go to Google with <code>validateOnly: true</code>. Google's guide says this checks the request "without ingesting any data" (<a href="https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/send-events">Data Manager guide</a>, as of 6 Nov 2026). You get Google's real validation errors, and nothing is imported.</li>
+</ul>
+
+<h2 id="verify">Verify it</h2>
+<ol>
+<li><b>Destination test:</b> <code>POST /v1/containers/:id/destinations/:did/test</code> returns <code>{ result: { ok, http_status, response }, test_mode }</code>, where <code>response</code> is Google's answer. A bad refresh token or a conversion action of the wrong type shows up here.</li>
+<li><b>Preview:</b> <code>POST /v1/containers/:id/preview</code> returns a <code>preview_url</code> that runs the draft on the live site. Its log (<code>GET .../preview/:token/log</code>, MCP <code>tags_get_preview_log</code>) lists each trigger matched and each tag fired or skipped, with the reason.</li>
+<li><b>The whole setup:</b> <code>POST https://agentfirststack.com/v1/setup/test</code> sends each conversion to each ad platform in its test mode and returns a browser plan; <code>GET /v1/setup</code> then reports the tags rows, ad platform deliveries included.</li>
+<li><b>After real traffic:</b> <code>GET /v1/containers/:id/events?since=1h</code> shows each conversion with its status per destination, attempts, Google's HTTP status and any error. Transient failures (network errors, 429, 5xx) are retried with backoff, up to 6 attempts.</li>
+</ol>
+
+<h2 id="api">Data Manager API or Google Ads API</h2>
+<p>The <code>google_ads</code> destination uploads through Google's Data Manager API by default (<code>POST https://datamanager.googleapis.com/v1/events:ingest</code>). Google's upgrade guide lists the developer token as "Not required" there and "Required" for the Google Ads API (<a href="https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/upgrade">upgrade guide</a>, as of 6 Nov 2026). If you already upload with a Google Ads API developer token, set <code>"api": "google_ads_api"</code> with <code>developer_token</code> and a refresh token for the <code>adwords</code> scope; the <a href="/guides/server-side-conversion-tracking#google-ads">server-side guide</a> has the background.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Does AgentFirstStack support Google Ads enhanced conversions?</h3>
+<p>Yes, on both sides. The browser tag loads with <code>allow_enhanced_conversions</code> and sets <code>user_data</code> with SHA-256 hashed email, phone and address fields. The server upload sends hashed email, phone and address as user identifiers next to the gclid. You turn enhanced conversions on in Google Ads and accept its customer data terms.</p>
+<h3>Will a conversion count twice if I use the tag and the upload?</h3>
+<p>It can. The tag reports to a website conversion action and the upload to an Import from clicks action, and Google Ads counts each action separately. The validator warns (<code>google_ads_double_count</code>) when one conversion does both: keep one action as primary in Google Ads, or drop one side.</p>
+<h3>Do I need Google Tag Manager or a developer token?</h3>
+<p>No. The container replaces the web container, and server uploads go through Google's Data Manager API, which needs no developer token. The older Google Ads API path is available with <code>api</code> set to <code>google_ads_api</code>, and that one needs a developer token.</p>
+<h3>Can test traffic end up as a conversion in Google Ads?</h3>
+<p>No. In test traffic (a preview link, <code>?afsa_debug=1</code> or <code>afst('test', true)</code>) the Google Ads tag doesn't fire in the browser, and server uploads are sent with <code>validateOnly</code>, which Google validates without ingesting any data. Backend events sent with <code>"test": true</code> are handled the same way.</p>
+<h3>What if a visitor has no gclid?</h3>
+<p>The upload still goes out if the conversion carries a hashed email or phone. With no click id (gclid, gbraid or wbraid) and no hashed email or phone, the delivery is logged as skipped with that reason.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/guides/meta-conversions-api"><span class="svc svc-tags">Tags</span><b>Meta Conversions API</b><span>Pixel and server, deduplicated by event id.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/stape-alternative"><span class="svc svc-tags">Tags</span><b>Stape alternative</b><span>Server-side GTM hosting, or conversion APIs built in.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>One prompt, every step, and what's left for you.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">The prompt</a></li><li><a href="#two-ways">Browser tag or server upload</a></li><li><a href="#ids">What the owner provides</a></li><li><a href="#setup">Set it up by API</a></li><li><a href="#enhanced">Enhanced conversions</a></li><li><a href="#backend">Conversions from your backend</a></li><li><a href="#test">Test traffic</a></li><li><a href="#verify">Verify it</a></li><li><a href="#api">Data Manager or Google Ads API</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -16,7 +16,7 @@ const LABEL: Record<ItemKind, [string, string]> = {
   variables: ["variable", "variables"],
   conversions: ["conversion", "conversions"],
 };
-const SECTIONS = ["consent", "settings"] as const;
+const SECTIONS = ["consent", "consent_banner", "settings"] as const;
 
 export interface PathChange {
   path: string;

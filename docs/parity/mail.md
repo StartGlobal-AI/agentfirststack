@@ -53,7 +53,7 @@ extraction, labels, allow/block lists, an event feed for agents without a public
 | Signature appended to sends | [AgentMail](https://docs.agentmail.to/inboxes) | **Missing** | Skip: the agent writes the whole body; per-inbox send state for little gain | - | - |
 | Search inboxes by address / name | [AgentMail](https://docs.agentmail.to/api-reference/inboxes/search) | **Partial**: `GET /v1/inboxes?domain=` | Adapt (low; hosted cap is 10 inboxes) | S | `GET /v1/inboxes?q=` substring of address or display_name |
 | Message / unread counts, storage used | [AgentMail usage](https://docs.agentmail.to/api-reference/metrics/query-usage) | **Have**: `GET /v1/inboxes/:id` `message_count`, `unread_count`; `GET /v1/inboxes` `storage` | Keep | - | - |
-| Reserved role names, address tombstones | (not documented elsewhere) | **Have**: reserved list + `EXTRA_RESERVED_USERNAMES`; `ADDRESS_TOMBSTONE_DAYS` | Keep | - | - |
+| Reserved role names, address tombstones | (not documented elsewhere) | **Have**: about 90 built-in reserved names (dots, dashes and case ignored) + `EXTRA_RESERVED_USERNAMES`; a deleted address is retired for good (only its last owner can recreate it) | Keep | - | - |
 | Inbox profile picture | [AgentMail](https://docs.agentmail.to/knowledge-base/inbox-profile-pictures) | **Missing** | Skip: cosmetic | - | - |
 | Per-inbox file drive | [AgentMail files](https://docs.agentmail.to/api-reference/inboxes/files/create) | **Missing** | Skip: not email; free general storage is an R2 abuse magnet | - | - |
 

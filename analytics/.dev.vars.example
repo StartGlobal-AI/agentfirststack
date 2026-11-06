@@ -5,6 +5,9 @@ SALT_SECRET=change-me-to-a-long-random-string
 DEV_MODE=true
 # Optional: rows a /sql query may read after its first result row before it is stopped (default 1000000)
 # SQL_MAX_ROWS_READ=1000000
+# Optional: a Google API key for lab runs (GET /v1/sites/:id/web-vitals/lab, PageSpeed Insights).
+# Unset = keyless, on Google's small shared quota.
+# PAGESPEED_API_KEY=
 # Optional: seals the Stripe webhook signing secret and alert destinations' webhook / Slack URLs
 # (32 bytes, base64): openssl rand -base64 32. Without it connecting Stripe or adding a webhook /
 # Slack destination returns 503 not_configured.

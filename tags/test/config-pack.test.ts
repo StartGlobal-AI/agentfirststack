@@ -133,13 +133,22 @@ describe("runtime size budget", () => {
   // The core bundle every container loads, and the extension bundle (video, js_error,
   // wait_for_tags, cross-domain, TCF, user_data auto) served only to configs that use it.
   // Raised from ~41.7 KB / 15.1 KB gzip (before the GTM parity work) for the variable and trigger
-  // packs, the preview log, tag sequencing, scheduling and telemetry. Raise again only with a reason.
+  // packs, the preview log, tag sequencing, scheduling and telemetry; then from 56 KB / 20 KB gzip
+  // (core was 55.1 / 19.5) for the consent banner's runtime side (stored choice, Consent Mode
+  // default/update, replay and analytics hooks, the proof-of-consent record: about 2.6 KB / 0.9 KB
+  // gzip). The banner UI itself is its own script (consent-ui), loaded only for visitors who see it.
+  // Raise again only with a reason.
   it("stays within budget", async () => {
     const core = await bundleRuntime();
     const ext = await bundleRuntime({ ext: true });
-    expect(core.length).toBeLessThanOrEqual(56_000);
-    expect(await gzipBytes(core)).toBeLessThanOrEqual(20_000);
-    expect(ext.length).toBeLessThanOrEqual(64_000);
-    expect(await gzipBytes(ext)).toBeLessThanOrEqual(23_000);
+    const ui = await bundleRuntime({ banner: true });
+    expect(core.length).toBeLessThanOrEqual(58_500);
+    expect(await gzipBytes(core)).toBeLessThanOrEqual(21_000);
+    expect(ext.length).toBeLessThanOrEqual(66_800);
+    expect(await gzipBytes(ext)).toBeLessThanOrEqual(24_000);
+    expect(ui.length).toBeLessThanOrEqual(8_000);
+    expect(await gzipBytes(ui)).toBeLessThanOrEqual(3_600);
+    // The UI and its English text never ride in the core bundle.
+    expect(core).not.toContain("We value your privacy");
   });
 });

@@ -6,6 +6,7 @@ import { DEFAULT_MAX_LIST_ENTRIES } from "./service/lists";
 import { DEFAULT_MAX_SCHEDULED, DEFAULT_SEND_DAILY_LIMIT, DEFAULT_UNCLAIMED_MAX_SCHEDULED } from "./service/send";
 import { DEFAULT_MAX_CONCURRENT_WAITS, DEFAULT_MAX_CONCURRENT_WAITS_PER_INBOX } from "./service/wait";
 import { DEFAULT_MAX_WEBHOOKS } from "./service/webhooks";
+import { DEFAULT_UNCLAIMED_MAX_MESSAGE_BYTES, MAX_MESSAGE_BYTES, maxInboundMessageBytes } from "./service/ingest";
 
 const bytes = (n: number) =>
   n >= 1024 ** 3 ? `${Math.round((n / 1024 ** 3) * 10) / 10} GiB` : n >= 1024 ** 2 ? `${Math.round(n / 1024 ** 2)} MiB` : `${n} bytes`;
@@ -32,6 +33,8 @@ export function limitsTable(env: AppEnv | undefined): string {
     ["Inboxes created / deleted per day", "MAX_INBOX_CREATES_PER_DAY", Infinity, Infinity, "n"],
     ["Inbound messages per day (account)", "MAX_INBOUND_PER_ACCOUNT_PER_DAY", Infinity, Infinity, "n"],
     ["Inbound messages per sender per inbox per day", "MAX_INBOUND_PER_SENDER_PER_DAY", Infinity, Infinity, "n"],
+    ["Inbound bytes per sender per day (account)", "MAX_INBOUND_BYTES_PER_SENDER_PER_DAY", Infinity, Infinity, "b"],
+    ["Largest inbound message", "MAX_INBOUND_MESSAGE_BYTES", MAX_MESSAGE_BYTES, DEFAULT_UNCLAIMED_MAX_MESSAGE_BYTES, "b"],
     ["Messages an inbox holds", "MAX_MESSAGES_PER_INBOX", Infinity, Infinity, "n"],
     ["Stored mail", "MAX_BLOB_BYTES_PER_ACCOUNT", DEFAULT_MAX_BLOB_BYTES, DEFAULT_UNCLAIMED_MAX_BLOB_BYTES, "b"],
     ["Stored text", "MAX_TEXT_BYTES_PER_ACCOUNT", Infinity, Infinity, "b"],
@@ -60,8 +63,11 @@ export function limitsTable(env: AppEnv | undefined): string {
   const fmt = (name: CapName, n: number, kind: "n" | "b") =>
     !Number.isFinite(n) || (name === "MAX_BLOB_BYTES_PER_ACCOUNT" && n === 0) ? "no cap" : kind === "b" ? bytes(n) : String(n);
   const lines = rows.map(([label, name, dc, du, kind]) => {
-    const c = cap(env, claimed, name, dc);
-    const u = cap(env, unclaimed, name, Number.isFinite(du) ? du : cap(env, claimed, name, dc));
+    const c = name === "MAX_INBOUND_MESSAGE_BYTES" ? maxInboundMessageBytes(env, claimed) : cap(env, claimed, name, dc);
+    const u =
+      name === "MAX_INBOUND_MESSAGE_BYTES"
+        ? maxInboundMessageBytes(env, unclaimed)
+        : cap(env, unclaimed, name, Number.isFinite(du) ? du : cap(env, claimed, name, dc));
     return `| ${label} | ${fmt(name, c, kind)} | ${fmt(name, u, kind)} | ${name} |`;
   });
   const retention = Number(env.SHARED_RETENTION_DAYS || 0);
@@ -112,9 +118,10 @@ KEY=${kp}_...
 # 2. More addresses (same address again returns the existing inbox, 200 + existing:true)
 curl -s -X POST $BASE/v1/inboxes -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \\
   -d '{"username":"acme-signups"}'
-# 3. Put acme-signups@${sharedDomain} into the signup form, then block until the code arrives:
-curl -s "$BASE/v1/inboxes/$INBOX/latest-code?timeout=60" -H "Authorization: Bearer $KEY"
-#  -> { "code": "482913", "link": "https://...", "link_kind": "verify", "message_id": "msg_...", ... }
+# 3. Put acme-signups@${sharedDomain} into github.com's signup form, then block until GitHub's code arrives.
+#    Always pass from=<the site's domain>: anyone can email your inbox, and only that site's mail should count.
+curl -s "$BASE/v1/inboxes/$INBOX/latest-code?from=github.com&timeout=60" -H "Authorization: Bearer $KEY"
+#  -> { "sender_domain": "github.com", "code": "482913", "link": "https://...", "link_kind": "verify", "message_id": "msg_...", ... }
 # or the whole message:
 curl -s "$BASE/v1/inboxes/$INBOX/wait?from=facebookmail.com&timeout=60" -H "Authorization: Bearer $KEY"
 # 4. Reply (safe to retry with the same Idempotency-Key)
@@ -148,12 +155,21 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
 - Filters on \`/wait\` (case-insensitive substrings, all optional, combined with AND): \`from\` (sender address, name or
   envelope sender: a loose filter, a display name is easy to fake), \`subject\`, \`contains\` (subject or body).
 - \`/latest-code\` is the same wait restricted to messages with an extracted code or action link, and returns
-  only \`{ code, codes, link, link_kind, message_id, from, subject, received_at, auth_verdict, auth_required, waited_ms }\`.
-  It is strict about the sender, so a forged mail cannot feed you a code:
+  only \`{ sender_domain, code, codes, link, link_kind, message_id, from, subject, received_at, auth_verdict, auth_required, tag, waited_ms }\`.
+  **Always pass \`from\`** with the domain of the site you are signing up to. Inbox addresses are easy to guess
+  (\`<brand>-signups@\`), and anyone who owns a domain can send authenticated mail, so while you wait a stranger can
+  send a fake "verify your account" link or code to the same address. Only \`from\` makes latest-code ignore them:
   - \`from\` is the sender's domain (\`from=github.com\` matches noreply@github.com and mail.github.com, never a display
     name "github.com" or github.com.evil.example) or a full address. A bare word (\`from=github\`) is a 400.
-  - By default only mail whose sender domain is authenticated counts (\`auth_verdict: "pass"\`).
-    \`allow_unauthenticated=true\` opts out; a 408 hint names a matching message that was skipped for this reason.
+  - By default only mail whose sender domain is authenticated counts (\`auth_verdict: "pass"\`), so with \`from\` a forged
+    mail cannot feed you a code. \`allow_unauthenticated=true\` opts out; a 408 hint names a matching message that was
+    skipped for this reason.
+  - Without \`from\`, the newest code from any authenticated sender counts, so check \`sender_domain\` (the registrable
+    domain of the From address, first in the answer) is the site. The answer then also carries \`warning\` and \`hint\`.
+    When code mail from two or more sender domains arrived in the window (after .. now; \`after=0\` = the whole inbox)
+    it refuses to pick: 409 \`ambiguous_sender\` with \`details.candidates\` (\`[{ sender_domain, from, message_id,
+    received_at, auth_verdict, messages }]\`) and a hint; call again with \`from=\`.
+  - \`/wait\`'s \`from\` is a loose substring: pass it too, and check \`auth_verdict\` and the sender before using a code or link.
 
 ## What is extracted at ingest (every message)
 
@@ -198,13 +214,22 @@ with \`tag=\` on \`/wait\`, \`/latest-code\`, \`/messages\` and \`/search\` (MCP
   together) or, on shared mailbox providers such as gmail.com, the address. All mail with no SPF, DKIM or DMARC pass
   is one sender, "unauthenticated" ("Too much unauthenticated mail ..."), whatever domain it claims. One sender also
   never gets more than half of the account's daily quota. Checked from the headers, before the body is read.
+- \`MAX_INBOUND_BYTES_PER_SENDER_PER_DAY\`: bytes of raw mail one sender (as above) may send the account per UTC day,
+  across inboxes ("Too much mail from <sender> to the account behind <address> today (UTC): at most ... a day from one
+  sender ..."). Other senders are not affected.
+- \`MAX_INBOUND_MESSAGE_BYTES\` (always on): the largest message accepted, 25 MB at most (Email Routing's limit), by default
+  10 MB for unclaimed accounts ("Message too large: <address> accepts messages up to ...").
 - \`MAX_INBOUND_PER_ACCOUNT_PER_DAY\`: the account's inbound mail per UTC day, across inboxes ("Daily limit reached: ...").
   Only stored messages count (not rejected mail or redeliveries).
 - \`MAX_BLOB_BYTES_PER_ACCOUNT\` (always on unless the operator sets "0"; this deployment's value is in "Limits on this
   deployment" below and in \`GET /v1/usage\`): bytes of mail the account keeps (raw messages, HTML bodies, attachments of
   sent mail). When full, new mail is rejected ("Mailbox full: ...") until you delete old mail (messages, inboxes, clear an
-  inbox; expiry and retention free it too). Sending still works, but the copy kept of a sent message is text only
-  (\`stored_copy: "text_only"\`). \`GET /v1/inboxes\` shows \`storage\`.
+  inbox; expiry and retention free it too). Before that, small mail keeps arriving: messages up to 256 KB (verification
+  codes, notices) fit until the storage is completely full, larger ones may not use its last 5% ("Mailbox nearly full:
+  ... keeps its last ... for messages up to 256 KB"), and past 80% a sender that already keeps 10% of it may not send
+  larger ones ("Mailbox nearly full: much of what ... keeps is mail from <sender> ..."), so the senders that filled it are
+  refused first, not everyone. Sending still works, but the copy kept of a sent message is text only
+  (\`stored_copy: "text_only"\`). \`GET /v1/inboxes\` shows \`storage\`; a wait that times out says when it is nearly full.
 - \`MAX_TEXT_BYTES_PER_ACCOUNT\`: stored text per account; beyond it new mail keeps a 2 KB excerpt and 10 links in the
   API (\`text_truncated: true\`; codes are still extracted from all of it; the raw MIME keeps everything).
 - Allow / block lists (see below) are checked as soon as the headers are read, before any of these.
@@ -275,14 +300,17 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
 - \`POST /v1/inboxes\` \`{ username?, domain?, display_name?, ttl_days?, forward? }\` -> 201 \`{ inbox, existing:false, next_steps }\` (200 + existing:true if you already own the address).
   Every inbox object has \`forward\` (see "Forward to the owner": mode, digest_hour, timezone, recipients, waiting_for_owner,
   last_forwarded_at, last_digest_at, forwarded_today, daily_limit).
-  username: a-z 0-9 . _ - (no "+": mail to name+tag@ is delivered to name@). Random if omitted. Role names
-  (admin, postmaster, abuse, ...) are reserved on the shared domain. \`domain\` defaults to ${sharedDomain}.
-  409 \`conflict\` if another account holds the address. An address on ${sharedDomain} that received mail stays
-  reserved after it is deleted (or expires): for ADDRESS_TOMBSTONE_DAYS (default 90) only the account that had it can
-  create it again; for others it is the same 409. One that never received mail is free again at once.
+  username: a-z 0-9 . _ - (no "+": mail to name+tag@ is delivered to name@). Random if omitted. Role and platform names
+  are reserved on the shared domain (400): admin, postmaster, hostmaster, webmaster, abuse, security, support, billing,
+  legal, privacy, conduct, notifications, alerts, hello, help, contact, team, staff, owner, official, operator, press,
+  status, verify, verification, account(s), login, register, signup(s), dmarc, mailer, bounce(s), noreply variants and
+  more, plus the operator's EXTRA_RESERVED_USERNAMES; ".", "_" and "-" don't count (no.reply = noreply). An inbox you
+  created before its name became reserved keeps working, and creating it again returns it. \`domain\` defaults to ${sharedDomain}.
+  409 \`conflict\` if another account holds the address or ever held it: an address on ${sharedDomain} is never given to
+  another account, even after it is deleted or expires (it may be the recovery email of accounts elsewhere). The 409 is
+  the same either way. Only the account that had it can create it again.
   Deleting the project (owner in the dashboard, or an unclaimed project's agent with DELETE https://agentfirststack.com/v1/me)
-  refuses its mail at once and erases its inboxes 7 days later; their addresses that ever received mail are then reserved
-  permanently, so nobody else can receive that project's password resets.
+  refuses its mail at once and erases its inboxes 7 days later; their addresses stay reserved for good.
   Inbox creations per UTC day may be capped (429 \`daily_limit\`; reusing an address you own is not a creation).
   A custom \`domain\` must be yours with ownership verified (else 403 \`ownership_not_verified\`; see Domains).
   \`ttl_days\`: inbox and its mail are deleted after that many days. \`display_name\`: line breaks and other
@@ -291,14 +319,16 @@ arrives, or one digest a day (and at what hour, in which time zone). Default: of
 - \`GET /v1/inboxes?limit=&domain=\` -> \`{ inboxes, shared_domain, storage: { used_bytes, limit_bytes } }\` (limit_bytes null = no cap)
 - \`GET /v1/inboxes/:id\` -> \`{ inbox }\` incl. message_count, unread_count
 - \`PATCH /v1/inboxes/:id\` \`{ display_name?, ttl_days? (null = forever), forward? (merged) }\` -> \`{ inbox, next_steps? }\` (next_steps when forward was given)
-- \`DELETE /v1/inboxes/:id\` -> deletes the inbox, its messages, attachments and raw MIME; \`address_reserved_until\` says
-  until when the address stays yours (null = not reserved). Deletes per UTC day may be capped (429 \`daily_limit\`;
+- \`DELETE /v1/inboxes/:id\` -> deletes the inbox, its messages, attachments and raw MIME; \`address_reserved: true\` = a
+  shared-domain address, which no other account will ever get (you can create it again). Deletes per UTC day may be capped (429 \`daily_limit\`;
   \`PATCH {"ttl_days": 1}\` lets an inbox expire instead).
 
 ### Receiving and reading
 - \`GET /v1/inboxes/:id/wait?from=&subject=&contains=&tag=&after=&timeout=\` -> \`{ message (incl. reply_text), waited_ms, after }\` or 408 timeout.
   \`curl "$BASE/v1/inboxes/$INBOX/wait?subject=verify&timeout=90" -H "Authorization: Bearer $KEY"\`
-- \`GET /v1/inboxes/:id/latest-code?from=<domain|address>&subject=&contains=&tag=&after=&timeout=&allow_unauthenticated=\` -> \`{ code, link, link_kind, message_id, auth_verdict, auth_required, tag, ... }\`
+- \`GET /v1/inboxes/:id/latest-code?from=<domain|address>&subject=&contains=&tag=&after=&timeout=&allow_unauthenticated=\` -> \`{ sender_domain, code, link, link_kind, message_id, auth_verdict, auth_required, tag, ... }\`
+  (+ \`warning\`, \`hint\` without from), 408 timeout, 409 \`ambiguous_sender\` (no from, two or more sender domains).
+  \`curl "$BASE/v1/inboxes/$INBOX/latest-code?from=github.com&timeout=60" -H "Authorization: Bearer $KEY"\`
 - \`GET /v1/inboxes/:id/messages\` -> \`{ messages, next_before }\`, newest first. Filters (all optional, AND):
   \`unread=true\`, \`q=\` (full text), \`from=\` / \`to=\` / \`subject=\` (substrings), \`direction=in|out\`, \`tag=\`,
   \`has=code,link,attachments\` (all must hold), \`auth=pass|fail|unknown\` (sender authentication), \`labels=a,b\` (custom or
@@ -521,7 +551,7 @@ Read-only keys see only the read tools. Operator-only arguments (\`auto_configur
 | update_thread { thread_id, add_labels?, remove_labels?, read? } | | PATCH /v1/threads/:id |
 | delete_thread { thread_id } | destructive | DELETE /v1/threads/:id |
 | wait_for_email { inbox_id, from?, subject?, contains?, tag?, after?, timeout? } | blocks <= 120 s | GET /v1/inboxes/:id/wait |
-| get_latest_code { inbox_id, from?, subject?, contains?, tag?, after?, timeout?, allow_unauthenticated? } | blocks <= 120 s; strict sender | GET /v1/inboxes/:id/latest-code |
+| get_latest_code { inbox_id, from (always pass it), subject?, contains?, tag?, after?, timeout?, allow_unauthenticated? } | blocks <= 120 s; strict sender; ambiguous_sender without from | GET /v1/inboxes/:id/latest-code |
 | wait_for_event { after?, types?, inbox_id?, limit?, timeout? } | event feed; blocks <= 120 s (default 30) | GET /v1/events |
 | mark_read { message_id, read? } | | PATCH /v1/messages/:id |
 | update_message { message_id, read?, add_labels?, remove_labels? } | labels | PATCH /v1/messages/:id |
@@ -554,7 +584,7 @@ Read-only keys see only the read tools. Operator-only arguments (\`auto_configur
 Example JSON-RPC:
 \`\`\`sh
 curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_latest_code","arguments":{"inbox_id":"inb_...","timeout":60}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_latest_code","arguments":{"inbox_id":"inb_...","from":"github.com","timeout":60}}}'
 \`\`\`
 
 ## Config (operator)
@@ -576,11 +606,12 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | SHARED_RETENTION_DAYS | var | optional; shared-domain mail older than this is deleted hourly |
 | MAX_INBOXES_PER_ACCOUNT | var | optional; inboxes per account |
 | MAX_INBOX_CREATES_PER_DAY, MAX_INBOX_DELETES_PER_DAY | var | optional; inbox creations / API deletions per account per UTC day |
-| ADDRESS_TOMBSTONE_DAYS | var | optional; days a deleted shared-domain address that received mail stays its old account's, default 90 |
-| EXTRA_RESERVED_USERNAMES | var | optional; comma-separated usernames reserved on the shared domain |
+| EXTRA_RESERVED_USERNAMES | var | optional; comma-separated usernames reserved on the shared domain on top of the built-in role names (your brand names); inboxes that already have one are listed, never deleted: the cron logs \`mail.reserved_conflicts\` when the list changes, and \`GET /v1/admin/reserved-inboxes?limit=\` (any key plus \`x-admin-token\`) lists them |
 | MAX_MESSAGES_PER_INBOX | var | optional; inbound messages an inbox holds (beyond it, the dominant sender's oldest mail is evicted) |
 | MAX_INBOUND_PER_ACCOUNT_PER_DAY | var | optional; inbound messages per account per UTC day (more are rejected at SMTP time) |
 | MAX_INBOUND_PER_SENDER_PER_DAY | var | optional; inbound messages per sender per inbox per UTC day (more from that sender are rejected) |
+| MAX_INBOUND_BYTES_PER_SENDER_PER_DAY | var | optional; bytes of raw mail one sender may send the account per UTC day (more from that sender are rejected) |
+| MAX_INBOUND_MESSAGE_BYTES | var | largest inbound message in bytes; default 25 MiB (the most it can be), 10 MiB for unclaimed accounts; "0" = 25 MiB |
 | MAX_TEXT_BYTES_PER_ACCOUNT | var | optional; stored text bytes per account (beyond it, new mail keeps an excerpt) |
 | MAX_BLOB_BYTES_PER_ACCOUNT | var | stored mail bytes per account (raw MIME, HTML, sent attachments); full = inbound rejected; "0" = off (this deployment's value: see Limits) |
 | MAX_CONCURRENT_WAITS, MAX_CONCURRENT_WAITS_PER_INBOX | var | optional; parked waits per account (default 3) / per inbox (default 2) |
@@ -596,7 +627,7 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H 'content-type: application/
 | WAIT_LIMITER, SEARCH_LIMITER, WEBHOOK_TEST_LIMITER | bindings | optional Workers rate limits per account (wait, search, webhook test) |
 
 ## Limits
-Inbound messages up to 25 MB; stored text up to 64 KB (text_truncated); 50 stored attachments. Sending: 50 recipients,
+Inbound messages up to 25 MB (MAX_INBOUND_MESSAGE_BYTES; 10 MB for unclaimed accounts by default); stored text up to 64 KB (text_truncated); 50 stored attachments. Sending: 50 recipients,
 32 attachments, 25 MiB per message; custom headers X-* only; send_at at most 7 days ahead. Waits up to 120 s. Search:
 words of 3+ characters, all must appear. Labels: 20 per message or thread. Webhooks: 5 custom headers, 50 inbox_ids.
 Event feed: 7 days. "0" for a cap means none allowed (except MAX_BLOB_BYTES_PER_ACCOUNT, where "0" turns the cap off).

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webflow analytics in one prompt</title>
+<meta name="description" content="Add cookieless analytics to a Webflow site with one prompt: your agent writes the head code over Webflow's MCP server, publishes and checks the live site.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/guides/webflow-analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Webflow analytics in one prompt">
+<meta property="og:description" content="Add cookieless analytics to a Webflow site with one prompt: your agent writes the head code over Webflow's MCP server, publishes and checks the live site.">
+<meta property="og:url" content="https://agentfirststack.com/guides/webflow-analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/guides.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AgentFirstStack guides and comparisons">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Webflow analytics in one prompt">
+<meta name="twitter:description" content="Add cookieless analytics to a Webflow site with one prompt: your agent writes the head code over Webflow's MCP server, publishes and checks the live site.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/guides.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": [
+        "https://github.com/StartGlobal-AI/agentfirststack"
+      ],
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "StartGlobal",
+        "url": "https://startglobal.co"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/guides/webflow-analytics#article",
+      "headline": "Webflow analytics in one prompt",
+      "description": "Add cookieless analytics to a Webflow site with one prompt: your agent writes the head code over Webflow's MCP server, publishes and checks the live site.",
+      "url": "https://agentfirststack.com/guides/webflow-analytics",
+      "image": "https://agentfirststack.com/og/guides.png",
+      "datePublished": "2026-11-06",
+      "dateModified": "2026-11-06",
+      "inLanguage": "en",
+      "author": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "publisher": {
+        "@id": "https://agentfirststack.com/#org"
+      },
+      "isPartOf": {
+        "@id": "https://agentfirststack.com/#website"
+      },
+      "mainEntityOfPage": "https://agentfirststack.com/guides/webflow-analytics",
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Webflow",
+        "applicationCategory": "WebApplication"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "AgentFirstStack",
+          "item": "https://agentfirststack.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://agentfirststack.com/guides"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Webflow analytics",
+          "item": "https://agentfirststack.com/guides/webflow-analytics"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/guides/webflow-analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Do I need a paid Webflow plan?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For custom code, yes: a Core, Growth, Agency or Freelancer Workspace, or a Site plan on the site. Webflow's MCP server itself works on every Site plan, including Starter."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can the tracker be served from my Webflow domain?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not by Webflow's hosting, which doesn't forward paths to other servers. With Cloudflare's orange-to-orange setup you can run a Worker route on /_a/* yourself; otherwise the direct snippet is the only option, and ad blockers block it."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will the agent overwrite my existing head code?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not if it follows the prompt. set_site_freeform_code replaces the whole block, so the prompt has it read the block first and append the tag."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it track visits to the webflow.io staging site?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No, as long as the analytics site is for your custom domain: events from other hosts are dropped and listed by verify. Add the staging host to allowed_hostnames if you do want it, together with your own domain."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tracker use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Services</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Webflow analytics</span></nav>
+      <h1>Webflow analytics in one prompt</h1>
+      <p class="lede">undefined</p>
+      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+
+<p>To add analytics to a Webflow site, the tracker goes in the site-wide head code, and the site has to be published for it to go live. An agent can do both: connect Webflow's own MCP server next to AgentFirstStack, paste the prompt below, and the agent creates the analytics site, writes the tag into the head code, publishes and runs verify. One limit up front: Webflow hosting can't serve the tracker from your own domain, so visitors with an ad blocker aren't counted. Other platforms: <a href="/add-analytics-with-ai-agent">add analytics with an AI agent</a>.</p>
+
+<h2 id="before">Before you start</h2>
+<ul>
+<li><b>A plan that allows custom code.</b> Webflow's head and body code needs a Core, Growth, Agency or Freelancer Workspace, or an active Site plan on the site.</li>
+<li><b>Webflow's MCP server in your agent.</b> It's at <code>https://mcp.webflow.com/mcp</code> and is available on every Site plan, the free Starter plan included. Add it to Claude Code, Cursor or Codex the way that tool adds remote servers, and sign in to Webflow when it asks.</li>
+<li><b>An agent that can make HTTP requests</b>, for AgentFirstStack's API (or its MCP server, <code>https://agentfirststack.com/mcp</code>).</li>
+</ul>
+
+<h2 id="prompt">The prompt</h2>
+<div class="prompt">
+  <span class="prompt-label">Paste this into your coding agent, with Webflow's MCP server connected</span>
+  <p class="prompt-text" id="prompt-1">Add analytics to my Webflow site with AgentFirstStack. It's free, open-source analytics built for agents, and you can do the API side yourself: there is no signup form, and no email or verification is needed.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If AGENTFIRSTSTACK_API_KEY is in this folder's .env, use it and read AGENTFIRSTSTACK.md. Otherwise get a key with one request:
+   curl -X POST https://agentfirststack.com/v1/signup
+   Save api_key in .env as AGENTFIRSTSTACK_API_KEY. Never put it in Webflow: everything in custom code is public. Name the project after the domain: PATCH https://agentfirststack.com/v1/me.
+
+3. Create a site for the custom domain. Webflow hosting can't proxy a path to another server, so use the direct snippet. With Webflow's MCP tools, read the site's freeform head code first (get_site_freeform_code), append the snippet with data-forms="true" to whatever is there, write it back (set_site_freeform_code), and publish the site to the custom domain (publish_site). Note in AGENTFIRSTSTACK.md that ad blockers block analytics on this site.
+
+4. Create goals for the main buttons and forms (form_submit events, or the thank-you page if a form redirects to one). Tell me which buttons to give a data-afsa-event custom attribute in the Designer.
+
+5. Add an email destination, a weekly report, and alerts for a traffic drop and for no data.
+
+6. After publishing, ask me to open the site once, then run verify and fix what it reports.
+
+7. Write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md, create a claim link with POST https://agentfirststack.com/v1/claim-link, then run GET https://agentfirststack.com/v1/setup?services=analytics and work through its next_steps until it says "ready": true.
+
+When you're done, tell me what you set up, how you verified it, and give me the claim link.</p>
+  <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+</div>
+
+<h2 id="head">The head code</h2>
+<p>By hand, it's Site settings &gt; Custom code &gt; Head code (up to 50,000 characters), then Publish:</p>
+<pre><code>&lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_..." data-forms="true"&gt;&lt;/script&gt;</code></pre>
+<p>Webflow's MCP server reaches the same field. Its scripts tool can "read or write the freeform head and footer custom-code blocks", and <code>set_site_freeform_code</code> "replaces the block's content". That's why the prompt makes the agent read the block first and append: writing it blind would delete whatever other code you already have there. Webflow's MCP server also has <code>publish_site</code>, because custom code "won't go live until your site is published".</p>
+<p>Two other ways an agent might reach for, and why not: registering <code>s.js</code> as a hosted script requires a fixed integrity hash of the file, which breaks the next time the tracker is updated; and Webflow's Custom Code REST endpoints only accept tokens from Webflow Apps, not site tokens. The freeform head block avoids both.</p>
+
+<h2 id="no-proxy">Why the direct snippet</h2>
+<p>On platforms that allow it, AgentFirstStack's tracker is served from the site's own domain through a small proxy, because ad blockers block <code>analytics.agentfirststack.com</code>. Webflow's hosting has no setting that forwards a path such as <code>/_a/*</code> to another server, and Webflow's help center says it "does not configure or support third-party proxies". So this guide uses the direct snippet, and visitors with an ad blocker aren't counted.</p>
+<p>If your domain already runs through Cloudflare in Webflow's orange-to-orange setup (a paid Site plan), a Cloudflare Worker route on <code>yourdomain.com/_a/*</code> can serve the tracker first-party, with the code and key from <code>GET /v1/sites/:id/install</code> (<code>first_party_proxy.cloudflare_worker</code>). Webflow's docs note that orange-to-orange "is not a full reverse proxy" and that you may need Workers for path routing; you'd be running that Worker yourself, outside Webflow's support. Then change the head code's src to <code>/_a/s.js</code>.</p>
+
+<h2 id="events">Buttons and forms</h2>
+<p><b>Buttons and links.</b> Select the element in the Designer, open its settings, and add a custom attribute named <code>data-afsa-event</code> with a value such as <code>book_demo</code>. A click then sends that event, with no script to write. Extra attributes named <code>data-afsa-prop-plan</code> and so on become event properties.</p>
+<p><b>Forms.</b> <code>data-forms="true"</code> on the script tag sends <code>form_start</code> when someone starts filling a form and <code>form_submit</code> when they submit it, with the form's id or name and never the field values. Webflow forms show a success message by default rather than going to a new page, so a pageview goal on a thank-you page only works if you set the form to redirect. Otherwise make an event goal: <code>{"name":"Lead","type":"event","match":"form_submit"}</code>. To count only submissions Webflow accepted, add a form webhook (form settings, Webhook) pointing at your own endpoint, and send the conversion from there as a server event.</p>
+
+<h2 id="verify">Publish, then verify</h2>
+<ol>
+<li><b>Publish to the custom domain.</b> Unpublished changes, including custom code, aren't live.</li>
+<li><b>Open the site once</b> in a normal browser. Headless browsers are filtered out unless the visit is marked with <code>?afsa_debug=1</code>.</li>
+<li><b>Run verify:</b> <code>POST https://analytics.agentfirststack.com/v1/sites/:id/verify</code> fetches your homepage, finds the tag, checks whether events arrived and lists fixes. The tag is in Webflow's published HTML, so verify also proves the domain.</li>
+<li><b>Run the setup check:</b> <code>GET https://agentfirststack.com/v1/setup?services=analytics</code> until <code>"ready": true</code>.</li>
+</ol>
+<p><b>Staging and preview stay out of your numbers.</b> A site accepts events only from its domain and its subdomains. Visits to the <code>yoursite.webflow.io</code> staging address, and Designer preview on <code>canvas.webflow.com</code> (Webflow runs custom code in preview and comment modes), are dropped as <code>hostname_not_allowed</code>. That's usually what you want. If the site has no custom domain yet, create the analytics site for <code>yoursite.webflow.io</code>; <code>webflow.io</code> on its own is refused as a site domain because it's a shared suffix.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Do I need a paid Webflow plan?</h3>
+<p>For custom code, yes: a Core, Growth, Agency or Freelancer Workspace, or a Site plan on the site. Webflow's MCP server itself works on every Site plan, including Starter.</p>
+<h3>Can the tracker be served from my Webflow domain?</h3>
+<p>Not by Webflow's hosting, which doesn't forward paths to other servers. With Cloudflare's orange-to-orange setup you can run a Worker route on <code>/_a/*</code> yourself; otherwise the direct snippet is the only option, and ad blockers block it.</p>
+<h3>Will the agent overwrite my existing head code?</h3>
+<p>Not if it follows the prompt. <code>set_site_freeform_code</code> replaces the whole block, so the prompt has it read the block first and append the tag.</p>
+<h3>Does it track visits to the webflow.io staging site?</h3>
+<p>No, as long as the analytics site is for your custom domain: events from other hosts are dropped and listed by verify. Add the staging host to <code>allowed_hostnames</code> if you do want it, together with your own domain.</p>
+<h3>Does the tracker use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent. Nothing is stored in the browser unless you switch the site to persistent mode.</p>
+
+<p class="meta">Webflow is a trademark of Webflow, Inc. AgentFirstStack isn't affiliated with Webflow. Webflow details come from its help center and developer docs (<a href="https://help.webflow.com/hc/en-us/articles/33961357265299-Custom-code-in-head-and-body-tags">custom code</a>, <a href="https://help.webflow.com/hc/en-us/articles/33961419650067-Webflow-staging-subdomain">staging subdomain</a>, <a href="https://help.webflow.com/hc/en-us/articles/49835650986259">proxies</a>, <a href="https://help.webflow.com/hc/en-us/articles/46651836279059">security headers</a>, <a href="https://help.webflow.com/hc/en-us/articles/52536616701971">MCP server</a>, <a href="https://developers.webflow.com/mcp/tools/data-tools">MCP data tools</a>, <a href="https://developers.webflow.com/data/v2.0.0/docs/working-with-custom-code">Custom Code API</a>, <a href="https://help.webflow.com/hc/en-us/articles/33961389460115">custom attributes</a>, <a href="https://help.webflow.com/hc/en-us/articles/33961347548563-How-do-I-add-forms-in-Webflow">forms</a>), checked on 6 November 2026.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>The prompt, the checks, and every tool and platform.</span></a></li>
+        <li><a class="card" href="/guides/wordpress-analytics"><span class="svc svc-analytics">Analytics</span><b>WordPress analytics in one prompt</b><span>functions.php, header plugins and form hooks.</span></a></li>
+        <li><a class="card" href="/guides/shopify-analytics"><span class="svc svc-analytics">Analytics</span><b>Shopify analytics in one prompt</b><span>theme.liquid, custom pixels and order webhooks.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt in the terminal, then questions over MCP.</span></a></li>
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>Meta, Google Ads, TikTok and GA4, counted once.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Find out why visitors drop off.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#before">Before you start</a></li><li><a href="#prompt">The prompt</a></li><li><a href="#head">The head code</a></li><li><a href="#no-proxy">Why the direct snippet</a></li><li><a href="#events">Buttons and forms</a></li><li><a href="#verify">Publish, then verify</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

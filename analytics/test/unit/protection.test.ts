@@ -235,7 +235,7 @@ describe("attack protection in the engine", () => {
     expect(db.all("SELECT COUNT(*) AS n FROM sessions WHERE visitor_id = 'only_dc'")[0]?.n).toBe(0);
   });
 
-  it("an older DO migrates to 12: the quarantine column, index, usage counter and net_daily", () => {
+  it("an older DO migrates to the current schema: the quarantine column, index, usage counters and net_daily", () => {
     const old = memoryDb({ migrate: false });
     for (const stmt of engine.SCHEMA_V1.split(";")
       .map((x) => x.trim())
@@ -243,9 +243,12 @@ describe("attack protection in the engine", () => {
       old.run(stmt);
     old.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1')");
     engine.migrate(old);
-    expect(engine.schemaVersion(old)).toBe(12);
+    expect(engine.schemaVersion(old)).toBe(engine.SCHEMA_VERSION);
     expect(engine.hasColumn(old, "events", "quarantine")).toBe(true);
     expect(engine.hasColumn(old, "usage", "quarantined")).toBe(true);
+    // 13: how browser events reached the collector, per day
+    for (const c of ["via_direct", "via_proxy", "via_edge", "edge_host", "last_direct_at", "last_first_party_at"])
+      expect(engine.hasColumn(old, "usage", c), c).toBe(true);
     expect(
       old.all("SELECT name FROM sqlite_master WHERE name IN ('net_daily', 'events_quarantined') ORDER BY name").map((r) => r.name),
     ).toEqual(["events_quarantined", "net_daily"]);

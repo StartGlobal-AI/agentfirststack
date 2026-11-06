@@ -23,7 +23,16 @@ import {
 import { getDelivery } from "../service/delivery";
 import { listEvents } from "../service/events";
 import { addListEntry, deleteListEntry, listListEntries } from "../service/lists";
-import { addDomain, deleteDomain, getDomain, getDomainZoneFile, listDomains, updateDomain, verifyDomain } from "../service/domains";
+import {
+  addDomain,
+  deleteDomain,
+  getDomain,
+  getDomainZoneFile,
+  isOperator,
+  listDomains,
+  updateDomain,
+  verifyDomain,
+} from "../service/domains";
 import { UNTRUSTED_NOTICE, untrustedMarker } from "../service/format";
 import { createInbox, deleteInboxForUser, getInbox, listInboxes, updateInbox } from "../service/inboxes";
 import {
@@ -42,6 +51,7 @@ import {
   updateThread,
 } from "../service/messages";
 import { purgeAccount } from "../service/purge";
+import { findReservedInboxes } from "../service/reserved";
 import { forwardMessage, replyToMessage, sendFromInbox } from "../service/send";
 import { getUsage } from "../service/usage";
 import { latestCode, waitForEmail } from "../service/wait";
@@ -92,10 +102,31 @@ api.delete("/account", async (c) => {
   if (c.var.auth.keyId !== INTERNAL_KEY_ID) {
     throw forbidden(
       "Only the platform erases a project's mail.",
-      "Projects are deleted on the platform: the owner deletes it from the dashboard, or an agent of an unclaimed project calls DELETE https://agentfirststack.com/v1/me. This app's data is erased 7 days later; its inbox addresses that received mail stay reserved for good.",
+      "Projects are deleted on the platform: the owner deletes it from the dashboard, or an agent of an unclaimed project calls DELETE https://agentfirststack.com/v1/me. This app's data is erased 7 days later; its inbox addresses stay reserved for good (never given to another account).",
     );
   }
   return c.json(await purgeAccount(c.env, acct(c)));
+});
+
+/**
+ * GET /v1/admin/reserved-inboxes: operator only (x-admin-token = ADMIN_TOKEN, plus any key).
+ * Shared-domain inboxes whose username is reserved now but was not when they were created
+ * (src/service/reserved.ts). Lists only; nothing is changed. No MCP tool: it reads every account.
+ */
+api.get("/admin/reserved-inboxes", async (c) => {
+  if (!isOperator(c.env, c.req.header("x-admin-token")))
+    throw forbidden("Only the operator can list other accounts' inboxes.", "Send the x-admin-token header with the ADMIN_TOKEN secret.");
+  const q = readQuery(c, z.object({ limit: z.coerce.number().int().min(1).max(1000).optional() }));
+  const r = await findReservedInboxes(c.env, { limit: q.limit });
+  return c.json({
+    ...r,
+    next_steps: r.inboxes.length
+      ? [
+          "These inboxes were created before their username became reserved. They still work and nothing was changed: contact the account's owner, or suspend the account (pnpm afs suspend <profile> <account_id>) if one is abused.",
+          ...(r.truncated ? ["More than the limit matched: pass limit= (max 1000)."] : []),
+        ]
+      : ["No inbox holds a reserved username."],
+  });
 });
 
 // ---- inboxes --------------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { type AuthContext, badRequest, requireAuth, tooManyRequests } from "@afs/shared";
 import { Hono } from "hono";
 import type { Bindings, SiteEnv } from "./env";
+import { type DomainRow, storedDomains } from "./first-party-domains";
 import { siteBase } from "./google";
 import { readSetupState, recordSetupCheck } from "./notices";
 import { AGENTS_MD_BLOCK } from "./setup-catalog";
@@ -104,7 +105,14 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
   { part: "Inbox", ids: ["mail.inbox", "mail.forwarding"], show: ["mail.forwarding"] },
   {
     part: "Analytics",
-    ids: ["analytics.site", "analytics.receiving", "analytics.domain_verified", "analytics.proxy_key", "analytics.server_events"],
+    ids: [
+      "analytics.site",
+      "analytics.receiving",
+      "analytics.domain_verified",
+      "analytics.first_party",
+      "analytics.proxy_key",
+      "analytics.server_events",
+    ],
     show: ["analytics.site", "analytics.receiving"],
     perDomain: true,
   },
@@ -125,6 +133,7 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
   },
   { part: "Events", ids: ["tags.events", "tags.to_analytics", "tags.goals_for_events"], show: ["tags.events"], perDomain: true },
   { part: "Ad platforms", ids: ["tags.destinations"], show: ["tags.destinations"], perDomain: true },
+  { part: "Consent banner", ids: ["tags.consent_banner"], show: ["tags.consent_banner"], perDomain: true },
   {
     part: "Session replay",
     ids: ["replay.site", "replay.linked", "replay.verified", "replay.recording", "replay.consent"],
@@ -264,6 +273,15 @@ interface AnalyticsSite {
     last_event_at: number | null;
     /** setup problems on events that were kept, by reason (proxy_key_missing, proxy_key_invalid) */
     warnings_last_7d?: Record<string, { count: number }>;
+    /** how the last 7 days' browser events reached the collector (absent on older analytics deployments) */
+    collection_last_7d?: {
+      direct: number;
+      proxy: number;
+      edge: number;
+      edge_hosts?: string[];
+      last_direct_at?: number | null;
+      last_first_party_at?: number | null;
+    };
   } | null;
 }
 interface Goal {
@@ -294,6 +312,14 @@ interface Alert {
 interface Conversion {
   name: string;
   send_to?: Record<string, unknown> & { analytics?: { event_name?: string } };
+}
+type ConsentState = Record<string, string>;
+/** The parts of a live tags config the consent check reads. */
+interface LiveTagsConfig {
+  conversions?: Conversion[];
+  tags?: { id: string; type: string; enabled?: boolean; consent?: string[] }[];
+  consent?: { mode?: string; default?: ConsentState; regions?: Record<string, ConsentState>; tcf?: boolean };
+  consent_banner?: { enabled?: boolean; regions?: string };
 }
 interface TagsContainer {
   container: {
@@ -490,7 +516,10 @@ export async function setupReport(
         ),
       );
   }
-  const perDomain = await Promise.all(domains.map((domain) => domainChecks(domain, { resources, read, has, A, T, R })));
+  const firstParty = has.analytics ? await storedDomains(env, accountId) : null;
+  const perDomain = await Promise.all(
+    domains.map((domain) => domainChecks(domain, { resources, read, has, A, T, R, S: opts.base, firstParty })),
+  );
   for (const list of perDomain) checks.push(...list);
 
   // Step 10: the owner has the project.
@@ -642,6 +671,10 @@ interface Ctx {
   A: string;
   T: string;
   R: string;
+  /** the site (platform) base, where first-party domains are */
+  S: string;
+  /** the project's first-party domains as stored (null: unreadable) */
+  firstParty: DomainRow[] | null;
 }
 
 async function domainChecks(domain: string, x: Ctx): Promise<SetupCheck[]> {
@@ -858,6 +891,75 @@ async function movingChecks(domain: string, siteId: string | null, tags: TagsDet
   return checks;
 }
 
+// ---------- first-party collection (step 4) ----------
+
+const FP_TITLE = "Browser events arrive first-party (through the site's own domain), so ad blockers don't drop them";
+
+/**
+ * analytics.first_party: fails while the latest browser events go straight to the analytics host;
+ * a warning when some did this week but the latest came first-party (pages still on the direct
+ * snippet); waiting_on_owner while a first-party domain waits for its DNS record. Only once browser
+ * events arrived in the last 7 days, and only with an analytics service that counts them.
+ */
+export function firstPartyCheck(
+  domain: string,
+  siteId: string,
+  data: AnalyticsSite["data"] | undefined,
+  x: Pick<Ctx, "S" | "A" | "firstParty">,
+): Omit<SetupCheck, "step" | "service" | "domain"> | null {
+  const c = data?.collection_last_7d;
+  if (!c || !(c.direct + c.proxy + c.edge)) return null;
+  const firstParty = c.proxy + c.edge;
+  const via = [
+    c.edge ? `${c.edge} through ${list(c.edge_hosts?.length ? c.edge_hosts : ["a first-party domain"], 3)}` : "",
+    c.proxy ? `${c.proxy} through the site's own proxy` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  if (!c.direct)
+    return {
+      id: "analytics.first_party",
+      status: "ok",
+      title: FP_TITLE,
+      detail: `All ${plural(firstParty, "browser event")} in 7 days came first-party (${via}).`,
+    };
+  const base = domain.replace(/^www\./, "");
+  const mine = (x.firstParty ?? []).filter((d) => d.hostname.endsWith(`.${base}`));
+  const active = mine.find((d) => d.status === "active");
+  const pending = mine.find((d) => d.status === "pending");
+  const swap = (h: string) =>
+    `Swap the snippets on every page to https://${h}: <script defer src="https://${h}/_a/s.js" data-site="${siteId}"></script> (tags: https://${h}/_t/c/<ctr>.js), deploy, open a page once, then run this check again`;
+  const fix = active
+    ? swap(active.hostname)
+    : pending
+      ? `The owner adds the DNS record CNAME ${pending.hostname} (GET ${x.S}/v1/first-party-domains/${pending.hostname} has it; MCP afs_list_first_party_domains); once it says active: ${swap(pending.hostname).charAt(0).toLowerCase()}${swap(pending.hostname).slice(1)}`
+      : `Add a first-party domain, one CNAME: POST ${x.S}/v1/first-party-domains {"hostname":"edge.${base}"} (MCP afs_add_first_party_domain) and follow its next_steps. Can't change DNS: the path proxy, GET ${x.A}/v1/sites/${siteId}/install (first_party_proxy). Then swap the snippet`;
+  const recentFirstParty = !!c.last_first_party_at && (c.last_direct_at ?? 0) <= c.last_first_party_at;
+  if (recentFirstParty)
+    return {
+      id: "analytics.first_party",
+      status: "warning",
+      title: FP_TITLE,
+      detail: `The latest browser events came first-party (${via}), but ${plural(c.direct, "event")} this week went straight to the analytics host (the last at ${iso(c.last_direct_at)}). Fine if that was before the switch; otherwise some pages still have the direct snippet.`,
+      fix: `Check every page and template for ${x.A}/s.js and swap it for the first-party src${active ? ` (https://${active.hostname}/_a/s.js)` : ""}`,
+    };
+  if (pending && !active)
+    return {
+      id: "analytics.first_party",
+      status: "waiting_on_owner",
+      title: FP_TITLE,
+      detail: `${plural(c.direct, "browser event")} in 7 days went straight to the analytics host, which ad blockers block. First-party domain ${pending.hostname} is waiting for its DNS record (CNAME), so the pages keep the current snippet until it is active.`,
+      fix,
+    };
+  return {
+    id: "analytics.first_party",
+    status: "failing",
+    title: FP_TITLE,
+    detail: `${plural(c.direct, "browser event")} in 7 days${firstParty ? ` (and the latest ones, at ${iso(c.last_direct_at)})` : ""} went straight to the analytics host: ad blockers block it (their filter lists target analytics.* hosts), so some visitors are never counted.${firstParty ? ` ${via} came first-party.` : ""}`,
+    fix,
+  };
+}
+
 // ---------- analytics (step 4) ----------
 
 async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
@@ -989,6 +1091,11 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
         fix: `Re-apply the proxy snippet from GET ${A}${p}/install (first_party_proxy): it sends x-afs-proxy-key with the site's proxy_key and the visitor's IP and geo. Then release anything set aside: GET ${A}${p}/quarantine.`,
       }),
     );
+
+  // First-party collection (the default): browser events sent straight to the analytics host are
+  // the ones ad blockers drop. Judged by the latest events, so a switch shows at once.
+  const fp = firstPartyCheck(domain, site.id, data, x);
+  if (fp) checks.push(at(fp));
 
   // Goals, and whether each has counted
   const goals = goalsRes?.goals ?? null;
@@ -1168,6 +1275,8 @@ async function analyticsChecks(domain: string, site: SiteItem | null, x: Ctx) {
 interface TagsDetail {
   container: TagsContainer | null;
   conversions: Conversion[] | null;
+  /** The live version's config (null: nothing published, or it didn't answer). */
+  config: LiveTagsConfig | null;
   stats: TagStats | null;
   destinations: TagsDestination[] | null;
 }
@@ -1180,10 +1289,11 @@ async function tagsDetail(container: ContainerItem, x: Ctx): Promise<TagsDetail>
     x.read<{ destinations: TagsDestination[] }>("tags", `${p}/destinations`),
   ]);
   const live = detail?.container.live_version ?? container.live_version;
-  const version = live ? await x.read<{ config?: { conversions?: Conversion[] } }>("tags", `${p}/versions/${live}`) : null;
+  const version = live ? await x.read<{ config?: LiveTagsConfig }>("tags", `${p}/versions/${live}`) : null;
   return {
     container: detail,
     conversions: live ? (version ? (version.config?.conversions ?? []) : null) : [],
+    config: version?.config ?? null,
     stats,
     destinations: dests?.destinations ?? null,
   };
@@ -1402,7 +1512,86 @@ function tagsChecksFor(
           }),
     );
   }
+
+  // Ad pixels for visitors who must consent first (only when the live config has ad pixels)
+  const consent = d.config ? consentBannerCheck(d.config, domain, `${T}${p}`) : null;
+  if (consent) checks.push(at(consent));
   return checks;
+}
+
+/** Tag types that are ad pixels (they wait for ad_storage unless a tag says otherwise). */
+const AD_PIXELS = new Set([
+  "google_ads",
+  "meta_pixel",
+  "tiktok_pixel",
+  "linkedin_insight",
+  "microsoft_uet",
+  "reddit_pixel",
+  "x_pixel",
+  "pinterest_tag",
+  "snap_pixel",
+  "image_pixel",
+]);
+/** The EEA (tags' "EEA" consent region), then the UK and Switzerland: where visitors must opt in. */
+const EEA = "AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO".split(" ");
+const ASK_FIRST = [...EEA, "GB", "CH"];
+
+/**
+ * Countries ("" = unknown) where the live config fires these ad pixels before the visitor chooses:
+ * the consent block's start state (mode, default, then the visitor's country or the EEA region, as
+ * the tags runtime decides) grants every type a pixel needs.
+ */
+export function adPixelsBeforeConsent(cfg: LiveTagsConfig): { tags: string[]; countries: string[] } {
+  const c = cfg.consent ?? {};
+  const base = c.mode === "opt_in" ? "denied" : "granted";
+  const pixels = (cfg.tags ?? []).filter((t) => t.enabled !== false && AD_PIXELS.has(t.type));
+  const tags = new Set<string>();
+  const countries: string[] = [];
+  for (const cc of [...ASK_FIRST, ""]) {
+    const region = (cc && c.regions?.[cc]) || (EEA.includes(cc) ? c.regions?.EEA : undefined);
+    const state = (k: string) => region?.[k] ?? c.default?.[k] ?? base;
+    const firing = pixels.filter((t) => (t.consent ?? ["ad_storage"]).every((k) => state(k) === "granted"));
+    if (!firing.length) continue;
+    countries.push(cc);
+    for (const t of firing) tags.add(t.id);
+  }
+  return { tags: [...tags], countries };
+}
+
+function consentBannerCheck(cfg: LiveTagsConfig, domain: string, url: string): Omit<SetupCheck, "step" | "service" | "domain"> | null {
+  if (!(cfg.tags ?? []).some((t) => t.enabled !== false && AD_PIXELS.has(t.type))) return null;
+  const title = "Visitors from the EU, UK and Switzerland are asked before ad pixels fire";
+  if (cfg.consent_banner?.enabled)
+    return {
+      id: "tags.consent_banner",
+      status: "ok",
+      title,
+      detail: `The consent banner asks ${cfg.consent_banner.regions === "all" ? "every visitor" : "visitors from the EU, UK and Switzerland"} first.`,
+    };
+  if (cfg.consent?.tcf)
+    return { id: "tags.consent_banner", status: "ok", title, detail: "An IAB TCF consent platform on the site decides (consent.tcf)." };
+  const firing = adPixelsBeforeConsent(cfg);
+  if (!firing.countries.length)
+    return {
+      id: "tags.consent_banner",
+      status: "ok",
+      title,
+      detail: "Ad pixels wait for consent there; the site's own banner grants it (afst('consent', 'update', ...) or gtag consent).",
+    };
+  const known = firing.countries.filter(Boolean);
+  const where = [
+    known.length ? `the EU, UK or Switzerland (${list(known, 5)})` : "",
+    firing.countries.includes("") ? "an unknown country" : "",
+  ]
+    .filter(Boolean)
+    .join(" and from ");
+  return {
+    id: "tags.consent_banner",
+    status: "warning",
+    title,
+    detail: `${list(firing.tags)} fire for visitors from ${where} before they consent, and there's no consent banner. Fine only if the site has its own consent platform that tells the container (gtag('consent', ...) or afst('consent', ...)).`,
+    fix: `PATCH ${url}/draft {"consent_banner":{"enabled":true,"privacy_url":"https://${domain}/privacy"}} (MCP tags_patch_draft), then POST ${url}/publish (MCP tags_publish)`,
+  };
 }
 
 // ---------- replay (step 6) ----------

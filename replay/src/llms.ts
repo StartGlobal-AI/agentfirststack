@@ -53,7 +53,16 @@ MCP (stateless, Streamable HTTP): \`claude mcp add --transport http replay ${bas
 <script defer src="${base}/r/rsite_xxx.js"></script>
 \`\`\`
 
-GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} returns the file and code for each (Shopify: layout/theme.liquid; Webflow, Wix, Squarespace, Framer: their head custom-code settings, which need a paid plan there), and \`with_tools\`: snippets for Segment (source middleware), Mixpanel (super property) and Amplitude (enrichment plugin) that put \`replay_session_id\` on their events and pass their identify on to \`afsr('identify')\`.
+**First-party (the default).** Ad blockers block recorder scripts and uploads on third-party hosts. Install and create
+answers lead with \`first_party\`, the three ways best first: (1) a first-party domain, one CNAME on a subdomain of the site
+(\`edge.example.com\`) created on the platform site with \`POST https://<platform>/v1/first-party-domains {"hostname":"edge.example.com"}\`
+(MCP \`afs_add_first_party_domain\`), no server code: it serves replay at \`/_r/*\` (and analytics at /_a, tags at /_t), the
+linked analytics tracker loaded from it loads the recorder from it too (\`https://edge.example.com/_r/r/<site>.js\`), and pages
+without the tracker use \`<script defer src="https://edge.example.com/_r/r/<site>.js"></script>\`; the platform's edge sends
+the visitor's IP and geo (X-Forwarded-For and x-afs-geo-* are used only from it); (2) the path proxy, \`/_r/*\` forwarded
+unchanged to ${base}/_r/*; (3) the direct snippet below, the last resort.
+
+GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} returns the file and code for each (Next.js: a plain \`<script defer>\` in the root layout's \`<head>\`, not next/script, so it is in the server HTML and verify finds it) (Shopify: layout/theme.liquid; Webflow, Wix, Squarespace, Framer: their head custom-code settings, which need a paid plan there), and \`with_tools\`: snippets for Segment (source middleware), Mixpanel (super property) and Amplitude (enrichment plugin) that put \`replay_session_id\` on their events and pass their identify on to \`afsr('identify')\`.
 
 **Already running AgentFirstStack analytics? Nothing to paste.** Link the sites: POST /v1/sites \`{"domain":"example.com","analytics_site_id":"site_..."}\`
 (or PATCH an existing site). Replay then sets that analytics site's \`replay_site_id\` to this site, and its tracker (/s.js) adds
@@ -65,7 +74,7 @@ GET /v1/sites/:id/install?framework=${FRAMEWORKS.join("|")} returns the file and
 - This link is the only way to set an analytics site's replay_site_id: analytics refuses it from API keys (403
   replay_link_from_replay), so no account can point its tracker at another account's recorder.
 - Keep the direct snippet for pages without the analytics tracker, and for a strict Content-Security-Policy: the tracker
-  fetches the loader from ${base} directly (never through an analytics proxy), so such a page needs
+  fetches the loader from ${base} directly (never through an analytics path proxy; through a first-party domain, from that domain), so such a page needs
   \`script-src ${base}/r/<site>.js ${base}/rec/; connect-src ${base}/i\`, or the direct snippet behind your own replay proxy.
 - Not linked but the account has analytics: install and create responses suggest the analytics site to link
   (\`suggested_analytics_site_id\`, the one for this domain) instead of a second snippet.

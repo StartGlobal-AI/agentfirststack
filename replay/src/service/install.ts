@@ -27,8 +27,9 @@ export const QUEUE_STUB = "<script>window.afsr=window.afsr||function(){(afsr.q=a
 const code = (base: string, id: string): Record<Framework, { file: string; code: string }> => ({
   html: { file: "every page, inside <head>", code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}` },
   nextjs: {
-    file: "app/layout.tsx (App Router) or pages/_app.tsx",
-    code: `import Script from "next/script";\n\n// inside <body> of the root layout:\n<Script src="${loaderUrl(base, id)}" strategy="afterInteractive" />`,
+    file: "app/layout.tsx (App Router), inside <head>; Pages Router: inside <Head> of pages/_document.tsx",
+    // A plain <script> is in the server HTML (verify finds it); next/script with afterInteractive isn't.
+    code: `// inside <head> of the root layout (a plain <script>, not next/script: it must be in the server HTML)\n<script defer src="${loaderUrl(base, id)}" />`,
   },
   react: { file: "index.html (Vite, CRA), inside <head>", code: `${QUEUE_STUB}\n${scriptSnippet(base, id)}` },
   astro: { file: "src/layouts/Layout.astro, inside <head>", code: `<script is:inline defer src="${loaderUrl(base, id)}"></script>` },
@@ -141,10 +142,56 @@ export function analyticsInstallNote(site: SiteRow, suggestion: AnalyticsSuggest
   };
 }
 
-export function installInstructions(site: SiteRow, base: string, framework: Framework = "html", suggestion: AnalyticsSuggestion = null) {
+/** Where first-party domains are created: the platform site (AUTH_ISSUER), or null when this service runs alone. */
+export const platformBase = (env: { AUTH_ISSUER?: string }) => env.AUTH_ISSUER?.trim().replace(/\/+$/, "") || null;
+
+/**
+ * The three ways replay reaches pages from the site's own domain, best first. With the analytics
+ * tracker loaded from a first-party domain, the recorder comes from that domain by itself.
+ */
+export function firstPartyBlock(base: string, site: SiteRow, siteBase: string | null) {
+  const endpoint = siteBase ? `${siteBase}/v1/first-party-domains` : null;
+  return {
+    default: true,
+    why: "Ad blockers block recorder scripts and uploads on third-party hosts. Serve replay from the site's own domain: use the first of these that works for the site.",
+    order: ["first_party_domain", "path_proxy", "direct"],
+    first_party_domain: {
+      rank: 1,
+      what: "A subdomain of the site (e.g. edge.example.com) with one CNAME to this platform, no server code; it serves replay (/_r), analytics (/_a) and tags (/_t) for the whole project. Pages that load the linked analytics tracker from it get the recorder from it too, with nothing to paste; pages without the tracker use the snippet here.",
+      when: "You can add a DNS record. If you can't, it's one record to hand the owner.",
+      create: endpoint
+        ? `POST ${endpoint} {"hostname":"edge.<the site's domain>"} (MCP afs_add_first_party_domain): returns the CNAME to add and next_steps`
+        : "Not on this deployment (this replay service runs without the platform site): use the path proxy.",
+      status: endpoint ? `GET ${endpoint} until status is "active"` : null,
+      snippet: `<script defer src="https://<hostname>/_r/r/${site.id}.js"></script>`,
+      label:
+        "Pick a neutral label (edge, go, www2), not analytics, stats, track, metrics, pixel, tag or collect: filter lists target those names too.",
+    },
+    path_proxy: {
+      rank: 2,
+      what: `Forward /_r/* on the site's own server to ${base}/_r/* unchanged (the loader, recorder and uploads are served under any path prefix and derive their base from the loader's src).`,
+      when: "DNS can't be changed, but the site's server or host can forward a path.",
+      snippet: `<script defer src="/_r/r/${site.id}.js"></script>`,
+    },
+    direct: {
+      rank: 3,
+      what: "The plain snippet (or the analytics tracker loading the recorder from this service's host). Last resort: ad blockers block it.",
+      snippet: scriptSnippet(base, site.id),
+    },
+  };
+}
+
+export function installInstructions(
+  site: SiteRow,
+  base: string,
+  framework: Framework = "html",
+  suggestion: AnalyticsSuggestion = null,
+  siteBase: string | null = null,
+) {
   const all = code(base, site.id);
   const note = analyticsInstallNote(site, suggestion);
   return {
+    first_party: firstPartyBlock(base, site, siteBase),
     site_id: site.id,
     framework,
     loads_with_analytics: loadsWithAnalytics(site),

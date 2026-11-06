@@ -442,6 +442,33 @@ describe("finding 7: only the container's own proxy may set the visitor IP", () 
     expect((await visit("vis_proxy_1", { "x-afs-proxy-key": key })).status).toBe(200);
     expect(await ipOf("vis_proxy_1")).toBe("198.51.100.77");
   });
+
+  it("the platform's edge (a first-party domain, over a service binding with INTERNAL_TOKEN) is trusted like the proxy key", async () => {
+    const a = await account();
+    const C = (await a.api("POST", "/v1/containers", { domain: "edge-proxy.test" })).body.container.id as string;
+    const edge = (url: string, vid: string, headers: Record<string, string>) =>
+      SELF.fetch(url, {
+        method: "POST",
+        headers: {
+          origin: "https://edge-proxy.test",
+          "user-agent": UA,
+          "cf-connecting-ip": "203.0.113.5",
+          "x-forwarded-for": "198.51.100.88",
+          "x-afs-edge-host": "edge.edge-proxy.test",
+          "x-afs-geo-country": "FR",
+          ...headers,
+        },
+        body: JSON.stringify({ container_id: C, type: "visit", visitor_id: vid, consent: granted, page_url: "https://edge-proxy.test/" }),
+      });
+    const ipOf = async (vid: string) => (await a.api("GET", `/v1/containers/${C}/visitors/${vid}`)).body.visitor.ip;
+    expect((await edge("https://tags.internal/_t/collect", "vis_edge_1", { "x-afs-internal": env.INTERNAL_TOKEN! })).status).toBe(200);
+    expect(await ipOf("vis_edge_1")).toBe("198.51.100.88");
+    // the same headers with a wrong token, or from the internet: cf-connecting-ip
+    expect((await edge("https://tags.internal/_t/collect", "vis_edge_2", { "x-afs-internal": "wrong-token" })).status).toBe(200);
+    expect(await ipOf("vis_edge_2")).toBe("203.0.113.5");
+    expect((await edge(`${B}/_t/collect`, "vis_edge_3", { "x-afs-internal": env.INTERNAL_TOKEN! })).status).toBe(200);
+    expect(await ipOf("vis_edge_3")).toBe("203.0.113.5");
+  });
 });
 
 describe("finding 2: storage and fan-out caps", () => {

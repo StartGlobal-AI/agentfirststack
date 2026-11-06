@@ -97,9 +97,11 @@ export const recipeInput = z.strictObject({
     .min(1)
     .max(20),
   consent: z
-    .enum(["none", "eea_opt_in", "opt_in", "opt_out"])
+    .enum(["none", "eea_opt_in", "opt_in", "opt_out", "banner"])
     .optional()
-    .describe("Default eea_opt_in: granted, except EEA/UK/CH visitors start denied until your banner grants."),
+    .describe(
+      "Default eea_opt_in: granted, except EEA/UK/CH visitors start denied until your banner grants. banner: the built-in consent banner asks EEA/UK/CH visitors (consent_banner, no CMP of your own needed).",
+    ),
   phone_country_code: z
     .string()
     .regex(/^\d{1,4}$/)
@@ -402,20 +404,35 @@ export function buildRecipe(
 
   const consent = input.consent ?? "eea_opt_in";
   const consentCfg: ContainerConfig["consent"] =
-    consent === "none"
+    consent === "none" || consent === "banner"
       ? { mode: "none" }
       : consent === "eea_opt_in"
         ? { mode: "none", regions: { EEA: { ...EEA_DENIED }, GB: { ...EEA_DENIED }, CH: { ...EEA_DENIED } } }
         : { mode: consent };
-  if (consent !== "none")
+  const consentBanner: ContainerConfig["consent_banner"] =
+    consent === "banner" ? { ...base.consent_banner, enabled: true } : base.consent_banner;
+  if (consent === "banner")
     notes.push(
-      'Your consent banner must call afst("consent", "update", { ad_storage: "granted", analytics_storage: "granted", ad_user_data: "granted", ad_personalization: "granted" }) when the visitor accepts (CMPs that call gtag("consent","update") work automatically).',
+      'The built-in consent banner asks visitors in the EEA, UK and Switzerland first; add consent_banner.privacy_url (your privacy policy) and a "Cookie settings" link (<a href="#" data-afst-consent-open>) to the footer. GET /v1/containers/:id/consent shows accept/reject rates after publishing.',
+    );
+  else if (consent !== "none")
+    notes.push(
+      'Your consent banner must call afst("consent", "update", { ad_storage: "granted", analytics_storage: "granted", ad_user_data: "granted", ad_personalization: "granted" }) when the visitor accepts (CMPs that call gtag("consent","update") work automatically). No banner yet? consent: "banner" turns on the built-in one.',
     );
 
   const settings = { ...(base.settings ?? {}) };
   if (input.phone_country_code) settings.phone_country_code = input.phone_country_code;
   return {
-    config: { ...base, variables, triggers, tags, conversions, consent: consentCfg, ...(Object.keys(settings).length ? { settings } : {}) },
+    config: {
+      ...base,
+      variables,
+      triggers,
+      tags,
+      conversions,
+      consent: consentCfg,
+      ...(consentBanner ? { consent_banner: consentBanner } : {}),
+      ...(Object.keys(settings).length ? { settings } : {}),
+    },
     destinations,
     missing,
     notes,
