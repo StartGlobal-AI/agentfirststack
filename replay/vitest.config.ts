@@ -13,6 +13,11 @@ export default defineConfig({
           cloudflareTest(async () => ({
             wrangler: { configPath: "./wrangler.jsonc" },
             miniflare: {
+              // The read limits stay out of the way (a test makes many reads with one key); their
+              // logic is tested with a stub limiter.
+              ratelimits: {
+                READ_LIMITER: { namespace_id: "42034", simple: { limit: 1_000_000, period: 60 } },
+              },
               // The analytics and tags Workers aren't part of this run: placeholders keep workerd
               // starting; forwarding tests pass an env with an in-isolate stub instead.
               serviceBindings: {

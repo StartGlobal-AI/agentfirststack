@@ -179,10 +179,13 @@ type IO = typeof IntersectionObserver;
     if (since) engaged += Date.now() - since;
     since = visible() ? Date.now() : 0;
   };
-  const flush = () => {
+  // l = 1: the page is unloading for good (pagehide, not the back/forward cache), so the visitor
+  // left it; that is beaconed even with under a second of visible time (the live "online" count;
+  // the server then ignores the time, as it did when such beacons weren't sent).
+  const flush = (l?: number) => {
     tick();
-    if (lastHref && engaged >= 1000)
-      send("engagement", { e: engaged, u: lastHref, sd: depth, v: hard ? vt.map(Math.round) : undefined }, true);
+    if (lastHref && (engaged >= 1000 || l))
+      send("engagement", { e: engaged, u: lastHref, sd: depth, v: hard ? vt.map(Math.round) : undefined, l }, true);
     engaged = 0;
   };
 
@@ -268,7 +271,7 @@ type IO = typeof IntersectionObserver;
   on2("popstate", () => pageview());
   if (hashed) on2("hashchange", () => pageview());
   on2("visibilitychange", () => (visible() ? (since = Date.now()) : flush()), d);
-  on2("pagehide", flush);
+  on2("pagehide", (e) => flush((e as PageTransitionEvent).persisted ? undefined : 1));
   on2("scroll", measure, w as unknown as EventTarget, { passive: true });
 
   // Core Web Vitals: LCP (last candidate), INP (slowest interaction), CLS (largest 5 s session window).

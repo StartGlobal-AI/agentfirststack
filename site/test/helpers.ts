@@ -72,6 +72,14 @@ function stubService(service: "analytics" | "tags" | "mail" | "replay"): Fetcher
   svc.get("/v1/usage", (c) => c.json(usageFixtures.get(`${service}:${c.var.auth.accountId}`) ?? { limits: {} }));
   if (service === "analytics") {
     svc.get("/v1/sites", (c) => c.json({ sites: fixtures.get(c.var.auth.accountId)?.sites ?? [] }));
+    // The live stream: a socket that says which account and site it was opened for.
+    svc.get("/v1/sites/:id/realtime/stream", (c) => {
+      const pair = new WebSocketPair();
+      const [client, server] = [pair[0], pair[1]];
+      server.accept();
+      server.send(JSON.stringify({ type: "snapshot", account_id: c.var.auth.accountId, site_id: c.req.param("id") }));
+      return new Response(null, { status: 101, webSocket: client });
+    });
     // The quiet-site check's reads, for sites given a fixture; the rest fall through.
     svc.get("/v1/sites/:id/timeseries", (c, next) => {
       const days = timeseriesFixtures.get(c.req.param("id"));

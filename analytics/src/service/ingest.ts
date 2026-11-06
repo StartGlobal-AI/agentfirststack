@@ -193,7 +193,8 @@ function revenueOf(v: unknown): { revenue: number | null; currency: string | nul
  *   e engagement ms · b 1 when navigator.webdriver · d 1 when GPC/DNT · dbg 1 = test traffic (afsa('debug'))
  *   pageviews: t document.title (data-title="true") · w viewport width (stored as a class) · h 1 = hash routing
  *   custom events: ni 1 = non-interactive (doesn't un-bounce the session)
- *   engagement only: sd max scroll depth % · v [LCP ms, INP ms, CLS x 1000] of the page load
+ *   engagement only: sd max scroll depth % · v [LCP ms, INP ms, CLS x 1000] of the page load ·
+ *     l 1 = the page unloaded (pagehide, not kept in the back/forward cache): the visitor left it
  */
 
 const finiteIn = (x: unknown, max: number): number | null => (typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= max ? x : null);
@@ -320,6 +321,7 @@ export async function ingestBrowser(
     user_props: cleanUserProps(p.up),
     ...revenueOf(p.$),
     engagement_ms: typeof p.e === "number" && p.e > 0 ? Math.round(p.e) : 0,
+    leave: name === "engagement" && (p.l === 1 || p.l === true),
     visitor_hash: await visitorHash(salt, siteId, ip, ua ?? "", now),
     client_visitor_id: typeof p.id === "string" && VISITOR_ID_RE.test(p.id) ? p.id : null,
     explicit_visitor_id: null,

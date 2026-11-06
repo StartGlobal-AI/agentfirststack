@@ -83,6 +83,7 @@ export default defineConfig({
                   ["SCAN_LIMITER", "42015"],
                   ["TEST_LIMITER", "42016"],
                   ["SERVER_EVENTS_LIMITER", "42017"],
+                  ["READ_LIMITER", "42018"],
                 ].map(([name, namespace_id]) => [name, { namespace_id: namespace_id!, simple: { limit: 1_000_000, period: 60 as const } }]),
               ),
               bindings: {

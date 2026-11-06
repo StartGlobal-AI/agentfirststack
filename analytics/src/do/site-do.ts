@@ -53,6 +53,25 @@ import type {
 import type { Bindings } from "../env";
 
 const DAY = 86_400_000;
+
+/** Live streams (dashboards, API) one site takes at once; past it, the oldest is closed. */
+export const MAX_LIVE_SOCKETS = 20;
+/** At most one live message a second per site, however busy it is. */
+const LIVE_EVERY_MS = 1000;
+/** A stream is closed after this long (the dashboard reconnects), so abandoned ones don't pile up. */
+const LIVE_MAX_AGE_MS = 6 * 3_600_000;
+
+/** The latest pageview in a live message: enough for "Someone from Berlin opened /pricing from Google". */
+export interface LiveEvent {
+  pathname: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  source: string | null;
+  channel: string | null;
+  ts: number;
+}
+
 export const NOT_CONFIGURED = { error: { code: "not_configured", message: "Site storage is not configured." } } as const;
 
 /** Report this site's daily count to the account / platform aggregate (D1) at most this often... */
@@ -103,9 +122,14 @@ export class SiteDO extends DurableObject<Bindings> {
   private pendingDrops = new Map<string, { count: number; last_at: number; sample: string | null }>();
   private pendingRefused = 0;
   private dropsWrittenAt = 0;
+  private liveLast = 0;
+  private liveTimer: ReturnType<typeof setTimeout> | null = null;
+  private livePending: { pageviews: number; latest: LiveEvent | null; dirty: boolean } = { pageviews: 0, latest: null, dirty: false };
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
+    // Keep-alive pings are answered without waking the object (no duration billed).
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     const sql = ctx.storage.sql;
     this.db = {
       all: (q: string, args: SqlValue[] = []) => sql.exec(q, ...args).toArray() as Row[],
@@ -128,6 +152,107 @@ export class SiteDO extends DurableObject<Bindings> {
   private withSettings<T>(fn: (s: SiteSettings) => T): T | typeof NOT_CONFIGURED {
     const s = this.settingsOrNull();
     return s ? fn(s) : NOT_CONFIGURED;
+  }
+
+  // ---------------------------------------------------------------- live stream
+
+  /**
+   * GET /live with `Upgrade: websocket` (the Worker checked the caller): a live stream of this
+   * site. Accepted with the Hibernation API and no timers, so an idle stream costs nothing; a
+   * message goes out only after an event arrives, when the object is awake anyway.
+   */
+  override async fetch(req: Request): Promise<Response> {
+    if (new URL(req.url).pathname !== "/live") return new Response("not found", { status: 404 });
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("expected a websocket upgrade", { status: 426 });
+    if (!this.settingsOrNull()) return Response.json(NOT_CONFIGURED, { status: 409 });
+    const open = this.ctx.getWebSockets();
+    if (open.length >= MAX_LIVE_SOCKETS) {
+      const age = (ws: WebSocket) => (ws.deserializeAttachment() as { at?: number } | null)?.at ?? 0;
+      const oldest = open.reduce((a, b) => (age(b) < age(a) ? b : a));
+      try {
+        oldest.close(4000, "replaced by a newer stream");
+      } catch {
+        // already closing
+      }
+    }
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    this.ctx.acceptWebSocket(server);
+    const at = Date.now();
+    server.serializeAttachment({ at });
+    server.send(JSON.stringify({ type: "snapshot", ...engine.liveCounts(this.db, at), at }));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** After stored events: tell the open streams, at most once a second (a busy site sends one message). */
+  private liveAfterIngest(events: EnrichedEvent[], results: { ok: boolean }[]): void {
+    if (!this.ctx.getWebSockets().length) return;
+    events.forEach((ev, i) => {
+      // Test traffic is left out, as in realtime; plain engagement beacons change no count.
+      if (!results[i]?.ok || ev.debug || (ev.name === "engagement" && !ev.leave)) return;
+      this.livePending.dirty = true;
+      if (ev.name === "pageview") {
+        this.livePending.pageviews++;
+        this.livePending.latest = {
+          pathname: ev.pathname,
+          country: ev.country ?? null,
+          region: ev.region ?? null,
+          city: ev.city ?? null,
+          source: ev.source ?? null,
+          channel: ev.channel ?? null,
+          ts: ev.ts,
+        };
+      }
+    });
+    if (!this.livePending.dirty || this.liveTimer) return;
+    const wait = this.liveLast + LIVE_EVERY_MS - Date.now();
+    if (wait <= 0) this.livePush();
+    else this.liveTimer = setTimeout(() => this.livePush(), wait);
+  }
+
+  private livePush(): void {
+    this.liveTimer = null;
+    const p = this.livePending;
+    this.livePending = { pageviews: 0, latest: null, dirty: false };
+    const at = Date.now();
+    this.liveLast = at;
+    const sockets = this.ctx.getWebSockets();
+    if (!sockets.length) return;
+    const msg = JSON.stringify({ type: "update", ...engine.liveCounts(this.db, at), pageviews: p.pageviews, latest: p.latest, at });
+    for (const ws of sockets) {
+      const opened = (ws.deserializeAttachment() as { at?: number } | null)?.at ?? at;
+      try {
+        if (at - opened > LIVE_MAX_AGE_MS) ws.close(4001, "stream open too long: reconnect");
+        else ws.send(msg);
+      } catch {
+        // closing: nothing to send to
+      }
+    }
+  }
+
+  override async webSocketMessage(): Promise<void> {
+    // Nothing to answer: "ping" is handled by the auto-response, anything else is ignored.
+  }
+
+  override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    try {
+      ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
+    } catch {
+      // already closed
+    }
+  }
+
+  override async webSocketError(ws: WebSocket): Promise<void> {
+    try {
+      ws.close(1011, "error");
+    } catch {
+      // already closed
+    }
+  }
+
+  /** Open live streams (diagnostics, tests). */
+  liveStreams(): number {
+    return this.ctx.getWebSockets().length;
   }
 
   // ---------------------------------------------------------------- standing and budgets
@@ -317,6 +442,7 @@ export class SiteDO extends DurableObject<Bindings> {
     if (policy.dryRun) return { ...res, replay_site_id: s.replay_site_id ?? null };
     this.pendingRefused += res.results.filter((r) => (engine.BUDGET_REASONS as readonly string[]).includes(r.reason ?? "")).length;
     this.writeDrops();
+    this.liveAfterIngest(events, res.results);
     if (aggregate) await this.reportIfDue(s.id, accountId!, caps);
     // From the settings copy already in hand: the Worker turns it into the tracker's replay loader URL.
     return { ...res, replay_site_id: s.replay_site_id ?? null };

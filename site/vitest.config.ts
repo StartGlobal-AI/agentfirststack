@@ -9,6 +9,12 @@ export default defineConfig({
     cloudflareTest(async () => ({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
+        // The read limits stay out of the way (a test makes many reads with one key); their
+        // logic is tested with a stub limiter.
+        ratelimits: {
+          READ_LIMITER: { namespace_id: "42044", simple: { limit: 1_000_000, period: 60 } },
+          DASHBOARD_LIMITER: { namespace_id: "42045", simple: { limit: 1_000_000, period: 60 } },
+        },
         // The pool bundles an older workerd than wrangler 4.156; pin a date it supports.
         compatibilityDate: "2026-08-01",
         // The services (afs-analytics, ...) aren't part of this test run: placeholders keep workerd

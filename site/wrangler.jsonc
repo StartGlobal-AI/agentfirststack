@@ -73,6 +73,10 @@
   // run (it sends a test email and test events, and fetches the homepage).
   "ratelimits": [
     { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    // API-key and OAuth reads (GET/HEAD) and MCP requests per account (@afs/shared readAllowed)
+    { "name": "READ_LIMITER", "namespace_id": "42044", "simple": { "limit": 300, "period": 60 } },
+    // the dashboard's data route (/dashboard/projects/:id/data/...) per signed-in person
+    { "name": "DASHBOARD_LIMITER", "namespace_id": "42045", "simple": { "limit": 600, "period": 60 } },
     { "name": "KEY_LIMITER", "namespace_id": "42041", "simple": { "limit": 10, "period": 60 } },
     { "name": "SETUP_LIMITER", "namespace_id": "42042", "simple": { "limit": 30, "period": 60 } },
     { "name": "SETUP_TEST_LIMITER", "namespace_id": "42043", "simple": { "limit": 3, "period": 60 } }

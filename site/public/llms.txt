@@ -554,6 +554,10 @@ moment it's deleted): `GET /v1/sites/:id/export` (analytics CSV), `GET /v1/conta
   and 2 MB, recordings kept up to 14 days, 5 active share links per site.
 - Inbox forwarding to the project's people: up to 100 a day per account; past that, the rest goes
   into one digest.
+- API reads: 300 a minute per project on each service (GET requests and MCP calls with a key;
+  writes and event ingest have their own limits). Past it: `429 rate_limited`, wait a minute.
+  For live numbers, open the analytics realtime stream instead of polling
+  (`GET https://analytics.agentfirststack.com/v1/sites/:id/realtime/stream`, a WebSocket).
 - Projects nobody has claimed get lower limits than claimed ones.
 
 Every limit with what the project has used: `GET https://agentfirststack.com/v1/usage` (MCP

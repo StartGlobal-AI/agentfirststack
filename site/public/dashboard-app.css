@@ -429,6 +429,25 @@
   box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5);
   animation: afa-pulse 2s ease-out infinite;
 }
+/* The Online tile's dot: still, and one ping for each new pageview the live stream reports. */
+.afa-live-dot.is-still {
+  animation: none;
+}
+.afa-live-dot.is-still.is-ping {
+  animation: afa-ping 0.9s ease-out 1;
+}
+/* The latest visitor, under the KPI row. */
+.afa-live-ticker {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.afa-live-ticker[hidden] {
+  display: none;
+}
 
 /* charts */
 .afa-chart {
@@ -2478,6 +2497,14 @@ a.afa-site-card:hover {
 @keyframes afa-shimmer {
   to {
     background-position: -200% 0;
+  }
+}
+@keyframes afa-ping {
+  0% {
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(22, 163, 74, 0);
   }
 }
 @keyframes afa-pulse {

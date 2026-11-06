@@ -3,7 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { type AuthBindings, type AuthContext, authenticate, authenticateEnv, canWrite, extractKey } from "./auth";
+import { type AuthBindings, type AuthContext, authenticate, authenticateEnv, canWrite, extractKey, readAllowed, readLimited } from "./auth";
 import { ApiError } from "./errors";
 import { MCP_NOTICE_PREFIX, pendingNotice, takeNotice } from "./notices";
 import { mcpChallenge } from "./resource";
@@ -129,6 +129,12 @@ export async function handleMcp(request: Request, envOrDb: AuthBindings | D1Data
   const isDb = "prepare" in envOrDb && typeof envOrDb.prepare === "function";
   const auth = isDb ? await authenticate(envOrDb as D1Database, token) : await authenticateEnv(envOrDb as AuthBindings, token);
   if (!auth) return unauthorizedMcp(request, "That API key is unknown, revoked or expired. POST /v1/signup for a new one.", true);
+  if (!isDb && !(await readAllowed(envOrDb as AuthBindings, auth.accountId))) {
+    return new Response(JSON.stringify(readLimited().toJSON()), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "60" },
+    });
+  }
   // For the project's notice on tool results (notices.ts); a bare D1 database is the identity DB.
   const env: AuthBindings = isDb ? { DB: envOrDb as D1Database } : (envOrDb as AuthBindings);
 

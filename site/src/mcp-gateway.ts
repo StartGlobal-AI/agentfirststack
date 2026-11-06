@@ -7,6 +7,8 @@ import {
   extractKey,
   isTemporaryCredential,
   mcpChallenge,
+  readAllowed,
+  readLimited,
   renameProject,
 } from "@afs/shared";
 import { claimLinkResponse, createClaimLink } from "./claims";
@@ -431,6 +433,7 @@ export async function mcpGateway(req: Request, env: Bindings): Promise<Response>
       "www-authenticate": mcpChallenge(req, true),
     });
   }
+  if (!(await readAllowed(env, auth.accountId))) return json(readLimited().toJSON(), 429, { "retry-after": "60" });
   const caller: Caller = {
     authHeader: `Bearer ${token}`,
     auth,

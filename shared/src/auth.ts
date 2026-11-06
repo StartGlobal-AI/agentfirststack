@@ -56,6 +56,12 @@ export interface AuthBindings {
   /** Optional Workers rate-limit binding, keyed by account, applied to API key creation. */
   KEY_LIMITER?: RateLimit;
   /**
+   * Optional Workers rate-limit binding, keyed by account: every GET/HEAD with an API key or OAuth
+   * token, and every MCP request. Writes and ingest keep their own limits; internal callers (the
+   * dashboard) are not counted here.
+   */
+  READ_LIMITER?: RateLimit;
+  /**
    * Secret shared by the Workers of one deployment. A request with `x-afs-internal: <token>` and
    * `x-afs-account: acct_...` is a full-access caller for that account (the site's dashboard
    * uses it over service bindings). Unset = internal auth is off.
@@ -290,6 +296,7 @@ export function requireAuth<E extends AuthEnv>(): MiddlewareHandler<E> {
     const method = c.req.method;
     const path = new URL(c.req.url).pathname;
     if (method !== "GET" && method !== "HEAD" && !path.startsWith("/mcp")) assertWrite(auth);
+    else if (!(await readAllowed(c.env, auth.accountId))) throw readLimited();
     c.set("auth", auth);
     // The project's notice, if the platform has one (notices.ts): looked up (cached) while the
     // handler runs, then added to the answer. API-key and OAuth callers only, never internal ones.
@@ -298,6 +305,24 @@ export function requireAuth<E extends AuthEnv>(): MiddlewareHandler<E> {
     if (attach) await attach(c);
   };
 }
+
+/**
+ * One read against READ_LIMITER (per account). True when allowed, when there is no binding, or
+ * when the binding itself fails: a limiter outage must not take the API down.
+ */
+export async function readAllowed(env: AuthBindings, accountId: string): Promise<boolean> {
+  if (!env.READ_LIMITER) return true;
+  try {
+    return (await env.READ_LIMITER.limit({ key: `read|${accountId}` })).success;
+  } catch {
+    return true;
+  }
+}
+
+export const readLimited = () =>
+  tooManyRequests(
+    "This project made too many API reads in the last minute. Wait a minute, then retry; spread polling out, or use the realtime stream (llms.txt) instead of polling.",
+  );
 
 /** Optional auth: sets `c.var.auth` when a valid key is present, never rejects. */
 export function optionalAuth<E extends AuthEnv>(): MiddlewareHandler<E> {

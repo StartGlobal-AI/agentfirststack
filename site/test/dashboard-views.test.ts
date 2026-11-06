@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { Browser, call, csrfOf, E, fixtures, serviceCalls, signup, uniqueEmail } from "./helpers";
+import { createExecutionContext } from "cloudflare:test";
+import { app } from "../src/index";
+import { BASE, Browser, call, csrfOf, E, fixtures, serviceCalls, signup, testEnv, uniqueEmail } from "./helpers";
 
 /** A project with one of everything, claimed by a signed-in owner. */
 async function ownedProject(label: string) {
@@ -153,6 +155,31 @@ describe("dashboard: projects, tabs and the views' data", () => {
     expect(r.status).toBe(404);
     expect(r.json.error.code).toBe("not_found");
     expect(serviceCalls.length).toBe(before);
+  });
+
+  it("opens an analytics site's live stream from our own page only, for members only", async () => {
+    const { agent, ids, owner, base } = await ownedProject("live");
+    const path = `${base}/live/analytics/${ids.site}`;
+    const open = (b: Browser, headers: Record<string, string>) =>
+      app.fetch(new Request(`${BASE}${path}`, { headers: { cookie: b.cookie, ...headers } }), testEnv(), createExecutionContext());
+    const ws = { upgrade: "websocket", origin: BASE };
+
+    const res = await open(owner, ws);
+    expect(res.status).toBe(101);
+    const socket = res.webSocket!;
+    socket.accept();
+    const first = await new Promise<any>((resolve) => socket.addEventListener("message", (e) => resolve(JSON.parse(String(e.data)))));
+    expect(first).toEqual({ type: "snapshot", account_id: agent.accountId, site_id: ids.site });
+    socket.close(1000, "done");
+
+    // Another site's page (cross-site WebSocket hijacking), no Origin, or no upgrade: refused.
+    expect((await open(owner, { ...ws, origin: "https://evil.test" })).status).toBe(403);
+    expect((await open(owner, { upgrade: "websocket" })).status).toBe(403);
+    expect((await open(owner, { origin: BASE })).status).toBe(426);
+    // Someone signed in who isn't a member: a JSON 404.
+    const stranger = new Browser();
+    await stranger.signIn(uniqueEmail("live-stranger"));
+    expect((await open(stranger, ws)).status).toBe(404);
   });
 
   it("makes a one-hour player link to watch a session, with the page's CSRF token", async () => {

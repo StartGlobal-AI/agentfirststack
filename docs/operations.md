@@ -157,6 +157,13 @@ Bindings on the site: `SIGNUP_LIMITER` (5 per minute per network, signup and OAu
 (namespace 42042, 30 setup checks per minute per project; each reads the services about 15 times)
 and `SETUP_TEST_LIMITER` (namespace 42043, 3 setup test runs per minute per project).
 
+Every app also has `READ_LIMITER` (namespaces 42008 analytics, 42018 tags, 42024 mail, 42034
+replay, 42044 site; 300 per minute per account): GET and HEAD requests with an API key or OAuth
+token, and every MCP request, counted in `requireAuth()` and `handleMcp()` of `@afs/shared`.
+Writes and ingest keep their own limits; the dashboard's internal calls are not counted here. The
+dashboard's data route and live stream have `DASHBOARD_LIMITER` instead (namespace 42045, 600 per
+minute per signed-in person; a page load makes 20-40 reads). Both fail open if the binding errors.
+
 Reports arrive at `abuse@<domain>`. Role addresses (abuse, postmaster, security, admin and others)
 can't be claimed by users, so route them to a person: in the dashboard under Email > Email
 Routing > Routing rules, add a custom address rule for each one that forwards to your own mailbox.

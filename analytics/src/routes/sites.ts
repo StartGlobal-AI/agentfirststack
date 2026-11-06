@@ -27,6 +27,7 @@ import {
   getMovers,
   getPaths,
   getRealtime,
+  openRealtimeStream,
   getStats,
   getTimeseries,
   querySql,
@@ -83,6 +84,7 @@ r.get("/:id/stats", async (c) => out(c, "stats", await getStats(ctxOf(c), c.req.
 r.get("/:id/breakdown", async (c) => out(c, "breakdown", await getBreakdown(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/timeseries", async (c) => out(c, "timeseries", await getTimeseries(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/realtime", async (c) => c.json(await getRealtime(ctxOf(c), c.req.param("id"), c.req.query())));
+r.get("/:id/realtime/stream", (c) => openRealtimeStream(ctxOf(c), c.req.param("id"), c.req.raw));
 r.get("/:id/realtime/map", async (c) => c.json(await getRealtimeMap(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/sessions", async (c) => c.json(await listSessions(ctxOf(c), c.req.param("id"), c.req.query())));
 r.get("/:id/funnel", async (c) => c.json(await getFunnel(ctxOf(c), c.req.param("id"), c.req.query())));

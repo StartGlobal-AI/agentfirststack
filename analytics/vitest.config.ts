@@ -60,6 +60,7 @@ export default defineConfig({
               ratelimits: {
                 INGEST_IP_LIMITER: { namespace_id: "42001", simple: { limit: 100000, period: 60 } },
                 INGEST_SITE_LIMITER: { namespace_id: "42002", simple: { limit: 100000, period: 60 } },
+                READ_LIMITER: { namespace_id: "42008", simple: { limit: 100000, period: 60 } },
               },
             },
           })),

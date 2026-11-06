@@ -1,4 +1,4 @@
-import { accountStanding, badRequest, capFor, parse } from "@afs/shared";
+import { ApiError, accountStanding, badRequest, capFor, parse } from "@afs/shared";
 import { DEFAULT_SQL_TIME_BUDGET_MS, enforce } from "../lib/limits";
 import { z } from "zod";
 import {
@@ -14,7 +14,7 @@ import {
 import { FunnelError, parseFunnelStep, parseFunnelSteps } from "../lib/query";
 import { type CompareSpec, INTERVALS, PERIODS, isValidTimezone } from "../lib/time";
 import type { SortSpec } from "../lib/types";
-import { type Ctx, callSite, loadSite, siteStub } from "./context";
+import { type Ctx, callSite, loadSite, pushSettings, siteStub } from "./context";
 import { filterShape, filtersField, filtersOf, resolveFilters } from "./filters";
 import { funnelModeField, funnelWindowField, loadFunnel } from "./funnels";
 import { ATTRIBUTION_DIMS, MODELS as ATTRIBUTION_MODELS } from "../do/attribution";
@@ -332,6 +332,32 @@ export const realtimeInput = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().describe("recent_events to return (default 50)."),
   debug: periodShape.debug,
 });
+
+/**
+ * GET /v1/sites/:id/realtime/stream with `Upgrade: websocket`: the site's live numbers, pushed
+ * within a second of each event (at most one message a second). The socket comes straight from
+ * the site's Durable Object.
+ */
+export async function openRealtimeStream(ctx: Ctx, siteId: string, req: Request): Promise<Response> {
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    throw new ApiError(
+      426,
+      "upgrade_required",
+      "This endpoint is a WebSocket stream.",
+      "Connect with a WebSocket client (Upgrade: websocket) and the same Authorization header. To poll instead, GET /v1/sites/:id/realtime.",
+    );
+  }
+  const site = await loadSite(ctx, siteId);
+  const stub = ctx.env.SITE.get(ctx.env.SITE.idFromName(site.id));
+  const open = () => stub.fetch(new Request("https://site.internal/live", { headers: { upgrade: "websocket" } }));
+  let res = await open();
+  if (res.status === 409) {
+    // The object was never configured (storage lost, or created before a deploy): push settings once.
+    await pushSettings(ctx.env, site);
+    res = await open();
+  }
+  return res;
+}
 
 export async function getRealtime(ctx: Ctx, siteId: string, raw: unknown = {}) {
   const q = parse(realtimeInput, raw);

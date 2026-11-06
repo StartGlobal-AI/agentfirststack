@@ -238,6 +238,73 @@ describe("handleMcp 401", () => {
   });
 });
 
+describe("read limit", () => {
+  /** A stub of a Workers rate-limit binding: allows `n` calls per key, then refuses. */
+  const stubLimiter = (n: number) => {
+    const seen = new Map<string, number>();
+    const keys: string[] = [];
+    return {
+      keys,
+      limit: async ({ key }: { key: string }) => {
+        keys.push(key);
+        const c = (seen.get(key) ?? 0) + 1;
+        seen.set(key, c);
+        return { success: c <= n };
+      },
+    };
+  };
+  const app = new Hono<{ Bindings: AuthBindings; Variables: { auth: AuthContext } }>();
+  app.onError(onError);
+  app.use("/v1/*", requireAuth());
+  app.get("/v1/who", (c) => c.json({ ok: true }));
+  app.post("/v1/who", (c) => c.json({ ok: true }));
+
+  it("counts API-key reads per account, not writes or internal callers, and fails open", async () => {
+    const db = memoryD1(IDENTITY);
+    const { accountId, apiKey } = await account(db);
+    const READ_LIMITER = stubLimiter(2);
+    const env = { DB: db, INTERNAL_TOKEN: "s3cret-internal", READ_LIMITER } as unknown as AuthBindings;
+    const auth = { authorization: `Bearer ${apiKey.key}` };
+    expect((await app.request("https://a.test/v1/who", { headers: auth }, env)).status).toBe(200);
+    expect((await app.request("https://a.test/v1/who", { headers: auth }, env)).status).toBe(200);
+    const third = await app.request("https://a.test/v1/who", { headers: auth }, env);
+    expect(third.status).toBe(429);
+    expect(await third.json()).toMatchObject({ error: { code: "rate_limited" } });
+    expect(READ_LIMITER.keys).toEqual([`read|${accountId}`, `read|${accountId}`, `read|${accountId}`]);
+    // Writes keep their own limits.
+    expect((await app.request("https://a.test/v1/who", { method: "POST", headers: auth }, env)).status).toBe(200);
+    // The dashboard (internal, over a service binding) isn't counted.
+    const internal = { "x-afs-internal": "s3cret-internal", "x-afs-account": accountId };
+    expect((await app.request("https://analytics.internal/v1/who", { headers: internal }, env)).status).toBe(200);
+    expect(READ_LIMITER.keys).toHaveLength(3);
+    // A limiter that throws doesn't take the API down.
+    const broken = { limit: async () => Promise.reject(new Error("down")) };
+    const env2 = { DB: db, READ_LIMITER: broken } as unknown as AuthBindings;
+    expect((await app.request("https://a.test/v1/who", { headers: auth }, env2)).status).toBe(200);
+  });
+
+  it("counts MCP requests too", async () => {
+    const db = memoryD1(IDENTITY);
+    const { apiKey } = await account(db);
+    const env = { DB: db, READ_LIMITER: stubLimiter(1) } as unknown as AuthBindings;
+    const post = () =>
+      new Request("https://mail.example.com/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${apiKey.key}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+    const opts = { name: "t", version: "0", register: () => {} };
+    expect((await handleMcp(post(), env, opts)).status).toBe(200);
+    const limited = await handleMcp(post(), env, opts);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("60");
+  });
+});
+
 describe("account standing", () => {
   it("reads suspension and whether a person claimed it, and picks caps by standing", async () => {
     const db = memoryD1(IDENTITY);

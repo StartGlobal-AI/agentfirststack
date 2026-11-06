@@ -38,6 +38,8 @@
   // `pnpm afs config`. Limits are per Cloudflare location and approximate.
   "ratelimits": [
     { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    // API-key and OAuth reads (GET/HEAD) and MCP requests per account (@afs/shared readAllowed)
+    { "name": "READ_LIMITER", "namespace_id": "42034", "simple": { "limit": 300, "period": 60 } },
     { "name": "INGEST_IP_LIMITER", "namespace_id": "42031", "simple": { "limit": 600, "period": 60 } },
     { "name": "INGEST_SITE_IP_LIMITER", "namespace_id": "42032", "simple": { "limit": 120, "period": 60 } },
     { "name": "INGEST_SITE_LIMITER", "namespace_id": "42033", "simple": { "limit": 3000, "period": 60 } }

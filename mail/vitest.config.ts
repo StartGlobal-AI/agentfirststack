@@ -12,6 +12,11 @@ export default defineConfig({
           cloudflareTest(async () => ({
             wrangler: { configPath: "./wrangler.jsonc" },
             miniflare: {
+              // The read limits stay out of the way (a test makes many reads with one key); their
+              // logic is tested with a stub limiter.
+              ratelimits: {
+                READ_LIMITER: { namespace_id: "42024", simple: { limit: 1_000_000, period: 60 } },
+              },
               bindings: {
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
                 // The shared identity DB (AUTH_DB), as on the hosted platform.

@@ -105,6 +105,8 @@ export interface EnrichedEvent extends Attribution, Geo, DeviceInfo {
   revenue: number | null;
   currency: string | null;
   engagement_ms: number;
+  /** engagement beacon sent as the page unloaded (pagehide, not kept in the back/forward cache) */
+  leave?: boolean;
   /** cookieless daily hash (always present) */
   visitor_hash: string;
   /** browser: id the tracker kept in localStorage (used only when the site is in persistent mode) */
@@ -162,6 +164,8 @@ export interface IngestOutcome {
   no_visit?: boolean;
   /** an engagement beacon (it updates its pageview, it doesn't add a row) */
   engagement?: boolean;
+  /** a leave beacon with no visible time: not counted against the daily budget */
+  uncounted?: boolean;
   /** validate_only: the row that would have been stored */
   stored?: Record<string, unknown> | null;
   /** validate_only: problems with a kept event (browser_revenue_ignored, ...) */

@@ -123,7 +123,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const ATTR_COLS = [
   "referrer",
@@ -359,6 +359,15 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
     up: (db) => {
       for (const s of IMPORTS_SQL) db.run(s); // IF NOT EXISTS: a no-op after version 8
       if (!hasColumn(db, "imports", "tool")) for (const s of IMPORTS_V10_SQL) db.run(s);
+    },
+  },
+  {
+    // Live "online" count: each visitor's latest leave (the tracker's pagehide beacon), kept 10 minutes.
+    version: 11,
+    up: (db) => {
+      db.run(
+        "CREATE TABLE IF NOT EXISTS live_leaves (visitor_id TEXT PRIMARY KEY, ts INTEGER NOT NULL, pathname TEXT NOT NULL DEFAULT '')",
+      );
     },
   },
 ];
@@ -654,7 +663,7 @@ export function ingest(db: Db, events: EnrichedEvent[], now = Date.now(), opts: 
           r.stored = r.engagement ? null : storedEventOut(db.all("SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 1", [before])[0]);
       }
       results.push(r);
-      if (r.ok) {
+      if (r.ok && !r.uncounted) {
         const n = 1 + (r.extra_events ?? 0);
         used += n;
         accepted += n;
@@ -777,7 +786,13 @@ function ingestOne(
   const visitorId =
     ev.explicit_visitor_id ?? (settings.visitor_id_mode === "persistent" && ev.client_visitor_id ? ev.client_visitor_id : ev.visitor_hash);
 
-  if (ev.name === "engagement") return { ...engagement(db, visitorId, ev), engagement: true };
+  if (ev.name === "engagement") {
+    if (ev.leave) recordLeave(db, visitorId, ev.pathname, ev.ts);
+    // A leave beacon with under a second of visible time only tells us the visitor left: it costs
+    // no budget, and the time is ignored (shorter beacons were never sent before leaves were).
+    if (ev.leave && ev.engagement_ms < 1000) return { ok: true, visitor_id: visitorId, engagement: true, uncounted: true };
+    return { ...engagement(db, visitorId, ev), engagement: true };
+  }
 
   const isPageview = ev.name === "pageview";
   // The site's session timeout (minutes of inactivity), 30 by default.
@@ -1064,6 +1079,19 @@ function engagement(db: Db, visitorId: string, ev: EnrichedEvent): IngestOutcome
     pv.session_id ?? null,
   ]);
   return { ok: true, visitor_id: visitorId, session_id: String(pv.session_id) };
+}
+
+/** How long a leave is kept: past the 5-minute online window, the visitor is gone anyway. */
+const LEAVE_TTL_MS = 10 * 60_000;
+
+/** The visitor closed `pathname` (one row per visitor: their latest leave). */
+function recordLeave(db: Db, visitorId: string, pathname: string | null, ts: number): void {
+  db.run(
+    `INSERT INTO live_leaves (visitor_id, ts, pathname) VALUES (?, ?, ?)
+     ON CONFLICT(visitor_id) DO UPDATE SET ts = excluded.ts, pathname = excluded.pathname`,
+    [visitorId, ts, pathname ?? ""],
+  );
+  db.run("DELETE FROM live_leaves WHERE ts < ?", [ts - LEAVE_TTL_MS]);
 }
 
 // ------------------------------------------------------------------ metrics
@@ -1704,6 +1732,7 @@ export function realtime(db: Db, q: RealtimeRequest = { filters: [] }, now = Dat
     };
     const c5 = counts(t5);
     const c30 = counts(t30);
+    const online = onlineCount(db, where(t5));
     const cw = minutes === 30 ? c30 : counts(tw);
     const limit = Math.min(200, Math.max(1, Math.round(q.limit ?? 50)));
     const rw = where(q.since != null ? q.since + 1 : 0);
@@ -1718,6 +1747,7 @@ export function realtime(db: Db, q: RealtimeRequest = { filters: [] }, now = Dat
     const breakdownCol = (dim: Breakdown) =>
       dim === "entry_page" ? raw("s.entry_page") : dim === "exit_page" ? raw("s.exit_page") : columnFor(dim, rctx);
     return {
+      online,
       visitors_last_5m: c5.visitors,
       visitors_last_30m: c30.visitors,
       pageviews_last_30m: c30.pageviews,
@@ -1743,6 +1773,51 @@ export function realtime(db: Db, q: RealtimeRequest = { filters: [] }, now = Dat
       next_since: recent.length ? Number(recent[0]!.ts) : (q.since ?? null),
     };
   });
+}
+
+/**
+ * Visitors online: an event in the last 5 minutes, unless the latest page they were seen on is
+ * the page they closed (live_leaves). Closing page A after opening page B keeps them online.
+ */
+function onlineCount(db: Db, w: Frag): number {
+  const r = all(db, {
+    sql: `SELECT COUNT(*) AS n FROM (
+            SELECT e.visitor_id AS v, MAX(e.ts) AS last_ts, e.pathname AS path FROM events e
+            WHERE ${w.sql} AND e.origin != 'payment' AND e.no_visit = 0 GROUP BY e.visitor_id
+          ) x LEFT JOIN live_leaves l ON l.visitor_id = x.v
+          WHERE l.visitor_id IS NULL OR l.ts < x.last_ts OR l.pathname != COALESCE(x.path, '')`,
+    args: w.args,
+  })[0];
+  return num(r?.n);
+}
+
+export interface LiveCounts {
+  online: number;
+  visitors_last_5m: number;
+  visitors_last_30m: number;
+  pageviews_last_30m: number;
+}
+
+/** The numbers the live stream sends (realtime without its lists; test traffic left out). */
+export function liveCounts(db: Db, now = Date.now()): LiveCounts {
+  const where = (start: number) => whereFrag(ctxFor(db, { start, end: now + 60_000 }, { filters: [] }));
+  const count = (start: number) => {
+    const w = where(start);
+    const r = all(db, {
+      sql: `SELECT COUNT(DISTINCT CASE WHEN e.origin != 'payment' AND e.no_visit = 0 THEN e.visitor_id END) AS visitors,
+              COALESCE(SUM(e.name = 'pageview'), 0) AS pageviews FROM events e WHERE ${w.sql}`,
+      args: w.args,
+    })[0];
+    return { visitors: num(r?.visitors), pageviews: num(r?.pageviews) };
+  };
+  const c5 = count(now - 5 * 60_000);
+  const c30 = count(now - 30 * 60_000);
+  return {
+    online: onlineCount(db, where(now - 5 * 60_000)),
+    visitors_last_5m: c5.visitors,
+    visitors_last_30m: c30.visitors,
+    pageviews_last_30m: c30.pageviews,
+  };
 }
 
 interface FunnelStepOut {

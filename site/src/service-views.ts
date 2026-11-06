@@ -46,7 +46,54 @@ async function projectForJson(c: Context<SiteEnv>): Promise<Project | Response> 
   }
 }
 
+/**
+ * The dashboard reaches the services with internal credentials, which READ_LIMITER doesn't count,
+ * so this route has its own limit per signed-in person (a page load makes 20-40 reads).
+ */
+async function dashboardReadAllowed(c: Context<SiteEnv>): Promise<boolean> {
+  if (!c.env.DASHBOARD_LIMITER) return true;
+  try {
+    return (await c.env.DASHBOARD_LIMITER.limit({ key: `dash|${c.var.session.user.id}` })).success;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * An analytics site's live stream for the dashboard: a WebSocket from the browser, checked here
+ * (our own page, signed in, a member of the project) and handed to the analytics Worker, whose
+ * site object holds it (GET /v1/sites/:id/realtime/stream).
+ */
+serviceViews.get("/projects/:id/live/analytics/:site", async (c) => {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+    return jsonError(c, 426, "upgrade_required", "This is a WebSocket stream; the dashboard opens it.");
+  }
+  // The browser sends the session cookie with any page's WebSocket: only our own pages may open one.
+  if (c.req.header("origin") !== new URL(c.req.url).origin) {
+    return jsonError(c, 403, "forbidden", "Live streams open from the dashboard only.");
+  }
+  if (!(await dashboardReadAllowed(c))) {
+    return jsonError(c, 429, "rate_limited", "Too many dashboard requests in the last minute. Wait a minute, then reload the page.");
+  }
+  const p = await projectForJson(c);
+  if (p instanceof Response) return p;
+  const site = c.req.param("site");
+  if (!/^site_[0-9a-z]{1,64}$/.test(site)) return jsonError(c, 404, "not_found", "Not an analytics site.");
+  const binding = c.env.ANALYTICS as Fetcher | undefined;
+  if (!binding || !c.env.INTERNAL_TOKEN) return jsonError(c, 503, "service_unavailable", "Analytics isn't connected here.");
+  return binding.fetch(`https://analytics.internal/v1/sites/${site}/realtime/stream`, {
+    headers: { upgrade: "websocket", "x-afs-internal": c.env.INTERNAL_TOKEN, "x-afs-account": p.id },
+  });
+});
+
 serviceViews.get("/projects/:id/data/:service/*", async (c) => {
+  if (!(await dashboardReadAllowed(c))) {
+    return c.json(
+      { error: { code: "rate_limited", message: "Too many dashboard requests in the last minute. Wait a minute, then reload the page." } },
+      429,
+      { "retry-after": "60", "cache-control": "no-store" },
+    );
+  }
   const p = await projectForJson(c);
   if (p instanceof Response) return p;
   const service = c.req.param("service") as Service;

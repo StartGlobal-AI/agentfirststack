@@ -194,6 +194,12 @@ The apex serves what agents and crawlers look for, from `site/public/`:
 - **Storage.** It then forwards the event to the site's own SQLite Durable Object (`SiteDO`),
   which stores events and sessions and runs every query. The site's settings are copied into the
   DO, so ingest never touches D1.
+- **Live.** The same DO holds the site's live streams (`GET /v1/sites/:id/realtime/stream`, and
+  the dashboard's `/dashboard/projects/:id/live/analytics/:site`, which the site Worker checks and
+  hands over a service binding). They are hibernating WebSockets: an idle stream costs nothing, and
+  after stored events the DO sends one message a second at most, while it is awake for the ingest
+  anyway. `online` counts visitors of the last 5 minutes minus those whose latest page is the one
+  they closed (the tracker's leave beacon, kept in `live_leaves` for 10 minutes).
 - **Backends** send events with `POST /v1/sites/:id/events` using a key. The tags service uses this
   path to forward conversions.
 - **Revenue.** Stripe posts to `/webhooks/stripe/:site_id` (no key; `Stripe-Signature` verified

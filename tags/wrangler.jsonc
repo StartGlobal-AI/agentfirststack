@@ -52,6 +52,8 @@
   // (IPv4 or IPv6 /48), container id or account id.
   "ratelimits": [
     { "name": "SIGNUP_LIMITER", "namespace_id": "41001", "simple": { "limit": 5, "period": 60 } },
+    // API-key and OAuth reads (GET/HEAD) and MCP requests per account (@afs/shared readAllowed)
+    { "name": "READ_LIMITER", "namespace_id": "42018", "simple": { "limit": 300, "period": 60 } },
     // /collect: every hit per client network, and per container.
     { "name": "COLLECT_IP_LIMITER", "namespace_id": "42011", "simple": { "limit": 600, "period": 60 } },
     { "name": "COLLECT_CONTAINER_LIMITER", "namespace_id": "42012", "simple": { "limit": 6000, "period": 60 } },

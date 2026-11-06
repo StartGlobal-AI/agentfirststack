@@ -48,7 +48,9 @@ async function seedLive(key: string, site: string, domain: string, perDay: Recor
       name: "pageview",
       url: `https://${domain}/`,
       user_id: `u${ago}_${i}`,
-      timestamp: today0() - Number(ago) * DAY + 12 * 3_600_000,
+      // Noon UTC, or earlier today when it isn't noon yet (a future timestamp is refused).
+      timestamp:
+        today0() - Number(ago) * DAY + (Number(ago) ? 12 * 3_600_000 : Math.min(12 * 3_600_000, Math.max(0, Date.now() - today0() - 1000))),
     })),
   );
   const r = await call(`/v1/sites/${site}/events`, { method: "POST", key, json: { events } });

@@ -1380,8 +1380,10 @@
     const filterRow = el("div", { class: "afa-filters", attrs: { "aria-label": "Filters" } });
     const main = el("section", { class: "afa-card afa-main", attrs: { "aria-label": "Overview" } });
     const kpis = el("div", { class: "afa-kpis" });
+    // The latest visitor, from the live stream: "Someone from Berlin opened /pricing from Google, just now."
+    const ticker = el("p", { class: "afa-live-ticker", attrs: { hidden: "" } });
     const chartBox = el("div", { class: "afa-chart" });
-    main.append(kpis, chartBox);
+    main.append(kpis, ticker, chartBox);
     const grid = el("div", { class: "afa-grid" });
     root.append(bar, filterRow, main, grid);
 
@@ -1638,12 +1640,106 @@
       try {
         // The tile needs only the count: one recent event instead of 50.
         const r = await api(project, `${base}/realtime`, { limit: 1 });
-        ONLINE.value = r.visitors_last_5m;
+        ONLINE.value = r.online ?? r.visitors_last_5m;
+        LIVE.heardAt = Date.now();
       } catch {
         ONLINE.value = null;
       }
+      paintOnline();
+    }
+    function paintOnline() {
       if (kpiTiles) countTo(kpiTiles.online, ONLINE.value, (v) => (v === null || v === undefined ? "–" : numFull(v)));
       dock.setOnline(ONLINE.value);
+      paintTitle();
+    }
+    // The count in the browser tab's title, "(3) shop.test analytics", while this view is open.
+    const TITLE_COUNT = /^\(\d[\d,]*\) /;
+    function paintTitle() {
+      if (!ctx.active) return;
+      const bare = document.title.replace(TITLE_COUNT, "");
+      document.title = ONLINE.value ? `(${numFull(ONLINE.value)}) ${bare}` : bare;
+    }
+
+    // ----- live: counts pushed by the site's object over a WebSocket; polling is the fallback -----
+    const LIVE = { ws: null, retry: 0, timer: 0, heardAt: 0, latest: null };
+    function liveConnect() {
+      if (LIVE.ws || !ctx.active || document.hidden || typeof WebSocket !== "function") return;
+      clearTimeout(LIVE.timer);
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      let ws;
+      try {
+        ws = new WebSocket(
+          `${scheme}://${location.host}/dashboard/projects/${encodeURIComponent(project)}/live/analytics/${encodeURIComponent(site.id)}`,
+        );
+      } catch {
+        return;
+      }
+      LIVE.ws = ws;
+      let keepAlive = 0;
+      ws.addEventListener("open", () => {
+        LIVE.retry = 0;
+        // Answered by the object without waking it; keeps proxies from closing a quiet socket.
+        keepAlive = setInterval(() => ws.readyState === 1 && ws.send("ping"), 30000);
+      });
+      ws.addEventListener("message", (e) => {
+        let m = null;
+        try {
+          m = JSON.parse(e.data);
+        } catch {
+          return; // "pong"
+        }
+        if (!m || typeof m.online !== "number") return;
+        LIVE.heardAt = Date.now();
+        ONLINE.value = m.online;
+        paintOnline();
+        if (m.pageviews > 0) pingDot();
+        if (m.latest) {
+          // Server clock to ours: how long ago it happened, as the server saw it.
+          LIVE.latest = { ...m.latest, seenAt: Date.now() - Math.max(0, (m.at || m.latest.ts) - m.latest.ts) };
+          paintTicker();
+        }
+      });
+      ws.addEventListener("close", () => {
+        clearInterval(keepAlive);
+        if (LIVE.ws !== ws) return;
+        LIVE.ws = null;
+        if (!ctx.active || document.hidden) return;
+        // Back off: 2 s, 4 s, ... up to a minute. The poll keeps the count going meanwhile.
+        LIVE.timer = setTimeout(liveConnect, Math.min(60000, 2000 * 2 ** LIVE.retry++));
+      });
+    }
+    function liveClose() {
+      clearTimeout(LIVE.timer);
+      const ws = LIVE.ws;
+      LIVE.ws = null;
+      if (ws) {
+        try {
+          ws.close(1000, "hidden");
+        } catch {
+          /* already closed */
+        }
+      }
+    }
+    const liveOpen = () => !!LIVE.ws && LIVE.ws.readyState === 1;
+    function pingDot() {
+      if (!kpiTiles || reduced()) return;
+      const dot = kpiTiles.dot;
+      dot.classList.remove("is-ping");
+      void dot.offsetWidth; // restart the animation
+      dot.classList.add("is-ping");
+    }
+    function paintTicker() {
+      const x = LIVE.latest;
+      const ago = x ? Date.now() - x.seenAt : Infinity;
+      if (!x || ago > 30 * 60000) {
+        ticker.hidden = true;
+        return;
+      }
+      const where = x.city || (x.country ? countryName(x.country) : null);
+      const page = !x.pathname ? "a page" : x.pathname.length > 60 ? `${x.pathname.slice(0, 59)}…` : x.pathname;
+      const when = ago < 15000 ? "just now" : ago < 60000 ? `${Math.round(ago / 1000)} seconds ago` : `${Math.round(ago / 60000)} min ago`;
+      ticker.textContent = `Someone${where ? ` from ${where}` : ""} opened ${page}${x.source ? ` from ${x.source}` : ""}, ${when}.`;
+      ticker.hidden = false;
     }
     const KPI = [
       ["visitors", "Visitors", (v) => numFull(v)],
@@ -1668,16 +1764,21 @@
       tiles.online = el("button", {
         class: "afa-kpi-num afa-online-num afa-plain",
         text: "–",
-        attrs: { type: "button", title: "Visitors in the last 5 minutes. Open the live view." },
+        attrs: {
+          type: "button",
+          title: "Visitors seen in the last 5 minutes who haven't closed the page. Open the live view.",
+        },
         on: { click: () => dock.openLive() },
       });
+      // Still, and it pings once for each new pageview the live stream reports.
+      tiles.dot = el("span", { class: "afa-live-dot is-still", attrs: { "aria-hidden": "true" } });
       tiles.nodes.push(
         el(
           "div",
           { class: "afa-kpi afa-kpi-online" },
-          el("span", { class: "afa-kpi-label" }, "Online", el("span", { class: "afa-live-dot", attrs: { "aria-hidden": "true" } })),
+          el("span", { class: "afa-kpi-label" }, "Online", tiles.dot),
           tiles.online,
-          el("span", { class: "afa-kpi-ch is-flat", text: "last 5 min" }),
+          el("span", { class: "afa-kpi-ch is-flat", text: "on the site now" }),
         ),
       );
       return tiles;
@@ -2563,16 +2664,18 @@
           ]);
           if (!sheet) return;
           if (vs) for (const v of vs.visitors || []) names.set(v.visitor_id, v.name);
-          ONLINE.value = rt.visitors_last_5m;
-          setOnline(rt.visitors_last_5m);
+          const now = rt.online ?? rt.visitors_last_5m;
+          ONLINE.value = now;
+          setOnline(now);
           if (kpiTiles) countTo(kpiTiles.online, ONLINE.value, (v) => numFull(v));
+          paintTitle();
           const first = !live;
           if (first) {
             live = buildLive();
             swap(body, live.node);
           }
-          countTo(live.big, rt.visitors_last_5m, numFull);
-          live.word.textContent = ` ${rt.visitors_last_5m === 1 ? "visitor" : "visitors"} on ${site.domain}`;
+          countTo(live.big, now, numFull);
+          live.word.textContent = ` ${now === 1 ? "visitor" : "visitors"} on ${site.domain}`;
           live.summary.textContent = `Last 30 minutes: ${numFull(rt.visitors_last_30m)} visitors, ${numFull(rt.pageviews_last_30m)} pageviews.`;
           const group = (title, rows, dim) =>
             el(
@@ -2949,13 +3052,26 @@
     [bar, main, ...grid.children].forEach((n, i) => enter(n, i));
     reload();
     loadOnline();
-    ctx.every(loadOnline, 10000);
+    liveConnect();
+    // Polling is the fallback: every 10 s without the stream, and once a minute with it (people
+    // drop out of the 5-minute window without sending anything).
+    ctx.every(() => {
+      if (!liveOpen() || Date.now() - LIVE.heardAt > 60000) loadOnline();
+    }, 10000);
+    ctx.every(paintTicker, 15000);
     // Back on this view or this browser tab: the live count straight away, everything else if it's
-    // been a while.
+    // been a while. A hidden tab or another view closes the stream.
     ctx.onShow((away) => {
       if (away > 60000) reload();
       loadOnline();
+      liveConnect();
     });
+    ctx.onHide(() => {
+      liveClose();
+      document.title = document.title.replace(TITLE_COUNT, "");
+    });
+    ctx.listen(document, "visibilitychange", () => document.hidden && liveClose());
+    ctx.cleanups.push(liveClose);
   }
 
   // ======================================================================

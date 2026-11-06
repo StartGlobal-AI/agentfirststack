@@ -125,7 +125,8 @@ Hostnames: without allowed_hostnames, browser events are accepted only from the 
 | GET | /v1/sites/:id/retention?interval=week&periods=8&breakdown=first_channel | retention cohorts by first-seen period, optionally by first touch |
 | GET | /v1/sites/:id/schema | metrics, breakdowns, filter grammar, goals, funnels, and the site's event names and prop keys (call first) |
 | GET | /v1/sites/:id/props?event_name= | custom prop keys with counts, event names and common values |
-| GET | /v1/sites/:id/realtime | last 5/30 minutes, a 1-60 minute window (minutes=, breakdown=, filters=), recent events (since=, limit=), debug=only view |
+| GET | /v1/sites/:id/realtime | online now, last 5/30 minutes, a 1-60 minute window (minutes=, breakdown=, filters=), recent events (since=, limit=), debug=only view |
+| GET | /v1/sites/:id/realtime/stream | WebSocket (Upgrade: websocket, same Authorization header): the live numbers pushed within a second of each event |
 | GET | /v1/sites/:id/realtime/map?minutes= | visitors of the last minutes by city with latitude / longitude |
 | GET | /v1/sites/:id/sessions?period=&filters=&sort=&limit=&offset= | session list (filterable, paged), linked to replay recordings |
 | GET | /v1/sites/:id/export?from=&to=&format=&cursor= | raw events as NDJSON / CSV / JSON, cursor-paged (10,000 a page) |
@@ -280,6 +281,12 @@ curl "$BASE/v1/sites/$SITE/timeseries?period=7d&interval=day&metrics=visitors,co
 curl "$BASE/v1/sites/$SITE/realtime" -H "Authorization: Bearer $KEY"
 curl "$BASE/v1/sites/$SITE/realtime?minutes=10&breakdown=page&filters=country==US" -H "Authorization: Bearer $KEY"
 curl "$BASE/v1/sites/$SITE/realtime?debug=only&since=$LAST_TS" -H "Authorization: Bearer $KEY"   # tail your own test traffic
+\`\`\`
+
+Realtime \`online\` counts visitors seen in the last 5 minutes, minus those who closed the page (the tracker sends a leave signal when a page unloads for good; switching tabs doesn't count as leaving). \`visitors_last_5m\` counts everyone with an event in those 5 minutes.
+
+**Live stream, instead of polling**: open a WebSocket to \`/v1/sites/:id/realtime/stream\` with the same \`Authorization\` header. The first message is \`{"type":"snapshot", online, visitors_last_5m, visitors_last_30m, pageviews_last_30m, at}\`. After that, within a second of new events (at most one message a second): \`{"type":"update", online, visitors_last_5m, visitors_last_30m, pageviews_last_30m, pageviews (new since the last message), latest: {pathname, country, region, city, source, channel, ts} | null, at}\`. Test traffic is left out. Send \`ping\` now and then (answered \`pong\`) to keep proxies from closing a quiet socket. A site takes 20 streams at once (a new one closes the oldest), and a stream closes after 6 hours: reconnect. People drop out of the 5-minute window without sending anything, so a long-lived client also polls \`GET /realtime\` about once a minute. MCP can't stream: use \`get_realtime\` with \`since\`.
+\`\`\`sh
 curl "$BASE/v1/sites/$SITE/funnel?period=30d&steps=/pricing,event:signup,goal:Purchase" -H "Authorization: Bearer $KEY"
 curl "$BASE/v1/sites/$SITE/breakdown?period=30d&breakdown=channel&metrics=visitors,revenue,revenue_per_visitor,purchase_rate&sort=revenue" -H "Authorization: Bearer $KEY"
 curl "$BASE/v1/sites/$SITE/breakdown?period=30d&breakdown=source&compare=previous&match_weekday=true&sort=change" -H "Authorization: Bearer $KEY"
@@ -835,7 +842,7 @@ curl -s $BASE/mcp -H "Authorization: Bearer $KEY" -H "content-type: application/
 | MAX_SHARE_LINKS_PER_SITE | optional var: active share links per site. Default 10 |
 | MAX_SITES_PER_ACCOUNT | optional var: sites per account. Unset = no cap |
 | UNCLAIMED_<NAME> | optional: every cap above (and MAX_ANNOTATIONS_PER_SITE / MAX_FUNNELS_PER_SITE / MAX_COST_ROWS_PER_SITE / MAX_ITEMS_PER_EVENT / MAX_USER_PROP_KEYS_PER_SITE / MAX_BROWSER_USER_PROP_KEYS_PER_SITE / MAX_CRAWL_HITS_PER_SITE_PER_DAY / MAX_CRAWL_HITS_PER_ACCOUNT_PER_DAY / MAX_CRAWL_HITS_PER_DAY / MAX_IMPORTED_ROWS_PER_SITE / MAX_IMPORTS_PER_SITE / MAX_EXPORT_ROWS_PER_SITE_PER_DAY) for accounts no person has claimed; unset = the plain value |
-| INGEST_IP_LIMITER, INGEST_SITE_LIMITER, API_INGEST_LIMITER, SQL_LIMITER, VERIFY_LIMITER, WEBHOOK_LIMITER, SHARE_LIMITER | optional Workers rate-limit bindings (wrangler.jsonc); absent = no limit |
+| INGEST_IP_LIMITER, INGEST_SITE_LIMITER, API_INGEST_LIMITER, SQL_LIMITER, VERIFY_LIMITER, WEBHOOK_LIMITER, SHARE_LIMITER, READ_LIMITER | optional Workers rate-limit bindings (wrangler.jsonc); absent = no limit. READ_LIMITER: API-key reads (GET) and MCP requests per account (hosted: 300 a minute) |
 | ENCRYPTION_KEY | optional secret: 32 bytes, base64 (openssl rand -base64 32); seals the Stripe webhook signing secret. Without it connecting Stripe returns 503 not_configured (the payments API still works). Changing it makes stored secrets unreadable: connect Stripe again |
 | MAX_ANNOTATIONS_PER_SITE | optional var: manual annotations per site (403 quota_exceeded beyond). Unset = no cap |
 | MAX_EXPORT_ROWS_PER_SITE_PER_DAY | optional var: raw events exported per site per UTC day (default 1000000) |

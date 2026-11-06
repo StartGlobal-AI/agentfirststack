@@ -250,8 +250,9 @@ describe("tracker (/s.js)", () => {
     // tags, site search and content groups are read on the server and cost the tracker nothing.
     // ?afsa_debug=1 (test traffic from the first pageview, kept for the tab in sessionStorage) took
     // it from 5096 / 2745 to 5260 / 2808: the budget went up by about that much (was 5100 / 2750).
-    expect(TRACKER.length).toBeLessThan(5265);
-    expect(gzipSync(TRACKER).length).toBeLessThan(2810);
+    // The leave flag on pagehide (live "online" count) took it to 5293 / 2825 (was 5265 / 2810).
+    expect(TRACKER.length).toBeLessThan(5300);
+    expect(gzipSync(TRACKER).length).toBeLessThan(2830);
   });
 
   it("exposes window.afsa and nothing under the old sga name", () => {
@@ -376,7 +377,24 @@ describe("tracker (/s.js)", () => {
     expect(b.sent).toHaveLength(3);
     b.tick(2500);
     b.fire("pagehide");
-    expect(b.sent[3]).toMatchObject({ via: "beacon", body: { n: "engagement", e: 2500, u: "https://example.com/pricing" } });
+    expect(b.sent[3]).toMatchObject({ via: "beacon", body: { n: "engagement", e: 2500, u: "https://example.com/pricing", l: 1 } });
+  });
+
+  it("flags a real unload as a leave, even with under a second visible, but not a hidden tab or the back/forward cache", () => {
+    const b = browser();
+    b.tick(3000);
+    (b.ctx.document as { visibilityState: string }).visibilityState = "hidden";
+    b.fire("visibilitychange");
+    const hidden = b.sent.filter((s) => s.body.n === "engagement");
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0]!.body.l).toBeUndefined();
+    // Kept in the back/forward cache: the visitor may come back, so no leave.
+    b.fire("pagehide", { persisted: true });
+    expect(b.sent.filter((s) => s.body.n === "engagement")).toHaveLength(1);
+    // Unloaded for good: a leave, with no time to add.
+    b.fire("pagehide", { persisted: false });
+    const leave = b.sent.filter((s) => s.body.n === "engagement")[1]!;
+    expect(leave).toMatchObject({ via: "beacon", body: { n: "engagement", e: 0, l: 1, u: "https://example.com/?utm_source=x" } });
   });
 
   it("custom events, revenue, outbound links and downloads", () => {
