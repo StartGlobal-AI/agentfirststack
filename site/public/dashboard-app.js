@@ -3070,7 +3070,7 @@
       liveClose();
       document.title = document.title.replace(TITLE_COUNT, "");
     });
-    ctx.listen(document, "visibilitychange", () => document.hidden && liveClose());
+    ctx.listen(document, "visibilitychange", () => (document.hidden ? liveClose() : liveConnect()));
     ctx.cleanups.push(liveClose);
   }
 
@@ -4412,8 +4412,9 @@
     ctx.onShow = (fn) => ctx.shows.push(fn);
     ctx.onHide = (fn) => ctx.hides.push(fn);
     // Coming back to the browser tab counts as coming back to the view: timers skip a hidden tab, so
-    // without this the numbers stay as they were until the next tick (or a reload).
-    let tabHiddenAt = 0;
+    // without this the numbers stay as they were until the next tick (or a reload). A page opened in
+    // a background tab counts as hidden since it loaded.
+    let tabHiddenAt = document.hidden ? Date.now() : 0;
     ctx.listen(document, "visibilitychange", () => {
       if (document.hidden) tabHiddenAt = Date.now();
       else if (tabHiddenAt) {
