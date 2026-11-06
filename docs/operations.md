@@ -202,7 +202,8 @@ Security rules): a per-IP rate limit on POST requests, a block on replay `/i` wi
 Origin, and a block on verified crawlers on `/e`, `/collect` and `/i`. Their exact definitions
 are recorded in the profile (`zone_rules` in `deploy/<profile>.json`, private like the budgets).
 `pnpm afs zone-rules <profile>` compares the live rules with them and exits 1 on any difference;
-`--save` records the live ones after a deliberate change. `pnpm afs check` runs the same
+`--save` records the live ones after a deliberate change. With `zone_id` in the profile the token
+needs only Zone WAF Read (otherwise also Zone Read, to find the zone by name). `pnpm afs check` runs the same
 comparison when `CLOUDFLARE_WAF_TOKEN` is set: an API token with Zone > WAF > Read on the zone
 (read-only; neither command changes the zone).
 

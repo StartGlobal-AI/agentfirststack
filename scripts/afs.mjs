@@ -628,9 +628,13 @@ const ZONE_PHASES = ["http_ratelimit", "http_request_firewall_custom"];
 
 /** The zone's rate-limit and custom rules, reduced to what matters (ids and timestamps dropped). */
 async function liveZoneRules(profile, token) {
-  const zone = await cf(token, "GET", `/zones?name=${encodeURIComponent(profile.domain)}`);
-  const zoneId = zone.result?.[0]?.id;
-  if (!zoneId) return { error: `zone ${profile.domain} not found for this token (${JSON.stringify(zone.errors)})` };
+  // profile.zone_id spares the token Zone Read (a WAF Read token can't list zones).
+  const zone = profile.zone_id ? null : await cf(token, "GET", `/zones?name=${encodeURIComponent(profile.domain)}`);
+  const zoneId = profile.zone_id ?? zone?.result?.[0]?.id;
+  if (!zoneId)
+    return {
+      error: `zone ${profile.domain} not found for this token: add "zone_id" to deploy/${profile.name}.json (dashboard, the zone's Overview), or give the token Zone Read too`,
+    };
   const rules = [];
   for (const phase of ZONE_PHASES) {
     const r = await cf(token, "GET", `/zones/${zoneId}/rulesets/phases/${phase}/entrypoint`);
