@@ -85,7 +85,10 @@ export const connectStripeKeyInput = z.object({
       `A restricted key with: ${STRIPE_KEY_PERMISSIONS.map((p) => `${p.resource} ${p.access}`).join(", ")}. Used only to create the webhook endpoint and backfill; sealed at rest.`,
     ),
   backfill_days: z.number().int().min(0).max(MAX_BACKFILL_DAYS).optional().describe("Days of history to import (default 90, 0 = none)."),
-  record_test_events: z.boolean().optional().describe("Count test-mode payments (an rk_test_ key: set true to see them)."),
+  record_test_events: z
+    .boolean()
+    .optional()
+    .describe("Store test-mode payments (default true for an rk_test_ key) as test data: in reports with debug=include only."),
 });
 
 const webhookUrl = (baseUrl: string, siteId: string) => `${baseUrl}/webhooks/stripe/${siteId}`;

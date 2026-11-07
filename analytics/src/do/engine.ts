@@ -125,7 +125,7 @@ export const RETURN_WINDOW_MS = 24 * 3_600_000;
  * created by any earlier release catches up the first time it is instantiated. Steps are
  * idempotent on their own too (columns are added only when missing), in case one half-applied.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export const ATTR_COLS = [
   "referrer",
@@ -406,6 +406,18 @@ CREATE TABLE IF NOT EXISTS provider_events (id TEXT PRIMARY KEY, received_at INT
     up: (db) => {
       addColumn(db, "usage", "server_events", "INTEGER NOT NULL DEFAULT 0");
       addColumn(db, "usage", "server_flushed", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    // Test payments (livemode false: Stripe test mode, sandboxes, the payments API) were stored as
+    // ordinary events, so a setup's test purchase showed as revenue. They are test data now
+    // (debug = 1, in reports with debug=include only), like test traffic; this marks the ones
+    // already stored.
+    version: 15,
+    up: (db) => {
+      db.run(
+        "UPDATE events SET debug = 1 WHERE debug = 0 AND origin = 'payment' AND id IN (SELECT event_rowid FROM payments WHERE livemode = 0 AND event_rowid IS NOT NULL)",
+      );
     },
   },
 ];

@@ -114,7 +114,10 @@ function insertEvent(db: Db, p: PaymentInput & { type: keyof typeof EVENT_NAME }
         user_id: p.user_id,
         channel: "Unattributed",
       };
-  const cols = ["ts", "name", "origin", "props", "revenue", "currency", "revenue_type", ...DIM_COLS];
+  // Test payments (livemode false: Stripe test mode, sandboxes, or the payments API with livemode
+  // false or debug: true) are stored like test traffic: kept, listed by GET /payments, but left out
+  // of every report unless debug=include, so a setup's test purchase never shows as revenue.
+  const cols = ["ts", "name", "origin", "props", "revenue", "currency", "revenue_type", "debug", ...DIM_COLS];
   const row = db.all(`INSERT INTO events (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")}) RETURNING id`, [
     p.ts,
     EVENT_NAME[p.type],
@@ -123,6 +126,7 @@ function insertEvent(db: Db, p: PaymentInput & { type: keyof typeof EVENT_NAME }
     signed,
     p.currency,
     p.type,
+    p.livemode ? 0 : 1,
     ...DIM_COLS.map((c) => (dims[c] ?? null) as string | number | null),
   ])[0];
   return num(row?.id);

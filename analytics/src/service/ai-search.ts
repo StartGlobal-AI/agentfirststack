@@ -29,6 +29,7 @@ export const aiSearchInput = z.object({
 const off = (c: unknown) => c === false || c === "false" || c === "none";
 
 const ROBOTS_CACHE_SECONDS = 3600;
+const ROBOTS_RETRY_SECONDS = 300;
 const ROBOTS_MAX_BYTES = 256 * 1024;
 
 /**
@@ -53,7 +54,9 @@ async function siteRobotsTxt(ctx: Ctx, site: SiteRow): Promise<string | null> {
   });
   // A missing robots.txt allows everything (RFC 9309): an empty file says exactly that.
   const text = "error" in r ? null : r.status === 200 ? r.text : r.status >= 400 && r.status < 500 ? "" : null;
-  const headers: Record<string, string> = { "cache-control": `max-age=${ROBOTS_CACHE_SECONDS}` };
+  // A failed read (a timeout, a deploy in progress, a 5xx) is kept only briefly, so one blip doesn't
+  // tell the report "couldn't be read" for an hour; a file we did read is kept the full hour.
+  const headers: Record<string, string> = { "cache-control": `max-age=${text === null ? ROBOTS_RETRY_SECONDS : ROBOTS_CACHE_SECONDS}` };
   if (text === null) headers["x-robots-unreadable"] = "1";
   await cache?.put(key, new Response(text ?? "", { headers })).catch(() => {});
   return text;

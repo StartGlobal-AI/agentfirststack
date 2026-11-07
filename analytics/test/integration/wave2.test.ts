@@ -230,7 +230,11 @@ describe("Stripe in one call", () => {
       ["refund", -10],
       ["renewal", 30],
     ]);
-    const rev = (await call(`/v1/sites/${site}/breakdown?breakdown=channel&period=7d&metrics=revenue`, { key })).body.results;
+    // An rk_test_ key: test-mode payments are stored as test data, so revenue shows with debug=include only.
+    expect((await call(`/v1/sites/${site}/breakdown?breakdown=channel&period=7d&metrics=revenue`, { key })).body.results).toEqual([
+      { value: "Organic Search", revenue: 0 },
+    ]);
+    const rev = (await call(`/v1/sites/${site}/breakdown?breakdown=channel&period=7d&metrics=revenue&debug=include`, { key })).body.results;
     expect(rev).toEqual([{ value: "Organic Search", revenue: 50 }]); // linked through the checkout's visitor
     // again with the same key: nothing new, the endpoint is reused, no double counting
     const again = await connectStripeWithKey(ctx, site, { restricted_key: FAKE_RK }, { fetcher: stripe.fetcher });

@@ -144,7 +144,9 @@ export const connectStripeInput = z.object({
   record_test_events: z
     .boolean()
     .optional()
-    .describe("Store test-mode (livemode: false) payments too. Default false: test events are verified and acknowledged, not counted."),
+    .describe(
+      "Store test-mode (livemode: false) payments too, as test data (in reports with debug=include only). Default false: test events are verified and acknowledged, not stored.",
+    ),
 });
 
 function stripeSteps(ctx: Ctx, site: SiteRow, connected: boolean): string[] {
@@ -426,7 +428,13 @@ const paymentSchema = z.object({
     .max(200)
     .optional()
     .describe("Refunds: the id of the payment being refunded (links the refund to its source)."),
-  livemode: z.boolean().optional().describe("false for test payments (stored, shown as livemode: false). Default true."),
+  livemode: z
+    .boolean()
+    .optional()
+    .describe(
+      "false for test payments: stored and listed (livemode: false) but left out of reports unless debug=include, like test traffic. Default true.",
+    ),
+  debug: z.boolean().optional().describe("true = a test payment (the same as livemode: false), for a setup's test purchase."),
 });
 
 export const recordPaymentsInput = z.union([
@@ -467,7 +475,7 @@ export async function recordPayments(ctx: Ctx, siteId: string, raw: unknown) {
         user_id: p.user_id ?? null,
         customer: p.customer_id ? await hashCustomer(site.id, provider, p.customer_id) : null,
         original_refs: p.refunded_payment_id ? [p.refunded_payment_id] : [],
-        livemode: p.livemode ?? true,
+        livemode: p.debug === true ? false : (p.livemode ?? true),
       };
     }),
   );
