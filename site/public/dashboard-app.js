@@ -2994,12 +2994,31 @@
               { class: "afa-ai-step-list" },
               steps.map((t) => el("li", { text: t })),
             ),
-            askCard(ask),
           )
         : null;
+      // The prompt for the agent sits to the right of the sections it acts on: next to "Who arrived"
+      // and "What to change" while no one has, next to "What to change" once the visitors' chart
+      // needs the full width.
+      const askNode = changeSection ? askCard(ask) : null;
+      if (askNode)
+        askNode.insertBefore(
+          el("p", {
+            class: "afa-askcard-hint",
+            text: "Paste it into Claude Code, Cursor or Codex: your agent reads the full report and works through these changes for you.",
+          }),
+          askNode.lastChild,
+        );
+      const side = askNode ? el("aside", { class: "afa-ai-ask" }, askNode) : null;
+      const left = hasVisitors ? [changeSection] : [visitSection, changeSection];
+      const bottom = el(
+        "div",
+        { class: `afa-ai-bottom${side ? "" : " is-single"}` },
+        el("div", { class: "afa-ai-bottom-main" }, left),
+        side,
+      );
 
       return {
-        node: el("div", { class: "afa-ai" }, funnel, readSection, visitSection, changeSection, unfiltered("AI search")),
+        node: el("div", { class: "afa-ai" }, funnel, readSection, hasVisitors ? visitSection : null, bottom, unfiltered("AI search")),
         after: () => {
           if (!hasVisitors) return;
           const series = r.series || [];

@@ -3081,6 +3081,53 @@ a.afa-site-card:hover {
   max-width: 90ch;
   font-size: 13.5px;
 }
-.afa-ai-section .afa-askcard {
-  margin-top: 14px;
+.afa-ai-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 28px;
+  align-items: stretch;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.afa-ai-bottom.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.afa-ai-bottom-main > .afa-ai-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+/* The card fills the column's height; its text at the top, Copy at the bottom. */
+.afa-ai-ask {
+  display: flex;
+}
+.afa-ai-ask .afa-askcard {
+  width: 100%;
+  margin: 0;
+  padding: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas:
+    "label"
+    "text"
+    "hint"
+    "copy";
+  align-items: start;
+  gap: 10px;
+}
+.afa-ai-ask .afa-copy {
+  justify-self: start;
+}
+.afa-askcard-hint {
+  grid-area: hint;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--on-ink-3);
+}
+@media (max-width: 900px) {
+  .afa-ai-bottom {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
