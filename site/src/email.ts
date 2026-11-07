@@ -151,10 +151,10 @@ export function renderEmail(content: EmailContent, footer: string[]): Rendered {
   ].join("\n");
   const p = (s: string) => `<p style="margin:0 0 14px;font:400 15px/1.6 ${FONT};color:#2b3446;">${esc(s)}</p>`;
   const actionHtml = content.action
-    ? `<p style="margin:22px 0 22px;"><a href="${esc(content.action.url)}" style="display:inline-block;background:#0f1626;color:#ffffff;text-decoration:none;font:600 15px/1 ${FONT};padding:13px 20px;border-radius:8px;">${esc(content.action.label)}</a></p>`
+    ? `<p style="margin:22px 0 22px;"><a href="${esc(content.action.url)}" style="display:inline-block;background:#2f6bff;color:#ffffff;text-decoration:none;font:600 15px/1 ${FONT};padding:13px 20px;border-radius:8px;">${esc(content.action.label)}</a></p>`
     : "";
   const askHtml = content.ask
-    ? `${content.askFirst ? "" : `<p style="margin:0 0 6px;font:600 13px/1.4 ${FONT};color:#5b6475;">Ask your agent</p>`}<p style="margin:0 0 16px;padding:12px 14px;background:#f4f5f7;border-radius:8px;font:400 14px/1.55 ${FONT};color:#0f1626;">&ldquo;${esc(content.ask)}&rdquo;</p>`
+    ? `${content.askFirst ? "" : `<p style="margin:0 0 6px;font:600 13px/1.4 ${FONT};color:#5b6475;">Ask your agent</p>`}<p style="margin:0 0 16px;padding:12px 14px;background:#f4f5f7;border-radius:8px;font:400 14px/1.55 ${FONT};color:#0a1330;">&ldquo;${esc(content.ask)}&rdquo;</p>`
     : "";
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(subject)}</title></head>
@@ -162,9 +162,9 @@ export function renderEmail(content: EmailContent, footer: string[]): Rendered {
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(oneLine(content.body[0] ?? "", 140))}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;"><tr><td align="center" style="padding:32px 14px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e3e6eb;border-radius:12px;">
-<tr><td style="padding:26px 30px 6px;font:700 15px/1.4 ${FONT};color:#0f1626;letter-spacing:-0.01em;"><span style="color:#ff6a2b;">&#9646;</span><span style="color:#f5b82e;">&#9646;</span><span style="color:#3b7bf6;">&#9646;</span>&nbsp;AgentFirstStack</td></tr>
+<tr><td style="padding:26px 30px 6px;font:700 15px/1.4 ${FONT};color:#0a1330;letter-spacing:-0.01em;"><table role="presentation" cellpadding="0" cellspacing="0" style="display:inline-table;vertical-align:middle;margin:-3px 8px 0 0;border-collapse:separate;"><tr><td width="7" height="7" bgcolor="#5B8CFF" style="width:7px;height:7px;background:#5B8CFF;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td><td width="2" style="width:2px;font-size:0;line-height:0;">&nbsp;</td><td width="7" height="7" bgcolor="#9CC2FF" style="width:7px;height:7px;background:#9CC2FF;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td></tr><tr><td colspan="3" height="2" style="height:2px;font-size:0;line-height:0;">&nbsp;</td></tr><tr><td width="7" height="7" bgcolor="#1A3FD6" style="width:7px;height:7px;background:#1A3FD6;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td><td width="2" style="width:2px;font-size:0;line-height:0;">&nbsp;</td><td width="7" height="7" bgcolor="#2F6BFF" style="width:7px;height:7px;background:#2F6BFF;border-radius:2px;font-size:0;line-height:0;">&nbsp;</td></tr></table>AgentFirstStack</td></tr>
 <tr><td style="padding:10px 30px 4px;">
-<h1 style="margin:0 0 14px;font:700 21px/1.3 ${FONT};color:#0f1626;letter-spacing:-0.015em;">${esc(title)}</h1>
+<h1 style="margin:0 0 14px;font:700 21px/1.3 ${FONT};color:#0a1330;letter-spacing:-0.015em;">${esc(title)}</h1>
 ${content.body.map(p).join("\n")}
 ${content.askFirst ? `${askHtml}\n${actionHtml}` : `${actionHtml}\n${askHtml}`}
 ${(content.after ?? []).map(p).join("\n")}

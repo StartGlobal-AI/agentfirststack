@@ -51,7 +51,7 @@ export function fmtDay(ms: number | null | undefined): string {
 /** 1284 -> "1,284" */
 
 /** The three bars of the AgentFirstStack mark: analytics, tags, mail. */
-export const MARK = html`<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>`;
+export const MARK = html`<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>`;
 
 const BRAND = html`<a class="brand" href="/" aria-label="AgentFirstStack home">${MARK}<span>AgentFirstStack</span></a>`;
 

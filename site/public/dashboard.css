@@ -27,15 +27,23 @@
 :root {
   --paper: #ffffff;
   --ground: #f4f5f8;
-  --ink: #0f1626;
+  --ink: #0a1330;
   --ink-2: #4b5466; /* 7.6:1 on white */
   --ink-3: #5f6878; /* 5.6:1 on white, 5.1:1 on --ground */
   --line: #e2e5ea;
   --line-2: #cfd4dc;
-  --orange: #ff6a2b; /* analytics */
-  --yellow: #f4b400; /* tags */
-  --blue: #2f6bff; /* mail */
-  --emerald: #0f9d58; /* replay */
+  /* The brand blues (as on the marketing pages): each service a shade of blue. The token names are
+     the old ones; status colours (--green, --red, --warn) keep their hues. */
+  --orange: #2f6bff; /* analytics */
+  --yellow: #1a3fd6; /* tags */
+  --blue: #4f8bff; /* mail */
+  --emerald: #0f2a8a; /* replay */
+  --brand: #2f6bff;
+  --brand-deep: #1a3fd6;
+  --warn: #f4b400;
+  --glow: #7fd4ff; /* the accent on deep blue */
+  --deep: #0a1a5c;
+  --deep-panel: linear-gradient(160deg, #040a2b 0%, #0a1a5c 100%);
   --green: #0b7a45;
   --red: #b3261e;
   --on-ink: #ffffff;
@@ -99,7 +107,7 @@ pre {
   overflow-wrap: anywhere;
 }
 ::selection {
-  background: #ffe08a;
+  background: #cfe0ff;
   color: var(--ink);
 }
 
@@ -518,6 +526,19 @@ pre {
 .ask-replay {
   --c: var(--emerald);
 }
+/* On the deep-blue panels the service blues are lighter, so each one still reads. */
+:is(.hero, .secret-tile, .auth-aside, .build-own) :is(.svc-analytics, .ask-analytics) {
+  --c: #5b8cff;
+}
+:is(.hero, .secret-tile, .auth-aside, .build-own) :is(.svc-tags, .ask-tags) {
+  --c: #9cc2ff;
+}
+:is(.hero, .secret-tile, .auth-aside, .build-own) :is(.svc-mail, .ask-mail) {
+  --c: #7fd4ff;
+}
+:is(.hero, .secret-tile, .auth-aside, .build-own) :is(.svc-replay, .ask-replay) {
+  --c: #c9d8ff;
+}
 .ask-projects {
   --c: #ffffff;
 }
@@ -601,11 +622,11 @@ pre {
   transform: translateY(1px);
 }
 .btn-primary {
-  background: var(--ink);
+  background: var(--brand);
   color: #fff;
 }
 .btn-primary:hover {
-  background: #28324a;
+  background: var(--brand-deep);
 }
 .btn-quiet {
   background: var(--paper);
@@ -862,12 +883,12 @@ pre {
   flex-direction: column;
   gap: 22px;
   padding: clamp(22px, 2.8vw, 32px);
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--deep-panel);
+  border-color: var(--deep);
   color: var(--on-ink);
 }
 .hero *::selection {
-  background: var(--yellow);
+  background: rgba(127, 212, 255, 0.4);
   color: var(--ink);
 }
 .hero h1 {
@@ -985,8 +1006,8 @@ pre {
   color: var(--on-ink);
 }
 .copy-on-ink[data-state="copied"] {
-  border-color: var(--yellow);
-  background: var(--yellow);
+  border-color: var(--glow);
+  background: var(--glow);
   color: var(--ink);
 }
 .copy-corner {
@@ -1356,15 +1377,15 @@ pre {
 .secret-tile {
   display: grid;
   gap: 10px;
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--deep-panel);
+  border-color: var(--deep);
   color: var(--on-ink);
 }
 .secret-tile p {
   color: var(--on-ink-2);
 }
 .secret-tile *::selection {
-  background: var(--yellow);
+  background: rgba(127, 212, 255, 0.4);
   color: var(--ink);
 }
 .secret {
@@ -1452,8 +1473,8 @@ pre {
   flex-direction: column;
   gap: 14px;
   padding: clamp(24px, 4vw, 36px);
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--deep-panel);
+  border-color: var(--deep);
   color: var(--on-ink);
 }
 .auth-aside h2 {
@@ -1472,7 +1493,7 @@ pre {
   font-weight: 600;
 }
 .auth-aside *::selection {
-  background: var(--yellow);
+  background: rgba(127, 212, 255, 0.4);
   color: var(--ink);
 }
 .snippet {
@@ -1872,12 +1893,12 @@ body.app .nav {
   display: grid;
   gap: 18px;
   padding: clamp(20px, 2.6vw, 30px);
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--deep-panel);
+  border-color: var(--deep);
   color: var(--on-ink);
 }
 .build-own *::selection {
-  background: var(--yellow);
+  background: rgba(127, 212, 255, 0.4);
   color: var(--ink);
 }
 .build-copy h2 {
@@ -2059,7 +2080,7 @@ body.app .nav {
   margin-top: 12px;
   padding: 12px 14px;
   border: 1px solid var(--line-2);
-  border-left: 3px solid var(--orange);
+  border-left: 3px solid var(--brand);
   border-radius: var(--r);
   background: var(--ground);
 }
@@ -2195,7 +2216,7 @@ body.app .nav {
   background: var(--line-2);
 }
 .pick-item.is-current .pick-dot {
-  background: var(--orange);
+  background: var(--brand);
 }
 .pick-head {
   padding: 6px 10px 4px;
@@ -2286,7 +2307,7 @@ body.app .nav {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--orange);
+  background: var(--brand);
 }
 .project-ask-panel {
   width: min(420px, calc(100vw - 24px));

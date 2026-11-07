@@ -1,10 +1,10 @@
 /* The analytics dashboard (/dashboard/analytics, /dashboard/projects/:id/analytics/:site), drawn
    by /analytics.js. Loaded after dashboard.css, so it uses its tokens: Host Grotesk, ink #0F1626,
-   hairline borders, one 4px radius. Floating layers (menus, tooltips, the live sheet, dialogs) are
+   hairline borders, one 4px radius, the brand blues. Floating layers (menus, tooltips, the live sheet, dialogs) are
    the only things with a shadow.
 
    Chart colours, checked with the dataviz palette validator (CVD and normal-vision separation
-   pass): visitors #2F6BFF and revenue #FF6A2B; categorical lines (goals, crawlers) in fixed order
+   pass): visitors #2F6BFF and revenue #A21CAF (plum violet, renewals #DFA6E8; CVD separation from the visitors blue passes, unlike pure violets); categorical lines (goals, crawlers) in fixed order
    #2A78D6 #EB6834 #1BAF7A #EDA100 #E87BA4 #008300 #6250D6 #E34948. Several sit below 3:1 on
    white, so every chart has a legend, hover values, and a list or table beside it. */
 
@@ -14,9 +14,9 @@
   --vis: #2f6bff;
   --vis-soft: rgba(47, 107, 255, 0.1);
   --vis-hover: rgba(47, 107, 255, 0.16);
-  --rev: #ff6a2b;
-  --rev-soft: rgba(255, 106, 43, 0.22);
-  --num-ink: #b33a08; /* orange for big numbers, 5.4:1 on white */
+  --rev: #a21caf;
+  --rev-soft: rgba(162, 28, 175, 0.18);
+  --num-ink: #86198f; /* money figures, 8.2:1 on white */
   --live: #16a34a;
   --float: 0 10px 30px rgba(15, 22, 38, 0.14), 0 1px 3px rgba(15, 22, 38, 0.08);
 }
@@ -1074,7 +1074,7 @@
   margin-top: 8px;
   padding: 14px 14px 14px 16px;
   border-radius: 8px;
-  background: var(--ink);
+  background: var(--deep-panel, var(--ink));
   color: var(--on-ink);
   text-align: left;
 }
@@ -1090,7 +1090,7 @@
 .afa-askcard-label .afa-icon {
   width: 13px;
   height: 13px;
-  color: #ffb08f;
+  color: #9cc2ff;
 }
 .afa-askcard-text {
   grid-area: text;
@@ -1403,7 +1403,7 @@
   font-weight: 650;
   line-height: 1.1;
   letter-spacing: -0.03em;
-  color: var(--num-ink);
+  color: var(--brand-deep);
 }
 .afa-ins-big span {
   font-size: 13.5px;
@@ -1886,7 +1886,7 @@ td .afa-badges .afa-badge {
   transition: width 700ms var(--ease);
 }
 .afa-meter-fill.is-warn {
-  background: var(--yellow);
+  background: var(--warn);
 }
 .afa-meter-fill.is-bad {
   background: var(--red);

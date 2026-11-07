@@ -162,8 +162,8 @@
   // ---------- colours (validated: see site/public/analytics.css) ----------
 
   const VISITORS = "#2f6bff";
-  const REVENUE = "#ff6a2b";
-  const REVENUE_2 = "#ffb08f";
+  const REVENUE = "#a21caf";
+  const REVENUE_2 = "#dfa6e8";
   const PREVIOUS = "#8f99aa";
   /** Categorical, fixed order (goal lines, crawler categories). */
   const SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -748,14 +748,18 @@
 
   // ---------- charts ----------
 
-  /** A rounded number above v, with `n` steps. */
-  function niceScale(max, n = 4) {
+  /**
+   * A rounded number above v, with `n` steps. `integer` (counts: visitors, events) keeps the step
+   * whole, so a chart that tops out at 1 shows 0 and 1, not 0, 0.5 and 1 labelled "0, 1, 1".
+   */
+  function niceScale(max, n = 4, { integer = false } = {}) {
     if (!(max > 0)) return { max: n, step: 1 };
     const raw = max / n;
     const p = 10 ** Math.floor(Math.log10(raw));
     const f = raw / p;
     // 2.5 only when it stays a whole number (counts never get a 2.5 step)
-    const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 && p >= 10 ? 2.5 : f <= 5 ? 5 : 10) * p;
+    let step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 && p >= 10 ? 2.5 : f <= 5 ? 5 : 10) * p;
+    if (integer) step = Math.max(1, Math.round(step));
     return { max: Math.ceil(max / step) * step || step * n, step };
   }
   /** Monotone cubic through points: smooth, never overshoots below zero. */
@@ -883,7 +887,7 @@
       const step = pw / n;
       const xs = rows.map((_, i) => padL + (i + 0.5) * step);
       const prevVals = compare ? rows.map((r) => (r.comparison && r.comparison.metrics ? r.comparison.metrics.visitors || 0 : 0)) : [];
-      const vMax = niceScale(Math.max(1, ...rows.map((r) => r.visitors || 0), ...prevVals));
+      const vMax = niceScale(Math.max(1, ...rows.map((r) => r.visitors || 0), ...prevVals), 4, { integer: true });
       const rMax = niceScale(Math.max(1, ...rows.map((r) => r.revenue || 0)));
       const yV = (v) => padT + ph - (v / vMax.max) * ph;
       const yR = (v) => padT + ph - (v / rMax.max) * ph;
@@ -1060,7 +1064,7 @@
       const ph = H - padT - padB;
       const n = labels.length || 1;
       const xs = labels.map((_, i) => (n === 1 ? padL + pw / 2 : padL + (i / (n - 1)) * pw));
-      const sc = niceScale(Math.max(1, ...series.flatMap((s) => s.values)));
+      const sc = niceScale(Math.max(1, ...series.flatMap((s) => s.values)), 4, { integer: true }); // every lines chart plots counts
       const y = (v) => padT + ph - (v / sc.max) * ph;
       const s = svg("svg", {
         width: W,
@@ -3814,12 +3818,14 @@
       const s = svg("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, class: "afa-svg", "aria-hidden": "true" });
       const defs = svg("defs");
       s.append(defs);
+      // One baseline for both series: the visitors line's zero, so revenue bars stand on it.
+      const base = H - 3;
       if (rMax > 0) {
         const bw = Math.max(2, Math.min(10, step * 0.62));
         rows.forEach((r, i) => {
-          const h = ((r.revenue || 0) / rMax) * (H - 6);
+          const h = ((r.revenue || 0) / rMax) * (H - 10);
           if (h <= 0) return;
-          const bar = svg("path", { d: barPath((i + 0.5) * step - bw / 2, H - h, bw, h, 2), fill: REVENUE });
+          const bar = svg("path", { d: barPath((i + 0.5) * step - bw / 2, base - h, bw, h, 2), fill: REVENUE });
           if (first && !reduced()) {
             bar.classList.add("afa-grow");
             bar.style.setProperty("--i", String(i));
@@ -3827,9 +3833,12 @@
           s.append(bar);
         });
       }
-      const pts = rows.map((r, i) => [(i + 0.5) * step, H - 3 - ((r.visitors || 0) / vMax) * (H - 10)]);
+      const pts = rows.map((r, i) => [(i + 0.5) * step, base - ((r.visitors || 0) / vMax) * (H - 10)]);
       if (pts.length > 1) {
-        const area = svg("path", { d: `${smooth(pts)}L${pts[pts.length - 1][0]},${H}L${pts[0][0]},${H}Z`, fill: gradient(defs, VISITORS) });
+        const area = svg("path", {
+          d: `${smooth(pts)}L${pts[pts.length - 1][0]},${base}L${pts[0][0]},${base}Z`,
+          fill: gradient(defs, VISITORS),
+        });
         const line = svg("path", { d: smooth(pts), class: "afa-line afa-line-spark", stroke: VISITORS });
         s.append(area, line);
         box.append(s);
