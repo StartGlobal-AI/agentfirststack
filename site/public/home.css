@@ -178,14 +178,14 @@ a {
   background: rgba(156, 194, 255, 0.12);
   box-shadow: inset 0 0 0 1px rgba(156, 194, 255, 0.28);
 }
+/* Two set lines; sized so the longer, "Your Whole GTM Stack,", always fits the column. */
 .hero h1 {
   margin-top: 22px;
-  font-size: clamp(42px, 5.6vw, 72px);
+  font-size: clamp(34px, 4.4vw, 52px);
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.02;
   letter-spacing: -0.045em;
   text-wrap: balance;
-  max-width: 13ch;
 }
 .lede {
   margin-top: 22px;
@@ -1186,6 +1186,9 @@ a {
 
 /* Phones: every button the full width, so stacked pairs line up; small links get room to tap. */
 @media (max-width: 640px) {
+  .hero h1 {
+    font-size: min(8.8vw, 40px);
+  }
   .actions .btn,
   .band .btn,
   .live-head .btn {

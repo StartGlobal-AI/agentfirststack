@@ -1,4 +1,4 @@
-# AgentFirstStack: The Agent Infrastructure for GTM Teams
+# AgentFirstStack: Your Whole GTM Stack, Set Up by Your Agent
 
 Analytics, a tag manager with server-side conversion tracking, email inboxes, AI search, page speed and
 session replay. Your coding agent sets it all up from one prompt, checks every part works, and hands you
