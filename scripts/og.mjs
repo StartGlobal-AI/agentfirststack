@@ -18,7 +18,23 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC = join(ROOT, "site", "public");
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
-const COLORS = { analytics: "#FF6A2B", tags: "#F4B400", mail: "#2F6BFF", replay: "#0F9D58" };
+// Blue only, like the marketing pages: each service a shade of it.
+const COLORS = { analytics: "#2F6BFF", tags: "#1A3FD6", mail: "#5B8CFF", replay: "#9CC2FF" };
+
+/** A corner of pixels, the landing page's motif: a fixed pattern so every card looks the same. */
+function pixels() {
+  const blues = ["#12298A", "#1A3FD6", "#2F6BFF", "#5B8CFF", "#9CC2FF", "#7FD4FF"];
+  let out = "";
+  for (let r = 0; r < 11; r++)
+    for (let c = 0; c < 16; c++) {
+      const v = Math.max(0, 1 - Math.hypot((15 - c) / 15, r / 10.5)) * 1.25;
+      const t = ((r * 7 + c * 13) % 16) / 16;
+      if (v < t * 0.9 || v < 0.08) continue;
+      const b = blues[Math.min(blues.length - 1, Math.floor(v * blues.length))];
+      out += `<i style="left:${c * 26}px;top:${r * 26}px;background:${b};opacity:${(0.25 + v * 0.6).toFixed(2)}"></i>`;
+    }
+  return `<div class="px">${out}</div>`;
+}
 const LABELS = { analytics: "Analytics", tags: "Tags", mail: "Mail", replay: "Replay" };
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -32,19 +48,22 @@ function html({ title, kicker, service }) {
 @font-face{font-family:"Geist Mono";src:url("${fonts}/geist-mono.woff2") format("woff2");font-weight:400 600}
 *{margin:0;box-sizing:border-box}
 html,body{width:1200px;height:630px}
-body{background:#0F1626;color:#fff;font-family:"Host Grotesk",sans-serif;padding:72px 80px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative}
+body{background:linear-gradient(160deg,#040A2B 0%,#0A1A5C 100%);color:#fff;font-family:"Host Grotesk",sans-serif;padding:72px 80px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative}
 .top{display:flex;align-items:center;gap:18px;font-size:30px;font-weight:650;letter-spacing:-.01em}
-.mark{display:flex;gap:7px}.mark i{display:block;width:13px;height:38px;border-radius:3px}
+.mark{display:grid;grid-template-columns:repeat(2,17px);gap:4px}.mark i{display:block;width:17px;height:17px;border-radius:4px}
+.px{position:absolute;right:0;top:0;width:416px;height:286px}.px i{position:absolute;width:22px;height:22px;border-radius:3px}
+.top,h1,.kicker,.foot{position:relative;z-index:1}
 h1{font-size:${size}px;line-height:1.04;font-weight:700;letter-spacing:-.035em;max-width:1000px}
-.kicker{margin-top:26px;font-size:30px;line-height:1.35;color:#B4BCCB;max-width:960px}
+.kicker{margin-top:26px;font-size:30px;line-height:1.35;color:#C9D8FF;max-width:960px}
 .foot{display:flex;justify-content:space-between;align-items:flex-end}
 .chips{display:flex;gap:14px}
-.chip{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:600;color:#E6E9F0;border:1px solid #2A3550;border-radius:6px;padding:10px 16px}
+.chip{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:600;color:#E8F0FF;border:1px solid #2A3F8F;border-radius:6px;padding:10px 16px}
 .chip b{width:14px;height:14px;border-radius:3px;display:block}
-.url{font-family:"Geist Mono",monospace;font-size:24px;color:#8F99AA}
+.url{font-family:"Geist Mono",monospace;font-size:24px;color:#9CC2FF}
 .bar{position:absolute;left:0;right:0;bottom:0;height:10px;display:flex}.bar i{flex:1}
 </style></head><body>
-<div class="top"><span class="mark"><i style="background:#FF6A2B"></i><i style="background:#F4B400"></i><i style="background:#2F6BFF"></i></span>AgentFirstStack</div>
+${pixels()}
+<div class="top"><span class="mark"><i style="background:#5B8CFF"></i><i style="background:#9CC2FF"></i><i style="background:#1A3FD6"></i><i style="background:#2F6BFF"></i></span>AgentFirstStack</div>
 <div><h1>${esc(title)}</h1>${kicker ? `<p class="kicker">${esc(kicker)}</p>` : ""}</div>
 <div class="foot"><div class="chips">${services.map((s) => `<span class="chip"><b style="background:${COLORS[s]}"></b>${LABELS[s]}</span>`).join("")}</div><span class="url">agentfirststack.com</span></div>
 <div class="bar">${services.map((s) => `<i style="background:${COLORS[s]}"></i>`).join("")}</div>

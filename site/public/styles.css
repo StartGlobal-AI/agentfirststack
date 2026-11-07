@@ -14,15 +14,20 @@
 :root {
   --bg: #ffffff;
   --tint: #f6f7f9;
-  --ink: #0f1626;
+  --ink: #0a1330;
   --ink-2: #525b6b; /* secondary text, 6.6:1 on white */
   --ink-3: #6b7383; /* tertiary text, 4.8:1 on white */
   --line: #e6e8ec;
   --line-2: #d5d9e0;
-  --orange: #ff6a2b; /* analytics */
-  --yellow: #f4b400; /* tags */
-  --blue: #2f6bff; /* mail */
-  --green: #0f9d58;
+  /* Marketing pages are blue: each service a shade of it (the dashboard keeps its own colours). */
+  --brand: #2f6bff;
+  --brand-deep: #1a3fd6;
+  --navy: #0a1a5c;
+  --orange: #2f6bff; /* analytics */
+  --yellow: #1a3fd6; /* tags */
+  --blue: #4f8bff; /* mail */
+  --green: #0f2a8a; /* replay */
+  --ok: #0f9d58; /* success and live states */
 
   --sans: "Host Grotesk", ui-sans-serif, system-ui, sans-serif;
   --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -143,14 +148,14 @@ pre {
     box-shadow 140ms;
 }
 .btn-primary {
-  background: var(--ink);
+  background: var(--brand);
   color: #fff;
 }
 .btn-primary:hover {
-  background: #222b3d;
+  background: var(--brand-deep);
 }
 .btn-primary.is-copied {
-  background: var(--green);
+  background: var(--ok);
 }
 .btn-quiet {
   color: var(--ink);
@@ -239,7 +244,7 @@ pre {
   margin-top: 10px;
   font-size: 13.5px;
   font-weight: 550;
-  color: var(--green);
+  color: var(--ok);
 }
 .works-with {
   font-size: 13.5px;

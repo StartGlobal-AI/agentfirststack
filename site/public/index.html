@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AgentFirstStack: analytics, tags, email, replay for agents</title>
-<meta name="description" content="Free, open-source analytics, tag manager, email inboxes and session replay that your AI agent sets up by itself. No signup form, no dashboard.">
+<title>AgentFirstStack: The Agent Infrastructure for GTM Teams</title>
+<meta name="description" content="Analytics, tags and server-side conversion tracking, email inboxes, AI search, page speed and session replay, set up end to end by your coding agent from one prompt. Free and open source.">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <link rel="canonical" href="https://agentfirststack.com/">
 <link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
@@ -15,22 +15,22 @@
 <meta property="og:site_name" content="AgentFirstStack">
 <meta property="og:locale" content="en_US">
 <meta property="og:type" content="website">
-<meta property="og:title" content="AgentFirstStack: analytics, tag manager, email and session replay your AI agent sets up">
-<meta property="og:description" content="Analytics, tag management, email inboxes and session replay your AI agent sets up end to end. No signup form. Free and open source.">
+<meta property="og:title" content="AgentFirstStack: the agent infrastructure for GTM teams">
+<meta property="og:description" content="Analytics, tags and conversion tracking, email inboxes, AI search and session replay your AI agent sets up from one prompt. Free and open source.">
 <meta property="og:url" content="https://agentfirststack.com/">
 <meta property="og:image" content="https://agentfirststack.com/og/home.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="AgentFirstStack: analytics, tag manager, email and session replay, set up by your AI agent.">
+<meta property="og:image:alt" content="AgentFirstStack: the agent infrastructure for GTM teams.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="AgentFirstStack: analytics, tag manager, email and session replay your AI agent sets up">
-<meta name="twitter:description" content="Analytics, tag management, email inboxes and session replay your AI agent sets up end to end. Free and open source.">
+<meta name="twitter:title" content="AgentFirstStack: the agent infrastructure for GTM teams">
+<meta name="twitter:description" content="Analytics, tags and conversion tracking, email inboxes, AI search and session replay your AI agent sets up from one prompt. Free and open source.">
 <meta name="twitter:image" content="https://agentfirststack.com/og/home.png">
-<meta name="theme-color" content="#FFFFFF">
+<meta name="theme-color" content="#040A2B">
 <meta name="google-site-verification" content="uO73RpYrhfPzsrcSh8qZoDJbT41U8bpzlwRTpEOKgx4">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/home.css">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -58,7 +58,7 @@
       "@id": "https://agentfirststack.com/#app",
       "name": "AgentFirstStack",
       "url": "https://agentfirststack.com/",
-      "description": "Free, open-source analytics, tag management with server-side conversion tracking, email inboxes and session replay that an AI agent sets up by itself over REST and MCP. One request returns an API key: no signup form, no verification email, no dashboard.",
+      "description": "The agent infrastructure for GTM teams: free, open-source analytics, tag management with server-side conversion tracking, email inboxes, AI search analytics, page speed and session replay that an AI agent sets up by itself over REST and MCP. One request returns an API key: no signup form, no verification email.",
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Web analytics, tag management, email, session replay",
       "operatingSystem": "Web",
@@ -86,100 +86,153 @@
 </head>
 <body>
 
-<header class="nav">
-  <div class="wrap nav-inner">
+<header class="top">
+  <div class="wrap top-inner">
     <a class="brand" href="/" aria-label="AgentFirstStack home">
-      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="5" height="14" rx="1.5" fill="#FF6A2B"/><rect x="9.5" y="5" width="5" height="14" rx="1.5" fill="#F4B400"/><rect x="17" y="5" width="5" height="14" rx="1.5" fill="#2F6BFF"/></svg>
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
       <span>AgentFirstStack</span>
     </a>
     <nav class="nav-links" aria-label="Main">
+      <a href="#services">Products</a>
       <a href="#live">Live demo</a>
-      <a href="#services">Services</a>
       <a href="#pricing">Pricing</a>
       <a href="/guides">Guides</a>
       <a href="/llms.txt">Manual</a>
       <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
-      <a href="/signin">Sign in</a>
+      <a class="top-cta" href="/signin">Sign in</a>
     </nav>
   </div>
 </header>
 
 <main>
 
-<section class="hero" id="setup">
+<section class="hero" id="setup" aria-labelledby="hero-title">
+  <canvas class="pixels" aria-hidden="true"></canvas>
   <div class="wrap hero-grid">
     <div class="hero-copy">
-      <ul class="pillars" aria-label="What it stands for">
-        <li><a href="https://github.com/StartGlobal-AI/agentfirststack" title="AGPL-3.0 on GitHub. Run it yourself with four commands."><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.4-2 3-7 4"/></svg><b>Open source</b></a></li>
-        <li><a href="/llms.txt" title="One request makes the account. Every feature is an API call and an MCP tool."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.8 3.8 1.4-3.8 1.4L8 12.2 6.6 8.4 2.8 7l3.8-1.4z"/></svg><b>Agent first</b></a></li>
-        <li><a href="/privacy" title="Cookieless analytics with no cross-day tracking. Replay masks what people type."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l5 1.9v3.9c0 3.2-2.1 5.6-5 6.6-2.9-1-5-3.4-5-6.6V3.7z"/><path d="M5.8 8l1.6 1.6 2.9-3"/></svg><b>Privacy first</b></a></li>
+      <ul class="pills" aria-label="What it stands for">
+        <li><a href="https://github.com/StartGlobal-AI/agentfirststack"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.4-2 3-7 4"/></svg>Open source</a></li>
+        <li><a href="/llms.txt"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.8 3.8 1.4-3.8 1.4L8 12.2 6.6 8.4 2.8 7l3.8-1.4z"/></svg>Agent first</a></li>
+        <li><a href="/privacy"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l5 1.9v3.9c0 3.2-2.1 5.6-5 6.6-2.9-1-5-3.4-5-6.6V3.7z"/><path d="M5.8 8l1.6 1.6 2.9-3"/></svg>Privacy first</a></li>
       </ul>
-      <h1>Analytics, tag manager, email and session replay, set&nbsp;up by your AI agent</h1>
-      <p class="lede">Like Google Analytics, Google Tag Manager and Hotjar, plus email inboxes your agent can use. Paste one prompt and your coding agent creates the account, adds everything to your site and checks it works. No signup form, no dashboard.</p>
+      <h1 id="hero-title">The Agent Infrastructure for GTM Teams</h1>
+      <p class="lede">Analytics, a tag manager with server-side conversion tracking, email inboxes, AI search, page speed and session replay. Your coding agent sets it all up from one prompt, checks every part works, and hands you a dashboard. Free, and served from your own domain.</p>
       <div class="actions">
-        <button class="btn btn-primary" type="button" data-copy data-cta="hero">Copy prompt for your agent</button>
-        <a class="btn btn-quiet" href="#live">See our live analytics</a>
+        <button class="btn btn-bright" type="button" data-copy data-cta="hero">Copy the setup prompt</button>
+        <a class="btn btn-line" href="#live">See our live analytics</a>
       </div>
       <p class="copy-status" role="status" aria-live="polite"></p>
-      <p class="works-with">Paste it into Claude Code, Cursor, Codex or any agent that can make HTTP requests. <a href="#pricing">Free to set up and use.</a></p>
+      <p class="works">Paste it into Claude Code, Cursor, Codex or any agent that can make HTTP requests. No signup form, no card.</p>
     </div>
 
-    <figure class="chat" id="chat" aria-label="Example: a coding agent setting up AgentFirstStack">
-      <div class="chat-top">
-        <div class="chat-who">
-          <span class="agent-avatar" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M10 2.5l1.6 4.4 4.4 1.6-4.4 1.6L10 14.5l-1.6-4.4L4 8.5l4.4-1.6z" fill="currentColor"/><circle cx="15.5" cy="15" r="1.6" fill="currentColor"/></svg></span>
-          <div><b>Your coding agent</b><span>yourshop, main branch</span></div>
-        </div>
-        <div class="chat-top-right">
-          <span class="chat-status" data-status>Done</span>
-          <button class="replay" type="button" data-replay hidden>Replay</button>
-        </div>
+    <figure class="setup" aria-label="Example: a coding agent setting up the GTM stack from one prompt">
+      <div class="setup-top">
+        <span class="setup-who"><span class="setup-avatar" aria-hidden="true"></span>Your coding agent</span>
+        <span class="setup-state" data-state>Setting up</span>
       </div>
-
-      <div class="chat-scroll" id="chat-scroll">
-        <div class="msg msg-user" data-step="user">
-          <div class="bubble">
-            <p>Set up AgentFirstStack for this project.</p>
-            <button class="attachment" type="button" data-show-prompt aria-expanded="false" title="Show the prompt"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h5l3 3v9H4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span>Pasted prompt</span></button>
-          </div>
-        </div>
-
-        <div class="msg msg-agent" data-step="say"><p>On it. I'll read the manual first, then set up analytics, conversion tracking and an inbox.</p></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>GET agentfirststack.com/llms.txt</code><span class="tool-res">200 OK</span></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>POST /v1/signup</code><span class="tool-res">key saved to .env</span></div>
-
-        <div class="msg msg-agent" data-step="say"><p>This is a Next.js app, so the analytics snippet goes in the root layout.</p></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_site yourshop.com</code><span class="tool-res">site_9x2f</span></div>
-        <div class="tool tool-edit" data-step="tool">
-          <span class="tool-state" aria-hidden="true"></span><code>Edit app/layout.tsx</code><span class="tool-res">+1 line</span>
-          <pre class="diff"><span>+ &lt;script defer src="https://analytics.agentfirststack.com/s.js" data-site="site_9x2f" /&gt;</span></pre>
-        </div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>verify</code><span class="tool-res is-good">receiving visits</span></div>
-
-        <div class="msg msg-agent" data-step="say"><p>Now conversion tracking. I found a checkout and a signup form.</p></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>scan_site yourshop.com</code><span class="tool-res">2 forms, /thank-you page</span></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>setup_conversion_tracking purchase, sign_up</code><span class="tool-res">GA4, Google Ads, Meta</span></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>publish</code><span class="tool-res is-good">version 1 live</span></div>
-
-        <div class="msg msg-agent" data-step="say"><p>Last, an inbox so I can sign up for Stripe.</p></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_inbox yourshop-signups</code><span class="tool-res">yourshop-signups@agentfirstinbox.com</span></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>wait_for_email from: stripe.com</code><span class="tool-res is-good">code 482913</span></div>
-        <div class="tool" data-step="tool"><span class="tool-state" aria-hidden="true"></span><code>create_claim_link</code><span class="tool-res">link for you</span></div>
-
-        <div class="msg msg-agent msg-final" data-step="say">
-          <p>Done. Analytics, conversion tracking and the inbox are set up and verified. Open your claim link to see it all in a dashboard. To send conversions to your ad accounts I need two things from you:</p>
-          <ul class="asks">
-            <li>Your Meta Conversions API access token</li>
-            <li>Your Google Ads conversion ID</li>
-          </ul>
-        </div>
+      <p class="setup-prompt">Set up our GTM infrastructure with AgentFirstStack.</p>
+      <ol class="setup-list">
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Email inbox</b><span>signups@agentfirstinbox.com, forwarded to you</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Website analytics</b><span>cookieless, from your own domain</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Page speed</b><span>Core Web Vitals from real visitors</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Tag container</b><span>published, version 1</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Click tracking</b><span>every main button, link and form</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Conversion tracking</b><span>GA4, Google Ads and Meta, server-side</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>AI search analytics</b><span>which AI bots read you, who they send</span></li>
+        <li data-step><span class="tick" aria-hidden="true"></span><b>Session replay</b><span>masked in the browser by default</span></li>
+        <li data-step class="setup-last"><span class="tick" aria-hidden="true"></span><b>Tested end to end</b><span>a claim link for your dashboard</span></li>
+      </ol>
+      <div class="setup-foot">
+        <span class="setup-count" data-count>0 of 9 set up</span>
+        <span class="setup-tools">
+          <button class="setup-link" type="button" data-show-prompt aria-expanded="false" aria-controls="full-prompt">See the full prompt</button>
+          <button class="setup-link" type="button" data-replay hidden>Replay</button>
+        </span>
       </div>
+      <pre class="setup-full" id="full-prompt" hidden>Set up AgentFirstStack for this project, completely, and verify it yourself. It's free, open-source infrastructure built for agents: web analytics, a tag manager with server-side conversion tracking, email inboxes and session replay. There is no signup form: one request gets a key, and you can do every step without me.
 
-      <div class="composer" aria-hidden="true">
-        <span>Reply to your agent</span>
-        <span class="send"><svg viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      </div>
+First, look at what this site uses today (Google Analytics, Google Tag Manager, Plausible, DataFast, ad pixels, any other analytics or replay tool) without changing anything. Then ask me once and wait for my answer: should email that reaches the project's inbox be forwarded to me as each one arrives, or as one daily digest (and at what time, in my time zone)? And if you found other tools: shall you bring their setup and history over, and if you need it to export their data, may you use my browser where I'm signed in? If I can't answer, forward each one as it arrives and bring over whatever needs no help from me.
+
+1. Read https://agentfirststack.com/llms.txt and the Acceptable Use Policy (https://agentfirststack.com/acceptable-use), then follow the manual's "Full setup" section from start to finish. Read each service's manual before you use that service.
+
+2. Key: if this project's .env already has AGENTFIRSTSTACK_API_KEY, use it, read AGENTFIRSTSTACK.md, and run the setup check (step 4) to see what earlier runs set up and what's missing. Otherwise run curl -X POST https://agentfirststack.com/v1/signup and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets. One key works for every service. If you support MCP, add the server the manual lists.
+
+3. The full setup, in this order:
+   - Map the site first: its main pages, every main button, link and form, and what counts as a sign-up, lead or purchase here.
+   - Email: an inbox for the project, for any third-party signups the setup needs, forwarded to me the way I chose.
+   - Analytics: the site, a goal for each conversion and main action, server events for what only the backend knows, AI crawler and search bot visits reported from the server (if the site has one), payments if the business takes them, and a weekly email report and alerts for me.
+   - Tags: one container snippet on every page, an event for every main button, link and form (sent to analytics), and the conversions (also sent to the ad platforms this business uses). Preview, then publish.
+   - Replay: linked to analytics, masked by default, asking for consent where the law requires it.
+   - Serve all of it first-party, from the site's own domain, because ad blockers block third-party analytics hosts: a first-party domain (one DNS record: add it yourself if you can change the DNS, otherwise give it to me) or, until then or instead, the path proxy. The direct snippets only as a last resort.
+
+4. Deploy, then test it end to end (the manual's step 8): run the setup test (POST https://agentfirststack.com/v1/setup/test, or afs_test_setup), do its browser plan in a real browser and check that visit (afs_check_test_visit), then run the setup check (GET https://agentfirststack.com/v1/setup, or afs_check_setup) until it says ready. Fix what fails and test again.
+
+5. Apart from that first message, don't stop to ask me things. For ad accounts (Google Ads, Meta, GA4, TikTok): if you have tools for them, use them to find the IDs; otherwise finish everything else and list exactly which IDs and tokens you need from me, and where I find each.
+
+6. Write what you set up in AGENTFIRSTSTACK.md at the repo root (ids, env var names, every goal and event and what triggers it; never key values), add the AgentFirstStack block from the manual to AGENTS.md (so later agent sessions see new features), and commit both.
+
+7. Create a claim link with POST https://agentfirststack.com/v1/claim-link (or the afs_create_claim_link MCP tool) so I can see everything in a dashboard.
+
+When you're done, show me the setup check's table of what's set up and the test results table, then what's waiting on me, and give me the claim link. If the site used other tools, say what you brought over from each, and leave them installed until I agree to remove them.</pre>
     </figure>
+  </div>
+</section>
+
+<section class="section products" id="services" aria-labelledby="services-title">
+  <div class="wrap">
+    <h2 id="services-title">Six tools your GTM team pays for, under one key</h2>
+    <p class="section-lede">Each one is a REST API, an MCP server and a plain-text manual your agent can set up, check and change. You get the dashboard.</p>
+    <div class="cards">
+      <article class="card" style="--tone: #2f6bff">
+        <span class="card-icon" aria-hidden="true"></span>
+        <h3>Analytics</h3>
+        <p class="replaces-label">Replaces</p>
+        <ul class="replaces"><li>Google Analytics</li><li>Plausible</li><li>DataFast</li><li>Fathom</li></ul>
+        <p>Where every visitor comes from, what they do and what they buy: channels, goals, funnels, revenue, MRR and ad spend, cookieless by default.</p>
+        <a class="card-link" href="/guides/add-analytics-with-claude-code">Add analytics with Claude Code</a>
+      </article>
+      <article class="card" style="--tone: #1a3fd6">
+        <span class="card-icon" aria-hidden="true"></span>
+        <h3>Tags and conversions</h3>
+        <p class="replaces-label">Replaces</p>
+        <ul class="replaces"><li>Google Tag Manager</li><li>Server-side GTM</li><li>Stape</li><li>Cookiebot</li></ul>
+        <p>Every click and conversion, sent from the browser and from our servers to GA4, Google Ads, Meta and TikTok with one event id, so each platform counts it once. Consent banner included.</p>
+        <a class="card-link" href="/guides/server-side-conversion-tracking">Server-side conversion tracking</a>
+      </article>
+      <article class="card" style="--tone: #4f8bff">
+        <span class="card-icon" aria-hidden="true"></span>
+        <h3>Email inboxes</h3>
+        <p class="replaces-label">Replaces</p>
+        <ul class="replaces"><li>A Gmail per project</li><li>AgentMail</li><li>Mailinator</li></ul>
+        <p>An inbox in one request. Verification codes and links come back to your agent the moment they arrive, and your team gets a copy.</p>
+        <a class="card-link" href="/guides/email-inbox-for-ai-agents">An inbox your agent creates itself</a>
+      </article>
+      <article class="card" style="--tone: #0f2a8a">
+        <span class="card-icon" aria-hidden="true"></span>
+        <h3>Session replay</h3>
+        <p class="replaces-label">Replaces</p>
+        <ul class="replaces"><li>Hotjar</li><li>Microsoft Clarity</li><li>FullStory</li></ul>
+        <p>Sessions as readable transcripts, with rage, dead and error clicks, heatmaps and JS errors as data. Masked in the browser by default.</p>
+        <a class="card-link" href="/guides/session-replay-for-ai-agents">Session replay for AI agents</a>
+      </article>
+      <article class="card" style="--tone: #3fa2ff">
+        <span class="card-icon" aria-hidden="true"></span>
+        <h3>Page speed</h3>
+        <p class="replaces-label">Replaces</p>
+        <ul class="replaces"><li>PageSpeed Insights</li><li>Vercel Speed Insights</li><li>SpeedCurve</li></ul>
+        <p>Core Web Vitals from your real visitors, by page, device, country and browser, with the slowest pages first.</p>
+        <a class="card-link" href="/features">Everything each service does</a>
+      </article>
+      <article class="card" style="--tone: #6a7dff">
+        <span class="card-icon" aria-hidden="true"></span>
+        <h3>AI search</h3>
+        <p class="replaces-label">Replaces</p>
+        <ul class="replaces"><li>AI crawler log digging</li><li>AI visibility trackers</li></ul>
+        <p>Which AI bots read which pages, which assistants send you visitors, and what to change so ChatGPT, Claude and Perplexity cite you.</p>
+        <a class="card-link" href="/agent-first-analytics">Agent-first analytics</a>
+      </article>
+    </div>
+    <p class="cards-more"><a href="/features">Everything each service does</a>, all of it over REST and MCP with the same key. <a href="/guides">Compare with the tools you use now</a>.</p>
   </div>
 </section>
 
@@ -190,7 +243,7 @@
         <h2 id="live-title">Our own analytics, live</h2>
         <p class="section-lede">This is agentfirststack.com since we launched, counted by the same cookieless analytics your agent sets up. Nothing is hidden or rounded, and the numbers update every minute.</p>
       </div>
-      <a class="btn btn-quiet" href="/live">Open the full dashboard</a>
+      <a class="btn btn-soft" href="/live">Open the full dashboard</a>
     </div>
     <div class="board" data-live aria-busy="true">
       <div class="board-top">
@@ -236,15 +289,16 @@
   </div>
 </section>
 
-<section class="section" id="pricing" aria-labelledby="pricing-title">
+<section class="section pricing" id="pricing" aria-labelledby="pricing-title">
   <div class="wrap">
     <div class="free">
+      <canvas class="pixels pixels-free" aria-hidden="true"></canvas>
       <div class="free-copy">
         <h2 id="pricing-title">Free to set up and free to use</h2>
         <p>There's no paid plan, no trial and no card to add. Every project on AgentFirstStack runs free. The only limits are a fair-use policy, so no one account can use up what everyone shares.</p>
         <div class="actions">
-          <button class="btn btn-invert" type="button" data-copy data-cta="pricing">Copy prompt for your agent</button>
-          <a class="btn btn-outline-invert" href="#limits">See the fair-use limits</a>
+          <button class="btn btn-bright" type="button" data-copy data-cta="pricing">Copy the setup prompt</button>
+          <a class="btn btn-line" href="#limits">See the fair-use limits</a>
         </div>
       </div>
       <dl class="free-facts">
@@ -259,14 +313,14 @@
         <p>The same for every project. One your agent made has the lower number until a person claims it.</p>
       </div>
       <div class="limit-grid">
-        <div class="limit" style="--c: var(--orange)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Analytics</p><p class="limit-n">10</p><p class="limit-what">sites per project</p><p class="limit-pre">3 before it's claimed</p></div>
-        <div class="limit" style="--c: var(--orange)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Analytics</p><p class="limit-n">400 days</p><p class="limit-what">of history kept</p><p class="limit-pre">&nbsp;</p></div>
-        <div class="limit" style="--c: var(--yellow)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Tags</p><p class="limit-n">10</p><p class="limit-what">tag containers per project</p><p class="limit-pre">3 before it's claimed</p></div>
-        <div class="limit" style="--c: var(--yellow)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Tags</p><p class="limit-n">5</p><p class="limit-what">conversion APIs per container</p><p class="limit-pre">&nbsp;</p></div>
-        <div class="limit" style="--c: var(--blue)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Mail</p><p class="limit-n">10</p><p class="limit-what">inboxes per project</p><p class="limit-pre">5 before it's claimed</p></div>
-        <div class="limit" style="--c: var(--blue)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Mail</p><p class="limit-n">20</p><p class="limit-what">recipients a day from shared inboxes</p><p class="limit-pre">10 before it's claimed</p></div>
-        <div class="limit" style="--c: var(--green)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Replay</p><p class="limit-n">5</p><p class="limit-what">replay sites per project</p><p class="limit-pre">2 before it's claimed</p></div>
-        <div class="limit" style="--c: var(--green)"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Replay</p><p class="limit-n">200</p><p class="limit-what">recorded sessions per site a day</p><p class="limit-pre">100 before it's claimed</p></div>
+        <div class="limit" style="--tone: #2f6bff"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Analytics</p><p class="limit-n">10</p><p class="limit-what">sites per project</p><p class="limit-pre">3 before it's claimed</p></div>
+        <div class="limit" style="--tone: #2f6bff"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Analytics</p><p class="limit-n">400 days</p><p class="limit-what">of history kept</p><p class="limit-pre">&nbsp;</p></div>
+        <div class="limit" style="--tone: #1a3fd6"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Tags</p><p class="limit-n">10</p><p class="limit-what">tag containers per project</p><p class="limit-pre">3 before it's claimed</p></div>
+        <div class="limit" style="--tone: #1a3fd6"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Tags</p><p class="limit-n">5</p><p class="limit-what">conversion APIs per container</p><p class="limit-pre">&nbsp;</p></div>
+        <div class="limit" style="--tone: #4f8bff"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Mail</p><p class="limit-n">10</p><p class="limit-what">inboxes per project</p><p class="limit-pre">5 before it's claimed</p></div>
+        <div class="limit" style="--tone: #4f8bff"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Mail</p><p class="limit-n">20</p><p class="limit-what">recipients a day from shared inboxes</p><p class="limit-pre">10 before it's claimed</p></div>
+        <div class="limit" style="--tone: #0f2a8a"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Replay</p><p class="limit-n">5</p><p class="limit-what">replay sites per project</p><p class="limit-pre">2 before it's claimed</p></div>
+        <div class="limit" style="--tone: #0f2a8a"><p class="limit-svc"><span class="dot" aria-hidden="true"></span>Replay</p><p class="limit-n">200</p><p class="limit-what">recorded sessions per site a day</p><p class="limit-pre">100 before it's claimed</p></div>
       </div>
       <p class="limits-foot">Also: 3 new projects an hour from one network. Shared inboxes reply only to people who wrote first, and keep mail for 14 days; replay keeps recordings for 14 days. Add your own domain to send to anyone.</p>
       <p class="limits-foot">Every limit is in the <a href="/acceptable-use">acceptable use policy</a> and the <a href="/llms.txt">manual</a>, and <code>GET /v1/usage</code> shows what a project has used. Need more? Run your own copy, with your own limits.</p>
@@ -274,121 +328,7 @@
   </div>
 </section>
 
-<section class="section section-tint" id="services" aria-labelledby="services-title">
-  <div class="wrap">
-    <h2 id="services-title">Four services, one key</h2>
-    <p class="section-lede">Each has a REST API, an MCP server and a plain-text manual.</p>
-    <div class="products">
-
-      <article class="product" style="--c: var(--orange)">
-        <p class="product-name"><span class="dot" aria-hidden="true"></span>Analytics <span>instead of Google Analytics</span></p>
-        <h3>See where every visitor comes from</h3>
-        <div class="preview" role="img" aria-label="Example analytics for yourshop.com: 38.4K visitors in the last 12 weeks, up 18%; top countries United States 33%, United Kingdom 14%, Germany 9%, India 8%">
-          <div class="stat">
-            <div>
-              <span class="stat-label">Visitors, last 12 weeks</span>
-              <span class="stat-value">38.4K <em>+18% vs previous 12 weeks</em></span>
-            </div>
-            <svg class="spark" viewBox="0 0 120 36" preserveAspectRatio="none" aria-hidden="true">
-              <polyline points="2,30 12,28 22,29 32,25 42,26 52,22 62,23 72,18 82,19 92,14 102,12 112,7" fill="none" stroke="#B9BFC9" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-              <polyline points="102,12 112,7" fill="none" stroke="var(--orange)" stroke-width="2" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-            </svg>
-          </div>
-          <ul class="bars">
-            <li title="United States: 33% of visitors"><span>United States</span><i style="--v: 33"></i><b>33%</b></li>
-            <li title="United Kingdom: 14% of visitors"><span>United Kingdom</span><i style="--v: 14"></i><b>14%</b></li>
-            <li title="Germany: 9% of visitors"><span>Germany</span><i style="--v: 9"></i><b>9%</b></li>
-            <li title="India: 8% of visitors"><span>India</span><i style="--v: 8"></i><b>8%</b></li>
-          </ul>
-        </div>
-        <ul class="chips"><li>Cities</li><li>Goals and revenue</li><li>No cookies</li></ul>
-        <a class="product-guide" href="/guides/add-analytics-with-claude-code">Add analytics with Claude Code</a>
-      </article>
-
-      <article class="product" style="--c: var(--yellow)">
-        <p class="product-name"><span class="dot" aria-hidden="true"></span>Tags <span>instead of Google Tag Manager</span></p>
-        <h3>Count every conversion once</h3>
-        <div class="preview" role="img" aria-label="Example: one purchase of $49.00 with event id evt_8f2a, sent from the browser and the server to GA4, Meta and Google Ads, each answering 200 OK">
-          <div class="event">
-            <code>purchase</code><span>$49.00</span><code class="event-id">evt_8f2a</code>
-          </div>
-          <ul class="dests">
-            <li><b>GA4</b><em>200 OK</em></li>
-            <li><b>Meta</b><em>200 OK</em></li>
-            <li><b>Google Ads</b><em>200 OK</em></li>
-          </ul>
-          <p class="preview-note">Sent from the browser and the server with one event id, so each platform counts it once.</p>
-        </div>
-        <ul class="chips"><li>Server-side</li><li>Click IDs kept</li><li>Rollback</li></ul>
-        <a class="product-guide" href="/guides/server-side-conversion-tracking">Server-side conversion tracking</a>
-      </article>
-
-      <article class="product" style="--c: var(--blue)">
-        <p class="product-name"><span class="dot" aria-hidden="true"></span>Mail <span>instead of a Gmail account per project</span></p>
-        <h3>Give your agent an inbox</h3>
-        <div class="preview" role="img" aria-label="Example: an email from Stripe titled Your verification code, with the code 482913 and a verify link extracted for the agent">
-          <div class="mail-row">
-            <span class="mail-from">S</span>
-            <div><b>Stripe</b><span>Your verification code</span></div>
-            <time>now</time>
-          </div>
-          <div class="extracted">
-            <span class="extracted-label">Extracted for your agent</span>
-            <div class="extracted-row"><code class="otp">482913</code><span class="link-chip">verify link</span></div>
-          </div>
-          <p class="preview-note">yourshop-signups@agentfirstinbox.com</p>
-        </div>
-        <ul class="chips"><li>Codes extracted</li><li>Sending</li><li>Own domain</li></ul>
-        <a class="product-guide" href="/guides/email-inbox-for-ai-agents">An inbox your agent creates itself</a>
-      </article>
-
-      <article class="product" style="--c: var(--green)">
-        <p class="product-name"><span class="dot" aria-hidden="true"></span>Replay <span>instead of Hotjar or Clarity</span></p>
-        <h3>Read sessions instead of watching them</h3>
-        <div class="preview" role="img" aria-label="Example session transcript: a visitor opened /pricing, clicked Start free trial four times (rage click), hit a JavaScript error, then went back to the home page">
-          <ol class="transcript">
-            <li><time>0:04</time><span>Opened <code>/pricing</code></span></li>
-            <li><time>0:11</time><span>Clicked “Start free trial” ×4</span><em>rage click</em></li>
-            <li><time>0:12</time><span>Error: <code>plan is undefined</code></span><em>JS error</em></li>
-            <li><time>0:18</time><span>Back to <code>/</code></span><em>quick back</em></li>
-          </ol>
-          <p class="preview-note">Text and form fields are masked in the browser before anything is sent.</p>
-        </div>
-        <ul class="chips"><li>Rage and dead clicks</li><li>Heatmaps as data</li><li>Masked by default</li></ul>
-        <a class="product-guide" href="/guides/session-replay-for-ai-agents">Session replay for AI agents</a>
-      </article>
-
-    </div>
-    <p class="features-link"><a href="/features">Everything each service does</a>, all of it over REST and MCP with the same key.</p>
-  </div>
-</section>
-
-<section class="section" aria-labelledby="flow-title">
-  <div class="wrap">
-    <h2 id="flow-title">Server-side conversions</h2>
-    <p class="section-lede">AgentFirstStack sends each conversion to the ad platform's conversion API from its own servers, with your credentials, and dedupes it with the browser pixel. Purchases and sign-ups your backend reports can't be blocked. For what happens in the browser, the agent serves the scripts from your own domain, so ad blockers don't drop those either.</p>
-    <div class="flow" role="img" aria-label="Your site and your backend send events to AgentFirstStack, which sends them to Google Ads, Meta, GA4 and TikTok">
-      <div class="flow-col">
-        <div class="node"><b>Your site</b><span>one snippet, or served from your own domain</span></div>
-        <div class="node"><b>Your backend</b><span>purchases and sign-ups from Stripe or your API</span></div>
-      </div>
-      <div class="flow-link" aria-hidden="true"><span></span></div>
-      <div class="node node-core">
-        <b>AgentFirstStack</b>
-        <span>keeps click IDs, dedupes, retries, logs each platform's answer</span>
-      </div>
-      <div class="flow-link" aria-hidden="true"><span></span></div>
-      <div class="flow-col">
-        <div class="node node-dest">Google Ads</div>
-        <div class="node node-dest">Meta</div>
-        <div class="node node-dest">GA4</div>
-        <div class="node node-dest">TikTok</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="section section-tint" id="open-source" aria-labelledby="principles-title">
+<section class="section section-ice" id="open-source" aria-labelledby="principles-title">
   <div class="wrap">
     <h2 id="principles-title">Open source, agent first, privacy first</h2>
     <p class="section-lede">The three promises at the top of this page, and how to check each one yourself.</p>
@@ -448,10 +388,10 @@
   </div>
 </section>
 
-<section class="guides-strip" aria-labelledby="guides-title">
+<section class="section guides" aria-labelledby="guides-title">
   <div class="wrap">
     <h2 id="guides-title">Coming from another tool?</h2>
-    <p class="guides-lede">How AgentFirstStack compares with the MCP servers you may already use.</p>
+    <p class="section-lede">How AgentFirstStack compares with the MCP servers and tools you may already use.</p>
     <ul class="guides-links">
       <li><a href="/google-analytics-mcp">Google Analytics MCP</a></li>
       <li><a href="/google-tag-manager-mcp">Google Tag Manager MCP</a></li>
@@ -466,19 +406,23 @@
   </div>
 </section>
 
-<section class="closing">
-  <div class="wrap closing-inner">
-    <h2>Give your agent the keys</h2>
-    <button class="btn btn-primary" type="button" data-copy data-cta="closing">Copy prompt for your agent</button>
+<section class="band" aria-labelledby="band-title">
+  <canvas class="pixels pixels-band" aria-hidden="true"></canvas>
+  <div class="wrap band-inner">
+    <div>
+      <h2 id="band-title">Give your agent the keys</h2>
+      <p>One prompt sets up your whole GTM stack, checks it and sends you the dashboard.</p>
+    </div>
+    <button class="btn btn-bright" type="button" data-copy data-cta="closing">Copy the setup prompt</button>
   </div>
 </section>
 
 </main>
 
-<footer class="footer">
-  <div class="wrap footer-inner">
+<footer class="foot">
+  <div class="wrap foot-inner">
     <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
-    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a><a href="/report-abuse">Report abuse</a></p>
+    <p class="foot-links"><a href="/guides">Guides</a><a href="/features">Features</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a><a href="/report-abuse">Report abuse</a></p>
   </div>
 </footer>
 

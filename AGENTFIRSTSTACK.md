@@ -66,15 +66,15 @@ analytics goal of the same event name.
 
 | Event (analytics name) | Fires on (CSS selector) | Props | Analytics goal |
 |---|---|---|---|
-| `copy_prompt` | `[data-copy], [data-copy-from]`: "Copy prompt for your agent" (home hero, home closing) and "Copy prompt" on every guide and comparison page | `location`: `hero`, `closing` or `page` | Copied setup prompt |
+| `copy_prompt` | `[data-copy], [data-copy-from]`: "Copy the setup prompt" (home hero, free card, closing band) and "Copy prompt" on every guide and comparison page | `location`: `hero`, `pricing`, `closing` or `page` | Copied setup prompt |
 | `manual_click` | `a[href$='/llms.txt']`: Manual (nav, footer), Read the manual, service manuals | `link_url` (the link's href) | Opened the manual |
 | `github_click` | `a[href^='https://github.com/StartGlobal-AI/']`: this project's repo (nav, footer) and license (footer) | `link_url` | Clicked GitHub |
 | `sign_in_click` | `a[href='/signin']` (nav) | | Clicked Sign in |
 | `setup_prompt_click` | `a[href='/#setup']`: "Get the setup prompt" in guide sidebars | | Clicked Get the setup prompt |
 | `guide_click` | `a[href^='/guides'], a[href$='-mcp'], a[href='/mcp'], a[href='/agentmail-alternative']` | `link_url` | Clicked a guide link |
-| `nav_section_click` | `.nav-links a[href*='#']`: How it works, Services | `link_url` | Clicked a home section link |
-| `show_prompt` | `[data-show-prompt]`: "Pasted prompt" in the home demo chat | | Showed the pasted prompt |
-| `replay_demo` | `[data-replay]`: Replay button of the demo chat | | Replayed the demo |
+| `nav_section_click` | `.nav-links a[href*='#']`: Products, Live demo, Pricing (home), Products (other pages) | `link_url` | Clicked a home section link |
+| `show_prompt` | `[data-show-prompt]`: "See the full prompt" in the home setup card | | Showed the pasted prompt |
+| `replay_demo` | `[data-replay]`: Replay, shown in the home setup card once its checklist finishes | | Replayed the demo |
 | `email_click` | `a[href^='mailto:']`: Security, Report abuse, privacy@ | `link_text` | Clicked an email link |
 | `signup` (server) | `POST /v1/signup` on agentfirststack.com answered 201 (`site/src/index.ts`) | `user_id` = the new project's id | Created a project (server) |
 | `project_claimed` (server) | a claim link was used (`POST /claim/:token`, `site/src/claims.ts`); joined to the claimer's cookieless visit by IP + user agent; skipped for GPC / DNT browsers | `user_id` = project id, `role` | Claimed a project (server) |

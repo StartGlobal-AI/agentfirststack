@@ -1,4 +1,5 @@
-// Landing page: copy the prompt, show it on request, play the agent session, nav border.
+// Home page: copy the prompt, show it on request, the pixel field, the setup card ticking in,
+// WebMCP tools, and our own live analytics.
 (function () {
   var tpl = document.getElementById("prompt-text");
   var promptText = tpl ? tpl.innerHTML.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim() : "";
@@ -36,7 +37,7 @@
       button.classList.add("is-copied");
       status.textContent = "Copied. Paste it into your agent's chat.";
     } else {
-      status.textContent = 'Couldn\'t copy automatically. Click "Pasted prompt" in the chat to see it and copy it by hand.';
+      status.textContent = 'Couldn\'t copy automatically. Open "See the full prompt" in the setup card and copy it by hand.';
     }
     copyTimer = setTimeout(function () {
       button.classList.remove("is-copied");
@@ -63,146 +64,171 @@
     });
   });
 
-  // ---------- the pasted prompt, inside the user's chat bubble ----------
-  var attach = document.querySelector("[data-show-prompt]");
-  if (attach && promptText) {
-    var lines = promptText.split("\n").length;
-    attach.lastChild.textContent = "Pasted prompt, " + lines + " lines";
-    attach.addEventListener("click", function () {
-      var bubble = attach.closest(".bubble");
-      var pre = bubble.querySelector(".bubble-prompt");
-      if (pre) {
-        pre.remove();
-        attach.setAttribute("aria-expanded", "false");
-        return;
-      }
-      pre = document.createElement("pre");
-      pre.className = "bubble-prompt";
-      pre.textContent = promptText;
-      bubble.appendChild(pre);
-      attach.setAttribute("aria-expanded", "true");
+  // ---------- the full prompt, under the setup card ----------
+  var showBtn = document.querySelector("[data-show-prompt]");
+  var full = document.getElementById("full-prompt");
+  if (showBtn && full) {
+    showBtn.addEventListener("click", function () {
+      var open = full.hidden;
+      full.hidden = !open;
+      showBtn.setAttribute("aria-expanded", String(open));
+      showBtn.textContent = open ? "Hide the full prompt" : "See the full prompt";
     });
   }
 
-  // ---------- agent session playback ----------
-  var chat = document.getElementById("chat");
-  var scroller = document.getElementById("chat-scroll");
   var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (chat && scroller && !reduce && window.Promise) {
-    var steps = Array.prototype.slice.call(chat.querySelectorAll("[data-step]"));
-    var pill = chat.querySelector("[data-status]");
-    var replay = chat.querySelector("[data-replay]");
-    var timers = [];
-    var run = 0;
-    steps.forEach(function (el) {
-      var p = el.querySelector("p");
-      if (el.dataset.step === "say" && p) {
-        el._p = p;
-        el._text = p.textContent;
-      }
-    });
 
-    var wait = function (ms) {
-      return new Promise(function (res) {
-        timers.push(setTimeout(res, ms));
-      });
-    };
-    var down = function () {
-      scroller.scrollTop = scroller.scrollHeight;
-    };
+  // ---------- pixel field ----------
+  // Square cells, ordered-dithered, brighter toward a focus point: a field of pixels in blues
+  // that rises toward the setup card. A few cells flicker on now and then.
+  var BLUES = ["#0a1a5c", "#12298a", "#1a3fd6", "#2f6bff", "#5b8cff", "#9cc2ff", "#7fd4ff"];
+  var BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(function (v) {
+    return (v + 0.5) / 16;
+  });
 
-    var reset = function () {
-      timers.forEach(clearTimeout);
-      timers = [];
-      chat.querySelectorAll(".typing").forEach(function (t) {
-        t.remove();
-      });
-      steps.forEach(function (el) {
-        el.classList.remove("is-shown", "is-running");
-        if (el._p) el._p.textContent = el._text;
-        var asks = el.querySelector(".asks");
-        if (asks) asks.classList.remove("is-pending");
-      });
-    };
-
-    var play = async function () {
-      var mine = ++run;
-      reset();
-      chat.classList.add("is-playing");
-      pill.textContent = "Working";
-      pill.classList.add("is-working");
-      replay.hidden = true;
-      scroller.scrollTop = 0;
-      for (var i = 0; i < steps.length; i++) {
-        if (mine !== run) return;
-        var el = steps[i];
-        var kind = el.dataset.step;
-        if (kind === "user") {
-          el.classList.add("is-shown");
-          await wait(700);
-        } else if (kind === "say") {
-          var dots = document.createElement("div");
-          dots.className = "typing";
-          dots.setAttribute("aria-hidden", "true");
-          dots.innerHTML = "<i></i><i></i><i></i>";
-          el.parentNode.insertBefore(dots, el);
-          down();
-          await wait(620);
-          dots.remove();
-          var asks = el.querySelector(".asks");
-          if (asks) asks.classList.add("is-pending");
-          var words = el._text.split(" ");
-          el._p.textContent = "";
-          el.classList.add("is-shown");
-          for (var w = 0; w < words.length; w++) {
-            if (mine !== run) return;
-            el._p.textContent += (w ? " " : "") + words[w];
-            if (w % 3 === 0) down();
-            await wait(26);
-          }
-          if (asks) {
-            await wait(180);
-            asks.classList.remove("is-pending");
-          }
-          down();
-          await wait(220);
-        } else {
-          el.classList.add("is-shown", "is-running");
-          down();
-          await wait(380 + Math.round(Math.random() * 360));
-          if (mine !== run) return;
-          el.classList.remove("is-running");
-          down();
-          await wait(140);
+  function field(canvas, opts) {
+    var ctx = canvas.getContext("2d");
+    var cell = opts.cell;
+    var cells = [];
+    var w = 0;
+    var h = 0;
+    function intensity(x, y) {
+      // Distance to the focus, squashed into an ellipse, plus a glow along the bottom edge.
+      // On narrow screens the text spans the width and the card sits below it: the pixels gather
+      // low, around the card, and fade out from top to bottom instead of from left to right.
+      var narrow = w < 760;
+      if (narrow && !opts.hero) return 0; // on phones only the hero has pixels
+      var dx = (x - (narrow ? 0.6 : opts.fx) * w) / (w * (narrow ? 0.8 : 0.55));
+      var dy = (y - (narrow ? 0.88 : opts.fy) * h) / (h * (narrow ? 0.45 : 0.7));
+      var focus = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy));
+      var floor = Math.max(0, (y / h - 0.62) / 0.38) * opts.floor;
+      // Fade out where the text sits (left of opts.clear), so the copy stays easy to read.
+      var u = narrow ? Math.min(1, Math.max(0, (y / h - 0.5) / 0.25)) : Math.min(1, Math.max(0, (x / w - opts.clear) / 0.22));
+      var keep = u * u * (3 - 2 * u);
+      return Math.min(1, (focus * opts.strength + floor * 0.6) * keep);
+    }
+    function draw() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var rect = canvas.getBoundingClientRect();
+      w = rect.width;
+      h = rect.height;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      cells = [];
+      var cols = Math.ceil(w / cell);
+      var rows = Math.ceil(h / cell);
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+          var x = c * cell;
+          var y = r * cell;
+          var v = intensity(x + cell / 2, y + cell / 2);
+          var t = BAYER[(r % 4) * 4 + (c % 4)];
+          if (v < t * 0.9 || v < 0.06) continue;
+          var level = Math.min(BLUES.length - 1, Math.floor(v * (BLUES.length - 0.01)));
+          ctx.globalAlpha = 0.18 + v * 0.62;
+          ctx.fillStyle = BLUES[level];
+          ctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+          cells.push({ x: x, y: y, v: v });
         }
       }
-      pill.textContent = "Done";
-      pill.classList.remove("is-working");
-      replay.hidden = false;
-    };
-
-    replay.addEventListener("click", function () {
-      play();
-    });
-
-    if ("IntersectionObserver" in window) {
-      var io = new IntersectionObserver(
-        function (entries) {
-          if (
-            !entries.some(function (e) {
-              return e.isIntersecting;
-            })
-          )
-            return;
-          io.disconnect();
-          play();
-        },
-        { threshold: 0.3 },
-      );
-      io.observe(chat);
-    } else {
-      play();
+      ctx.globalAlpha = 1;
     }
+    function flicker() {
+      if (!cells.length) return;
+      for (var i = 0; i < opts.flicker; i++) {
+        var p = cells[Math.floor(Math.random() * cells.length)];
+        if (p.v < 0.35) continue;
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = Math.random() < 0.5 ? "#7fd4ff" : "#ffffff";
+        ctx.fillRect(p.x + 1, p.y + 1, cell - 2, cell - 2);
+        (function (q) {
+          setTimeout(
+            function () {
+              var level = Math.min(BLUES.length - 1, Math.floor(q.v * (BLUES.length - 0.01)));
+              ctx.clearRect(q.x, q.y, cell, cell);
+              ctx.globalAlpha = 0.18 + q.v * 0.62;
+              ctx.fillStyle = BLUES[level];
+              ctx.fillRect(q.x + 1, q.y + 1, cell - 2, cell - 2);
+            },
+            500 + Math.random() * 900,
+          );
+        })(p);
+      }
+      ctx.globalAlpha = 1;
+    }
+    draw();
+    var t;
+    window.addEventListener("resize", function () {
+      clearTimeout(t);
+      t = setTimeout(draw, 150);
+    });
+    if (!reduce && opts.flicker) setInterval(flicker, 260);
+  }
+
+  var hero = document.querySelector(".hero .pixels");
+  if (hero) field(hero, { cell: 14, fx: 0.76, fy: 0.5, strength: 1.15, floor: 1, flicker: 3, clear: 0.34, hero: true });
+  var freeCanvas = document.querySelector(".pixels-free");
+  if (freeCanvas) field(freeCanvas, { cell: 12, fx: 1.02, fy: 1.05, strength: 0.75, floor: 0, flicker: 1, clear: 0.82 });
+  var band = document.querySelector(".pixels-band");
+  if (band) field(band, { cell: 12, fx: 0.92, fy: 0.5, strength: 0.9, floor: 0.4, flicker: 1, clear: 0.45 });
+
+  // ---------- the setup card ----------
+  var card = document.querySelector(".setup");
+  if (card) {
+    var steps = [].slice.call(card.querySelectorAll("[data-step]"));
+    var state = card.querySelector("[data-state]");
+    var count = card.querySelector("[data-count]");
+    var replay = card.querySelector("[data-replay]");
+    var timers = [];
+    function setCount(n) {
+      count.textContent = n + " of " + steps.length + " set up";
+    }
+    function finish() {
+      card.classList.add("is-done");
+      state.textContent = "All set up";
+      replay.hidden = false;
+    }
+    function run() {
+      timers.forEach(clearTimeout);
+      timers = [];
+      card.classList.remove("is-done");
+      state.textContent = "Setting up";
+      replay.hidden = true;
+      steps.forEach(function (s) {
+        s.classList.remove("is-working", "is-done");
+      });
+      setCount(0);
+      if (reduce) {
+        steps.forEach(function (s) {
+          s.classList.add("is-done");
+        });
+        setCount(steps.length);
+        finish();
+        return;
+      }
+      var at = 700;
+      steps.forEach(function (s, i) {
+        timers.push(
+          setTimeout(function () {
+            s.classList.add("is-working");
+          }, at),
+        );
+        at += 520 + (i % 3) * 180;
+        timers.push(
+          setTimeout(function () {
+            s.classList.remove("is-working");
+            s.classList.add("is-done");
+            setCount(i + 1);
+            if (i === steps.length - 1) finish();
+          }, at),
+        );
+        at += 90;
+      });
+    }
+    replay.addEventListener("click", run);
+    run();
   }
 
   // ---------- WebMCP: let an agent in the browser use the page's key actions ----------
@@ -552,14 +578,4 @@
       }, 150);
     });
   })();
-
-  // ---------- nav ----------
-  var nav = document.querySelector(".nav");
-  if (nav) {
-    var onScroll = function () {
-      nav.classList.toggle("is-scrolled", window.scrollY > 6);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-  }
 })();
