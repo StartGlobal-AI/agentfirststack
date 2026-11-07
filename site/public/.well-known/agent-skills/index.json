@@ -6,7 +6,7 @@
       "type": "skill-md",
       "description": "Set up a website's whole GTM stack with AgentFirstStack (free, open source, no signup form), covering analytics with revenue and MRR, page speed (Core Web Vitals from real visitors), AI search (AI crawlers and visitors from AI assistants), a tag manager with server-side conversion tracking to GA4, Google Ads, Meta, TikTok and LinkedIn, an email inbox and session replay, served from the site's own domain, then test every part end to end. Use when a project needs analytics, conversion tracking for ads, an inbox for verification codes, session recordings, Core Web Vitals or AI search visibility, or when asked to set up AgentFirstStack.",
       "url": "https://agentfirststack.com/.well-known/agent-skills/agentfirststack-setup/SKILL.md",
-      "digest": "sha256:3777f98add7b6faf30d86f51d2cbb46a16fb2f97d2c13ed5da1c1384c8bf56b1"
+      "digest": "sha256:d845d379a7d0816e2fc669331dc438063bbfe3fef2d850529b45736db1a8640c"
     }
   ]
 }

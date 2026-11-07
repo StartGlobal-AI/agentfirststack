@@ -68,7 +68,9 @@ It reaches the people who claim the project, from the moment the owner claims it
 2. A goal for every conversion and main action (`POST /v1/sites/:id/goals`).
 3. Conversions only the backend knows as server events (`POST /v1/sites/:id/events`), with
    `afsa.visitorId()` passed through the request so they join the visit. Payments: connect the
-   provider (Stripe, Paddle, Polar or LemonSqueezy), so revenue and MRR are reported by source.
+   provider (Stripe, Paddle, Polar or LemonSqueezy), so revenue and MRR are reported by source. This
+   only reads payments: for Stripe, the owner makes a restricted key that can read checkout sessions,
+   invoices, charges and subscriptions and add one webhook. Nothing is ever charged or moved.
 4. AI crawlers and search bots: if the site has a server or edge code, report bot requests from
    there (`POST /v1/sites/:id/crawls`, only for user agents matching `GET /v1/crawlers` ->
    `prefilter`, without waiting for the answer). On static hosting, skip it and say so.
