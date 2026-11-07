@@ -60,6 +60,13 @@ All notable changes to this project. The format follows
 
 ### Added
 
+- **A new home page and the brand blues on every marketing page.** The home page leads with "Your Whole GTM Stack, Set Up by Your Agent", a setup card that ticks off each part as an agent sets it up, eight product cards naming the tools each one replaces (their favicons in grey, from `site/public/logos`), our own analytics live, and a free card linking to the fair-use limits, which have their own page now (`/limits`). The logo, favicon, OG cards and every guide and comparison page moved to the blues.
+- **Product pages, one per home card** (`/analytics`, `/revenue-analytics`, `/tag-manager`, `/conversion-tracking`, `/session-replay`, `/page-speed`, `/ai-search`, `/email-inboxes`): a setup prompt, what the agent does step by step, what the setup check verifies, the tools each replaces and honest limits, three with our own dashboard's real numbers (`site/public/img`). And **14 comparison pages**: Google Analytics, Plausible, DataFast, Fathom, cookie consent banners and Consent Mode v2, Cookiebot, Meta's Conversions API Gateway, server-side GTM, Microsoft Clarity, Fullstory, AI visibility trackers, Vercel Speed Insights, PageSpeed Insights and Mailinator, every fact about another product dated and linked. All in `/guides`, the sitemap, `index.md` and `llms.txt`.
+- **The setup skill for `npx skills add StartGlobal-AI/agentfirststack`** (listed on skills.sh): `skills/agentfirststack-setup/SKILL.md`, the same file as `/.well-known/agent-skills/agentfirststack-setup/SKILL.md`; a test keeps the two identical and the discovery index's description and digest in step, and fails on frontmatter YAML would misread.
+- **Dashboard: Traffic, AI search and Page speed views** in a project's Analytics (`?view=ai|speed`). AI search reads in order (read by AI bots, visitors from AI, converted, what to change) with an Ask your agent card beside the sections it acts on.
+- **Setup: the tag container's domain is verified too** (`tags.domain_verified`, `POST /v1/containers/:id/verify` in the setup test), like analytics and replay.
+- **Analytics: `debug: true` on the payments API** marks a test payment (the same as `livemode: false`).
+
 - **Own domains for shared inboxes and share pages** (so other people's content doesn't share the main domain's reputation or origin; runbook in docs/operations.md).
   - **Mail: a second shared domain** (`SHARED_INBOX_DOMAIN`, profile `shared_inbox_domain`; hosted: agentfirstinbox.com). New inboxes (signup's too) go there; inboxes on `MAIL_DOMAIN` keep receiving, sending under `reply_only`, forwarding, waiting and expiring as before. An explicit old domain only returns or recreates an address the account holds or held there (else `400 legacy_shared_domain`). Both domains are shared for every rule (reserved names, `reply_only`, retention, no catch-all, not addable as custom domains), and a username is one name across them: retired or held on one, nobody else gets it on the other. `SHARED_SENDING_DOMAINS` lists the shared domains onboarded to Email Sending (default `MAIL_DOMAIN`); mail to outside addresses from any other is refused with `503 domain_not_onboarded` before it is sent or counted (own inboxes still get it; forwards wait, logged `forward.cannot_send`). `GET /v1/inboxes`, `GET /v1/domains` and `GET /` add `shared_domains`; `pnpm afs email` sets up both domains; the setup test picks an inbox on any shared domain.
   - **Share pages on a user-content host** (`USER_CONTENT_BASE_URL` in analytics and replay, profile `user_content_domain`: `pnpm afs config` adds the Worker routes `<domain>/a/*` and `<domain>/r/*`; hosted: afsusercontent.com). New links are `<host>/a/<token>` and `<host>/r/<token>`; that host serves those pages and nothing else; the analytics unlock cookie is set there (host-only, `Path=/a/<token>`). A valid old `/share/<token>` or `/play/<token>` URL answers 301 to the new one; their `/data` (and replay `/chunks`) keep answering. Same CSP, noindex, Report abuse and pause checks. `pnpm afs check` tests both paths. Without the var nothing changes.
@@ -250,6 +257,12 @@ All notable changes to this project. The format follows
 
 ### Fixed
 
+- **Analytics: breakdowns and filters by `content_group` or `channel_group` answered "Internal error" past about a dozen patterns.** Each pattern was a bound parameter and a breakdown repeats the expression up to five times, past the Durable Object's 100-parameter limit (the settings allow 50 content groups). Past 12 parameters the groups now go in as one bound JSON parameter read with `json_each`, first match still winning.
+- **Analytics: a robots.txt that failed to load once was "couldn't be read" for an hour** in the AI search report (cached like a good read). Failed reads are kept 5 minutes.
+- **Dashboard charts:** revenue bars on the project cards stood 3px below the visitors line's baseline; count charts used a 0.5 step under 2 (labelled "0, 1, 1"); both fixed.
+- **Pages:** the Stape, Umami and Hotjar comparisons said there were no first-party domains; the replay guide gave share links 7 days (a day by default, up to 30) and old script sizes; attachment text was listed as on (only with Workers AI); the limits page counted the daily send limit for shared inboxes only (it covers every inbox in the project).
+- **Home page on phones:** stacked buttons of different widths, small tap targets, the hero pills off-centre.
+
 - **The MCP page's servers table said 114 tools** (40 analytics, 26 tags, 29 mail, 19 replay); `scripts/tool-counts.mjs` now keeps that table and the manual's list of gateway tools in step too.
 - **Analytics: verify reported a broken script on the service's own host.** A Worker fetching its own zone gets a 522, which showed as a `script_loads` failure; that script is now checked in-process, and suggested fixes never repeat the `src` the page already uses.
 - **Tags: scan found tags that weren't there.** Tags are detected only from script `src`, inline code, globals and `noscript` pixels, never from links, text or examples in `pre`, `code`, `template` or comments; signup is reported only when it really means sign up; `unused_variable` counts templates in `conversions[].params`.
@@ -258,6 +271,11 @@ All notable changes to this project. The format follows
 - **Analytics: share pages could be framed** by any site (clickjacking). They now send `Content-Security-Policy: frame-ancestors 'none'` (with a nonce'd policy for their own inline code) and `X-Frame-Options: DENY`.
 
 ### Changed
+
+- **Analytics: test payments are test data.** Payments with `livemode: false` (the payments API, Stripe test mode, Polar and Paddle sandboxes) or `debug: true` are stored and listed by `GET /payments`, but left out of every report, revenue total and dashboard unless `debug=include`, like test traffic and test subscriptions. Before, a setup's test purchase showed as revenue, and an `rk_test_` key's payments counted.
+- **The dashboard and emails in the brand blues:** the four-square blue mark, brand-blue primary buttons, each service a shade of blue (lighter ones on the deep panels), the deep-blue gradient on dark panels. Warnings keep amber, errors red, done green. Revenue is plum violet (`#A21CAF`, renewals `#DFA6E8`) instead of orange: pure violets fail colour-blind separation from the visitors blue, plum passes the dataviz checks.
+- **AI search reads the site's robots.txt** (RFC 9309) before saying a bot is blocked, and says when it couldn't read it.
+- **`pnpm afs check` deletes its own project at the end**, so runs don't pile up as accounts.
 
 - **License: AGPL-3.0 for the services, MIT for the browser scripts** (was MIT for everything). The scripts websites load (the analytics tracker, the tags runtime, the replay loader, recorder and survey widget, and every file they're built from) stay MIT, so embedding them puts no obligations on a site. [LICENSING.md](LICENSING.md) says what applies where; each manual links to the source (AGPL section 13). The MCP registry listings (0.1.1) say "open source".
 - Tags: existing containers now honour Global Privacy Control and Do Not Track by default (`settings.respect_dnt: false` turns it off).
@@ -273,6 +291,8 @@ All notable changes to this project. The format follows
 - In each service's `wrangler.jsonc`, `AUTH_DB` has its own placeholder database id, so local dev and tests keep the app DB and the identity DB apart, as deployments do. Run `pnpm db:migrate:local` again after pulling.
 
 ### Migrations
+
+- Analytics Durable Objects: schema version 15 (payments stored with `livemode = 0` get `events.debug = 1`, out of reports like new test payments).
 
 - Analytics Durable Objects: schema version 9 (`events.no_visit`). Tags container Durable Objects: schema version 4 (removes the raw IP, user agent, city, postcode and detailed device fields from conversions stored by older code). Both apply on each object's next start.
 - Analytics D1 (wave 2): `0015_stripe_connect.sql` (`integrations.api_key_sealed`, `endpoint_id`, `backfill`), `0016_currency_fx.sql` (`sites.currency`; tables `fx_rates`, `fx_meta`), `0017_share_link_options.sql` (`share_links.password_hash`, `expires_at`, `segment_id`, `label`), `0018_session_timeout_channel_groups.sql` (`sites.session_timeout_minutes`, `channel_groups`), `0019_security_review.sql` (tables `crawl_usage_daily`, `crawl_usage_global`, `share_attempts`; `integrations.sig_fail_window`, `sig_fail_count`; `sites.browser_user_props`). Additive only.

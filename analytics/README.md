@@ -418,8 +418,8 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   (`checkout.session.completed`, `checkout.session.async_payment_succeeded`, `invoice.paid`,
   `charge.refunded`; optional `payment_intent.succeeded`). `POST` stores the signing secret sealed
   with `ENCRYPTION_KEY` (never returned). Each delivery: `Stripe-Signature` verified (any v1, 5 min
-  tolerance), event id deduped for 30 days, body capped at 1 MB, test-mode events acknowledged but
-  counted only with `record_test_events`. Every unauthenticated failure (unknown site, no Stripe
+  tolerance), event id deduped for 30 days, body capped at 1 MB, test-mode events acknowledged, and
+  stored as test data (in reports with `debug=include` only) with `record_test_events`. Every unauthenticated failure (unknown site, no Stripe
   connected, missing or wrong signature, stale timestamp) gets one identical `400 webhook_rejected`
   and writes nothing, so nobody can tell which sites use Stripe or plant a misleading `last_error`;
   deliveries are rate limited per site and, like every payment, count against the daily event
@@ -438,7 +438,10 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   (provider, id), so re-runs only fill gaps. A refused page (daily budget) pauses until 00:00 UTC
   and resumes at the first refused object.
 - **Any provider:** `POST /sites/:id/payments` `{payments: [{id, provider?, amount, currency, type?,
-  timestamp?, visitor_id?, session_id?, user_id?, customer_id?, refunded_payment_id?, livemode?}]}`.
+  timestamp?, visitor_id?, session_id?, user_id?, customer_id?, refunded_payment_id?, livemode?, debug?}]}`.
+  Test payments (`livemode: false` or `debug: true`, and every provider's test mode or sandbox) are
+  stored with `events.debug = 1`: listed by `GET /payments`, left out of reports unless
+  `debug=include`, like test traffic (`src/do/payments.ts`).
 
 - **Polar, Paddle, LemonSqueezy** (`src/lib/billing.ts`, `src/service/billing-webhooks.ts`): one
   signed webhook per site and provider into the same payments and subscriptions. Signatures as
@@ -523,7 +526,10 @@ ledger keyed by `provider:external_id` for idempotency, refunds, renewals and de
   session gap in `findSession`; `channel_groups` (D1 column, migration 0018) compile to a CASE over
   source / utm_medium / utm_campaign / channel with lower-case GLOBs at query time
   (`channelGroupFrag` in `lib/query.ts`), so `channel_group` is a dimension and filter over stored
-  data. Alert firings write an `alert` annotation (once per alert and minute).
+  data. Content groups work the same way (`contentGroupFrag`). Past 12 bound parameters either one
+  goes in as a single bound JSON parameter read with `json_each` (first match wins), because a
+  breakdown repeats the expression up to five times and a Durable Object's SQLite takes at most 100
+  parameters a statement. Alert firings write an `alert` annotation (once per alert and minute).
 - **Ad spend** (`src/do/costs.ts`, `src/service/costs.ts`, DO table `costs`): rows keyed by
   (day, source, campaign), lowercased, in the site timezone; capped by `MAX_COST_ROWS_PER_SITE`
   (default 50,000, UNCLAIMED_ variant). Reports ask for the base metrics too (revenue,

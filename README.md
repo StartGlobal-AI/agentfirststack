@@ -5,14 +5,16 @@
 <h1 align="center">AgentFirstStack</h1>
 
 <p align="center">
-  Analytics, tag management, email inboxes and session replay that an AI agent sets up by itself.<br>
-  No signup form, no verification email, no dashboard to click through. Free to use, and open source.
+  Your whole GTM stack, set up by your agent: analytics, tags with server-side conversion tracking,<br>
+  email inboxes, session replay, page speed and AI search. No signup form, no verification email,<br>
+  no dashboard to click through. Free to use, and open source.
 </p>
 
 <p align="center">
   <a href="https://agentfirststack.com">agentfirststack.com</a> ·
   <a href="https://agentfirststack.com/live">Live demo</a> ·
   <a href="https://agentfirststack.com/features">Features</a> ·
+  <a href="https://agentfirststack.com/guides">Guides and comparisons</a> ·
   <a href="https://agentfirststack.com/llms.txt">Manual</a> ·
   <a href="docs/self-hosting.md">Self-host</a> ·
   <a href="docs/architecture.md">Architecture</a>

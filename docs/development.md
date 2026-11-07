@@ -116,6 +116,20 @@ budget enforced by `tags/test/config-pack.test.ts`; keep new code in `ext.ts` wh
 need it, and raise the budget only with a reason. The runtime tests run the real bundle in a
 small fake browser (`tags/test/fixtures/browser.ts`).
 
+### A marketing page (guide, comparison or product page)
+
+1. Copy `site/templates/page.html` to `site/public/<path>.html` and follow the rules in its header
+   comment: title and description lengths, JSON-LD, "Products" or "Guides" in the breadcrumbs,
+   dated and linked facts about other products, our own numbers only in screenshots (`site/public/img`).
+2. Add its card to `site/og-cards.json` and render it: `node scripts/og.mjs <slug> "<title>" "<kicker>" <service>`.
+3. List it in `/guides` (its card and the ItemList), `site/public/index.md` and `site/public/llms.txt`,
+   then `node scripts/sitemap.mjs`. A new top-level asset folder also needs a `"!/<folder>/*"` line in
+   `site/wrangler.jsonc` (`run_worker_first`); `site/test/static-pages.test.ts` checks it.
+4. After the deploy, `node scripts/indexnow.mjs`.
+
+The home page is `site/public/index.html` with `home.css`; the guide and comparison pages use
+`styles.css` and `content.css`. Brand colours are in CLAUDE.md, "Conventions".
+
 ## Shipping a feature that projects have to act on
 
 Server behaviour and the hosted browser scripts change for everyone on deploy: nothing to do. When
