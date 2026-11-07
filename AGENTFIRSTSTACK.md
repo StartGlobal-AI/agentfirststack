@@ -81,6 +81,11 @@ analytics goal of the same event name.
 | `signup` (server) | `POST /v1/signup` on agentfirststack.com answered 201 (`site/src/index.ts`) | `user_id` = the new project's id | Created a project (server) |
 | `project_claimed` (server) | a claim link was used (`POST /claim/:token`, `site/src/claims.ts`); joined to the claimer's cookieless visit by IP + user agent; skipped for GPC / DNT browsers | `user_id` = project id, `role` | Claimed a project (server) |
 
+Content groups (set 2026-11-07, evaluated at query time so they cover past data too): Home (`/`),
+Product pages (the 8 product paths), Comparisons (`/*-alternative`, `/*-mcp`, `/mcp`, the other
+comparison pages), Guides (`/guides*`), Features and limits. Read them with
+`breakdown=content_group`; add a new product or comparison page to them when it ships.
+
 Goals from earlier runs, kept: Read a guide (pageview `/guides/*`), Read an MCP comparison
 (pageview `/*-mcp`), Scrolled the home page (scroll 75% of `/`).
 
