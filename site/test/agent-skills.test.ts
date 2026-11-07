@@ -7,6 +7,18 @@ import index from "../public/.well-known/agent-skills/index.json";
 // StartGlobal-AI/agentfirststack` and skills.sh find it) and on the site under /.well-known (agent
 // skills discovery, which pins it by digest). Both have to say the same thing.
 describe("the agentfirststack-setup skill", () => {
+  it("has frontmatter a YAML parser reads as plain strings", () => {
+    // An unquoted ": " or " #" in a value is a nested mapping or a comment to YAML, and the skills
+    // CLI (and agents that load skills) then skip the whole skill.
+    const front = /^---\n([\s\S]*?)\n---\n/.exec(siteSkill)?.[1] ?? "";
+    const fields = Object.fromEntries(front.split("\n").map((l) => [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 2)]));
+    expect(Object.keys(fields)).toEqual(["name", "description"]);
+    expect(fields.name).toBe("agentfirststack-setup");
+    for (const value of Object.values(fields)) {
+      expect(value).not.toMatch(/: | #|^["'&*!|>%@`[{]/);
+    }
+  });
+
   it("is the same file in skills/ and on the site", () => {
     expect(repoSkill).toBe(siteSkill);
   });

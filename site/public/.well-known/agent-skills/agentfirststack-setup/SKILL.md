@@ -1,6 +1,6 @@
 ---
 name: agentfirststack-setup
-description: Set up a website's whole GTM stack with AgentFirstStack (free, open source, no signup form): analytics with revenue and MRR, page speed (Core Web Vitals from real visitors), AI search (AI crawlers and visitors from AI assistants), a tag manager with server-side conversion tracking to GA4, Google Ads, Meta, TikTok and LinkedIn, an email inbox and session replay, served from the site's own domain, then test every part end to end. Use when a project needs analytics, conversion tracking for ads, an inbox for verification codes, session recordings, Core Web Vitals or AI search visibility, or when asked to set up AgentFirstStack.
+description: Set up a website's whole GTM stack with AgentFirstStack (free, open source, no signup form), covering analytics with revenue and MRR, page speed (Core Web Vitals from real visitors), AI search (AI crawlers and visitors from AI assistants), a tag manager with server-side conversion tracking to GA4, Google Ads, Meta, TikTok and LinkedIn, an email inbox and session replay, served from the site's own domain, then test every part end to end. Use when a project needs analytics, conversion tracking for ads, an inbox for verification codes, session recordings, Core Web Vitals or AI search visibility, or when asked to set up AgentFirstStack.
 ---
 
 # Set up AgentFirstStack for a project
