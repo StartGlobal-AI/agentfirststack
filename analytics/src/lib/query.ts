@@ -137,6 +137,15 @@ export function conversionCond(ctx: QueryCtx): Frag {
 // ---------------------------------------------------------------- filters
 
 /**
+ * Up to this many bound parameters, a group CASE is written out (fastest for a few groups). Past
+ * it, the groups go in as one bound JSON parameter read with json_each: a Durable Object's SQLite
+ * takes at most 100 parameters a statement, and a breakdown repeats the group expression in up
+ * to five places (top rows, sessions, visitor types, vitals, the comparison period), so 50
+ * content groups written out (two parameters each) would fail with "too many SQL variables".
+ */
+const INLINE_GROUP_PARAMS = 12;
+
+/**
  * content_group: the site's content_groups (path patterns, first match wins) as a CASE over the
  * page path, every pattern and name a bound parameter. Evaluated at query time, so a new group
  * applies to stored data too.
@@ -144,10 +153,15 @@ export function conversionCond(ctx: QueryCtx): Frag {
 function contentGroupFrag(ctx: Pick<QueryCtx, "contentGroups"> | undefined): Frag {
   const groups = ctx?.contentGroups ?? [];
   if (!groups.length) return raw("NULL");
-  return sql`(CASE ${join(
-    groups.map((g) => sql`WHEN e.pathname GLOB ${toGlob(g.match)} THEN ${g.name}`),
-    " ",
-  )} END)`;
+  if (groups.length * 2 <= INLINE_GROUP_PARAMS) {
+    return sql`(CASE ${join(
+      groups.map((g) => sql`WHEN e.pathname GLOB ${toGlob(g.match)} THEN ${g.name}`),
+      " ",
+    )} END)`;
+  }
+  // [[glob, name], ...] in order; the first array entry that matches wins.
+  const list = JSON.stringify(groups.map((g) => [toGlob(g.match), g.name]));
+  return sql`(SELECT json_extract(cg.value, '$[1]') FROM json_each(${list}) cg WHERE e.pathname GLOB json_extract(cg.value, '$[0]') ORDER BY cg.key LIMIT 1)`;
 }
 
 /**
@@ -158,21 +172,41 @@ function channelGroupFrag(ctx: Pick<QueryCtx, "channelGroups"> | undefined): Fra
   const groups = ctx?.channelGroups ?? [];
   if (!groups.length) return raw("e.channel");
   const COL = { source: "e.source", medium: "e.utm_medium", campaign: "e.utm_campaign", channel: "e.channel" } as const;
-  const rules = groups
-    .map((g) => {
-      const conds = (Object.keys(COL) as (keyof typeof COL)[])
-        .filter((k) => g[k]?.length)
-        .map(
-          (k) =>
-            sql`(${join(
-              g[k]!.map((p) => sql`lower(${raw(COL[k])}) GLOB ${wildcardGlob(p.toLowerCase())}`),
-              " OR ",
-            )})`,
-        );
-      return conds.length ? sql`WHEN ${join(conds, " AND ")} THEN ${g.name}` : null;
-    })
-    .filter((x): x is Frag => !!x);
-  return rules.length ? sql`(CASE ${join(rules, " ")} ELSE e.channel END)` : raw("e.channel");
+  const FIELDS = Object.keys(COL) as (keyof typeof COL)[];
+  const used = groups.filter((g) => FIELDS.some((k) => g[k]?.length));
+  if (!used.length) return raw("e.channel");
+  const patterns = used.reduce((n, g) => n + FIELDS.reduce((m, k) => m + (g[k]?.length ?? 0), 0), 0);
+  if (patterns + used.length <= INLINE_GROUP_PARAMS) {
+    const rules = used.map((g) => {
+      const conds = FIELDS.filter((k) => g[k]?.length).map(
+        (k) =>
+          sql`(${join(
+            g[k]!.map((p) => sql`lower(${raw(COL[k])}) GLOB ${wildcardGlob(p.toLowerCase())}`),
+            " OR ",
+          )})`,
+      );
+      return sql`WHEN ${join(conds, " AND ")} THEN ${g.name}`;
+    });
+    return sql`(CASE ${join(rules, " ")} ELSE e.channel END)`;
+  }
+  // One bound JSON parameter: [{n, source?, medium?, campaign?, channel?}] with each field's
+  // patterns already lowercased GLOBs. A rule matches when every field it gives matches one of its
+  // patterns; the first rule in order wins; unmatched traffic keeps its built-in channel.
+  const list = JSON.stringify(
+    used.map((g) => {
+      const r: Record<string, unknown> = { n: g.name };
+      for (const k of FIELDS) if (g[k]?.length) r[k] = g[k]!.map((p) => wildcardGlob(p.toLowerCase()));
+      return r;
+    }),
+  );
+  const field = (k: keyof typeof COL) =>
+    raw(
+      `(json_type(cr.value, '$.${k}') IS NULL OR EXISTS (SELECT 1 FROM json_each(cr.value, '$.${k}') p WHERE lower(${COL[k]}) GLOB p.value))`,
+    );
+  return sql`COALESCE((SELECT json_extract(cr.value, '$.n') FROM json_each(${list}) cr WHERE ${join(
+    FIELDS.map(field),
+    " AND ",
+  )} ORDER BY cr.key LIMIT 1), e.channel)`;
 }
 
 export function columnFor(key: string, ctx?: Pick<QueryCtx, "contentGroups" | "channelGroups">): Frag {
