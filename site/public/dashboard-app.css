@@ -2810,27 +2810,14 @@ a.afa-site-card:hover {
 
 /* AI search: a head with its subtitle under it, KPIs across the full width, and (before any AI
    visitors) the pages AI bots read next to who reads them and what to change. */
+.afa-panel-tabs-row {
+  padding: 0 12px 6px;
+}
 .afa-panel-head.is-stacked {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
   padding-bottom: 10px;
-}
-.afa-kpis-even {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  overflow: visible;
-}
-.afa-kpis-even .afa-kpi {
-  min-width: 0;
-}
-.afa-ai-lede {
-  max-width: 82ch;
-  margin: 16px 0 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  font-size: 14px;
-  color: var(--ink-2);
 }
 .afa-ai-two {
   display: grid;
@@ -2946,5 +2933,128 @@ a.afa-site-card:hover {
 @media (max-width: 900px) {
   .afa-ai-two {
     grid-template-columns: 1fr;
+  }
+}
+
+/* AI search, in the order the view reads: read by bots, visitors from AI, converted, what to change */
+.afa-ai-funnel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 2px 0 0;
+}
+.afa-ai-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.afa-ai-stage + .afa-ai-stage::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-top: 1.5px solid var(--ink-3);
+  border-right: 1.5px solid var(--ink-3);
+  transform: translate(-1px, -50%) rotate(45deg);
+}
+.afa-ai-stage-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.afa-ai-stage-n {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ground);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 650;
+}
+.afa-ai-sub {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.afa-ai-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.afa-ai-section-h {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.afa-ai-section .afa-ai-two,
+.afa-ai-section .afa-split {
+  margin-top: 12px;
+}
+.afa-ai-h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.afa-ai-files {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-ai-files li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.afa-ai-file-state {
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.afa-ai-file-state.is-good {
+  color: #0a7d0a;
+}
+.afa-ai-file-state.is-bad {
+  color: #b42318;
+}
+.afa-ai-file-state.is-none {
+  color: var(--ink-3);
+}
+.afa-ai-none {
+  max-width: 80ch;
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.afa-ai-section .afa-ai-step-list {
+  margin-top: 10px;
+  max-width: 90ch;
+  font-size: 13.5px;
+}
+.afa-ai-section .afa-askcard {
+  margin-top: 14px;
+}
+@media (max-width: 640px) {
+  .afa-ai-stage + .afa-ai-stage::before {
+    display: none;
   }
 }
