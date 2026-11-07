@@ -4,7 +4,7 @@ import { alertNumbers } from "../../src/do/alerts";
 import { recordCrawls } from "../../src/do/crawlers";
 import * as engine from "../../src/do/engine";
 import { webVitals } from "../../src/do/vitals";
-import { aiSearchNextSteps, isPagePath } from "../../src/lib/ai-search";
+import { aiSearchNextSteps, isPagePath, robotsAllows } from "../../src/lib/ai-search";
 import { type AlertRule, alertText, decide, vitalsThreshold } from "../../src/lib/alerts";
 import { assess, formatVital, rate } from "../../src/lib/vitals";
 import { DAY, HOUR, NOW, ev, settings } from "./fixtures";
@@ -272,5 +272,57 @@ describe("AI search", () => {
         referredNotCrawled: 1,
       }).join("\n"),
     ).toMatch(/No AI search or answer bot[\s\S]*20% of AI crawler page requests[\s\S]*Create goals[\s\S]*search index/);
+  });
+});
+
+describe("robots.txt: blocked, or just not crawling yet", () => {
+  // Shaped like agentfirststack.com's own robots.txt: everyone welcome, private paths closed.
+  const ours = [
+    "User-agent: *",
+    "Content-Signal: search=yes, ai-input=yes, ai-train=yes",
+    "Allow: /",
+    "Disallow: /v1/",
+    "Disallow: /dashboard",
+    "",
+    "# AI search and assistant crawlers",
+    "User-agent: OAI-SearchBot",
+    "User-agent: ChatGPT-User",
+    "Allow: /",
+    "Disallow: /v1/",
+  ].join("\n");
+  it("reads groups, the longest rule and wildcards the way RFC 9309 does", () => {
+    expect(robotsAllows(ours, "OAI-SearchBot")).toBe(true);
+    expect(robotsAllows(ours, "oai-searchbot", "/v1/sites")).toBe(false);
+    expect(robotsAllows(ours, "Bytespider")).toBe(true); // no group of its own: "*"
+    expect(robotsAllows(ours, "Bytespider", "/dashboard/x")).toBe(false);
+    expect(robotsAllows("", "GPTBot")).toBe(true); // no robots.txt: everything allowed
+    const strict = "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nDisallow: /private\nAllow: /private/ok$";
+    expect(robotsAllows(strict, "GPTBot")).toBe(false);
+    expect(robotsAllows(strict, "ClaudeBot")).toBe(true);
+    expect(robotsAllows(strict, "ClaudeBot", "/private/x")).toBe(false);
+    expect(robotsAllows(strict, "ClaudeBot", "/private/ok")).toBe(true);
+    expect(robotsAllows("User-agent: *\nDisallow: /*.pdf$", "x", "/a.pdf")).toBe(false);
+    expect(robotsAllows("User-agent: *\nDisallow: /*.pdf$", "x", "/a.pdf?x=1")).toBe(true);
+  });
+  const signals = (robotsTxt?: string | null) => ({
+    siteId: "s",
+    reportsCrawls: true,
+    aiHits: 30,
+    citationBotsSeen: ["PerplexityBot"],
+    robotsOnly: ["OAI-SearchBot"],
+    robotsTxt,
+    errorShare: 0,
+    llmsTxt: { ok: 1, error: 0 },
+    aiVisitors: 5,
+    hasGoals: true,
+    crawledNotReferred: 0,
+    referredNotCrawled: 0,
+  });
+  it("says robots.txt blocks a bot only when it does, and nothing when the bot just hasn't crawled yet", () => {
+    expect(aiSearchNextSteps(signals(ours)).join("\n")).not.toMatch(/OAI-SearchBot/);
+    const blocked = aiSearchNextSteps(signals("User-agent: OAI-SearchBot\nDisallow: /")).join("\n");
+    expect(blocked).toContain("Your robots.txt disallows OAI-SearchBot");
+    expect(aiSearchNextSteps(signals(null)).join("\n")).toContain("couldn't be read to check why");
+    expect(aiSearchNextSteps(signals(null)).join("\n")).not.toContain("disallows");
   });
 });

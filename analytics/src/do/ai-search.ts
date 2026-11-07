@@ -30,6 +30,8 @@ export interface AiSearchRequest extends PeriodParams {
   compare?: CompareSpec;
   /** rows per list (default 10) */
   limit?: number;
+  /** the site's robots.txt (null: couldn't be read), so next_steps can tell blocked from not crawling yet */
+  robots_txt?: string | null;
 }
 
 /** What visitors did, per channel and for AI vs the rest. */
@@ -398,7 +400,11 @@ export function aiSearch(db: Db, settings: SiteSettings, q: AiSearchRequest, now
       reportsCrawls,
       aiHits: ct.hits,
       citationBotsSeen: citationBots,
-      robotsOnly: bots.filter((b) => b.robots_txt_hits > 0 && b.page_hits === 0).map((b) => b.bot),
+      // Only bots that can cite the site: whether training bots may read it is the site's choice.
+      robotsOnly: bots
+        .filter((b) => (b.category === "ai_search" || b.category === "ai_assistant") && b.robots_txt_hits > 0 && b.page_hits === 0)
+        .map((b) => b.bot),
+      robotsTxt: q.robots_txt,
       // robots.txt / llms.txt / sitemap misses have their own advice
       errorShare: ct.page_hits ? ct.page_errors / ct.page_hits : 0,
       llmsTxt: { ok: llms.ok, error: llms.errors },

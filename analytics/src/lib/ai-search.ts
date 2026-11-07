@@ -56,8 +56,13 @@ export interface AiSearchSignals {
   aiHits: number;
   /** AI search / answer bots with page hits in the period */
   citationBotsSeen: string[];
-  /** AI bots that fetched robots.txt and nothing else in the period */
+  /** AI search and answer bots that fetched robots.txt and nothing else in the period */
   robotsOnly: string[];
+  /**
+   * The site's robots.txt, to tell "robots.txt blocks them" from "they haven't crawled yet":
+   * a string when it was read, null when it couldn't be, undefined when nobody looked.
+   */
+  robotsTxt?: string | null;
   /** share (0-1) of AI crawler page requests (not robots.txt, llms.txt, sitemaps) answered 4xx/5xx */
   errorShare: number;
   llmsTxt: { ok: number; error: number };
@@ -69,6 +74,50 @@ export interface AiSearchSignals {
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
+/**
+ * Does robots.txt let `agent` fetch `path`? RFC 9309: the groups naming the agent (case-insensitive
+ * product token) or else the "*" groups; the longest matching rule wins and Allow wins a tie; "*"
+ * and a final "$" in a rule are wildcards; no matching rule means allowed.
+ */
+export function robotsAllows(robotsTxt: string, agent: string, path = "/"): boolean {
+  const want = agent.toLowerCase();
+  const groups: { agents: string[]; rules: { allow: boolean; path: string }[] }[] = [];
+  let cur: (typeof groups)[number] | null = null;
+  let inAgents = false;
+  for (const raw of robotsTxt.slice(0, 512 * 1024).split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    const m = /^([A-Za-z-]+)\s*:\s*(.*)$/.exec(line);
+    if (!m) continue;
+    const key = m[1]!.toLowerCase();
+    const value = m[2]!.trim();
+    if (key === "user-agent") {
+      if (!cur || !inAgents) {
+        cur = { agents: [], rules: [] };
+        groups.push(cur);
+      }
+      cur.agents.push(value.toLowerCase());
+      inAgents = true;
+    } else if (key === "allow" || key === "disallow") {
+      inAgents = false;
+      if (cur && value) cur.rules.push({ allow: key === "allow", path: value });
+    } else inAgents = false;
+  }
+  const named = groups.filter((g) => g.agents.includes(want));
+  const rules = (named.length ? named : groups.filter((g) => g.agents.includes("*"))).flatMap((g) => g.rules);
+  const matches = (rule: string) => {
+    const anchored = rule.endsWith("$");
+    const body = (anchored ? rule.slice(0, -1) : rule).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    return new RegExp(`^${body}${anchored ? "$" : ""}`).test(path);
+  };
+  let best: { allow: boolean; len: number } | null = null;
+  for (const r of rules) {
+    if (!matches(r.path)) continue;
+    const len = r.path.length;
+    if (!best || len > best.len || (len === best.len && r.allow)) best = { allow: r.allow, len };
+  }
+  return best ? best.allow : true;
+}
+
 export function aiSearchNextSteps(s: AiSearchSignals): string[] {
   const base = `/v1/sites/${s.siteId}`;
   const steps: string[] = [];
@@ -76,9 +125,18 @@ export function aiSearchNextSteps(s: AiSearchSignals): string[] {
     steps.push(
       `Report bot requests from your server so this report sees AI crawlers: POST ${base}/crawls (MCP record_crawls) for each request whose user agent matches the prefilter from GET /v1/crawlers (the "AI crawlers" section of llms.txt has middleware for Cloudflare Workers, Next.js and Express).`,
     );
-  if (s.robotsOnly.length)
+  // A search or answer bot that only read robots.txt: blocked there, or (when robots.txt allows it)
+  // simply not crawling yet, which needs nothing from you.
+  const robotsTxt = s.robotsTxt;
+  const blocked = typeof robotsTxt === "string" ? s.robotsOnly.filter((b) => !robotsAllows(robotsTxt, b)) : [];
+  const unchecked = typeof robotsTxt === "string" ? [] : s.robotsOnly;
+  if (blocked.length)
     steps.push(
-      `${s.robotsOnly.join(", ")} read robots.txt but fetched no page in this period: robots.txt probably disallows ${s.robotsOnly.length === 1 ? "it" : "them"}. To be cited in AI answers, allow the search and answer bots (${CITATION_BOTS.join(", ")}); blocking training bots (GPTBot, ClaudeBot, CCBot) is a separate choice.`,
+      `Your robots.txt disallows ${blocked.join(", ")}, so ${blocked.length === 1 ? "it reads" : "they read"} robots.txt and stop there. To be cited in AI answers, allow the search and answer bots (${CITATION_BOTS.join(", ")}); blocking training bots (GPTBot, ClaudeBot, CCBot) is a separate choice.`,
+    );
+  if (unchecked.length)
+    steps.push(
+      `${unchecked.join(", ")} read robots.txt but fetched no page in this period, and your robots.txt couldn't be read to check why. Make sure it allows the search and answer bots (${CITATION_BOTS.join(", ")}).`,
     );
   if (s.reportsCrawls && !s.citationBotsSeen.length && !s.robotsOnly.length)
     steps.push(
