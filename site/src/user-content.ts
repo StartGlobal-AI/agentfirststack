@@ -7,7 +7,9 @@ import type { SiteEnv } from "./env";
  * afsusercontent.com). Analytics owns /a/* there and replay /r/* (Worker routes; the more specific
  * route wins), and this Worker gets the rest of the host. Runs before everything else, so nothing of
  * the platform (pages, API, sign-in, MCP) is served there: a short page saying what the domain is
- * and where to report a page, a robots.txt, and a plain 404 for every other path.
+ * and where to report a page, a robots.txt, and a plain 404 for every other path. Static files skip
+ * the Worker (assets.run_worker_first), so the dashboard's scripts, styles and fonts load there:
+ * a shared dashboard (analytics' shareAppPage, /a/<token>) is the dashboard itself, read-only.
  */
 export const userContentSite: MiddlewareHandler<SiteEnv> = async (c, next) => {
   if (!onUserContentHost(c.env, c.req.raw)) return next();

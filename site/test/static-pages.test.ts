@@ -93,4 +93,21 @@ describe("which paths skip the Worker", () => {
         p,
       ).toBe(false);
   });
+
+  it("serves the dashboard's files on the user-content host too: a shared dashboard loads them there", () => {
+    // analytics' shareAppPage (afsusercontent.com/a/<token>) loads these from its own origin; the
+    // Worker answers 404 for everything else on that host (src/user-content.ts).
+    for (const f of [
+      "/dashboard.css",
+      "/dashboard-app.css",
+      "/dashboard.js",
+      "/dashboard-app.js",
+      "/favicon.svg",
+      "/fonts/host-grotesk.woff2",
+    ])
+      expect(
+        rules.some((r) => matches(r, f)),
+        f,
+      ).toBe(true);
+  });
 });

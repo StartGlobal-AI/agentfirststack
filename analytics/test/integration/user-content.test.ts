@@ -58,7 +58,7 @@ describe("public dashboards on the user-content host", () => {
     const csp = page.headers.get("content-security-policy")!;
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("connect-src 'self'");
-    expect(page.text).toContain('BASE="/a"');
+    expect(page.text).toContain(`data-share="${new URL(url).pathname}"`);
     expect(page.text).toContain(`https://platform.test/report-abuse?url=${encodeURIComponent(url)}`);
     expect(page.text).toContain(">Report abuse</a>");
     const data = await fetchAt(`${url}/data?period=7d`);

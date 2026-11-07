@@ -21,8 +21,105 @@ export const sharePageCsp = (nonce: string, formAction = false) =>
     "frame-ancestors 'none'",
   ].join("; ");
 
+/**
+ * The shared dashboard's Content-Security-Policy (the user-content host): the dashboard's own
+ * scripts, styles and fonts from this origin (the site Worker serves them on that host), reads from
+ * this origin, no inline code at all, never framed. The same rules as the dashboard's own pages.
+ */
+export const shareAppCsp = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "font-src 'self'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 /** The platform's abuse report form (the site app's /report-abuse) when ABUSE_REPORT_URL is unset. */
 export const DEFAULT_ABUSE_REPORT_URL = "https://agentfirststack.com/report-abuse";
+
+/** The platform's own origin: where the abuse form lives (ABUSE_REPORT_URL), else agentfirststack.com. */
+export function platformOrigin(env: { ABUSE_REPORT_URL?: string }): string {
+  try {
+    const u = new URL(env.ABUSE_REPORT_URL?.trim() || DEFAULT_ABUSE_REPORT_URL);
+    if (u.protocol === "https:" || u.protocol === "http:") return u.origin;
+  } catch {
+    /* the default below */
+  }
+  return new URL(DEFAULT_ABUSE_REPORT_URL).origin;
+}
+
+/** The four-square mark (the brand's blues), as the dashboard's top bar draws it. */
+const MARK =
+  '<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>';
+
+/**
+ * The shared dashboard on the user-content host: the dashboard itself, read-only. A shell like the
+ * dashboard's own pages (src/analytics-dashboard.ts in the site app) that /dashboard-app.js draws in
+ * shared mode (data-share), reading <base>/<token>/data/<report>. No inline script or style: the
+ * page's facts travel in data-* attributes, escaped. The site's free-form name is never shown,
+ * only a domain it proved.
+ */
+export function shareAppPage(o: {
+  token: string;
+  domain: string | null;
+  currency: string | null;
+  timezone: string;
+  segment: string | null;
+  expiresAt: number | null;
+  reportUrl: string;
+  platform: string;
+  base: string;
+}): string {
+  const heading = o.domain ?? "Unverified site";
+  const title = o.domain ? `${o.domain} analytics` : "Shared analytics (unverified site)";
+  const source = o.domain
+    ? `The numbers come from the analytics tracker on ${o.domain} and its own server, as they reported them; they are not audited.`
+    : "This site's domain isn't verified, so its name isn't shown. The numbers come from the site's own tracker, as it reported them; they are not audited.";
+  const site = JSON.stringify({ id: "shared", domain: heading, name: null, currency: o.currency, timezone: o.timezone });
+  const notes = [
+    o.segment ? `Only the ${o.segment} segment's traffic.` : "",
+    o.expiresAt ? `This link stops working on ${new Date(o.expiresAt).toISOString().slice(0, 10)}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>${esc(title)}</title>
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/dashboard.css">
+<link rel="stylesheet" href="/dashboard-app.css">
+<script src="/dashboard.js" defer></script>
+<script src="/dashboard-app.js" defer></script>
+</head>
+<body class="app afa-shared">
+<header class="topbar">
+  <div class="shell topbar-inner">
+    <a class="brand" href="${esc(o.platform)}/" aria-label="AgentFirstStack">${MARK}<span>AgentFirstStack</span></a>
+    <div class="topbar-end"><span class="share-badge" title="A read-only dashboard its owner shared">Shared dashboard</span></div>
+  </div>
+</header>
+<main class="shell app-main" id="main">
+<div class="afa" id="afa" data-view="site" data-share="${esc(`${o.base}/${o.token}`)}" data-share-segment="${esc(o.segment ?? "")}" data-site="${esc(site)}" data-sites="[]"><noscript><p class="notice notice-error">This dashboard needs JavaScript.</p></noscript></div>
+</main>
+<footer class="footer">
+  <div class="shell footer-inner">
+    <p>${esc(source)} Aggregate numbers only: no individual visitors.${notes ? ` ${esc(notes)}` : ""}</p>
+    <p class="footer-links"><a href="${esc(o.platform)}/">Made with AgentFirstStack</a>${reportLink(o.reportUrl)}</p>
+  </div>
+</footer>
+</body>
+</html>`;
+}
 
 /** The "Report abuse" link of a public page: the report form with the page's URL filled in (?url=). */
 export function reportAbuseUrl(env: { ABUSE_REPORT_URL?: string }, pageUrl: string): string {

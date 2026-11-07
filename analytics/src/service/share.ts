@@ -17,7 +17,13 @@ import {
 import { z } from "zod";
 import type { Bindings } from "../env";
 import { DEFAULT_MAX_SHARE_LINKS_PER_SITE, enforce, quotaExceeded, siteCap } from "../lib/limits";
-import { DEFAULT_METRICS } from "../lib/filters";
+import { BREAKDOWNS, DEFAULT_METRICS, filterLeaves } from "../lib/filters";
+import { getAiSearch } from "./ai-search";
+import { getCrawlers } from "./crawlers";
+import { listFunnels } from "./funnels";
+import { listGoals } from "./goals";
+import { getBreakdown, getFunnel, getInsights, getRealtime, getStats, getTimeseries } from "./stats";
+import { getWebVitals } from "./vitals";
 import { PERIODS } from "../lib/time";
 import { type Ctx, type SiteRow, callSite, isVerified, loadSite } from "./context";
 import { verifyRecord } from "./sites";
@@ -337,6 +343,144 @@ export async function shareData(
     goals,
     share: { segment: seg ? seg.name : null, expires_at: link.expires_at },
   };
+}
+
+/**
+ * The reports a share link answers, one per call: GET <base>/:token/data/<report> (and
+ * data/funnels/<fnl_...>). They are the dashboard's own reads, so the public page can be the
+ * dashboard itself (dashboard-app.js in shared mode): the same service calls as
+ * GET /v1/sites/:id/<report>, read-only, under the link's segment. Aggregates only: no visitors,
+ * journeys, sessions or the realtime event list (one person's data), no SQL or exports, and no
+ * web-vitals/lab (an outbound PageSpeed run).
+ */
+export const SHARE_REPORTS = [
+  "stats",
+  "timeseries",
+  "breakdown",
+  "goals",
+  "funnels",
+  "insights",
+  "crawlers",
+  "ai-search",
+  "web-vitals",
+  "realtime",
+] as const;
+export type ShareReport = (typeof SHARE_REPORTS)[number];
+const isShareReport = (r: string): r is ShareReport => (SHARE_REPORTS as readonly string[]).includes(r);
+
+/** Reports that aren't visitor traffic, so a segment can't narrow them: a segment link leaves them out. */
+const SITE_WIDE_REPORTS: readonly ShareReport[] = ["crawlers", "ai-search"];
+
+/**
+ * What a shared dashboard may group and filter by: the standard dimensions. Never custom event or
+ * user properties (prop:, user:), which can hold emails or account details, nor did==<event>.
+ */
+const SHARE_DIMS = new Set<string>(BREAKDOWNS);
+
+/** Rows per list on a shared dashboard: its longest list (a card's "Show all") asks for 100. */
+export const SHARE_MAX_ROWS = 100;
+
+/**
+ * Query keys a share link never passes on: the link's own segment applies (no other segment, no
+ * compare_segments), test and quarantined traffic stay out (debug), no paging past the top rows
+ * (offset), funnels are the site's saved ones (no ad-hoc steps).
+ */
+const SHARE_DROPPED_KEYS = new Set(["segment", "compare_segments", "debug", "offset", "steps", "format"]);
+
+function notShared(key: string): ApiError {
+  return new ApiError(
+    400,
+    "not_shared",
+    `A shared dashboard can't group or filter by "${key}".`,
+    `Use one of the standard dimensions: ${BREAKDOWNS.join(", ")}.`,
+  );
+}
+
+/** A viewer's query, made safe for a share link: standard dimensions only, capped rows, the link's segment. */
+export function shareQuery(raw: Record<string, string | undefined>, segmentId: string | null): Record<string, string> {
+  const q: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) if (v !== undefined && !SHARE_DROPPED_KEYS.has(k)) q[k] = v;
+  for (const f of filtersOf(q.filters)) if (!SHARE_DIMS.has(f.key)) throw notShared(f.key);
+  for (const f of filterLeaves(filterJsonOf(q.filters_json))) if (!SHARE_DIMS.has(f.key)) throw notShared(f.key);
+  if (q.breakdown) for (const dim of q.breakdown.split(",").map((s) => s.trim())) if (dim && !SHARE_DIMS.has(dim)) throw notShared(dim);
+  if (q.limit !== undefined && Number(q.limit) > SHARE_MAX_ROWS) q.limit = String(SHARE_MAX_ROWS);
+  if (segmentId) q.segment = segmentId;
+  return q;
+}
+
+/** One report of a share link; `open` = the link has no password (its answers may be cached publicly). */
+export async function shareReport(
+  env: Bindings,
+  token: string,
+  report: string,
+  funnelId: string | null,
+  raw: Record<string, string | undefined>,
+  auth: { cookie?: string; password?: string; ip?: string | null; baseUrl: string },
+): Promise<{ body: unknown; open: boolean }> {
+  if (!isShareReport(report) || (funnelId !== null && (report !== "funnels" || !/^fnl_[0-9a-z]{1,64}$/.test(funnelId))))
+    throw notFound("Report", `A shared dashboard answers ${SHARE_REPORTS.join(", ")} (and funnels/<fnl_...>).`);
+  const { site, link } = await linkForToken(env, token);
+  if (!(await shareUnlocked(env, link, auth.cookie, auth.password, auth.ip ?? null)))
+    throw new ApiError(
+      401,
+      "share_password_required",
+      "This dashboard needs its password.",
+      "Open the share URL and enter the password (or send it as the x-share-password header).",
+    );
+  if (link.segment_id) {
+    const seg = await env.DB.prepare("SELECT id FROM segments WHERE id = ? AND site_id = ?").bind(link.segment_id, site.id).first();
+    if (!seg) throw notFound("Share link", "The segment this link was made for was deleted.");
+    if (SITE_WIDE_REPORTS.includes(report))
+      throw new ApiError(
+        403,
+        "not_in_segment",
+        "This link shows one segment's traffic, and crawler visits and AI search aren't split by segment.",
+        "Ask the site's owner for a link without a segment.",
+      );
+  }
+  // The site's own account, read-only: every service check (the site belongs to the account, no
+  // writes) applies as it does for the owner's read-only key.
+  const ctx: Ctx = {
+    env,
+    accountId: site.account_id,
+    auth: { accountId: site.account_id, keyId: `share:${link.token.slice(0, 12)}`, scopes: ["read"] },
+    baseUrl: auth.baseUrl,
+  };
+  const q = shareQuery(raw, link.segment_id);
+  const open = !link.password_hash;
+  switch (report) {
+    case "stats":
+      return { body: await getStats(ctx, site.id, q), open };
+    case "breakdown":
+      return { body: await getBreakdown(ctx, site.id, q), open };
+    case "timeseries":
+      return { body: await getTimeseries(ctx, site.id, q), open };
+    case "goals":
+      return { body: await listGoals(ctx, site.id), open };
+    case "funnels":
+      return { body: funnelId ? await getFunnel(ctx, site.id, { ...q, funnel_id: funnelId }) : await listFunnels(ctx, site.id), open };
+    case "insights":
+      return { body: await getInsights(ctx, site.id, q), open };
+    case "crawlers":
+      return { body: await getCrawlers(ctx, site.id, q), open };
+    case "ai-search":
+      return { body: await getAiSearch(ctx, site.id, q), open };
+    case "web-vitals":
+      return { body: await getWebVitals(ctx, site.id, q), open };
+    case "realtime": {
+      // The counts only: realtime's event list is one visitor at a time.
+      const r = (await getRealtime(ctx, site.id, { ...(q.segment ? { segment: q.segment } : {}), limit: 1 })) as Record<string, unknown>;
+      return {
+        body: {
+          online: r.online,
+          visitors_last_5m: r.visitors_last_5m,
+          visitors_last_30m: r.visitors_last_30m,
+          pageviews_last_30m: r.pageviews_last_30m,
+        },
+        open,
+      };
+    }
+  }
 }
 
 /** The domain the share page is titled with: null unless the site proved it. */

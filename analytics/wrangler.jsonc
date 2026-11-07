@@ -51,8 +51,9 @@
     { "name": "VERIFY_LIMITER", "namespace_id": "42005", "simple": { "limit": 6, "period": 60 } },
     // Payment webhook deliveries that fail authentication, per client network and per endpoint (correctly signed ones are never limited)
     { "name": "WEBHOOK_LIMITER", "namespace_id": "42006", "simple": { "limit": 300, "period": 60 } },
-    // public share dashboard requests per share token
-    { "name": "SHARE_LIMITER", "namespace_id": "42007", "simple": { "limit": 120, "period": 60 } }
+    // public share dashboard requests per share token (a page load reads 15-20 reports; answers of
+    // links without a password are cached at the edge for a minute and don't count)
+    { "name": "SHARE_LIMITER", "namespace_id": "42007", "simple": { "limit": 300, "period": 60 } }
   ],
 
   // Alerts, scheduled reports, delivery retries and history purges (src/service/cron.ts; bounded per run).

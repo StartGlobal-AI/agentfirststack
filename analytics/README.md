@@ -275,7 +275,7 @@ the `?afsa_debug=1` flag took it from 5,096 / 2,745).
 | POST/GET/PATCH/DELETE | `/sites/:id/reports[/:report_id]`, `POST .../send` | the digest weekly or monthly at an hour of the site timezone, through the destinations |
 
 Public: `GET /s.js`, `POST /e` (both under any prefix), `GET /share/:token` (on the user-content
-host `/a/:token` when `USER_CONTENT_BASE_URL` is set), `GET /share/:token/data`, `GET /llms.txt`, `POST /mcp`, `POST /webhooks/stripe/:site_id` (signed).
+host `/a/:token` when `USER_CONTENT_BASE_URL` is set), `GET /share/:token/data`, `GET /share/:token/data/:report`, `GET /llms.txt`, `POST /mcp`, `POST /webhooks/stripe/:site_id` (signed).
 
 Query params for stats/timeseries/breakdowns/funnel:
 - `period`: `today`, `yesterday`, `24h`, `7d`, `30d` (default), `90d`, `12mo`, `mtd`, `ytd`, `all`, or `from`/`to` (YYYY-MM-DD inclusive, site timezone, or ISO timestamps for an exact `[from, to)` range). `7d`/`30d`/`90d` include today. `timezone=` (IANA) overrides the site's for one query.
@@ -743,12 +743,28 @@ counts of small tables; user property keys by an index skip-scan), never a scan 
 
 ## Dashboard
 
-`GET /share/:token`: a single self-contained HTML page (no framework, no external assets; it can't
-be framed: `frame-ancestors 'none'` + `X-Frame-Options: DENY`, and its inline code runs under a
-per-response CSP nonce) with the
-headline numbers and % change, a visitors chart (inline SVG, hover tooltip, table view), and top
-pages/sources/countries/devices tables, light and dark. It reads `GET /share/:token/data`
-(aggregates only, no filters or SQL). For humans; agents use the API.
+On the user-content host (below) a share link's page is the dashboard itself, read-only: the site
+app's `dashboard-app.js` in shared mode (`shareAppPage` in `src/share-page.ts`: a shell with the
+link's facts in `data-*` attributes, the dashboard's files from that host, `script-src 'self'`, no
+inline code). It reads one report at a time from `GET /a/:token/data/:report` (`shareReport` in
+`src/service/share.ts`): `stats`, `timeseries`, `breakdown`, `goals`, `funnels`,
+`funnels/:funnel_id`, `insights`, `crawlers`, `ai-search`, `web-vitals` and `realtime`, the same
+service calls as `/v1/sites/:id/<report>` with a read-only credential of the site's account.
+Aggregates only: no visitors, journeys, sessions or realtime event list (realtime answers its four
+counts), no SQL, exports or `web-vitals/lab`. A viewer can group and filter by the standard
+dimensions only (`prop:`, `user:` and `did` get `400 not_shared`: custom properties can hold
+emails), `limit` is capped at 100 and `offset`, `debug`, `segment`, `compare_segments` and `steps`
+are dropped; the link's own segment always applies, and a segment link answers `403
+not_in_segment` for `crawlers` and `ai-search` (they aren't split by segment). Answers of a link
+without a password are cached at the edge for a minute (realtime 15 s) and don't count against
+`SHARE_LIMITER`; a password link's never leave the browser's cache.
+
+`GET /share/:token` (the service host, and every deployment without a user-content host): a single
+self-contained HTML page (no framework, no external assets; it can't be framed:
+`frame-ancestors 'none'` + `X-Frame-Options: DENY`, and its inline code runs under a per-response
+CSP nonce) with the headline numbers and % change, a visitors chart (inline SVG, hover tooltip,
+table view), and top pages/sources/countries/devices tables, light and dark. It reads
+`GET /share/:token/data` (aggregates only, no filters or SQL). For humans; agents use the API.
 
 With `USER_CONTENT_BASE_URL` (e.g. `https://afsusercontent.com`; `pnpm afs config` derives it, and
 the Worker route `<domain>/a/*`, from the profile's `user_content_domain`) the dashboards live on a

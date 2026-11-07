@@ -3,9 +3,18 @@ import { type Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "../env";
 import { readTextCapped } from "../lib/body";
-import { linkForToken, shareData, shareUnlocked, shareUrl, unlockShare } from "../service/share";
+import { linkForToken, shareData, shareReport, shareUnlocked, shareUrl, unlockShare } from "../service/share";
 import { isVerified } from "../service/context";
-import { reportAbuseUrl, shareMovedPage, sharePage, sharePageCsp, sharePasswordPage } from "../share-page";
+import {
+  platformOrigin,
+  reportAbuseUrl,
+  shareAppCsp,
+  shareAppPage,
+  shareMovedPage,
+  sharePage,
+  sharePageCsp,
+  sharePasswordPage,
+} from "../share-page";
 
 /**
  * Public, token-scoped, aggregate-only dashboard, mounted twice:
@@ -14,7 +23,15 @@ import { reportAbuseUrl, shareMovedPage, sharePage, sharePageCsp, sharePasswordP
  *   user-content     /a/<token>, /a/<token>/data, POST /a/<token>/unlock, on USER_CONTENT_BASE_URL
  *                    (a domain of its own: the page shows visitor-sent paths and referrers, and its
  *                    unlock cookie is set there, so nothing is shared with the platform's domain).
- *                    That host serves nothing else.
+ *                    Analytics serves nothing else there; the site Worker serves the rest of the
+ *                    host, including the dashboard's static scripts, styles and fonts.
+ *   both             <base>/<token>/data/<report> (and data/funnels/<fnl_...>): one dashboard report
+ *                    (service/share.ts shareReport), what the dashboard page reads.
+ *
+ * On the user-content host the page is the dashboard itself (dashboard-app.js in shared mode,
+ * share-page.ts shareAppPage), reading the reports above. The service host keeps the small
+ * standalone page (sharePage): a deployment without a user-content host may not serve the
+ * dashboard's files at all.
  *
  * With USER_CONTENT_BASE_URL set, new links point at the user-content host and a dashboard page on
  * the service host answers 301 to the same link there while the link is valid (revoked, expired,
@@ -38,6 +55,15 @@ const pageHeaders = (nonce: string, formAction = false) => ({
   "x-frame-options": "DENY",
   "x-content-type-options": "nosniff",
 });
+
+/** The Workers cache (caches.default), when this runtime has one. */
+function edgeCache(): Cache | null {
+  try {
+    return (globalThis as { caches?: { default?: Cache } }).caches?.default ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** The password form is a few hundred bytes: read at most this much of the body. */
 const MAX_UNLOCK_BODY = 4096;
@@ -66,6 +92,25 @@ function mountShare(r: Hono<AppEnv>, base: "/share" | "/a") {
     const nonce = randomString(24);
     if (!(await shareUnlocked(c.env, link, getCookie(c, COOKIE), undefined)))
       return c.html(sharePasswordPage(token, domain, nonce, false, undefined, reportFor(c, token), base), 200, pageHeaders(nonce, true));
+    if (base === "/a") {
+      const segment = link.segment_id
+        ? await c.env.DB.prepare("SELECT name FROM segments WHERE id = ? AND site_id = ?")
+            .bind(link.segment_id, site.id)
+            .first<{ name: string }>()
+        : null;
+      const page = shareAppPage({
+        token,
+        domain,
+        currency: (site as { currency?: string | null }).currency ?? null,
+        timezone: site.timezone,
+        segment: segment?.name ?? null,
+        expiresAt: link.expires_at,
+        reportUrl: reportFor(c, token),
+        platform: platformOrigin(c.env),
+        base,
+      });
+      return c.html(page, 200, { ...pageHeaders(nonce), "content-security-policy": shareAppCsp });
+    }
     return c.html(sharePage(token, domain, nonce, reportFor(c, token), base), 200, pageHeaders(nonce));
   });
 
@@ -125,6 +170,46 @@ function mountShare(r: Hono<AppEnv>, base: "/share" | "/a") {
     });
     return c.redirect(`${base}/${token}`, 303);
   });
+
+  /**
+   * One dashboard report. A link without a password is public, so its answers are cached at the
+   * edge for a minute (realtime counts for 15 s) by URL, whatever order the query is in: a busy
+   * link reads the site's numbers once a minute per location, not once per viewer. A cached answer
+   * can outlive a revoke by at most that long. Password links are never cached outside the browser.
+   */
+  const report = async (c: Context<AppEnv>, name: string, funnel: string | null) => {
+    const token = c.req.param("token") ?? "";
+    const key = new URL(c.req.url);
+    key.searchParams.sort();
+    const keyReq = new Request(key.toString());
+    const cache = edgeCache();
+    const hit = cache ? await cache.match(keyReq).catch(() => undefined) : undefined;
+    if (hit) return hit;
+    const { body, open } = await shareReport(c.env, token, name, funnel, c.req.query(), {
+      cookie: getCookie(c, COOKIE),
+      password: c.req.header("x-share-password"),
+      ip: c.req.header("cf-connecting-ip") ?? null,
+      baseUrl: publicBaseUrl(c),
+    });
+    const ttl = name === "realtime" ? 15 : 60;
+    const res = c.json(body, 200, {
+      "cache-control": `${open ? "public" : "private"}, max-age=${ttl}`,
+      "x-robots-tag": "noindex, nofollow",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+    });
+    if (open && cache) {
+      const put = cache.put(keyReq, res.clone()).catch(() => {});
+      try {
+        c.executionCtx.waitUntil(put);
+      } catch {
+        await put; // no execution context (tests)
+      }
+    }
+    return res;
+  };
+  r.get(`${base}/:token/data/funnels/:funnel`, (c) => report(c, "funnels", c.req.param("funnel")));
+  r.get(`${base}/:token/data/:report`, (c) => report(c, c.req.param("report"), null));
 
   r.get(`${base}/:token/data`, async (c) => {
     const data = await shareData(c.env, c.req.param("token"), c.req.query(), {

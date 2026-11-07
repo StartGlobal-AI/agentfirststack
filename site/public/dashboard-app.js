@@ -3,6 +3,11 @@
 // src/analytics-dashboard.ts, src/service-views.ts); this draws them from the services' own
 // answers, read through the dashboard's read-only data route /dashboard/projects/:id/data/<service>/<path>.
 //
+// Shared mode: a share link's public page (analytics' shareAppPage, on the user-content host) is
+// this same site view, read-only. #afa carries data-share="<base>/<token>" and every read goes to
+// <base>/<token>/data/<report>. It leaves out what is one person's data (the visitors list and the
+// live feed), the prompts for an agent, and links into a project.
+//
 // Everything a visitor can send (paths, referrers, campaigns, event and goal names) is set as text,
 // never parsed as HTML. The CSP allows scripts from this origin only and no inline styles, so
 // sizes are set through the CSSOM (el.style) and SVG attributes.
@@ -10,6 +15,9 @@
   "use strict";
   const main = document.getElementById("main");
   if (!main) return;
+  const shareRoot = document.getElementById("afa");
+  const SHARE = shareRoot && shareRoot.dataset.share ? shareRoot.dataset.share : null;
+  const SHARE_SEGMENT = SHARE ? shareRoot.dataset.shareSegment || "" : "";
 
   // ---------- DOM ----------
 
@@ -360,7 +368,11 @@
    */
   const answers = new Map(); // url -> { at, promise }
   const dataUrl = (project, path, params) => {
-    const u = new URL(`/dashboard/projects/${encodeURIComponent(project)}/data/${path}`, location.origin);
+    // Shared: the site's reports are the link's own (analytics/sites/<id>/stats -> <share>/data/stats).
+    const shared = SHARE && /^analytics\/sites\/[^/]+\/(.+)$/.exec(path);
+    const u = SHARE
+      ? new URL(`${SHARE}/data/${shared ? shared[1] : "none"}`, location.origin)
+      : new URL(`/dashboard/projects/${encodeURIComponent(project)}/data/${path}`, location.origin);
     for (const [k, v] of Object.entries(params || {})) if (v !== null && v !== undefined && v !== "") u.searchParams.set(k, String(v));
     return u;
   };
@@ -384,7 +396,7 @@
   }
   /** Forget a project's answers (Refresh). */
   function invalidate(project) {
-    const mark = `/dashboard/projects/${encodeURIComponent(project)}/data/`;
+    const mark = SHARE ? `${SHARE}/data/` : `/dashboard/projects/${encodeURIComponent(project)}/data/`;
     for (const k of [...answers.keys()]) if (k.includes(mark)) answers.delete(k);
   }
   async function apiCall(u) {
@@ -404,9 +416,11 @@
       const msg =
         j && j.error
           ? j.error.message
-          : r.redirected || !j
-            ? "Your session ended. Reload the page to sign in again."
-            : `Analytics answered ${r.status}.`;
+          : SHARE
+            ? "The dashboard didn't answer. Reload the page in a minute."
+            : r.redirected || !j
+              ? "Your session ended. Reload the page to sign in again."
+              : `Analytics answered ${r.status}.`;
       const e = new Error(msg);
       e.hint = j && j.error ? j.error.hint : null;
       throw e;
@@ -615,6 +629,7 @@
   }
   /** A prompt for the person's agent, in a card with a Copy button. */
   function askCard(prompt, label = "Ask your agent") {
+    if (SHARE) return null; // a shared page's viewer isn't the site's owner
     const text = el("p", { class: "afa-askcard-text", text: prompt });
     const btn = el(
       "button",
@@ -633,7 +648,7 @@
     const o = typeof textOrOpts === "string" ? { text: textOrOpts, ask } : textOrOpts;
     return el(
       "div",
-      { class: `afa-empty${o.ask ? " has-ask" : ""}${o.chips ? " has-chips" : ""}` },
+      { class: `afa-empty${o.ask && !SHARE ? " has-ask" : ""}${o.chips ? " has-chips" : ""}` },
       o.icon ? el("span", { class: "afa-empty-icon", attrs: { "aria-hidden": "true" } }, icon(o.icon)) : null,
       o.title ? el("h3", { class: "afa-empty-title", text: o.title }) : null,
       o.text ? el("p", { class: "afa-empty-text", text: o.text }) : null,
@@ -1270,7 +1285,7 @@
       interval: qs.get("interval") || "auto",
       compare: qs.get("compare") === "1",
       // Which view of the site: traffic (the default), AI search, or page speed.
-      view: ["ai", "speed"].includes(qs.get("view")) ? qs.get("view") : "traffic",
+      view: (SHARE_SEGMENT ? ["speed"] : ["ai", "speed"]).includes(qs.get("view")) ? qs.get("view") : "traffic",
       filters: qs.getAll("f").flatMap((f) => {
         const i = f.indexOf("==");
         return i > 0 ? [{ key: f.slice(0, i), value: f.slice(i + 2) }] : [];
@@ -1396,11 +1411,12 @@
     // the bottom of the traffic panels.
     const aiGrid = el("div", { class: "afa-grid" });
     const speedGrid = el("div", { class: "afa-grid" });
+    // A segment link has no AI search: crawler visits and AI referrals aren't split by segment.
     const VIEWS = [
       ["traffic", "Traffic"],
       ["ai", "AI search"],
       ["speed", "Page speed"],
-    ];
+    ].filter(([k]) => !(k === "ai" && SHARE_SEGMENT));
     const viewTabs = el("div", { class: "afa-tabs afa-views", attrs: { role: "tablist", "aria-label": "Analytics views" } });
     const viewBtns = VIEWS.map(([k, label]) => {
       const b = el("button", {
@@ -1706,7 +1722,8 @@
     // ----- live: counts pushed by the site's object over a WebSocket; polling is the fallback -----
     const LIVE = { ws: null, retry: 0, timer: 0, heardAt: 0, latest: null };
     function liveConnect() {
-      if (LIVE.ws || !ctx.active || document.hidden || typeof WebSocket !== "function") return;
+      // Shared pages poll the count instead: the stream carries each new pageview's page and place.
+      if (SHARE || LIVE.ws || !ctx.active || document.hidden || typeof WebSocket !== "function") return;
       clearTimeout(LIVE.timer);
       const scheme = location.protocol === "https:" ? "wss" : "ws";
       let ws;
@@ -1804,15 +1821,21 @@
           el("div", { class: "afa-kpi" }, el("span", { class: "afa-kpi-label", text: label }), tiles.nums[key], tiles.chs[key]),
         );
       }
-      tiles.online = el("button", {
-        class: "afa-kpi-num afa-online-num afa-plain",
-        text: "–",
-        attrs: {
-          type: "button",
-          title: "Visitors seen in the last 5 minutes who haven't closed the page. Open the live view.",
-        },
-        on: { click: () => dock.openLive() },
-      });
+      tiles.online = SHARE
+        ? el("span", {
+            class: "afa-kpi-num afa-online-num",
+            text: "–",
+            title: "Visitors seen in the last 5 minutes who haven't closed the page.",
+          })
+        : el("button", {
+            class: "afa-kpi-num afa-online-num afa-plain",
+            text: "–",
+            attrs: {
+              type: "button",
+              title: "Visitors seen in the last 5 minutes who haven't closed the page. Open the live view.",
+            },
+            on: { click: () => dock.openLive() },
+          });
       // Still, and it pings once for each new pageview the live stream reports.
       tiles.dot = el("span", { class: "afa-live-dot is-still", attrs: { "aria-hidden": "true" } });
       tiles.nodes.push(
@@ -2239,11 +2262,12 @@
     const goalBody = el("div", { class: "afa-panel-body" });
     goalsCard.append(el("div", { class: "afa-panel-head" }, goalTabs, goalTools), goalBody);
     grid.append(goalsCard);
+    // Visitors (one person at a time) isn't on a shared page.
     const GOAL_TABS = [
       ["goal", "Goals"],
       ["funnel", "Funnels"],
       ["visitors", "Visitors"],
-    ];
+    ].filter(([k]) => !(SHARE && k === "visitors"));
     let goalTab = "goal";
     const goalBtns = GOAL_TABS.map(([k, label]) => {
       const b = el("button", {
@@ -3316,7 +3340,8 @@
         el("span", { class: "afa-dock-live", text: "Live" }),
       );
       const insBtn = el("button", { class: "afa-dock-btn", attrs: { type: "button" } }, icon("bulb"), el("span", { text: "Insights" }));
-      const d = el("nav", { class: "afa-dock", attrs: { "aria-label": "More views" } }, liveBtn, insBtn);
+      // Shared: Insights only (the live feed lists visitors one by one).
+      const d = el("nav", { class: "afa-dock", attrs: { "aria-label": "More views" } }, SHARE ? null : liveBtn, insBtn);
       ctx.attach(d);
       let sheet = null;
       let timer = null;
@@ -3439,7 +3464,7 @@
         }
       }
       function openLive() {
-        if (sheet) return;
+        if (sheet || SHARE) return;
         const body = el(
           "div",
           { class: "afa-sheet-body" },
@@ -3782,9 +3807,12 @@
     liveConnect();
     // Polling is the fallback: every 10 s without the stream, and once a minute with it (people
     // drop out of the 5-minute window without sending anything).
-    ctx.every(() => {
-      if (!liveOpen() || Date.now() - LIVE.heardAt > 60000) loadOnline();
-    }, 10000);
+    ctx.every(
+      () => {
+        if (!liveOpen() || Date.now() - LIVE.heardAt > 60000) loadOnline();
+      },
+      SHARE ? 30000 : 10000,
+    );
     ctx.every(paintTicker, 15000);
     // Back on this view or this browser tab: the live count straight away, everything else if it's
     // been a while. A hidden tab or another view closes the stream.
