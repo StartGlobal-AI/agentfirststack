@@ -959,6 +959,12 @@
   text-align: right;
   white-space: nowrap;
 }
+/* A note under a table: off the last row, lined up with the cells' text, short enough lines to read. */
+.afa-table-wrap + .fine {
+  max-width: 96ch;
+  margin: 12px 10px 2px;
+  line-height: 1.5;
+}
 .afa-table tbody tr:hover {
   background: var(--ground);
 }
