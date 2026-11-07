@@ -670,6 +670,21 @@
   font-size: 13px;
   color: var(--ink-3);
 }
+/* The analytics views: Traffic, AI search, Page speed (a grid each; one shows at a time). */
+.afa-views {
+  display: flex;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 12px;
+}
+.afa-views .afa-tab {
+  padding: 7px 14px;
+  font-size: 14px;
+}
+.afa-grid[hidden],
+.afa-main[hidden] {
+  display: none;
+}
 .afa-tabs {
   display: inline-flex;
   flex-wrap: wrap;
@@ -2633,18 +2648,27 @@ a.afa-site-card:hover {
 }
 .afa-vs-row {
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) auto;
+  gap: 3px;
+  font-size: 13px;
+}
+.afa-vs-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.afa-vs-line b {
+  color: var(--ink);
+  font-weight: 600;
 }
 .afa-vs-label {
   color: var(--ink-2);
 }
-.afa-vs-bars {
-  display: grid;
-  gap: 2px;
-}
+
 .afa-vs-track {
   display: block;
   height: 8px;
@@ -2658,17 +2682,7 @@ a.afa-site-card:hover {
   border-radius: 0 4px 4px 0;
   transition: width 320ms var(--ease);
 }
-.afa-vs-vals {
-  display: grid;
-  justify-items: end;
-  font-size: 12.5px;
-  line-height: 1.25;
-  color: var(--ink-3);
-}
-.afa-vs-vals b {
-  color: var(--ink);
-  font-weight: 600;
-}
+
 .afa-plain-list {
   display: grid;
   gap: 2px;
@@ -2791,5 +2805,146 @@ a.afa-site-card:hover {
   }
   .afa-vs-row {
     grid-template-columns: 96px minmax(0, 1fr) auto;
+  }
+}
+
+/* AI search: a head with its subtitle under it, KPIs across the full width, and (before any AI
+   visitors) the pages AI bots read next to who reads them and what to change. */
+.afa-panel-head.is-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding-bottom: 10px;
+}
+.afa-kpis-even {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  overflow: visible;
+}
+.afa-kpis-even .afa-kpi {
+  min-width: 0;
+}
+.afa-ai-lede {
+  max-width: 82ch;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.afa-ai-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 28px;
+  margin: 16px 0 4px;
+}
+.afa-ai-side {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+}
+.afa-ai-rows {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-ai-rows li {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.afa-ai-row-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 6px;
+  background: rgba(98, 80, 214, 0.11);
+  transition: width 320ms var(--ease);
+}
+.afa-ai-row-label,
+.afa-ai-rows li > b {
+  position: relative;
+}
+.afa-ai-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.afa-ai-row-label .afa-mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.afa-ai-row-label small {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.afa-ai-rows li > b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.afa-ai-stack {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+.afa-ai-stack span {
+  min-width: 4px;
+}
+.afa-ai-kind-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.afa-ai-kind-list li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  font-size: 13px;
+}
+.afa-ai-kind-list li .afa-sw {
+  margin-top: 4px;
+}
+.afa-ai-kind-list b {
+  display: block;
+  font-weight: 600;
+}
+.afa-ai-kind-list small {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.afa-ai-kind-n {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.afa-ai-step-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+@media (max-width: 900px) {
+  .afa-ai-two {
+    grid-template-columns: 1fr;
   }
 }

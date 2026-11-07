@@ -1265,6 +1265,8 @@
       to: qs.get("to"),
       interval: qs.get("interval") || "auto",
       compare: qs.get("compare") === "1",
+      // Which view of the site: traffic (the default), AI search, or page speed.
+      view: ["ai", "speed"].includes(qs.get("view")) ? qs.get("view") : "traffic",
       filters: qs.getAll("f").flatMap((f) => {
         const i = f.indexOf("==");
         return i > 0 ? [{ key: f.slice(0, i), value: f.slice(i + 2) }] : [];
@@ -1284,6 +1286,7 @@
       }
       if (state.interval !== "auto") p.set("interval", state.interval);
       if (state.compare) p.set("compare", "1");
+      if (state.view !== "traffic") p.set("view", state.view);
       for (const f of state.filters) p.append("f", `${f.key}==${f.value}`);
       ctx.replaceUrl(`${ctx.path}?${p}`);
     }
@@ -1385,7 +1388,43 @@
     const chartBox = el("div", { class: "afa-chart" });
     main.append(kpis, ticker, chartBox);
     const grid = el("div", { class: "afa-grid" });
-    root.append(bar, filterRow, main, grid);
+    // AI search and page speed have views of their own, so they're one click away instead of at
+    // the bottom of the traffic panels.
+    const aiGrid = el("div", { class: "afa-grid" });
+    const speedGrid = el("div", { class: "afa-grid" });
+    const VIEWS = [
+      ["traffic", "Traffic"],
+      ["ai", "AI search"],
+      ["speed", "Page speed"],
+    ];
+    const viewTabs = el("div", { class: "afa-tabs afa-views", attrs: { role: "tablist", "aria-label": "Analytics views" } });
+    const viewBtns = VIEWS.map(([k, label]) => {
+      const b = el("button", {
+        class: "afa-tab",
+        text: label,
+        attrs: { type: "button", role: "tab" },
+        on: {
+          click: () => {
+            if (state.view === k) return;
+            state.view = k;
+            syncUrl();
+            paintViews();
+            loadView(gen);
+          },
+        },
+      });
+      viewTabs.append(b);
+      return b;
+    });
+    const viewSlide = tabSlider(viewTabs);
+    function paintViews() {
+      viewBtns.forEach((b, i) => b.setAttribute("aria-selected", String(VIEWS[i][0] === state.view)));
+      main.hidden = grid.hidden = state.view !== "traffic";
+      aiGrid.hidden = state.view !== "ai";
+      speedGrid.hidden = state.view !== "speed";
+      viewSlide();
+    }
+    root.append(bar, filterRow, viewTabs, main, grid, aiGrid, speedGrid);
 
     // ----- top bar -----
     const sitePick = picker(
@@ -2457,7 +2496,7 @@
       el("div", { class: "afa-panel-head" }, crawlTabs, el("span", { class: "afa-panel-title", text: "AI and search crawlers" })),
       crawlBody,
     );
-    grid.append(crawlCard);
+    aiGrid.append(crawlCard);
     const CRAWL = [
       ["ai_assistant", "AI answers", SERIES[6]],
       ["ai_search", "AI search", SERIES[0]],
@@ -2628,13 +2667,13 @@
     aiCard.append(
       el(
         "div",
-        { class: "afa-panel-head" },
+        { class: "afa-panel-head is-stacked" },
         el("h2", { class: "afa-panel-h", text: "AI search" }),
-        el("span", { class: "afa-panel-title", text: "Assistants that send visitors, and the AI bots that read your pages" }),
+        el("span", { class: "afa-panel-title", text: "Visitors that AI assistants send you, and the AI bots that read your pages" }),
       ),
       aiBody,
     );
-    grid.append(aiCard);
+    aiGrid.append(aiCard);
     let aiGen = 0;
     async function loadAiSearch() {
       const g = ++aiGen;
@@ -2653,6 +2692,40 @@
         swap(aiBody, errorBox(e, loadAiSearch));
       }
     }
+    /** "1 read", "5 reads". */
+    const reads = (n) => `${num(n)} ${n === 1 ? "read" : "reads"}`;
+    /** A ranked list with a bar behind each row; label and value are plain text (visitor or bot sent). */
+    function shareRows(rows, label, value, valueText, sub) {
+      const max = Math.max(1, ...rows.map(value));
+      return el(
+        "ol",
+        { class: "afa-ai-rows" },
+        rows.map((x, i) => {
+          const fill = growTo(
+            el("span", { class: "afa-ai-row-bar", attrs: { "aria-hidden": "true" } }),
+            "width",
+            `${(value(x) / max) * 100}%`,
+          );
+          return el(
+            "li",
+            { class: "afa-stagger", attrs: { "data-i": i, style: `--i:${i}` } },
+            fill,
+            el(
+              "span",
+              { class: "afa-ai-row-label" },
+              el("span", { class: "afa-mono", text: label(x) }),
+              sub && sub(x) ? el("small", { text: sub(x) }) : null,
+            ),
+            el("b", { text: valueText(x) }),
+          );
+        }),
+      );
+    }
+    const BOT_KINDS = [
+      ["ai_assistant", "AI answers", "fetch a page while answering someone"],
+      ["ai_search", "AI search", "index pages to cite in answers"],
+      ["ai_training", "Training", "collect text to train models; they send no visitors"],
+    ];
     function aiView(r) {
       const s = r.summary || {};
       const ch = (r.comparison && r.comparison.change_percent) || {};
@@ -2680,44 +2753,150 @@
         };
       const aiM = vs.ai_assistants || {};
       const oth = vs.all_other_channels || {};
+      const hasVisitors = s.ai_visitors > 0;
+      const allVisitors = (aiM.visitors || 0) + (oth.visitors || 0);
+      const quiet = (text) => el("span", { class: "afa-kpi-ch is-flat", text });
+      const totals = crawlers.totals || {};
       const kpiRow = el(
         "div",
-        { class: "afa-kpis afa-kpis-panel" },
-        miniKpi("Visitors from AI", num(s.ai_visitors), changeChip(ch.ai_visitors, false, vsTitle)),
-        miniKpi("Share of visitors", pct(s.share_of_visitors), el("span", { class: "afa-kpi-ch is-flat", text: "of all visitors" })),
+        { class: "afa-kpis afa-kpis-panel afa-kpis-even" },
+        miniKpi(
+          "Visitors from AI",
+          num(s.ai_visitors),
+          hasVisitors ? changeChip(ch.ai_visitors, false, vsTitle) : quiet("none in this period"),
+        ),
+        miniKpi("Share of all visitors", pct(s.share_of_visitors), quiet(`of ${num(allVisitors)} visitors`)),
         miniKpi(
           "AI conversion rate",
-          pct(s.ai_conversion_rate),
-          el("span", { class: "afa-kpi-ch is-flat", text: `others ${pct(oth.conversion_rate || 0)}` }),
+          hasVisitors ? pct(s.ai_conversion_rate) : "–",
+          quiet(`other channels ${pct(oth.conversion_rate || 0)}`),
         ),
         s.ai_revenue || ch.ai_revenue
           ? miniKpi("Revenue from AI", money(s.ai_revenue, cur), changeChip(ch.ai_revenue, false, vsTitle))
           : null,
         miniKpi(
-          "AI crawler hits",
-          num(s.ai_crawler_hits),
+          "Pages AI bots read",
+          num(s.ai_crawled_pages || totals.pages || 0),
           crawlers.reporting
-            ? changeChip(ch.ai_crawler_hits, false, vsTitle)
-            : el("span", { class: "afa-kpi-ch is-flat", text: "not reported" }),
+            ? quiet(
+                `${reads(s.ai_crawler_hits || 0)} by ${num(s.ai_bots || totals.bots || 0)} ${(s.ai_bots || totals.bots) === 1 ? "bot" : "bots"}`,
+              )
+            : quiet("not reported"),
         ),
       );
-      // Visitors from AI per day (one series, one axis: crawler hits have their own panel above).
+
+      // Pages AI bots read that no AI visitor landed on: the gap to close.
+      const gaps = r.gaps || {};
+      const unread = gaps.crawled_not_referred || [];
+      const gapBlock = el(
+        "div",
+        null,
+        subHead(hasVisitors ? "Read by AI bots, no AI visitors yet" : "Pages AI bots read"),
+        unread.length
+          ? shareRows(
+              unread.slice(0, 8),
+              (x) => x.page,
+              (x) => x.ai_crawler_hits || 0,
+              (x) => reads(x.ai_crawler_hits || 0),
+              (x) => (x.operators || []).slice(0, 3).join(", "),
+            )
+          : el("p", {
+              class: "muted small",
+              text: gaps.crawled_not_referred
+                ? "Every page AI bots read also sent AI visitors."
+                : crawlers.reporting
+                  ? "No AI bot read a page in this period."
+                  : "Needs crawler hits from your server (see AI crawlers).",
+            }),
+      );
+
+      // Which kinds of bot read the site: answer and search bots can send visitors, training bots can't.
+      const byKind = totals.by_category || {};
+      const kindTotal = BOT_KINDS.reduce((n, [k]) => n + (byKind[k] || 0), 0);
+      const kindColor = { ai_assistant: SERIES[6], ai_search: SERIES[0], ai_training: SERIES[1] };
+      const kinds = kindTotal
+        ? el(
+            "div",
+            { class: "afa-ai-kinds" },
+            subHead("Who reads your pages"),
+            el(
+              "div",
+              {
+                class: "afa-ai-stack",
+                attrs: { role: "img", "aria-label": BOT_KINDS.map(([k, l]) => `${l}: ${reads(byKind[k] || 0)}`).join(", ") },
+              },
+              BOT_KINDS.filter(([k]) => byKind[k]).map(([k]) => {
+                const seg = el("span");
+                seg.style.flexGrow = String(byKind[k]);
+                seg.style.background = kindColor[k];
+                return seg;
+              }),
+            ),
+            el(
+              "ul",
+              { class: "afa-ai-kind-list" },
+              BOT_KINDS.map(([k, l, what]) =>
+                el(
+                  "li",
+                  null,
+                  swatchOf(kindColor[k]),
+                  el("span", null, el("b", { text: l }), el("small", { text: what })),
+                  el("span", { class: "afa-ai-kind-n", text: reads(byKind[k] || 0) }),
+                ),
+              ),
+            ),
+          )
+        : null;
+      const steps = (r.next_steps || []).slice(0, 3);
+      const stepsBlock = steps.length
+        ? el(
+            "div",
+            { class: "afa-ai-steps" },
+            subHead("What to change"),
+            el(
+              "ul",
+              { class: "afa-ai-step-list" },
+              steps.map((t) => el("li", { text: t })),
+            ),
+          )
+        : null;
+
+      if (!hasVisitors) {
+        return {
+          node: el(
+            "div",
+            null,
+            kpiRow,
+            el(
+              "p",
+              { class: "afa-ai-lede" },
+              `AI bots read ${num(s.ai_crawled_pages || totals.pages || 0)} of your pages in this period, but no one has arrived from ChatGPT, Perplexity, Claude, Gemini or Copilot yet.`,
+            ),
+            el("div", { class: "afa-ai-two" }, gapBlock, el("div", { class: "afa-ai-side" }, kinds, stepsBlock)),
+            askCard(ask),
+            unfiltered("AI search"),
+          ),
+        };
+      }
+
+      // Visitors from AI per day (one series, one axis: crawler hits have their own panel).
       const chart = el("div", { class: "afa-chart" });
       const sources = ((r.referrals && r.referrals.sources) || []).map((x) => ({ ...x, value: x.source }));
       const pages = ((r.referrals && r.referrals.landing_pages) || []).map((x) => ({ ...x, value: x.page }));
       const top = el(
         "div",
         { class: "afa-split" },
-        s.ai_visitors ? chart : empty("No visitors from AI assistants in this period."),
+        chart,
         el(
           "div",
           { class: "afa-split-side" },
+          subHead("Assistants that sent them"),
           sources.length
             ? barRows("source", sources, "visitors", s.ai_visitors, (x) => pickFilter("source", x))
-            : empty("No assistant sent a visitor yet."),
+            : el("p", { class: "muted small", text: "Not known for these visits." }),
         ),
       );
-      // AI visitors vs everyone else: paired bars per measure, AI in its channel colour, the rest in grey.
+      // AI visitors next to everyone else: two bars per measure, each with its value at its end.
       const measures = [
         ["Conversion rate", "conversion_rate", pct],
         ["Engaged visits", "engagement_rate", pct],
@@ -2738,46 +2917,26 @@
           const a = aiM[k] || 0;
           const b = oth[k] || 0;
           const max = Math.max(a, b) || 1;
-          const bar = (v, color) => {
+          const line = (v, color, strong) => {
             const fill = growTo(el("span", { class: "afa-vs-fill" }), "width", `${(v / max) * 100}%`);
             fill.style.background = color;
-            return el("span", { class: "afa-vs-track" }, fill);
+            return el(
+              "span",
+              { class: "afa-vs-line" },
+              el("span", { class: "afa-vs-track" }, fill),
+              el(strong ? "b" : "span", { text: f(v) }),
+            );
           };
           return el(
             "div",
             { class: "afa-vs-row" },
             el("span", { class: "afa-vs-label", text: label }),
-            el("span", { class: "afa-vs-bars" }, bar(a, AI_COLOR), bar(b, PREVIOUS)),
-            el("span", { class: "afa-vs-vals" }, el("b", { text: f(a) }), el("span", { text: f(b) })),
+            line(a, AI_COLOR, true),
+            line(b, PREVIOUS, false),
           );
         }),
         vs.enough_data ? null : el("p", { class: "fine", text: "Fewer than 30 visitors on one side: read these as rough." }),
       );
-      const gaps = r.gaps || {};
-      const unread = gaps.crawled_not_referred || [];
-      const gapList = gaps.crawled_not_referred
-        ? unread.length
-          ? el(
-              "ul",
-              { class: "afa-plain-list" },
-              unread
-                .slice(0, 6)
-                .map((x) =>
-                  el(
-                    "li",
-                    null,
-                    el("span", { class: "afa-mono afa-row-text", text: x.page }),
-                    el("b", { text: `${num(x.ai_crawler_hits)} hits` }),
-                  ),
-                ),
-            )
-          : el("p", { class: "muted small", text: "Every page AI bots read also sent AI visitors." })
-        : el("p", {
-            class: "muted small",
-            text: crawlers.reporting
-              ? "No AI bot read a page in this period."
-              : "Needs crawler hits from your server (see the panel above).",
-          });
       const bottom = el(
         "div",
         { class: "afa-ai-cols" },
@@ -2790,13 +2949,11 @@
             : el("p", { class: "muted small", text: "No landings yet." }),
         ),
         el("div", null, subHead("AI visitors vs other channels"), pair),
-        el("div", null, subHead("Read by AI bots, no AI visitors yet"), gapList),
+        gapBlock,
       );
-      const steps = r.next_steps || [];
       return {
         node: el("div", null, kpiRow, top, bottom, steps.length ? askCard(ask) : null, unfiltered("AI search")),
         after: () => {
-          if (!s.ai_visitors) return;
           const series = r.series || [];
           linesChart(
             chart,
@@ -2854,7 +3011,7 @@
       ),
       vitalsBody,
     );
-    grid.append(vitalsCard);
+    speedGrid.append(vitalsCard);
     const VITAL_TABS = [
       ["page", "Page"],
       ["device", "Device"],
@@ -3511,12 +3668,23 @@
         .catch(() => {})
         .finally(() => {
           if (g !== gen) return;
-          for (const p of panels) p.load();
-          loadGoals();
-          loadCrawlers();
-          loadAiSearch();
-          loadVitals();
+          totalsGen = g;
+          loadView(g);
         });
+    }
+    /** Load the panels of the view on screen, once per reload (gen): switching back doesn't refetch. */
+    const viewLoaded = { traffic: -1, ai: -1, speed: -1 };
+    let totalsGen = -1;
+    function loadView(g) {
+      if (g !== gen || totalsGen !== g || viewLoaded[state.view] === g) return;
+      viewLoaded[state.view] = g;
+      if (state.view === "traffic") {
+        for (const p of panels) p.load();
+        loadGoals();
+      } else if (state.view === "ai") {
+        loadCrawlers();
+        loadAiSearch();
+      } else loadVitals();
     }
 
     // Shortcuts as in the period menu: T, Y, D, W, 3, M, A; ← and → step the period.
@@ -3534,7 +3702,9 @@
     });
 
     // One entrance when the page opens: the cards rise in, one after another.
-    [bar, main, ...grid.children].forEach((n, i) => enter(n, i));
+    paintViews();
+    const opening = state.view === "ai" ? aiGrid : state.view === "speed" ? speedGrid : grid;
+    [bar, viewTabs, ...(state.view === "traffic" ? [main] : []), ...opening.children].forEach((n, i) => enter(n, i));
     reload();
     loadOnline();
     liveConnect();
