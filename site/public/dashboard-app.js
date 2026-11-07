@@ -2809,6 +2809,7 @@
           ? stage(4, "Revenue from AI", money(s.ai_revenue, cur), changeChip(ch.ai_revenue, false, vsTitle))
           : null,
       );
+      funnel.style.setProperty("--n", String(funnel.children.length));
 
       // 2. What AI bots read: the pages, who reads them, and the files that point bots around.
       const gaps = r.gaps || {};

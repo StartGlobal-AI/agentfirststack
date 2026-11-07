@@ -2939,30 +2939,61 @@ a.afa-site-card:hover {
 /* AI search, in the order the view reads: read by bots, visitors from AI, converted, what to change */
 .afa-ai-funnel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));
   margin: 2px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
 }
 .afa-ai-stage {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 12px 14px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--paper);
+  min-width: 0;
+  padding: 14px 16px 14px 24px;
 }
+.afa-ai-stage:first-child {
+  padding-left: 16px;
+}
+.afa-ai-stage + .afa-ai-stage {
+  border-left: 1px solid var(--line);
+}
+/* The step to the next one: a small badge centred on the divider. */
 .afa-ai-stage + .afa-ai-stage::before {
-  content: "";
+  content: "\2192";
   position: absolute;
-  left: -9px;
+  left: 0;
   top: 50%;
-  width: 8px;
-  height: 8px;
-  border-top: 1.5px solid var(--ink-3);
-  border-right: 1.5px solid var(--ink-3);
-  transform: translate(-1px, -50%) rotate(45deg);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+}
+@media (max-width: 760px) {
+  .afa-ai-funnel {
+    grid-template-columns: 1fr;
+  }
+  .afa-ai-stage,
+  .afa-ai-stage:first-child {
+    padding: 16px 16px 14px;
+  }
+  .afa-ai-stage + .afa-ai-stage {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .afa-ai-stage + .afa-ai-stage::before {
+    content: "\2193";
+    left: 50%;
+    top: 0;
+  }
 }
 .afa-ai-stage-label {
   display: inline-flex;
@@ -3052,9 +3083,4 @@ a.afa-site-card:hover {
 }
 .afa-ai-section .afa-askcard {
   margin-top: 14px;
-}
-@media (max-width: 640px) {
-  .afa-ai-stage + .afa-ai-stage::before {
-    display: none;
-  }
 }
