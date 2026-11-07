@@ -248,6 +248,16 @@ a {
   font-size: 14px;
   color: rgba(232, 240, 255, 0.6);
 }
+/* the skill install command: one tap selects all of it */
+.works code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ice);
+  background: rgba(156, 194, 255, 0.12);
+  user-select: all;
+}
 
 /* ---------- the setup card: one prompt, then each part ticks in ---------- */
 .setup {

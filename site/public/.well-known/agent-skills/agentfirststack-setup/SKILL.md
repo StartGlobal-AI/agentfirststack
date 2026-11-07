@@ -1,6 +1,6 @@
 ---
 name: agentfirststack-setup
-description: Set up a website's analytics, tag manager with server-side conversion tracking (GA4, Google Ads, Meta, TikTok and more), an email inbox and session replay with AgentFirstStack (free, open source, no signup form), then verify every part yourself. Use when a project needs analytics, conversion tracking for ads, an inbox for verification codes or session recordings, or when asked to set up AgentFirstStack.
+description: Set up a website's whole GTM stack with AgentFirstStack (free, open source, no signup form): analytics with revenue and MRR, page speed (Core Web Vitals from real visitors), AI search (AI crawlers and visitors from AI assistants), a tag manager with server-side conversion tracking to GA4, Google Ads, Meta, TikTok and LinkedIn, an email inbox and session replay, served from the site's own domain, then test every part end to end. Use when a project needs analytics, conversion tracking for ads, an inbox for verification codes, session recordings, Core Web Vitals or AI search visibility, or when asked to set up AgentFirstStack.
 ---
 
 # Set up AgentFirstStack for a project
@@ -67,11 +67,15 @@ It reaches the people who claim the project, from the moment the owner claims it
    else the path proxy (`install.first_party_proxy`); the direct snippet only as a last resort.
 2. A goal for every conversion and main action (`POST /v1/sites/:id/goals`).
 3. Conversions only the backend knows as server events (`POST /v1/sites/:id/events`), with
-   `afsa.visitorId()` passed through the request so they join the visit. Payments: connect the provider.
+   `afsa.visitorId()` passed through the request so they join the visit. Payments: connect the
+   provider (Stripe, Paddle, Polar or LemonSqueezy), so revenue and MRR are reported by source.
 4. AI crawlers and search bots: if the site has a server or edge code, report bot requests from
    there (`POST /v1/sites/:id/crawls`, only for user agents matching `GET /v1/crawlers` ->
    `prefilter`, without waiting for the answer). On static hosting, skip it and say so.
 5. For the owner: an email destination, a weekly report and alerts for a traffic drop and for no data.
+   Page speed and AI search need nothing more: the snippet measures Core Web Vitals and step 4 feeds
+   AI search. After the deploy, `GET /v1/sites/:id/web-vitals` and `GET /v1/sites/:id/ai-search`
+   show them; pass on what `ai-search` lists as `next_steps`.
 6. History from the tool the site used before (GA4, Plausible or any other):
    `POST /v1/sites/:id/imports` (GA4 Data API report JSON, Plausible Stats API JSON, their CSV
    exports, or `{"source":"other","tool":"datafast","rows":[...]}`), including its daily visitors

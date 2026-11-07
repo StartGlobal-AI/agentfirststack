@@ -7,6 +7,7 @@ from your own domain, and open source (AGPL-3.0; the browser scripts are MIT).
 
 - Live demo, our own analytics: https://agentfirststack.com/#live
 - Manual for agents: https://agentfirststack.com/llms.txt
+- As an agent skill: `npx skills add StartGlobal-AI/agentfirststack`
 - Registration and credentials: https://agentfirststack.com/auth.md
 - Source: https://github.com/StartGlobal-AI/agentfirststack
 

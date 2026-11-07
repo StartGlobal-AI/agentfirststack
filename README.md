@@ -73,6 +73,16 @@ claim link. Your old tools stay until the setup check says the numbers match and
 remove them. Pasting the same prompt again later starts from the
 setup check and fills the gaps.
 
+Or install it as an agent skill ([skills.sh](https://www.skills.sh)), so your agent has the setup
+steps on hand in every session:
+
+```sh
+npx skills add StartGlobal-AI/agentfirststack
+```
+
+Then ask it to set up AgentFirstStack. The skill is
+[`skills/agentfirststack-setup/SKILL.md`](skills/agentfirststack-setup/SKILL.md).
+
 Or do it by hand:
 
 ```sh

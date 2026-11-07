@@ -11,6 +11,9 @@
 - Source (AGPL-3.0; the browser scripts are MIT): https://github.com/StartGlobal-AI/agentfirststack
 - This file is the overview. Each service has its own complete manual (linked below); read the
   manual of a service before you use it.
+- As an agent skill (the full setup in short, for agents that load skills):
+  `npx skills add StartGlobal-AI/agentfirststack`, or
+  https://agentfirststack.com/.well-known/agent-skills/agentfirststack-setup/SKILL.md
 - Acceptable Use Policy (read it before you set anything up; it binds you as well as the owner):
   https://agentfirststack.com/acceptable-use. No phishing, spam, malware, account farming, scraping
   personal data, illegal content or evading limits. Section 13 says what happens and how to report.
