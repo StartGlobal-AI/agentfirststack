@@ -29,6 +29,7 @@
       "!/fonts/*",
       "!/brand/*",
       "!/og/*",
+      "!/logos/*",
       "!/app.js",
       "!/content.js",
       "!/dashboard.js",

@@ -438,7 +438,7 @@ a {
 }
 .cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-top: 40px;
 }
@@ -453,15 +453,15 @@ a {
     0 0 0 1px var(--line),
     0 18px 40px -30px rgba(10, 26, 92, 0.35);
 }
-/* Each product's icon: a small pixel cluster in its own blue. */
+/* Each product's icon: its glyph drawn in pixels, white on its own blue. */
 .card-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background:
-    linear-gradient(var(--tone), var(--tone)) 0 0 / 50% 50% no-repeat,
-    linear-gradient(var(--tone), var(--tone)) 100% 100% / 50% 50% no-repeat,
-    color-mix(in srgb, var(--tone) 30%, #fff);
+  width: 44px;
+  height: 44px;
+  padding: 9px;
+  border-radius: 11px;
+  fill: #fff;
+  background: var(--tone);
+  box-shadow: 0 8px 18px -10px color-mix(in srgb, var(--tone) 80%, transparent);
 }
 .card h3 {
   margin-top: 18px;
@@ -544,12 +544,14 @@ a {
   color: var(--ink-2);
 }
 
+@media (max-width: 1100px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 980px) {
   .hero-grid {
     grid-template-columns: 1fr;
-  }
-  .cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 640px) {
@@ -618,124 +620,7 @@ a {
   border-radius: 3px;
   background: var(--c);
 }
-.principles {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-  margin-top: 32px;
-}
-.principle {
-  display: flex;
-  flex-direction: column;
-  padding: clamp(20px, 2.4vw, 28px);
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-}
-.principle h3 {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 12px 5px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-.principle h3 svg {
-  width: 15px;
-  height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.claim {
-  margin-top: 16px;
-  font-size: clamp(20px, 2vw, 23px);
-  font-weight: 650;
-  line-height: 1.2;
-  letter-spacing: -0.022em;
-  text-wrap: balance;
-}
-.proof {
-  margin-top: 18px;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: var(--tint);
-}
-.proof-title {
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 500;
-}
-.proof-title code {
-  font-size: inherit;
-}
-.proof dl {
-  margin: 10px 0 0;
-  display: grid;
-  gap: 0;
-}
-.proof dl div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 0;
-  border-top: 1px solid var(--line-2);
-  font-size: 13.5px;
-}
-.proof dt {
-  color: var(--ink-2);
-}
-.proof dd {
-  margin: 0;
-  font-weight: 600;
-  text-align: right;
-}
-.proof code {
-  font-family: var(--mono);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-.principle .ticks {
-  margin-top: 18px;
-  font-size: 14.5px;
-}
-.proof-link {
-  margin-top: auto;
-  padding-top: 18px;
-  color: var(--ink);
-  font-size: 14.5px;
-  font-weight: 600;
-  text-underline-offset: 3px;
-}
-.ticks {
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-  color: var(--ink-2);
-}
-.ticks li {
-  position: relative;
-  padding-left: 20px;
-}
-.ticks li::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 0.5em;
-  width: 9px;
-  height: 5px;
-  border-left: 1.6px solid var(--ink);
-  border-bottom: 1.6px solid var(--ink);
-  transform: rotate(-45deg);
-}
+
 .free {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
@@ -806,7 +691,8 @@ a {
   flex-wrap: wrap;
   gap: 6px 32px;
 }
-.limits-head h3 {
+.limits-head h3,
+.limits-block .limits-head h2 {
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.015em;
@@ -1207,54 +1093,7 @@ a {
   background: var(--tone);
 }
 
-/* principles on ice */
-.principle {
-  border-color: var(--line);
-}
-.principle h3 {
-  border-color: var(--line-2);
-}
-.proof {
-  background: var(--paper);
-}
-.ticks li::before {
-  border-color: var(--blue);
-}
-
-/* guides strip */
-.guides-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 24px;
-  padding: 0;
-  list-style: none;
-}
-.guides-links a {
-  display: inline-block;
-  padding: 9px 14px;
-  border-radius: 10px;
-  font-size: 15px;
-  font-weight: 550;
-  color: var(--deep);
-  text-decoration: none;
-  background: #fff;
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.guides-links a:hover {
-  box-shadow: inset 0 0 0 1px var(--blue);
-}
-.guides-all {
-  margin-top: 18px;
-  font-size: 15px;
-}
-.guides-all a {
-  color: var(--cobalt);
-  font-weight: 600;
-}
-
 @media (max-width: 980px) {
-  .principles,
   .free,
   .limits-row {
     grid-template-columns: 1fr;
@@ -1279,4 +1118,53 @@ a {
   .board-chart {
     height: 150px;
   }
+}
+
+/* product chips: each tool's mark, in grey, beside its name */
+.replaces li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px 4px 8px;
+  font-size: 12.5px;
+}
+.replaces img {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 3px;
+  filter: grayscale(1) contrast(1.1);
+  opacity: 0.75;
+  mix-blend-mode: multiply;
+}
+.cards-note {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* sub pages (fair-use limits): a short deep-blue head, then paper */
+.subhead {
+  padding: 132px 0 56px;
+  color: #fff;
+  background: linear-gradient(160deg, var(--abyss), var(--deep));
+}
+.subhead h1 {
+  font-size: clamp(34px, 4.4vw, 52px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.subhead p {
+  max-width: 62ch;
+  margin-top: 16px;
+  font-size: 17px;
+  color: #c9d8ff;
+}
+.subhead .actions {
+  margin-top: 26px;
+}
+.subpage .limits-block {
+  margin-top: 0;
 }

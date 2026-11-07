@@ -25,8 +25,10 @@ from your own domain, and open source (AGPL-3.0; the browser scripts are MIT).
 
 | Service | What it does | Replaces | Manual |
 |---|---|---|---|
-| Analytics | Countries, regions and cities from the edge; pages, sources and campaigns including AI assistants; goals, revenue, MRR, funnels, realtime; server-side events; no cookies | Google Analytics, Plausible, DataFast, Fathom | https://analytics.agentfirststack.com/llms.txt |
-| Tags and conversions | One snippet for every pixel; conversions sent from the browser and your server to GA4, Google Ads, Meta and TikTok with one event id, so each counts it once; click IDs kept; consent banner; preview, publish, roll back | Google Tag Manager, server-side GTM, Stape, Cookiebot | https://tags.agentfirststack.com/llms.txt |
+| Web analytics | Countries, regions and cities from the edge; pages, sources and campaigns including AI assistants; goals, revenue, MRR, funnels, realtime; server-side events; no cookies | Google Analytics, Plausible, DataFast, Fathom | https://analytics.agentfirststack.com/llms.txt |
+| Revenue and MRR | Payments from Stripe, Paddle, Polar and LemonSqueezy joined to the visit that brought them; MRR, ARR, churn and trial conversion by channel, campaign, country or plan (part of Analytics) | ChartMogul, Baremetrics, ProfitWell | https://analytics.agentfirststack.com/llms.txt |
+| Tag manager | One snippet for every pixel and click event; triggers, variables, preview, versions and rollback; consent banner and Consent Mode v2 | Google Tag Manager, Cookiebot, CookieYes | https://tags.agentfirststack.com/llms.txt |
+| Conversion tracking | Conversions sent from the browser and your server to GA4, Google Ads, Meta, TikTok, LinkedIn and more with one event id, so each counts it once; click IDs kept (part of Tags) | Server-side GTM, Stape, Meta CAPI Gateway | https://tags.agentfirststack.com/llms.txt |
 | Email inboxes | Inboxes in one request; verification codes and links extracted; read, reply, send; your own domain; webhooks | A Gmail account per project, AgentMail, Mailinator | https://mail.agentfirststack.com/llms.txt |
 | Session replay | Session recordings masked in the browser by default; sessions as readable transcripts; rage, dead and error clicks; heatmaps and JS errors as data | Hotjar, Microsoft Clarity, FullStory | https://replay.agentfirststack.com/llms.txt |
 | Page speed | Core Web Vitals from real visitors, by page, device, country and browser, slowest pages first (part of Analytics) | PageSpeed Insights, Vercel Speed Insights, SpeedCurve | https://analytics.agentfirststack.com/llms.txt |
@@ -133,7 +135,7 @@ When you're done, show me the setup check's table of what's set up and the test 
 
 ## Free and open source
 
-- Hosted: free, with fair-use limits listed in the manual.
+- Hosted: free at any size within the fair-use limits: https://agentfirststack.com/limits
 - Self-host: `pnpm afs init <name> --domain example.com --account <id>` then `pnpm afs deploy <name>`.
 
 ## Guides and comparisons (for people)

@@ -88,5 +88,11 @@
     "title": "Session replay your agent can read",
     "kicker": "Masked by default, set up over an API, and read as text transcripts.",
     "service": "replay"
+  },
+  {
+    "slug": "limits",
+    "title": "Fair-use limits on the hosted service",
+    "kicker": "Free at any size within them: sites, containers, inboxes and recorded sessions per project.",
+    "service": "all"
   }
 ]

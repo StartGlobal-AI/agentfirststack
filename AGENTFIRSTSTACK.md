@@ -26,7 +26,7 @@ this first on every later run and update it instead of starting over. Never writ
 - Pages (all static, `site/public/`): home `/`, `/guides` and four guides under `/guides/*`, the
   comparison pages (`/google-analytics-mcp`, `/google-tag-manager-mcp`, `/posthog-mcp`,
   `/mixpanel-mcp`, `/gmail-mcp`, `/agentmail-alternative`, `/microsoft-clarity-mcp`), `/mcp`,
-  `/privacy`, `/terms`. The manual `/llms.txt` is plain text (no snippet).
+  `/limits` (fair-use limits), `/privacy`, `/terms`. The manual `/llms.txt` is plain text (no snippet).
 - Private pages (`site/src/`: `/signin`, `/claim/*`, `/dashboard`) run no tracking, as the privacy page says.
 - Links out: the nav and footer GitHub links (repo, license) are this project's; the comparison
   pages and one guide also link to other GitHub repos and to vendor docs, which analytics counts as
@@ -70,7 +70,7 @@ analytics goal of the same event name.
 | `manual_click` | `a[href$='/llms.txt']`: Manual (nav, footer), Read the manual, service manuals | `link_url` (the link's href) | Opened the manual |
 | `github_click` | `a[href^='https://github.com/StartGlobal-AI/']`: this project's repo (nav, footer) and license (footer) | `link_url` | Clicked GitHub |
 | `sign_in_click` | `a[href='/signin']` (nav) | | Clicked Sign in |
-| `setup_prompt_click` | `a[href='/#setup']`: "Get the setup prompt" in guide sidebars | | Clicked Get the setup prompt |
+| `setup_prompt_click` | `a[href='/#setup']`: "Get the setup prompt" in guide sidebars and on `/limits` | | Clicked Get the setup prompt |
 | `guide_click` | `a[href^='/guides'], a[href$='-mcp'], a[href='/mcp'], a[href='/agentmail-alternative']` | `link_url` | Clicked a guide link |
 | `nav_section_click` | `.nav-links a[href*='#']`: Products, Live demo, Pricing (home), Products (other pages) | `link_url` | Clicked a home section link |
 | `show_prompt` | `[data-show-prompt]`: "See the full prompt" in the home setup card | | Showed the pasted prompt |
