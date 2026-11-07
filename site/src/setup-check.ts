@@ -127,7 +127,7 @@ const ROWS: { part: string; ids: string[]; show: string[]; perDomain?: true }[] 
   },
   {
     part: "Tag manager",
-    ids: ["tags.container", "tags.installed", "tags.published", "tags.firing"],
+    ids: ["tags.container", "tags.installed", "tags.domain_verified", "tags.published", "tags.firing"],
     show: ["tags.published"],
     perDomain: true,
   },
@@ -1355,6 +1355,23 @@ function tagsChecksFor(
           fix: `Put the container's snippet (GET ${T}${p} -> container.snippet) in the <head> of every page, deploy, then POST ${T}${p}/scan (MCP tags_scan_site)`,
         }),
   );
+
+  // Domain verified for the container too (custom HTML and JavaScript tags need it), the way
+  // analytics and replay verify theirs: the snippet on the homepage, or the DNS record.
+  if (d.container) {
+    const title = "The container's domain is verified";
+    checks.push(
+      d.container.container.domain_verified
+        ? at({ id: "tags.domain_verified", status: "ok", title, detail: "verify found the container on the homepage, or the DNS record." })
+        : at({
+            id: "tags.domain_verified",
+            status: "missing",
+            title,
+            detail: "Not verified yet: custom HTML and JavaScript tags can't be published until it is.",
+            fix: `Deploy the snippet, then POST ${T}${p}/verify (MCP tags_verify_domain)`,
+          }),
+    );
+  }
 
   // Published, with events
   if (!live)

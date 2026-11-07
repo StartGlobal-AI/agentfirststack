@@ -194,6 +194,7 @@ describe("setup check", () => {
     expect(r.json.summary).toContain("waiting on the owner");
     // www.acme.test (the container) and acme.test (the sites) are one website.
     expect(c("tags.container").domain).toBe("acme.test");
+    expect(c("tags.domain_verified").status).toBe("ok"); // the container proves the domain too
     expect(c("tags.goals_for_events").status).toBe("ok"); // copy_prompt matches the copy_* goal
     expect(c("tags.destinations").detail).toContain("none failing");
     expect(c("analytics.goals_counted").detail).toBe("All 3 goals counted.");

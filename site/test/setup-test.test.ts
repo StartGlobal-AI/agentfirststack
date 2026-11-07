@@ -107,6 +107,7 @@ function world(
     tags: {
       "/v1/containers": { containers: [{ id: "ctr_acme", domain: "acme.test", name: null, live_version: 3, created_at: NOW() }] },
       "/v1/containers/ctr_acme": { container: { id: "ctr_acme", live_version: 3 } },
+      "POST /v1/containers/ctr_acme/verify": { container_id: "ctr_acme", verified: true, method: "snippet", checks: [] },
       "/v1/containers/ctr_acme/versions/3": { config },
       "/v1/containers/ctr_acme/destinations": {
         destinations: [
@@ -239,6 +240,7 @@ describe("setup test", () => {
     expect(t("tags.ad_platform.dst_meta")).toMatchObject({ status: "passed", detail: expect.stringContaining("sign_up, purchase") });
     expect(t("tags.ad_platform.dst_li")).toMatchObject({ status: "skipped", detail: expect.stringContaining("no test mode") });
     expect(t("replay.verify").status).toBe("passed");
+    expect(t("tags.verify")).toMatchObject({ status: "passed", detail: "domain verified (snippet)." });
     expect(r.json.passed).toBe(true);
 
     // Test conversions: flagged test, no identity, only to the ad platforms (never to analytics, so

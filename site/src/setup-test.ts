@@ -265,6 +265,30 @@ async function verifyTest(x: Ctx, svc: "analytics" | "replay", siteId: string, d
       };
 }
 
+/**
+ * Tags verify: proves the domain for the tag container (custom HTML or JavaScript tags need it),
+ * from the container snippet on https://<domain>/ or the DNS TXT record. Already verified: passes.
+ */
+async function tagsVerifyTest(x: Ctx, containerId: string, domain: string): Promise<SetupTest> {
+  const base = { id: "tags.verify", service: "tags" as const, domain, title: "Tags verify: the live homepage loads the container" };
+  const r = await x.call<{
+    verified?: boolean;
+    method?: string | null;
+    checks?: { method: string; ok: boolean; detail: string }[];
+    next_steps?: string[];
+  }>("tags", `/v1/containers/${containerId}/verify`, { method: "POST", body: {} });
+  if (!r.ok) return { ...base, status: "failed", detail: `verify didn't run (${r.status}): ${errOf(r.json)}` };
+  const v = r.json ?? {};
+  if (v.verified) return { ...base, status: "passed", detail: `domain verified${v.method ? ` (${v.method})` : ""}.` };
+  const snippet = (v.checks ?? []).find((c) => c.method === "snippet");
+  return {
+    ...base,
+    status: "failed",
+    detail: snippet?.detail ?? "domain not verified.",
+    fix: (v.next_steps ?? []).at(-1) ?? `POST ${serviceUrl(x.base, "tags")}/v1/containers/${containerId}/verify`,
+  };
+}
+
 /** Recent test events in analytics since a time (realtime, debug only). */
 async function analyticsTestEvents(x: Ctx, siteId: string, since: number) {
   const r = await x.call<{ recent_events?: { name: string; pathname?: string; debug?: boolean; ts?: number }[] }>(
@@ -822,8 +846,10 @@ export async function runSetupTest(
     jobs.push(verifyTest(x, "analytics", picked.site.id, domain));
     jobs.push(analyticsIngestTest(x, picked.site.id, domain, start));
   }
-  if (domain && x.has.tags && picked.container)
+  if (domain && x.has.tags && picked.container) {
     jobs.push(tagsTests(x, picked.container.id, picked.site?.id ?? null, domain, start, config));
+    jobs.push(tagsVerifyTest(x, picked.container.id, domain));
+  }
   if (domain && x.has.replay && picked.replaySite) jobs.push(verifyTest(x, "replay", picked.replaySite.id, domain));
   const tests = (await Promise.all(jobs)).flat();
   const missing: SetupTest[] = [];

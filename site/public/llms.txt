@@ -176,7 +176,8 @@ Every create call is safe to repeat: it returns the existing thing (`"existing":
 8. **Test it, end to end.** Three calls, in this order; fix what fails and run that call again.
    1. `POST https://agentfirststack.com/v1/setup/test` (MCP `afs_test_setup`): sends test traffic
       through everything the server can reach: a test email from the inbox to itself (sent,
-      received, code read back), analytics and replay `verify` on the live homepage, a test event
+      received, code read back), analytics, replay and tag container `verify` on the live homepage
+      (the container's proves the domain for custom HTML and JavaScript tags), a test event
       into analytics, one through the tag manager to analytics, and each conversion to each ad
       platform in its test mode. It returns `browser_plan`, built from the live tags config.
    2. Do the `browser_plan` in a real browser (a browser tool, Playwright or Puppeteer): open its
