@@ -258,6 +258,58 @@ a {
   background: rgba(156, 194, 255, 0.12);
   user-select: all;
 }
+/* the command and its copy button stay on one line together */
+.cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.cmd code {
+  overflow-wrap: anywhere;
+}
+.cmd-copy {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: rgba(232, 240, 255, 0.6);
+  background: transparent;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.cmd-copy:hover {
+  color: var(--ice);
+  background: rgba(156, 194, 255, 0.12);
+}
+.cmd-copy:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 1px;
+}
+.cmd-copy svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cmd-copy .i-done,
+.cmd-copy.is-copied .i-copy {
+  display: none;
+}
+.cmd-copy.is-copied .i-done {
+  display: block;
+}
+.cmd-copy.is-copied {
+  color: #7fd4ff;
+}
 
 /* ---------- the setup card: one prompt, then each part ticks in ---------- */
 .setup {

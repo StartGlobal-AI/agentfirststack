@@ -75,6 +75,7 @@ analytics goal of the same event name.
 | `setup_prompt_click` | `a[href='/#setup']`: "Get the setup prompt" in guide sidebars and on `/limits` | | Clicked Get the setup prompt |
 | `guide_click` | `a[href^='/guides'], a[href$='-mcp'], a[href='/mcp'], a[href='/agentmail-alternative']` | `link_url` | Clicked a guide link |
 | `nav_section_click` | `.nav-links a[href*='#']`: Products, Live demo, Pricing (home), Products (other pages) | `link_url` | Clicked a home section link |
+| `copy_skill_command` | `[data-copy-cmd]`: the copy button beside `npx skills add StartGlobal-AI/agentfirststack` in the home hero (its own button, so it isn't counted as `copy_prompt`) | | Copied the skill command |
 | `show_prompt` | `[data-show-prompt]`: "See the full prompt" in the home setup card | | Showed the pasted prompt |
 | `replay_demo` | `[data-replay]`: Replay, shown in the home setup card once its checklist finishes | | Replayed the demo |
 | `email_click` | `a[href^='mailto:']`: Security, Report abuse, privacy@ | `link_text` | Clicked an email link |

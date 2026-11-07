@@ -64,6 +64,37 @@
     });
   });
 
+  // ---------- the skill's install command (its own button: copy_skill_command, not copy_prompt) ----------
+  document.querySelectorAll("[data-copy-cmd]").forEach(function (button) {
+    var source = document.getElementById(button.dataset.copyCmd);
+    if (!source) return;
+    var timer;
+    button.addEventListener("click", function () {
+      var text = source.textContent.trim();
+      var done = function (ok) {
+        clearTimeout(timer);
+        button.classList.toggle("is-copied", ok);
+        button.setAttribute("aria-label", ok ? "Copied" : "Copy the install command");
+        if (status) status.textContent = ok ? "Copied. Run it in your project's folder." : "Couldn't copy automatically. Select the command and copy it.";
+        timer = setTimeout(function () {
+          button.classList.remove("is-copied");
+          button.setAttribute("aria-label", "Copy the install command");
+          if (status && ok) status.textContent = "";
+        }, 2000);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(
+          function () {
+            done(true);
+          },
+          function () {
+            done(fallbackCopy(text));
+          },
+        );
+      } else done(fallbackCopy(text));
+    });
+  });
+
   // ---------- the full prompt, under the setup card ----------
   var showBtn = document.querySelector("[data-show-prompt]");
   var full = document.getElementById("full-prompt");
