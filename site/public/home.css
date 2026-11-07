@@ -555,7 +555,7 @@ a {
   }
 }
 @media (max-width: 640px) {
-  .nav-links a:not(.top-cta):not([href="#pricing"]) {
+  .nav-links a:not(.top-cta):not([href$="#pricing"]) {
     display: none;
   }
   .hero {
@@ -1172,4 +1172,49 @@ a {
 }
 .subpage .limits-block {
   margin-top: 0;
+}
+
+/* Phones: every button the full width, so stacked pairs line up; small links get room to tap. */
+@media (max-width: 640px) {
+  .actions .btn,
+  .band .btn,
+  .live-head .btn {
+    width: 100%;
+  }
+  .band-inner > div {
+    width: 100%;
+  }
+  .pills {
+    gap: 6px;
+  }
+  .pills li {
+    font-size: 12.5px;
+  }
+  .pills a {
+    height: 28px;
+    padding: 0 10px;
+    gap: 6px;
+  }
+  .pills svg {
+    width: 13px;
+    height: 13px;
+  }
+  .nav-links a[href="#pricing"],
+  .nav-links a[href="/#pricing"] {
+    padding: 7px 6px;
+  }
+  .setup-link {
+    padding: 8px 0;
+    margin: -8px 0;
+  }
+  .card-link,
+  .foot-links a {
+    padding-block: 5px;
+  }
+  .foot-links {
+    gap: 4px 18px;
+  }
+}
+.foot a {
+  white-space: nowrap;
 }
