@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revenue analytics and MRR your AI agent sets up</title>
+<meta name="description" content="Revenue and MRR from Stripe, Paddle, Polar and LemonSqueezy, joined to the visit that brought each customer. Free, open source, set up by your AI agent.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/revenue-analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Revenue analytics and MRR your AI agent sets up">
+<meta property="og:description" content="Revenue and MRR from Stripe, Paddle, Polar and LemonSqueezy, joined to the visit that brought each customer. Free, open source, set up by your AI agent.">
+<meta property="og:url" content="https://agentfirststack.com/revenue-analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/revenue-analytics.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Revenue analytics and MRR your AI agent sets up">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Revenue analytics and MRR your AI agent sets up">
+<meta name="twitter:description" content="Revenue and MRR from Stripe, Paddle, Polar and LemonSqueezy, joined to the visit that brought each customer. Free, open source, set up by your AI agent.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/revenue-analytics.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/revenue-analytics#article",
+      "headline": "Revenue analytics and MRR your AI agent sets up",
+      "description": "Revenue and MRR from Stripe, Paddle, Polar and LemonSqueezy, joined to the visit that brought each customer. Free, open source, set up by your AI agent.",
+      "url": "https://agentfirststack.com/revenue-analytics",
+      "image": "https://agentfirststack.com/og/revenue-analytics.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/revenue-analytics"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "Revenue and MRR", "item": "https://agentfirststack.com/revenue-analytics" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/revenue-analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does it replace ChartMogul or Baremetrics?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For the marketing question, yes: which channels, campaigns, pages and countries bring revenue and MRR. For finance it doesn't: it has no forecasts, benchmarks, LTV, dunning or cancellation insights, and connects fewer billing systems. You can run both."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What Stripe permissions does it need?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A restricted key with Webhook Endpoints Write, and Read on Checkout Sessions, Invoices, Charges and Subscriptions. The write permission lets the service create the site's webhook endpoint and delete it on disconnect; nothing else can change money, customers or products. The key is stored sealed and never returned."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can it import my Stripe history?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Up to 90 days: checkout sessions, paid invoices, refunds and subscriptions, with every subscription that hadn't ended before the window. Payments from before the tracker was on your site count in totals and MRR, but show as Unattributed by source, because there was no visit to join."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does a payment find the visit that brought it?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The page's afsa.visitorId() goes into the checkout as metadata.afs_visitor_id (or Stripe's client_reference_id, Paddle's customData, Polar's metadata, LemonSqueezy's checkout custom data). Renewals keep the customer's first source. A payment with no match is kept under Unattributed and linked later if that customer's checkout turns up."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does MRR work with Paddle, Polar and LemonSqueezy?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Each provider's webhook feeds payments, refunds and subscription states into the same MRR as Stripe. Amounts are after discounts and before tax, except Paddle subscriptions, which are counted before discounts, and LemonSqueezy subscriptions, whose MRR comes from their invoices because they carry no price."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The hosted service is free with fair-use limits, and the code is open source under AGPL-3.0 (the browser scripts are MIT), so you can also run it on your own Cloudflare account."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>Revenue and MRR</span></nav>
+      <h1>Revenue analytics and MRR your AI agent sets up</h1>
+      <p class="lede">AgentFirstStack's revenue analytics joins every payment to the visit that brought the customer, so revenue, MRR and churn split by channel, campaign, page, country and plan. An AI agent connects Stripe in one call with a restricted key (with 90 days of history), or Polar, Paddle or LemonSqueezy by webhook, and checks that payments find their visit. It's free on the hosted service and open source. ChartMogul (free up to $10K MRR, then from $69 a month) and Baremetrics go deeper on subscription finance, with forecasts, benchmarks and more billing systems: pick them for finance reporting, and this to see which marketing brings paying customers.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It changes your checkout code to pass the visitor id, so read the diff before you deploy. What it has to ask you for is the payment provider's key or webhook access.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up revenue analytics for this project with AgentFirstStack: payments joined to the visits that brought each customer, and MRR by channel and campaign. It's free, open-source analytics built for agents, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt (the Revenue attribution and Subscriptions and MRR sections).
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. If there's no analytics site for the production domain yet, create one and serve its snippet first-party (a first-party domain, or else the path proxy from the install answer), deploy, and run verify.
+
+4. Find how this business takes payments. For Stripe, ask me for a restricted key with exactly these permissions: Webhook Endpoints Write, and Checkout Sessions, Invoices, Charges and Subscriptions Read. Connect it with POST /v1/sites/:id/integrations/stripe/connect and backfill_days 90, and don't save the key anywhere. For Polar, Paddle or LemonSqueezy, GET the integration for the webhook URL and events, add the webhook if you have access (otherwise tell me where), and connect its signing secret. For any other billing system, send payments and subscription states from the backend with POST /v1/sites/:id/payments and /v1/sites/:id/subscriptions.
+
+5. Link each checkout to its visit with afsa.visitorId(): metadata.afs_visitor_id on Stripe Checkout (and subscription_data.metadata for subscriptions), client_reference_id on Stripe Payment Links, customData on Paddle, metadata on Polar, checkout[custom] on LemonSqueezy. If the app identifies users, send afs_user_id as well, and a server event with the user_id when they sign up.
+
+6. If the business reports in one currency, set it on the site. Create an email destination if there isn't one, and a payment alert to it.
+
+7. Check it: GET the integration until the backfill is done, run verify and fix any stripe_webhook or payment_linking check it reports, then read GET /v1/sites/:id/mrr?breakdown=channel.
+
+8. Write the site id and the env var name (never a key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what's connected, how many payments and subscriptions came in and how many found their visit, MRR by channel, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="steps">What your agent does</h2>
+<ol>
+<li><b>Gets a key</b> with <code>POST https://agentfirststack.com/v1/signup</code> and saves it in <code>.env</code> as <code>AGENTFIRSTSTACK_API_KEY</code>. The same key works on REST and on the MCP server at <code>https://agentfirststack.com/mcp</code>.</li>
+<li><b>Puts the tracker on the site, first-party.</b> <code>POST /v1/sites</code> creates the site. A first-party domain (<code>POST https://agentfirststack.com/v1/first-party-domains</code> with <code>{"hostname":"edge.example.com"}</code>, then one CNAME to <code>fp.agentfirststack.com</code>) serves it from your own subdomain with no server code; the path proxy is the alternative. Revenue needs visits to join, so this comes first.</li>
+<li><b>Connects the payment provider.</b>
+<ul>
+<li>Stripe: <code>POST /v1/sites/:id/integrations/stripe/connect</code> with a restricted key (MCP <code>connect_stripe_key</code>). The service creates the site's webhook endpoint in your Stripe account and imports up to 90 days of checkout sessions, paid invoices, refunds and subscriptions. The key's only write permission is webhook endpoints: it can't change money, customers or products. It's stored sealed and never returned.</li>
+<li>Polar, Paddle and LemonSqueezy: <code>GET /v1/sites/:id/integrations/&lt;provider&gt;</code> returns the webhook URL and the events to enable, and <code>POST</code> with the signing secret connects it (MCP <code>connect_billing_provider</code>). Signatures are checked with each provider's own scheme.</li>
+<li>Any other billing: <code>POST /v1/sites/:id/payments</code> and <code>POST /v1/sites/:id/subscriptions</code> from your backend (MCP <code>record_payments</code>, <code>record_subscriptions</code>), up to 100 at a time and safe to retry.</li>
+</ul></li>
+<li><b>Links checkouts to visits.</b> Your coding agent passes <code>afsa.visitorId()</code> from the page into the checkout, so the payment lands on the right source, page and country:
+<pre><code>const session = await stripe.checkout.sessions.create({
+  mode: "subscription",
+  line_items: [{ price: "price_...", quantity: 1 }],
+  metadata: { afs_visitor_id: visitorId },            // afsa.visitorId() from the page
+  subscription_data: { metadata: { afs_visitor_id: visitorId } },
+  success_url: "https://example.com/thanks",
+});</code></pre></li>
+<li><b>Checks it.</b> <code>GET /v1/sites/:id/integrations/stripe</code> shows the backfill (status, imported, linked, skipped) and the webhook (events received, last result, payments and unlinked payments in the last 30 days). <code>POST /v1/sites/:id/verify</code> fails <code>stripe_webhook</code> when no verified delivery has arrived, and <code>payment_linking</code> when payments found no visitor, with the fix for each.</li>
+<li><b>Answers your questions</b> from the same API:
+<pre><code>A=https://analytics.agentfirststack.com
+curl "$A/v1/sites/$SITE/mrr?period=12mo&amp;interval=month&amp;breakdown=utm_campaign" -H "Authorization: Bearer $KEY"
+curl "$A/v1/sites/$SITE/breakdown?period=30d&amp;breakdown=channel&amp;metrics=visitors,revenue,revenue_per_visitor,purchase_rate&amp;sort=revenue" -H "Authorization: Bearer $KEY"
+curl "$A/v1/sites/$SITE/attribution?period=90d&amp;model=position_based&amp;breakdown=source" -H "Authorization: Bearer $KEY"</code></pre></li>
+</ol>
+
+<h2 id="features">What you get</h2>
+<ul>
+<li><b>Payments joined to visits.</b> Each payment is matched to its session, the visitor's latest session, the user's latest session or the customer's earlier payment, so renewals keep the source that first brought the customer. A payment with no match is kept under the channel "Unattributed", and linked later if that customer's checkout turns up. Customer ids are stored as a salted hash.</li>
+<li><b>Revenue in every report.</b> Revenue, new and renewal revenue, refunds, revenue per visitor, purchases, customers, purchase rate, average order value and revenue per customer, in every breakdown (channel, source, campaign, page, country, device and the rest), filter, timeseries and funnel.</li>
+<li><b>MRR and subscriptions.</b> <code>GET /v1/sites/:id/mrr</code> returns MRR, ARR, ARPU, active subscriptions, paying customers, trialing and past due; new, expansion, contraction, churned and reactivation MRR; customer, revenue and net revenue churn rates; trials started and converted. Per day, week or month, and by channel, source, utm_source, utm_medium, utm_campaign, referrer, country or plan.</li>
+<li><b>How MRR is counted.</b> Only subscriptions that pay (active, or past due while the provider retries) count. Each item is turned into a monthly amount from its interval, coupons in effect are applied, and tax is never included. Out-of-order and retried webhook deliveries are safe: a state older than the stored one is ignored.</li>
+<li><b>Attribution.</b> Six models (last non-direct, last touch, first touch, linear, position based, time decay) with conversion paths; journeys to the first purchase with time and visits to complete; insights such as the share of customers who buy on their first visit and revenue by device, OS and browser.</li>
+<li><b>Ad spend.</b> Daily cost per source and campaign (<code>POST /v1/sites/:id/costs</code>, JSON or CSV) gives ROAS, CPA and CAC next to revenue.</li>
+<li><b>One reporting currency.</b> Set the site's currency and every payment and subscription is converted at the European Central Bank's reference rate for its day, with the original amount kept.</li>
+<li><b>Alerts and reports.</b> A payment alert for new live payments, checked every 5 minutes, and weekly or monthly reports with revenue, by email, Slack or a signed webhook.</li>
+<li><b>For your agent and for you.</b> All of it over REST and MCP (<code>get_mrr</code>, <code>list_payments</code>, <code>list_subscriptions</code>, <code>get_attribution</code>, <code>get_journeys</code>). Your dashboard shows revenue, split into new and renewal, and revenue per visitor next to visitors. MRR is in the API and MCP only: the dashboard has no MRR chart yet.</li>
+</ul>
+
+<h2 id="setup-check">What the setup check verifies</h2>
+<p><code>GET https://agentfirststack.com/v1/setup</code> (MCP <code>afs_check_setup</code>) checks the analytics underneath. Payments aren't in it: the check lists "backend conversions and payments" under <code>not_checked</code>, because it reads what the services have received and can't know what your business sells. The analytics <code>verify</code> call covers them.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Check</th><th>What it verifies</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>analytics.site</code></th><td>Analytics has a site for the website</td></tr>
+<tr><th scope="row"><code>analytics.receiving</code></th><td>Analytics is receiving events from the pages</td></tr>
+<tr><th scope="row"><code>analytics.first_party</code></th><td>Browser events arrive first-party (through the site's own domain), so ad blockers don't drop them</td></tr>
+<tr><th scope="row"><code>analytics.proxy_key</code></th><td>Events through a first-party proxy carry its proxy key</td></tr>
+<tr><th scope="row"><code>analytics.goals</code>, <code>analytics.goals_counted</code></th><td>There is a goal for each conversion and main action, and every goal has counted at least once</td></tr>
+<tr><th scope="row"><code>analytics.server_events</code></th><td>Conversions only the backend knows arrive as server events (a warning, not a blocker)</td></tr>
+<tr><th scope="row"><code>analytics.alerts</code></th><td>Alerts fire on a traffic drop and when tracking stops</td></tr>
+<tr><th scope="row"><code>stripe_webhook</code> (verify)</th><td>A verified Stripe delivery has arrived and the last one didn't fail</td></tr>
+<tr><th scope="row"><code>payment_linking</code> (verify)</th><td>Payments in the last 30 days found their visitor; it fails with the count that show as "Unattributed"</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="compared">Compared with ChartMogul, Baremetrics and ProfitWell</h2>
+<p>These are subscription analytics tools for finance: they read your billing system and report the business. AgentFirstStack starts from the website and joins payments to the visits behind them. They go deeper on subscription finance; we answer which marketing brought the money. Prices and features as of 7 Nov 2026, from each product's own pages.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Price</th><th>Subscription analytics</th><th>Failed payments and churn</th><th>Forecasting</th><th>Billing sources</th></tr></thead>
+<tbody>
+<tr><th scope="row"><a href="https://chartmogul.com/pricing/">ChartMogul</a></th><td>Free "up to $10K MRR"; Starter from $69 a month ($57 billed annually); Pro from $119; Enterprise "From $19,900" a year</td><td>MRR, ARR, churn and LTV, customer MRR movements, segments by plan, country or cohort, industry benchmarks, a built-in CRM, REST API and an MCP server</td><td>Not listed on its pricing page</td><td>"Revenue forecast modeling" on every plan</td><td>"Stripe and Chargebee", and Paddle and Xero through its partner SaaSync; 1 billing source on Free and Starter, 5 on Pro</td></tr>
+<tr><th scope="row"><a href="https://baremetrics.com/pricing">Baremetrics</a></th><td>Launch "STARTS AT: $ 75 / mo" up to $360K ARR, Growth $255, Scale $1,152 (the FAQ on the same page says $49, $189 and $749)</td><td>"over 28 key subscription metrics", trial insights, segmentation, benchmarks on Growth, an MCP server</td><td>Payment Recovery (+$129 a month) for Stripe, Braintree and Recurly; Cancellation Insights (+$129 a month)</td><td>Forecast+, and scenario planning on Scale</td><td>Stripe, Braintree, Chargebee, Recurly, App Store, Google Play; Paddle in beta (<a href="https://baremetrics.com/integrations">integrations</a>)</td></tr>
+<tr><th scope="row"><a href="https://www.paddle.com/profitwell-metrics">ProfitWell Metrics</a></th><td>"completely free"; now listed among Paddle's products</td><td>MRR, churn, upgrades and downgrades, LTV, benchmarks against 30,000 subscription and SaaS companies</td><td>Paddle sells Retain separately: "Radically reduce churn, automatically"</td><td>Not described on its page</td><td>"Stripe, Chargebee, and many other payment and billing tools, including Paddle"</td></tr>
+<tr><th scope="row">AgentFirstStack</th><td>Free hosted service with <a href="/limits">fair-use limits</a>; AGPL-3.0, self-hostable</td><td>MRR, ARR, ARPU, MRR movements, churn rates and trial conversion, by channel, campaign, country or plan, joined to visits</td><td>None: no dunning, no cancellation surveys</td><td>None</td><td>Stripe in one call, Polar, Paddle and LemonSqueezy by webhook, anything else through the API</td></tr>
+</tbody>
+</table>
+</div>
+<p>Looking at revenue-first web analytics rather than finance tools? See the <a href="/datafast-alternative">DataFast alternative</a> page, and <a href="/fathom-alternative">Fathom alternative</a> for privacy-first analytics without payment data.</p>
+
+<h2 id="limits">Limits</h2>
+<ul>
+<li>10 analytics sites per project (3 before a person claims it) and 400 days of history kept on the hosted service.</li>
+<li>Payments and subscription changes count against a daily budget for server events, kept apart from browser events so a flood of page traffic can't refuse them. A Stripe delivery past it gets a 429 and Stripe retries it later, for up to 3 days; the backfill pauses until 00:00 UTC.</li>
+<li>The Stripe backfill reaches back at most 90 days, and reads at most 20,000 subscriptions (newest first).</li>
+<li>API reads: 300 a minute per project. <code>GET https://agentfirststack.com/v1/usage</code> shows every limit with what's used. All of them: <a href="/limits">fair-use limits</a>.</li>
+</ul>
+
+<h2 id="not-a-fit">When it isn't the right fit</h2>
+<ul>
+<li><b>Finance and board reporting.</b> Forecasts, benchmarks against other companies, LTV and revenue cohorts aren't computed. ChartMogul or Baremetrics do these.</li>
+<li><b>Failed payments and cancellations.</b> We don't send dunning emails, retry cards or survey people who cancel. Baremetrics' add-ons or Paddle's Retain do.</li>
+<li><b>Other billing systems.</b> There's no native connection for Chargebee, Recurly, Braintree, Zuora, the App Store or Google Play. Your backend can send their subscription states to <code>POST /v1/sites/:id/subscriptions</code>, but that's code to write and keep.</li>
+<li><b>History.</b> The Stripe import stops at 90 days, and Polar, Paddle and LemonSqueezy record from the day the webhook is connected. Payments made before the tracker was on the site have no visit to join, so they count in totals and MRR but show as "Unattributed" by source.</li>
+<li><b>Long anonymous journeys.</b> Analytics is cookieless by default, and an anonymous visitor's id changes every UTC day, so a payment credits that day's visits. To credit a visit from an earlier day, identify users (a user id on a server event) or switch the site to persistent mode.</li>
+<li><b>Usage-based pricing.</b> Metered and tiered prices count 0 in MRR unless you send the amount through the API. Paddle subscriptions are counted before discounts, because Paddle's subscription carries no discount amount.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Does it replace ChartMogul or Baremetrics?</h3>
+<p>For the marketing question, yes: which channels, campaigns, pages and countries bring revenue and MRR. For finance it doesn't: it has no forecasts, benchmarks, LTV, dunning or cancellation insights, and connects fewer billing systems. You can run both.</p>
+<h3>What Stripe permissions does it need?</h3>
+<p>A restricted key with Webhook Endpoints Write, and Read on Checkout Sessions, Invoices, Charges and Subscriptions. The write permission lets the service create the site's webhook endpoint and delete it on disconnect; nothing else can change money, customers or products. The key is stored sealed and never returned.</p>
+<h3>Can it import my Stripe history?</h3>
+<p>Up to 90 days: checkout sessions, paid invoices, refunds and subscriptions, with every subscription that hadn't ended before the window. Payments from before the tracker was on your site count in totals and MRR, but show as Unattributed by source, because there was no visit to join.</p>
+<h3>How does a payment find the visit that brought it?</h3>
+<p>The page's afsa.visitorId() goes into the checkout as metadata.afs_visitor_id (or Stripe's client_reference_id, Paddle's customData, Polar's metadata, LemonSqueezy's checkout custom data). Renewals keep the customer's first source. A payment with no match is kept under Unattributed and linked later if that customer's checkout turns up.</p>
+<h3>Does MRR work with Paddle, Polar and LemonSqueezy?</h3>
+<p>Yes. Each provider's webhook feeds payments, refunds and subscription states into the same MRR as Stripe. Amounts are after discounts and before tax, except Paddle subscriptions, which are counted before discounts, and LemonSqueezy subscriptions, whose MRR comes from their invoices because they carry no price.</p>
+<h3>Is it free?</h3>
+<p>Yes. The hosted service is free with fair-use limits, and the code is open source under AGPL-3.0 (the browser scripts are MIT), so you can also run it on your own Cloudflare account.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with ChartMogul, Baremetrics, ProfitWell, Paddle or Stripe.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics your AI agent sets up</b><span>The analytics the revenue joins to.</span></a></li>
+        <li><a class="card" href="/datafast-alternative"><span class="svc svc-analytics">Analytics</span><b>DataFast alternative</b><span>Revenue-first web analytics, compared.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt, revenue included.</span></a></li>
+        <li><a class="card" href="/conversion-tracking"><span class="svc svc-tags">Tags</span><b>Conversion tracking</b><span>Send the same purchases to Google Ads, Meta and TikTok.</span></a></li>
+        <li><a class="card" href="/guides/shopify-analytics"><span class="svc svc-analytics">Analytics</span><b>Shopify analytics</b><span>Orders from the webhook, joined to the visit.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#steps">What your agent does</a></li><li><a href="#features">What you get</a></li><li><a href="#setup-check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#not-a-fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

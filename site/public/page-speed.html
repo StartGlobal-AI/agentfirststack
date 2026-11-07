@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real user monitoring for Core Web Vitals · AgentFirstStack</title>
+<meta name="description" content="Core Web Vitals from real visitors: LCP, INP and CLS at p75 by page, device, country and browser, plus a lab run. Free, and your AI agent sets it up.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/page-speed">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Real user monitoring for Core Web Vitals, set up by your AI agent">
+<meta property="og:description" content="Core Web Vitals from real visitors: LCP, INP and CLS at p75 by page, device, country and browser, plus a lab run. Free, and your AI agent sets it up.">
+<meta property="og:url" content="https://agentfirststack.com/page-speed">
+<meta property="og:image" content="https://agentfirststack.com/og/page-speed.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Real user monitoring for Core Web Vitals, set up by your AI agent">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Real user monitoring for Core Web Vitals, set up by your AI agent">
+<meta name="twitter:description" content="Core Web Vitals from real visitors: LCP, INP and CLS at p75 by page, device, country and browser, plus a lab run. Free, and your AI agent sets it up.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/page-speed.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/page-speed#article",
+      "headline": "Real user monitoring for Core Web Vitals, set up by your AI agent",
+      "description": "Core Web Vitals from real visitors: LCP, INP and CLS at p75 by page, device, country and browser, plus a lab run. Free, and your AI agent sets it up.",
+      "url": "https://agentfirststack.com/page-speed",
+      "image": "https://agentfirststack.com/og/page-speed.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/page-speed"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "Page speed", "item": "https://agentfirststack.com/page-speed" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/page-speed#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is this real user monitoring or APM?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Real user monitoring for Core Web Vitals only. It measures how fast your pages load, respond and stay still in visitors' browsers (LCP, INP and CLS). It doesn't trace backend requests, time database queries or collect server errors, so it doesn't replace an APM tool."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it measure Core Web Vitals the way Google does?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It uses Google's method and thresholds: per metric, the 75th percentile of page loads by nearest rank, rated good, needs improvement or poor (LCP 2.5 s and 4 s, INP 200 ms and 500 ms, CLS 0.1 and 0.25). The visitors differ: Google's field data comes from eligible Chrome users in the Chrome UX Report, ours from every visitor whose browser reports the metrics, so the numbers won't match exactly."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does the dashboard say to read INP as an upper bound?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The tracker records only interactions slower than 40 ms. Page loads whose interactions were all faster report no INP, so the p75 is taken over the slower page loads, and the real p75 is at most that. The tracker also keeps the single slowest interaction, where Google skips one outlier for every 50 interactions on very busy pages."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it run Lighthouse lab tests?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, through Google's PageSpeed Insights API, one page at a time when your agent asks: the performance score, lab LCP, CLS, Total Blocking Time, FCP, Speed Index and server response time, the biggest opportunities, Google's field data and our real-visitor p75 for the same page. It asks only for Lighthouse's performance category, and it isn't scheduled."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How many page loads do I need?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "30 page loads with a metric before its p75 counts as enough; fewer and the dashboard marks it too few to trust. A page needs 10 to be ranked among the slowest pages. On a quiet site, widen the period, for example to 90 days."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need another script for page speed?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The AgentFirstStack Analytics tracker sends LCP, INP and CLS with the beacon it already sends when a visitor leaves a page. Load the current tracker from our service or your first-party domain, not a copy."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>Page speed</span></nav>
+      <h1>Real user monitoring for Core Web Vitals, set up by your AI agent</h1>
+      <p class="lede">AgentFirstStack Page speed measures Core Web Vitals in your real visitors' browsers: LCP, INP and CLS of each full page load, reported at the 75th percentile the way Google measures them, by page, device, country and browser, slowest pages first. It's part of AgentFirstStack Analytics, so the tracker you already load sends it. It does the Core Web Vitals job of PageSpeed Insights' field data, Vercel Speed Insights and SpeedCurve's RUM, free and open source, and an AI agent sets it up, tests it and reads it over REST and MCP. It's real user monitoring for page speed, not APM: no backend traces, server timings or error tracking.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. Real-visitor numbers need visits, so on a new site the prompt has your agent run a lab test first and tell you when the field data will be worth reading.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Measure this site's Core Web Vitals from real visitors with AgentFirstStack Analytics. It's free, open-source analytics built for agents, its tracker reports LCP, INP and CLS for every page load, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt (the "Page speed" section).
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Use the analytics site in AGENTFIRSTSTACK.md, or create one for the production domain. Serve the tracker from our own domain: a first-party domain (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain; add the CNAME if you can change our DNS, otherwise give me the record) or, meanwhile, the path proxy from GET /v1/sites/:id/install. Put the tracker in the head of every page.
+
+4. Deploy, open a few pages in a normal browser, and run verify. If the site already runs another speed tool (Vercel Speed Insights, SpeedCurve, a web-vitals script), tell me and leave it in place.
+
+5. Run a lab test on the homepage and our main landing page with GET /v1/sites/:id/web-vitals/lab?strategy=mobile, and show me lab, Google's field data and our real visitors side by side.
+
+6. Read GET /v1/sites/:id/web-vitals?breakdown=page, then breakdown=device. If a metric has fewer than 30 page loads, say so and tell me when to look again. For each failing metric, list the pages and the fix you'd make first, and ask me before you change code.
+
+7. Add a web_vitals alert for LCP on mobile to an email destination for me, and write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md. Create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what verify and the lab test returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="steps">What your agent does</h2>
+<ol>
+<li><b>Gets a key</b> with one request, <code>curl -X POST https://agentfirststack.com/v1/signup</code>, and saves it in <code>.env</code> as <code>AGENTFIRSTSTACK_API_KEY</code>, or reuses the one there.</li>
+<li><b>Creates the analytics site:</b> <code>POST https://analytics.agentfirststack.com/v1/sites {"domain":"example.com"}</code> (MCP <code>analytics_create_site</code>). Page speed has nothing else to turn on.</li>
+<li><b>Serves the tracker from your domain:</b> a first-party domain, <code>POST https://agentfirststack.com/v1/first-party-domains {"hostname":"edge.example.com"}</code> (MCP <code>afs_add_first_party_domain</code>), with one CNAME to <code>fp.agentfirststack.com</code>, or the path proxy from <code>GET /v1/sites/:id/install</code>. Ad blockers block analytics hosts, and a blocked tracker sends no vitals either.</li>
+<li><b>Adds the snippet</b>, <code>&lt;script defer src="https://edge.example.com/_a/s.js" data-site="site_..."&gt;</code>, to the <code>&lt;head&gt;</code> of every page, deploys, and runs <code>POST /v1/sites/:id/verify</code> (MCP <code>analytics_verify_install</code>).</li>
+<li><b>Reads real visitors' vitals:</b> <code>GET /v1/sites/:id/web-vitals?period=30d&amp;breakdown=page</code> (MCP <code>analytics_get_web_vitals</code>), then <code>breakdown=device</code>, because Google assesses mobile and desktop separately.</li>
+<li><b>Runs a lab test</b> on the slowest page: <code>GET /v1/sites/:id/web-vitals/lab?url=https://example.com/pricing&amp;strategy=mobile</code> (MCP <code>analytics_get_web_vitals_lab</code>).</li>
+<li><b>Sets an alert:</b> <code>POST /v1/sites/:id/alerts {"name":"Slow LCP on mobile","type":"web_vitals","metric":"lcp","filters":"device==mobile","destination_ids":["dst_..."]}</code> (MCP <code>analytics_create_alert</code>), by email, Slack or webhook.</li>
+<li><b>Hands over</b> a claim link (<code>POST https://agentfirststack.com/v1/claim-link</code>): you sign in with Google and see the Page speed panel in the dashboard.</li>
+</ol>
+
+<h2 id="features">What you get</h2>
+<ul>
+<li><b>Three Core Web Vitals from each full page load:</b> LCP (the last largest-contentful-paint candidate), INP (the slowest interaction) and CLS (the largest 5-second window of layout shifts). They ride on the beacon the tracker sends when a visitor leaves or hides the page; no second script.</li>
+<li><b>Google's method:</b> per metric, the 75th percentile of page loads by nearest rank, the share of page loads that are good, need improvement or are poor, and an assessment: passed, failed or not enough data. Fewer than 30 page loads and the answer says the p75 is rough.</li>
+<li><b>Breakdowns:</b> by page, device, country or browser, the most-loaded first; filters such as <code>device==mobile</code> or <code>page==/checkout*</code>, saved segments, and comparison with the previous period or last year. <code>lcp_p75</code>, <code>inp_p75</code> and <code>cls_p75</code> are also stats metrics, so any other breakdown (operating system, channel, campaign) can carry them.</li>
+<li><b>Slowest pages first:</b> among the 100 most-loaded pages, the ones whose worst metric is furthest over its good limit, and <code>coverage</code>: how many pageviews carried vitals.</li>
+<li><b>Next steps:</b> what usually fixes each failing metric, naming its worst pages, in every answer.</li>
+<li><b>A lab run</b> through Google's PageSpeed Insights, next to both kinds of field data (below).</li>
+<li><b>Alerts:</b> a <code>web_vitals</code> alert fires when a metric's p75 over a window (default 1 day) goes over its threshold (default Google's good limit) with at least 30 page loads, and lists the slowest pages.</li>
+<li><b>Raw values:</b> each pageview's <code>lcp</code>, <code>inp</code> and <code>cls</code> in the event export and read-only SQL.</li>
+</ul>
+
+<figure><img src="/img/dashboard-page-speed.webp" width="1600" height="980" alt="The Page speed panel of the AgentFirstStack dashboard for agentfirststack.com: Passes Core Web Vitals, p75 of 112 page loads; LCP 1.2 s, INP 64 ms and CLS 0.00, all rated good, above a table of pages with their page loads and LCP, INP and CLS p75." loading="lazy"><figcaption>Our own site in the dashboard, last 30 days as of 7 November 2026: it passes Core Web Vitals, with LCP 1.2 s, INP 64 ms and CLS 0.00 at p75 of 112 page loads. INP came from 24 of them, which the panel marks as too few to trust.</figcaption></figure>
+
+<h2 id="method">How the numbers are measured</h2>
+<p>The tracker reads the browser's own performance entries during each full page load. Client-side navigations in a single-page app carry no vitals, because the three metrics describe a page load. Thresholds are Google's: LCP is good up to 2.5 s and poor over 4 s, INP good up to 200 ms and poor over 500 ms, CLS good up to 0.1 and poor over 0.25. A site passes when every metric with enough page loads is good and LCP and CLS have enough; INP needs an interaction, so some page loads have none.</p>
+<p>The dashboard prints one caveat under the table: "INP is recorded only for interactions slower than 40 ms, so read it as an upper bound." Page loads whose interactions all answered faster than 40 ms report no INP, so the p75 is taken over the slower ones and the true figure is at most that. The tracker also keeps the single slowest interaction, where <a href="https://web.dev/articles/inp">Google's INP</a> ignores one highest interaction for every 50 on very busy pages.</p>
+<p>Browsers report what their performance APIs support, so some visitors send fewer than three metrics or none. Each metric's sample count says how many page loads it rests on.</p>
+
+<h2 id="lab">Lab tests: a PageSpeed Insights run</h2>
+<p><code>GET /v1/sites/:id/web-vitals/lab</code> asks Google's PageSpeed Insights API to run Lighthouse on one https page of the site's domain or its subdomains, <code>strategy=mobile</code> (default) or <code>desktop</code>, with Lighthouse's performance category only. One call returns:</p>
+<ul>
+<li><code>lab</code>: the performance score, LCP, CLS, Total Blocking Time (the lab stand-in for INP, since a lab run has no real interactions), FCP, Speed Index and server response time.</li>
+<li><code>opportunities</code>: up to 6 audits with their estimated savings, biggest first.</li>
+<li><code>google_field</code>: Google's Chrome UX Report p75 for the URL, or the whole origin when the URL has too little data, over the last 28 days; null when Google has none.</li>
+<li><code>real_visitors</code>: our own p75 for the same path over the last 30 days.</li>
+</ul>
+<p>A run takes 10 to 45 seconds and needs a full-access key, because Google fetches the page on your behalf. Your agent runs it when it needs it; it isn't scheduled, and it doesn't return Lighthouse's accessibility, best practices or SEO audits.</p>
+
+<h2 id="check">What the setup check verifies</h2>
+<p>The setup check (<code>GET https://agentfirststack.com/v1/setup</code>, MCP <code>afs_check_setup</code>) has no page-speed check of its own: vitals arrive with the tracker, so the analytics checks cover them.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Check</th><th>What it means here</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>analytics.site</code></th><td>Analytics has a site for the website</td></tr>
+<tr><th scope="row"><code>analytics.receiving</code></th><td>Analytics is receiving events from the pages, from browsers as well as servers</td></tr>
+<tr><th scope="row"><code>analytics.domain_verified</code></th><td>The site's domain is verified: verify found the snippet on the live homepage, or the DNS record</td></tr>
+<tr><th scope="row"><code>analytics.first_party</code></th><td>Browser events arrive first-party, through the site's own domain, so ad blockers don't drop them</td></tr>
+<tr><th scope="row"><code>analytics.proxy_key</code></th><td>Shown only when it fails: events through a path proxy are missing its proxy key, so countries are wrong</td></tr>
+<tr><th scope="row"><code>analytics.alerts</code></th><td>Alerts fire on a traffic drop and when tracking stops (a <code>web_vitals</code> alert is extra; the check doesn't ask for one)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Whether page loads carry vitals shows in <code>coverage</code> on <code>GET /v1/sites/:id/web-vitals</code>, and its <code>next_steps</code> say what to check when none do.</p>
+
+<h2 id="compared">Compared with</h2>
+<p>Prices and plans as of 7 November 2026, from each product's own pages; the comparison pages link the sources.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Field data</th><th>Lab tests</th><th>Price</th><th>Hosting</th></tr></thead>
+<tbody>
+<tr><th scope="row"><a href="/pagespeed-insights-alternative">PageSpeed Insights</a></th><td>Chrome UX Report: eligible Chrome users over 28 days, for pages or origins with enough traffic</td><td>Lighthouse: performance, accessibility, best practices, SEO</td><td>Free; no sign-in</td><td>Any public URL</td></tr>
+<tr><th scope="row"><a href="/vercel-speed-insights-alternative">Vercel Speed Insights</a></th><td>Real visitors; the free tier shows the Real Experience Score only, Plus every Core Web Vital</td><td>Not its own; a Virtual Experience Score through integrations such as Checkly</td><td>Free tier with 10,000 events a team per 30 days; Plus $10 a project a month plus $0.65 per 10,000 events on Pro</td><td>Vercel projects</td></tr>
+<tr><th scope="row"><a href="https://www.speedcurve.com/pricing/">SpeedCurve</a></th><td>RUM page views</td><td>Synthetic monitoring</td><td>From $90 a month (Starter), Growth from $576</td><td>A RUM snippet at the top of the page's head</td></tr>
+<tr><th scope="row">AgentFirstStack</th><td>Real visitors: LCP, INP and CLS at p75, by page, device, country and browser</td><td>One PageSpeed Insights run on request, performance only</td><td>Free hosted service with fair-use limits</td><td>Any site that can load a script</td></tr>
+</tbody>
+</table>
+</div>
+<p>SpeedCurve's figures are from <a href="https://www.speedcurve.com/pricing/">speedcurve.com/pricing</a>, where RUM "collects page views" and Synthetic "collects lab data"; its RUM snippet goes "at the top of the <code>&lt;HEAD&gt;</code> element" (<a href="https://support.speedcurve.com/docs/tag-managers">SpeedCurve support</a>). There's no SpeedCurve comparison page yet.</p>
+
+<h2 id="limits">Limits</h2>
+<ul>
+<li>10 analytics sites per project (3 before a person claims it), and 400 days of history kept.</li>
+<li>Lab runs: a few a minute per account and per domain, keyless on Google's shared PageSpeed Insights quota, which can run out (<code>503 upstream_rate_limited</code>: try again in a few minutes). Self-hosters can set their own <code>PAGESPEED_API_KEY</code>.</li>
+<li>The engagement beacons that carry vitals count toward the analytics daily event budgets; <code>GET /v1/usage</code> shows what a project has used.</li>
+</ul>
+<p>All of them: <a href="/limits">fair-use limits</a>.</p>
+
+<h2 id="not-a-fit">When it isn't the right fit</h2>
+<ul>
+<li><b>You need APM.</b> There are no backend traces, server timings or error rates. For JavaScript errors in the browser, <a href="/session-replay">session replay</a> records them.</li>
+<li><b>You need more than LCP, INP and CLS from real visitors.</b> FCP, TTFB and long-animation-frame data aren't collected from visitors (FCP and server response time come only from a lab run), and the percentile is p75 only, with no p90 to p99.</li>
+<li><b>You need attribution.</b> It doesn't record which element was the LCP element, which one shifted, or which script made an interaction slow. Vercel Speed Insights Plus shows element selectors.</li>
+<li><b>Your app is a single-page app</b> and the slow part is client-side navigation: those navigations carry no vitals.</li>
+<li><b>You need scheduled synthetic tests</b>, from many locations or before each deploy. The lab run is one PageSpeed Insights run when your agent asks; SpeedCurve sells synthetic monitoring.</li>
+<li><b>You need native app performance.</b> The tracker measures websites.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is this real user monitoring or APM?</h3>
+<p>Real user monitoring for Core Web Vitals only. It measures how fast your pages load, respond and stay still in visitors' browsers (LCP, INP and CLS). It doesn't trace backend requests, time database queries or collect server errors, so it doesn't replace an APM tool.</p>
+<h3>Does it measure Core Web Vitals the way Google does?</h3>
+<p>It uses Google's method and thresholds: per metric, the 75th percentile of page loads by nearest rank, rated good, needs improvement or poor (LCP 2.5 s and 4 s, INP 200 ms and 500 ms, CLS 0.1 and 0.25). The visitors differ: Google's field data comes from eligible Chrome users in the Chrome UX Report, ours from every visitor whose browser reports the metrics, so the numbers won't match exactly.</p>
+<h3>Why does the dashboard say to read INP as an upper bound?</h3>
+<p>The tracker records only interactions slower than 40 ms. Page loads whose interactions were all faster report no INP, so the p75 is taken over the slower page loads, and the real p75 is at most that. The tracker also keeps the single slowest interaction, where Google skips one outlier for every 50 interactions on very busy pages.</p>
+<h3>Does it run Lighthouse lab tests?</h3>
+<p>Yes, through Google's PageSpeed Insights API, one page at a time when your agent asks: the performance score, lab LCP, CLS, Total Blocking Time, FCP, Speed Index and server response time, the biggest opportunities, Google's field data and our real-visitor p75 for the same page. It asks only for Lighthouse's performance category, and it isn't scheduled.</p>
+<h3>How many page loads do I need?</h3>
+<p>30 page loads with a metric before its p75 counts as enough; fewer and the dashboard marks it too few to trust. A page needs 10 to be ranked among the slowest pages. On a quiet site, widen the period, for example to 90 days.</p>
+<h3>Do I need another script for page speed?</h3>
+<p>No. The AgentFirstStack Analytics tracker sends LCP, INP and CLS with the beacon it already sends when a visitor leaves a page. Load the current tracker from our service or your first-party domain, not a copy.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, Vercel or SpeedCurve.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics your AI agent sets up</b><span>The tracker that sends page speed, and everything else it counts.</span></a></li>
+        <li><a class="card" href="/pagespeed-insights-alternative"><span class="svc svc-analytics">Analytics</span><b>PageSpeed Insights alternative</b><span>Field data from your own visitors, next to Google's.</span></a></li>
+        <li><a class="card" href="/vercel-speed-insights-alternative"><span class="svc svc-analytics">Analytics</span><b>Vercel Speed Insights alternative</b><span>Every Core Web Vital, free, on any host.</span></a></li>
+        <li><a class="card" href="/ai-search"><span class="svc svc-analytics">Analytics</span><b>AI search</b><span>Which AI crawlers read your pages, and who they send.</span></a></li>
+        <li><a class="card" href="/session-replay"><span class="svc svc-replay">Replay</span><b>Session replay</b><span>See what a slow page did to a real visit.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#steps">What your agent does</a></li><li><a href="#features">What you get</a></li><li><a href="#method">How the numbers are measured</a></li><li><a href="#lab">Lab tests</a></li><li><a href="#check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#not-a-fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session replay your AI agent sets up · AgentFirstStack</title>
+<meta name="description" content="Free, open-source session replay an AI agent sets up and reads as text: masked in the browser, rage and dead clicks, heatmaps, surveys and JS errors.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/session-replay">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Session replay your AI agent sets up">
+<meta property="og:description" content="Free, open-source session replay an AI agent sets up and reads as text: masked in the browser, rage and dead clicks, heatmaps, surveys and JS errors.">
+<meta property="og:url" content="https://agentfirststack.com/session-replay">
+<meta property="og:image" content="https://agentfirststack.com/og/session-replay.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Session replay your AI agent sets up">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Session replay your AI agent sets up">
+<meta name="twitter:description" content="Free, open-source session replay an AI agent sets up and reads as text: masked in the browser, rage and dead clicks, heatmaps, surveys and JS errors.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/session-replay.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/session-replay#article",
+      "headline": "Session replay your AI agent sets up and reads",
+      "description": "Free, open-source session replay an AI agent sets up and reads as text: masked in the browser, rage and dead clicks, heatmaps, surveys and JS errors.",
+      "url": "https://agentfirststack.com/session-replay",
+      "image": "https://agentfirststack.com/og/session-replay.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/session-replay"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "Session replay", "item": "https://agentfirststack.com/session-replay" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/session-replay#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is session replay?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Session replay records what visitors do on a website (pages, clicks, scrolling, typing into fields, errors) so you can see where they get stuck. AgentFirstStack Replay records the page's changes with rrweb, not video, and also returns each session as a text transcript an agent can read."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is AgentFirstStack Replay free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The hosted service is free within fair-use limits: 5 replay sites per project, 200 recorded sessions per site a day and recordings kept 14 days. The service is open source under AGPL-3.0, the recorder is MIT, and you can self-host it on Cloudflare with your own limits."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it record, and what stays masked?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "By default every text node and every typed value is masked in the visitor's browser before anything is sent. Your agent unmasks interface text such as navigation, buttons and headings. A typed value shows only if the page marks that field with data-afsr-unmask, and never for passwords, payment cards or one-time codes. Query strings are removed from URLs and the IP address is never stored."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it ask visitors for consent?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "With require_consent set to eea, visitors from the EU, Iceland, Liechtenstein, Norway, the UK and Switzerland are recorded only after consent; everyone else is recorded at once. Consent can come from your own banner calling afsr('consent', true), Google Consent Mode, an IAB TCF v2 CMP, or the AgentFirstStack tags consent banner. The recorder sets no cookies."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can a person watch the recordings?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Your agent can create an expiring share link that opens one session, or a clip of it, in a player. Once you claim the project, the dashboard lists the most frustrated sessions first, with their transcripts and JS errors, and a Watch button that opens the player."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it record mobile apps?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It records websites only, in the browser. Microsoft Clarity, Fullstory and Contentsquare have SDKs for native apps."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>Session replay</span></nav>
+      <h1>Session replay your AI agent sets up and reads</h1>
+      <p class="lede">AgentFirstStack Replay is free, open-source session replay that an AI agent sets up and reads. It replaces Hotjar (now Contentsquare), Microsoft Clarity and Fullstory: recordings masked in the visitor's browser, each session as a readable transcript, rage, dead and error clicks, JS errors, heatmaps and surveys. Your agent creates it with one request, serves it from your own domain, asks for consent where the law requires it, and tests the install itself. Choose Clarity or Fullstory if people will watch replays in a dashboard every day, or you need mobile apps or months of history.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Recording sessions is a bigger privacy decision than counting visits, so the prompt keeps the strict default masking and asks for consent in the EEA, the UK and Switzerland.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add session replay to this project with AgentFirstStack Replay. It's free, open-source session replay built for agents, masked in the visitor's browser by default, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://replay.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Create a replay site for the production domain with require_consent "eea". If the site runs AgentFirstStack analytics, link it with analytics_site_id, so the analytics tracker loads the recorder; otherwise add the snippet from the install answer to the head of every page.
+
+4. Serve it from the site's own domain. If the project has no first-party domain yet, create one (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain such as edge.&lt;domain&gt;): add its one CNAME if you can change the DNS, otherwise give me the record and use the path proxy from the install answer meanwhile, with the proxy key kept server-side.
+
+5. Keep mask_mode strict. Unmask only interface text (nav, buttons, links, headings, labels), and block chat widgets and account details with block_selectors.
+
+6. Deploy, open the homepage with ?afsr=1 and click through the main pages, then run verify and fix what it reports. Run GET https://agentfirststack.com/v1/setup?services=replay until the replay rows pass.
+
+7. If the site runs Hotjar, Contentsquare, Microsoft Clarity or Fullstory, tell me, copy its masking rules into the replay site's selectors, and leave it installed: recordings can't be moved.
+
+8. Write the replay site id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what verify returned, how to turn replay off, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+<p>This is the replay part of the full setup. For analytics, tags, an inbox and replay together, use the <a href="/#setup">full setup prompt</a>.</p>
+
+<h2 id="steps">What your agent does</h2>
+<ol>
+<li><b>Gets a key</b> with <code>POST https://agentfirststack.com/v1/signup</code>, or reuses the one in <code>.env</code>. One key works for every service.</li>
+<li><b>Creates the replay site</b> with <code>POST https://replay.agentfirststack.com/v1/sites</code> (MCP <code>replay_create_replay_site</code>), linked to the analytics site. The analytics tracker then loads the recorder by itself: nothing to paste. Without analytics, the answer has a <code>&lt;script defer&gt;</code> tag for the head.</li>
+<li><b>Serves it first-party.</b> A first-party domain (<code>POST /v1/first-party-domains {"hostname":"edge.example.com"}</code>, one CNAME to <code>fp.agentfirststack.com</code>) serves replay at <code>/_r/*</code> next to analytics and tags, and the tracker loaded from it loads the recorder from it too. Where the DNS can't change, a path proxy forwards <code>/_r/*</code> with the site's proxy key. Either way the recorder doesn't load from a third-party host, which is what ad blockers block.</li>
+<li><b>Sets the privacy rules</b> with <code>PATCH /v1/sites/:id</code>: <code>unmask_selectors</code> for interface text, <code>block_selectors</code> for what must never be recorded, <code>exclude_paths</code> for whole pages, <code>require_consent</code> and the consent source.</li>
+<li><b>Tests it.</b> It opens a page with <code>?afsr=1</code>, which forces a recording even in a headless browser, then calls <code>POST /v1/sites/:id/verify</code> (MCP <code>replay_verify_install</code>). Verify fetches the live homepage, finds the loader or the linked tracker in a real script tag, checks the Content-Security-Policy, proves the domain, and reports sessions received, chunks refused and whether labels are all masked.</li>
+<li><b>Reads the sessions</b>: the most frustrated first, one as a transcript, then patterns across many.</li>
+<li><b>Hands over</b> a claim link (<code>POST /v1/claim-link</code>), so you can see the project in a dashboard with Google sign-in.</li>
+</ol>
+<pre><code>R=https://replay.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+
+curl -s -X POST $R/v1/sites -H "$H" -H 'content-type: application/json' \
+  -d '{"domain":"example.com","analytics_site_id":"site_...","require_consent":"eea"}'
+curl -s -X PATCH $R/v1/sites/$RSITE -H "$H" -H 'content-type: application/json' \
+  -d '{"unmask_selectors":["nav","button","a","h1","h2","label"],"block_selectors":["#chat-widget"]}'
+# after one visit to https://example.com/?afsr=1
+curl -s -X POST $R/v1/sites/$RSITE/verify -H "$H"
+curl -s "$R/v1/sites/$RSITE/sessions?sort=frustration&amp;signal=rage_click" -H "$H"
+curl -s "$R/v1/sites/$RSITE/sessions/$SESSION/transcript" -H "$H"
+curl -s "$R/v1/sites/$RSITE/summary?page=/checkout*&amp;period=7d" -H "$H"</code></pre>
+<p>A transcript is one line per step, with the element's label as recorded and a CSS selector the agent can try on the live page:</p>
+<pre><code>[00:00.0] page "/pricing" · load · from "google.com" · stayed 15s · saw 64% of the page
+[00:05.1] click button "Start trial" {"#plans &gt; div:nth-of-type(2) &gt; button.cta"}
+[00:07.9] typed into input[type=email] "Email" name="email" (value masked)
+[00:09.3] click x4 in 0.8s button "Pay" {"#checkout button.pay"}  [RAGE DEAD ERROR-CLICK]
+[00:09.5] JS error "TypeError: Cannot read properties of undefined (reading 'id')" after click on {"#checkout button.pay"}  [ERROR-CLICK]
+[00:15.0] page "/signup" · push · from "/pricing" · stayed 2s · saw 30% of the page  [QUICK-BACK]</code></pre>
+<p>Recorded page text comes back marked untrusted, so the agent treats it as data and never as instructions.</p>
+
+<h2 id="features">What you get</h2>
+<ul>
+<li><b>Recording:</b> a loader of about 1.7 KB gzipped decides whether the tab is recorded, then loads the recorder (rrweb, about 32 KB gzipped) after the page's load event. Sampling, excluded paths and IP ranges, and a page API to identify users, tag sessions (plan, A/B variant) and mark named steps.</li>
+<li><b>Masking in the browser:</b> <code>strict</code> by default (every text node and text attribute becomes asterisks), or <code>balanced</code> and <code>relaxed</code>. Typed values are masked in every mode; password, payment-card and one-time-code fields can't be unmasked. Query strings are removed and id-like path segments become <code>:id</code>. Canvas and cross-origin iframes aren't captured.</li>
+<li><b>Consent:</b> <code>require_consent: "eea"</code> waits for consent only from visitors in the EEA, the UK and Switzerland; consent from <code>afsr('consent', true)</code>, Google Consent Mode or an IAB TCF v2 CMP. Browsers that send Global Privacy Control or Do Not Track aren't recorded. No cookies: the session lives in the tab's sessionStorage.</li>
+<li><b>Sessions as text:</b> search by page, signal, error, device, country, referrer, user, tag or frustration score; transcripts as text or JSON; summaries across up to 1,000 sessions (top rage-click targets, dead clicks, errors, exit pages, common journeys) with example session ids, worked out without a model; CSV and NDJSON exports and the raw rrweb events.</li>
+<li><b>Signals:</b> rage clicks (3 or more within 1 second on one element), dead clicks (nothing changes within 1 second), error clicks (a JS error within 1 second of a click), quick backs, excessive scrolling, JS errors, failed requests if you turn them on, and a frustration score from 0 to 100.</li>
+<li><b>Heatmaps:</b> click, scroll and attention maps as data, by element or by page zone, with how many pageviews scrolled far enough to see each element, comparisons with an earlier period, a device or a segment, and plain-sentence findings such as CTAs few people reach. A PNG of the page with the overlay too, for claimed projects.</li>
+<li><b>Errors:</b> JS errors grouped by fingerprint with the click that triggered them, the pages and browsers they happen on, and example sessions; failed requests grouped by method, path and status.</li>
+<li><b>Surveys and feedback:</b> popovers, embedded surveys and a feedback tab with NPS, CSAT, CES, product-market fit and free-text templates, triggered on load, scroll, exit intent or a rage click. Each answer links to its session, so the agent can read what a detractor did.</li>
+<li><b>Analysis:</b> saved segments, metrics over time by page, referrer or tag, funnel drop-offs with what the people who dropped did, and events defined after the fact from clicks already recorded.</li>
+<li><b>Signals sent on:</b> linked to an analytics site, rage, dead and error clicks, JS errors, quick backs and excessive scrolls arrive there as events, joined to the visitor. Linked to a tags container, rage and dead clicks, JS errors, failed requests and survey scores go to it as server events: to GA4 under the same name, and to ad platforms only through a conversion you define. Test sessions stay test traffic in both.</li>
+<li><b>Workflow:</b> notes, labels and stars on sessions; signed webhooks for survey answers, new errors, sessions entering a segment and signal spikes; share links to a player, for a whole session or a clip.</li>
+<li><b>Privacy requests:</b> look up everything stored about one visitor, and delete it by user id, analytics visitor id, session ids or email. The IP address is never stored.</li>
+</ul>
+
+<h2 id="setup-check">What the setup check verifies</h2>
+<p><code>GET https://agentfirststack.com/v1/setup</code> (MCP <code>afs_check_setup</code>) reads what the services have received and lists these rows for replay, per website. It fetches nothing from the site; the replay <code>verify</code> call and the setup test do that.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Check</th><th>Title</th><th>Passes when</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>replay.site</code></th><td>Replay records the website</td><td>A replay site exists for the domain and is enabled; the detail names its masking mode</td></tr>
+<tr><th scope="row"><code>replay.linked</code></th><td>Replay is linked to analytics</td><td>The replay site has an <code>analytics_site_id</code>, so it loads with the tracker and sessions join analytics visits</td></tr>
+<tr><th scope="row"><code>replay.verified</code></th><td>Replay's domain is verified</td><td>Verify found the recorder or the linked tracker on the homepage, or the DNS TXT record; until then replay records only a short trial</td></tr>
+<tr><th scope="row"><code>replay.recording</code></th><td>Sessions are being recorded</td><td>At least one session has arrived</td></tr>
+<tr><th scope="row"><code>replay.proxy_key</code></th><td>Recordings through a first-party proxy carry its proxy key</td><td>Shown only when uploads in the last 7 days came through a path proxy without the right key</td></tr>
+<tr><th scope="row"><code>replay.consent</code></th><td>Visitors from the EU, UK and Switzerland are recorded only after consent</td><td>A warning when <code>require_consent</code> is off, which is fine if the owner decided so</td></tr>
+</tbody>
+</table>
+</div>
+<p>The setup test (<code>POST /v1/setup/test</code>) runs replay's verify on the live homepage, and its browser plan opens the site with <code>?afsr=1</code>, so <code>afs_check_test_visit</code> can confirm a test recording arrived. If the tags scan found Hotjar, Clarity, Fullstory or LogRocket on the site, the "other tools" row names it: there's nothing to import, because recordings can't move.</p>
+
+<h2 id="compared">Compared with</h2>
+<p>Facts about other products as of 7 November 2026, from their own pages.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Tool</th><th>What it is and costs</th><th>Recordings kept</th><th>Comparison</th></tr></thead>
+<tbody>
+<tr><th scope="row">Hotjar (now Contentsquare)</th><td>New Hotjar accounts can't be created; new users sign up for Contentsquare (<a href="https://contentsquare.com/hotjar/">contentsquare.com/hotjar</a>). Free up to 200k monthly sessions with 5% captured as replays (max. 10k), Growth from $39 a month, APIs on Pro and Enterprise only (<a href="https://contentsquare.com/pricing/">pricing</a>)</td><td>1 month on Free, 2 on Growth, up to 24 on Pro and Enterprise</td><td><a href="/hotjar-alternative">Hotjar alternative</a></td></tr>
+<tr><th scope="row">Microsoft Clarity</th><td>Free, with no traffic limits and no sampling (<a href="https://learn.microsoft.com/en-us/clarity/faq">FAQ</a>); its Data Export API allows 10 requests a project a day (<a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api">docs</a>)</td><td>30 days; labelled or favorited sessions 9 months (<a href="https://learn.microsoft.com/en-us/clarity/setup-and-installation/data-retention">data retention</a>)</td><td><a href="/microsoft-clarity-alternative">Clarity alternative</a>, <a href="/microsoft-clarity-mcp">Clarity MCP</a></td></tr>
+<tr><th scope="row">Fullstory</th><td>Digital experience analytics: replay with product analytics, mobile apps as an add-on and warehouse sync as a separate product. FullstoryFree has 30,000 sessions a month for up to 10 users; paid plans are priced on request (<a href="https://www.fullstory.com/pricing/">pricing</a>)</td><td>"12 months of data retention" on FullstoryFree</td><td><a href="/fullstory-alternative">Fullstory alternative</a></td></tr>
+<tr><th scope="row">AgentFirstStack Replay</th><td>Free hosted service with fair-use limits; AGPL-3.0, recorder MIT; set up and read by an agent over REST and MCP</td><td>14 days hosted; daily heatmap aggregates up to 90 days</td><td>This page</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="limits">Limits</h2>
+<p>On the hosted service (the lower number applies until a person claims the project):</p>
+<ul>
+<li>5 replay sites per project (2), and one unverified site at a time, which records a trial of 20 sessions a day (10) with strict masking.</li>
+<li>200 recorded sessions per site a day (100), each up to 30 minutes and 2 MB.</li>
+<li>Recordings kept up to 14 days; daily heatmap aggregates up to 90 days.</li>
+<li>5 active share links per site (3).</li>
+<li>Heatmap images for claimed projects only, 10 per site and 30 per project a day.</li>
+<li>Up to 500 signals a day per site sent on to analytics, and 500 to tags.</li>
+</ul>
+<p>Every cap, with what the project has used: <code>GET /v1/usage</code> (MCP <code>replay_get_usage</code>). The full list is on <a href="/limits">fair-use limits</a>. Need more? Self-host it: <code>pnpm afs init &lt;name&gt; --domain example.com --account &lt;id&gt;</code>, then <code>pnpm afs deploy &lt;name&gt;</code> on your own Cloudflare account, with retention up to 365 days.</p>
+
+<h2 id="not-a-fit">When it isn't the right fit</h2>
+<ul>
+<li><b>Mobile apps.</b> It records websites only. Clarity, Fullstory and Contentsquare have native app SDKs.</li>
+<li><b>Every session at high traffic.</b> The hosted service records 200 sessions per site a day. Clarity has no traffic limits.</li>
+<li><b>Months of recordings.</b> Hosted recordings are kept 14 days, against Clarity's 30 days and FullstoryFree's 12 months of data retention.</li>
+<li><b>A team that watches replays all day.</b> People get a player behind share links and a Watch button in the dashboard, but the product is built for an agent reading text. Contentsquare, Clarity and Fullstory are built for people watching and have fuller interfaces for it.</li>
+<li><b>Model-written summaries.</b> Summaries, findings and survey themes are computed without a model; your agent does the interpreting. Clarity's Copilot and Fullstory's StoryAI write summaries for you.</li>
+<li><b>Warehouse sync and enterprise controls.</b> There's no sync to Snowflake or BigQuery (exports are CSV, NDJSON and raw events), and no SAML single sign-on.</li>
+<li><b>A full consent platform.</b> The tags consent banner gates the container's tags, Consent Mode, replay and the analytics tracker, but it doesn't scan for cookies or block scripts loaded outside the container.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>What is session replay?</h3>
+<p>Session replay records what visitors do on a website (pages, clicks, scrolling, typing into fields, errors) so you can see where they get stuck. AgentFirstStack Replay records the page's changes with rrweb, not video, and also returns each session as a text transcript an agent can read.</p>
+<h3>Is AgentFirstStack Replay free?</h3>
+<p>Yes. The hosted service is free within fair-use limits: 5 replay sites per project, 200 recorded sessions per site a day and recordings kept 14 days. The service is open source under AGPL-3.0, the recorder is MIT, and you can self-host it on Cloudflare with your own limits.</p>
+<h3>What does it record, and what stays masked?</h3>
+<p>By default every text node and every typed value is masked in the visitor's browser before anything is sent. Your agent unmasks interface text such as navigation, buttons and headings. A typed value shows only if the page marks that field with <code>data-afsr-unmask</code>, and never for passwords, payment cards or one-time codes. Query strings are removed from URLs and the IP address is never stored.</p>
+<h3>Does it ask visitors for consent?</h3>
+<p>With <code>require_consent</code> set to <code>eea</code>, visitors from the EU, Iceland, Liechtenstein, Norway, the UK and Switzerland are recorded only after consent; everyone else is recorded at once. Consent can come from your own banner calling <code>afsr('consent', true)</code>, Google Consent Mode, an IAB TCF v2 CMP, or the AgentFirstStack tags consent banner. The recorder sets no cookies.</p>
+<h3>Can a person watch the recordings?</h3>
+<p>Yes. Your agent can create an expiring share link that opens one session, or a clip of it, in a player. Once you claim the project, the dashboard lists the most frustrated sessions first, with their transcripts and JS errors, and a Watch button that opens the player.</p>
+<h3>Does it record mobile apps?</h3>
+<p>No. It records websites only, in the browser. Microsoft Clarity, Fullstory and Contentsquare have SDKs for native apps.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Contentsquare, Hotjar, Microsoft or Fullstory.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/guides/session-replay-for-ai-agents"><span class="svc svc-replay">Replay</span><b>Session replay for AI agents</b><span>Set up masked recordings and read sessions as text.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-alternative"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity alternative</b><span>Free at any traffic, or replay your agent reads.</span></a></li>
+        <li><a class="card" href="/fullstory-alternative"><span class="svc svc-replay">Replay</span><b>Fullstory alternative</b><span>Enterprise experience analytics, or open-source replay.</span></a></li>
+        <li><a class="card" href="/hotjar-alternative"><span class="svc svc-replay">Replay</span><b>Hotjar alternative</b><span>What happened to Hotjar, and where each fits.</span></a></li>
+        <li><a class="card" href="/microsoft-clarity-mcp"><span class="svc svc-replay">Replay</span><b>Microsoft Clarity MCP</b><span>What Clarity's MCP server returns to an agent.</span></a></li>
+        <li><a class="card" href="/cookie-consent-banner"><span class="svc svc-tags">Tags</span><b>Cookie consent banner</b><span>One banner for tags, Consent Mode and replay.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#steps">What your agent does</a></li><li><a href="#features">What you get</a></li><li><a href="#setup-check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#not-a-fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

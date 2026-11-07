@@ -23,10 +23,12 @@ this first on every later run and update it instead of starting over. Never writ
 
 ## The site map
 
-- Pages (all static, `site/public/`): home `/`, `/guides` and four guides under `/guides/*`, the
-  comparison pages (`/google-analytics-mcp`, `/google-tag-manager-mcp`, `/posthog-mcp`,
-  `/mixpanel-mcp`, `/gmail-mcp`, `/agentmail-alternative`, `/microsoft-clarity-mcp`), `/mcp`,
-  `/limits` (fair-use limits), `/privacy`, `/terms`. The manual `/llms.txt` is plain text (no snippet).
+- Pages (all static, `site/public/`): home `/`, `/guides` and the guides under `/guides/*`; product
+  pages, one per home card (`/analytics`, `/revenue-analytics`, `/tag-manager`, `/conversion-tracking`,
+  `/session-replay`, `/page-speed`, `/ai-search`, `/email-inboxes`); comparison pages (`/*-mcp`,
+  `/*-alternative`, `/cookie-consent-banner`, `/conversions-api-gateway`, `/server-side-gtm`,
+  `/ai-visibility-tracker`); `/mcp`, `/features`, `/limits`, `/privacy`, `/terms`, `/acceptable-use`.
+  The manual `/llms.txt` is plain text (no snippet).
 - Private pages (`site/src/`: `/signin`, `/claim/*`, `/dashboard`) run no tracking, as the privacy page says.
 - Links out: the nav and footer GitHub links (repo, license) are this project's; the comparison
   pages and one guide also link to other GitHub repos and to vendor docs, which analytics counts as

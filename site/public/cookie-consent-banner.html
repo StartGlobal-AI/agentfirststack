@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cookie consent banner and Consent Mode v2: a guide</title>
+<meta name="description" content="What a cookie consent banner must do under EU and UK rules and Google Consent Mode v2, and how CookieYes, Cookiebot and a free open-source banner compare.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/cookie-consent-banner">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cookie consent banner and Consent Mode v2: a guide">
+<meta property="og:description" content="What a cookie consent banner must do under EU and UK rules and Google Consent Mode v2, and how CookieYes, Cookiebot and a free open-source banner compare.">
+<meta property="og:url" content="https://agentfirststack.com/cookie-consent-banner">
+<meta property="og:image" content="https://agentfirststack.com/og/cookie-consent-banner.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cookie consent banner and Consent Mode v2: a guide">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cookie consent banner and Consent Mode v2: a guide">
+<meta name="twitter:description" content="What a cookie consent banner must do under EU and UK rules and Google Consent Mode v2, and how CookieYes, Cookiebot and a free open-source banner compare.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/cookie-consent-banner.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/cookie-consent-banner#article",
+      "headline": "Cookie consent banner: what it has to do, Consent Mode v2, and which one to use",
+      "description": "What a cookie consent banner must do under EU and UK rules and Google Consent Mode v2, and how CookieYes, Cookiebot and a free open-source banner compare.",
+      "url": "https://agentfirststack.com/cookie-consent-banner",
+      "image": "https://agentfirststack.com/og/cookie-consent-banner.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/cookie-consent-banner"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Cookie consent banner", "item": "https://agentfirststack.com/cookie-consent-banner" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/cookie-consent-banner#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does my website need a cookie consent banner?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "If it stores or reads anything on visitors' devices that isn't strictly necessary, and it has visitors in the EU or the UK, the ePrivacy rules and the UK's PECR generally require their consent first, and a banner is the usual way to ask. In the UK, the ICO says advertising can't rely on any exception, while some limited analytics now can. This isn't legal advice: check the rules that apply to your site with a lawyer or your data protection authority's guidance."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is Google Consent Mode v2?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Consent Mode is how a site tells Google's tags what a visitor agreed to. Version 2, introduced in November 2023, added ad_user_data and ad_personalization to ad_storage and analytics_storage. It doesn't show a banner: a banner or consent platform collects the choice and sends it through Consent Mode. Google says advertisers must collect consent from EEA users and share consent signals with Google to keep measurement, ad personalization and remarketing features."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need a Google-certified consent management platform?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "If you're a publisher using AdSense, Ad Manager or AdMob and serve personalized ads to users in the EEA, the UK or Switzerland, yes: Google requires a certified CMP integrated with the IAB TCF. For an advertiser sending Consent Mode signals from its own site, Google's developer docs allow a consent banner or other custom consent solution as well as a CMP."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the AgentFirstStack banner scan or block cookies automatically?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It holds the tags in its tag container until the visitor chooses, sends Google Consent Mode updates, and tells AgentFirstStack replay and analytics. It doesn't crawl the site for cookies or generate a cookie list, and scripts loaded outside the container keep running. Move them into the container, or use a consent platform such as CookieYes or Cookiebot, which scan and block automatically."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What do CookieYes and Cookiebot cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "As of 7 November 2026, CookieYes is free up to 5,000 pageviews a month, then $10, $25 or $55 a month per domain ($100, $250 or $550 a year). Cookiebot is free for one domain up to 50 subpages, and Premium costs €7 to €90 a month per domain depending on the number of subpages. The AgentFirstStack banner is free, within the hosted service's fair-use limits."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does a banner make my site compliant?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not on its own, whichever you use. Compliance also depends on what the site actually loads, the text you show, the third parties you name, your privacy policy and how you use the data. A banner is the tool that asks and records; the decisions are yours."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Cookie consent banner</span></nav>
+      <h1>Cookie consent banner: what it has to do, Consent Mode v2, and which one to use</h1>
+      <p class="lede">A cookie consent banner asks visitors before a site stores or reads anything non-essential on their device, keeps proof of each choice, and makes changing it as easy as giving it; Google Consent Mode v2 passes the choice to Google's tags. CookieYes (free to 5,000 pageviews a month, then from $10 a month per domain) and Cookiebot (free for one small domain, then from €7) are consent platforms that also scan for cookies and can block them automatically (as of 7 November 2026): pick one of them if you show Google ads as a publisher, need IAB TCF, or have trackers outside a tag manager. AgentFirstStack's banner is free and built into its tag manager: an AI agent turns it on, and it holds the container's tags, drives Consent Mode v2 and keeps consent records, but doesn't scan for cookies. This page isn't legal advice.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It looks at everything the site loads first, stops if the site needs a certified consent platform, and tests the banner in a real browser before publishing.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add a cookie consent banner to this project with AgentFirstStack Tags. Its banner is free and open source, drives Google Consent Mode v2 and holds the tags in the container until each visitor chooses, and you can set it up yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and the "Consent banner" section of https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Find every script, pixel, embed and widget the site loads, from the code and with the tags scan. If the site already has a consent platform (Cookiebot, CookieYes, OneTrust or another), shows Google ads through AdSense or Ad Manager, or relies on an IAB TCF consent string, stop and tell me before you change anything.
+
+4. Use the project's tags container, or create one for the production domain with its snippet first in the head of every page. Move each tracker that stores or reads anything on the device into the container as a tag with the right consent type, and list the ones you can't move.
+
+5. Turn on the banner in the draft: consent_banner enabled, privacy_url set to our privacy policy, only the categories we use, and its text in each language the site is published in. Add a "Cookie settings" link with data-afst-consent-open to the footer.
+
+6. Open a preview with &amp;afst_consent=open in a real browser. Choose Reject all and check that no tag waiting for consent fired and no advertising or analytics cookie was set; then Accept all and check that they do. Validate, fix its warnings, and publish.
+
+7. Write down for me every third party and cookie you saw, for our privacy policy, and anything that still loads outside the container.
+
+8. Write the container id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what the banner covers, what it doesn't, what each test showed and what's left for me to decide. Don't tell me the site is compliant: that's for me and my adviser.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="rules">What a cookie banner has to do</h2>
+<p class="callout">This section summarises official texts so you know what to ask about. It isn't legal advice, and national rules and regulators' guidance add to it. Check what applies to your site with a lawyer or your data protection authority.</p>
+<p>In the EU, the rule comes from Article 5(3) of the ePrivacy Directive: storing information on a visitor's device, or reading it, is allowed only if the visitor "has given his or her consent, having been provided with clear and comprehensive information". The exception is storage that's strictly necessary for a service the visitor asked for, or for sending a communication (<a href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02002L0058-20091219">Directive 2002/58/EC, consolidated</a>). Consent takes its meaning from the GDPR: "freely given, specific, informed and unambiguous", by a clear affirmative action (Article 4(11)); Recital 32 adds that pre-ticked boxes or inactivity don't count (<a href="https://eur-lex.europa.eu/eli/reg/2016/679/oj">Regulation (EU) 2016/679</a>).</p>
+<p>The European Data Protection Board's cookie banner taskforce recorded where national regulators agree, as a minimum threshold rather than a full rulebook (<a href="https://www.edpb.europa.eu/system/files/documents/2023-01/edpb_20230118_report_cookie_banner_taskforce_en.pdf">report of 18 January 2023</a>): a vast majority considered a banner with a consent button but no reject option on any layer an infringement; pre-ticked boxes on the second layer don't give valid consent; and sites should offer an easy way to withdraw at any time, such as a small permanent icon or a link in a visible place.</p>
+<p>In the UK, the Information Commissioner's Office guidance on PECR (last updated 29 April 2026) lists, among its expectations, that a mechanism makes it "as easy to refuse consent as it is to accept", needs a positive action before non-exempt technologies are set, offers granular options by purpose, names the third parties data is shared with, and says how to revisit the choice (<a href="https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/guidance-on-the-use-of-storage-and-access-technologies/how-do-we-manage-consent-in-practice/">How do we manage consent in practice?</a>). Advertising can't rely on any exception. A new "statistical purposes" exception covers some limited analytics, provided visitors get clear information and a simple, free way to object (<a href="https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/guidance-on-the-use-of-storage-and-access-technologies/what-are-the-exceptions/">What are the exceptions?</a>).</p>
+<p>Put together, and mapped to what the AgentFirstStack banner does:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>What the texts ask</th><th>Source</th><th>AgentFirstStack banner</th></tr></thead>
+<tbody>
+<tr><th scope="row">Ask before non-essential storage or access</th><td>ePrivacy Art. 5(3); PECR</td><td>Asked visitors start with every category denied; the container's tags wait</td></tr>
+<tr><th scope="row">Clear information about the purposes</th><td>ePrivacy Art. 5(3); ICO</td><td>Title, text and a privacy link you set; a description per category</td></tr>
+<tr><th scope="row">No pre-ticked boxes; a positive action</th><td>GDPR Recital 32; EDPB taskforce; ICO</td><td>Category boxes start unticked; closing without choosing changes nothing</td></tr>
+<tr><th scope="row">Refusing as easy as accepting</th><td>EDPB taskforce; ICO</td><td>"Reject all" on the first layer, styled exactly like "Accept all"</td></tr>
+<tr><th scope="row">Granular choices by purpose</th><td>GDPR Art. 4(11); ICO</td><td>Analytics, advertising and personalization, each on its own; necessary always on</td></tr>
+<tr><th scope="row">Name the third parties</th><td>ICO</td><td>Not automatic: your banner text or privacy policy has to name them</td></tr>
+<tr><th scope="row">Withdrawing as easy as giving</th><td>GDPR Art. 7(3); EDPB taskforce; ICO</td><td>A "Cookie settings" link or a floating button reopens it; withdrawal stops the tags and removes the container's own cookies</td></tr>
+<tr><th scope="row">Proof of consent</th><td>GDPR Art. 7(1); ICO</td><td>One record per choice, kept 12 months</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="consent-mode">What Google asks for: Consent Mode v2</h2>
+<p>Consent Mode is the way a site passes the visitor's choice to Google's tags. Google's own words: "Consent mode doesn't provide a consent banner or widget"; it works with the banner you have (<a href="https://support.google.com/google-ads/answer/10000067">About consent mode</a>, as of 7 Nov 2026). Version 2 arrived in November 2023 and added <code>ad_user_data</code> and <code>ad_personalization</code> to the two older types (<a href="https://support.google.com/tagmanager/answer/14754100">Tag Manager Help</a>). The four, as Google's <a href="https://developers.google.com/tag-platform/security/concepts/consent-mode">consent mode overview</a> describes them:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Type</th><th>What it controls</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>ad_storage</code></th><td>Storage such as cookies related to advertising</td></tr>
+<tr><th scope="row"><code>analytics_storage</code></th><td>Storage such as cookies related to analytics, for example visit duration</td></tr>
+<tr><th scope="row"><code>ad_user_data</code></th><td>Consent for sending user data to Google for online advertising</td></tr>
+<tr><th scope="row"><code>ad_personalization</code></th><td>Consent for personalized advertising</td></tr>
+</tbody>
+</table>
+</div>
+<p>In basic mode, Google's tags don't load until the visitor answers the banner; in advanced mode they load at once with consent denied and send measurements without cookies until the visitor grants it (<a href="https://developers.google.com/tag-platform/security/concepts/consent-mode">consent mode overview</a>). For the EEA, Google's Tag Manager Help says that to keep measurement, ad personalization and remarketing features you must "collect consent for use of personal data from end users based in the EEA" and share consent signals with Google.</p>
+<p>Two Google requirements decide whether a home-made or built-in banner is enough:</p>
+<ul>
+<li><b>Advertisers</b> (Google Ads and GA4 tags on your own site): Google's developer docs allow "a consent banner or other custom consent solution, or use a Consent Management Platform", as long as the consent state reaches Google (<a href="https://developers.google.com/tag-platform/security/concepts/consent-mode">consent mode overview</a>). Google's Tag Manager Help recommends a CMP, and its <a href="https://cmppartnerprogram.withgoogle.com/">CMP Partner Program</a> lists platforms integrated with Consent Mode and Tag Manager.</li>
+<li><b>Publishers</b> using AdSense, Ad Manager or AdMob: since 16 January 2024 in the EEA and UK, and 31 July 2024 in Switzerland, "a certified CMP integrated with the TCF is required" to serve personalized ads there; traffic from a non-certified CMP may get non-personalized or limited ads. Google adds that it doesn't check CMPs for full compliance with the TCF or privacy laws (<a href="https://support.google.com/adsense/answer/13554116">consent management requirements for publishers</a>).</li>
+</ul>
+
+<h2 id="banner">How the AgentFirstStack banner works</h2>
+<p>It's part of <a href="/tag-manager">AgentFirstStack Tags</a>, the tag manager your agent sets up. One block in the container's draft turns it on, and <code>{"enabled": true}</code> alone is a complete banner:</p>
+<pre><code>curl -s -X PATCH https://tags.agentfirststack.com/v1/containers/$C/draft -H "$H" -H 'content-type: application/json' \
+  -d '{"consent_banner":{"enabled":true,"privacy_url":"https://example.com/privacy","reopen_button":true}}'
+curl -s -X POST https://tags.agentfirststack.com/v1/containers/$C/preview -H "$H"   # add &amp;afst_consent=open to preview_url
+curl -s -X POST https://tags.agentfirststack.com/v1/containers/$C/publish -H "$H"
+curl -s https://tags.agentfirststack.com/v1/containers/$C/consent -H "$H"            # accept and reject rates, records</code></pre>
+<ul>
+<li><b>Who is asked:</b> by default, visitors from the EU, Iceland, Liechtenstein, Norway, the UK and Switzerland, and visitors whose country is unknown, by the country of the request at the edge. Everyone else starts with the container's consent defaults, isn't shown the banner, and can still open it. <code>regions: "all"</code> asks everyone.</li>
+<li><b>What they see:</b> a first layer with your title, text, privacy link, "Reject all" styled exactly like "Accept all" (same color, size and weight) and "Customize"; a settings layer with one unticked box per category and "Necessary" always on. These defaults can't be turned off. It's an accessible dialog in a shadow root, so the site's CSS can't break it, with focus handling, 44 px targets and stacked buttons on small screens. Validation warns when your colors fall under 4.5:1 contrast.</li>
+<li><b>Categories:</b> analytics sets <code>analytics_storage</code>; advertising sets <code>ad_storage</code> and <code>ad_user_data</code>; personalization sets <code>ad_personalization</code>, <code>personalization_storage</code> and <code>functionality_storage</code>. A category you leave out is never offered, so never granted.</li>
+<li><b>What follows the choice:</b> each tag in the container waits for its consent types and fires the moment they're granted; the Consent Mode v2 default goes to <code>gtag</code> before any Google tag, also for a GTM container loaded after the snippet, and each choice sends an update; a dataLayer event (<code>afst_consent</code>) lets other code react; AgentFirstStack session replay starts only with analytics consent; the analytics tracker waits too when it's set to keep a visitor id and wait for consent. In its default cookieless mode the tracker stores nothing on the device and keeps counting without asking.</li>
+<li><b>Withdrawal:</b> a "Cookie settings" link (any element with <code>data-afst-consent-open</code>), <code>afst('consent', 'open')</code> or the optional floating "Privacy choices" button reopens the settings with the current choice. Turning a category off stops its tags, sends a Consent Mode update, and deletes the container's own identity and click-id cookies.</li>
+<li><b>The stored choice:</b> one first-party cookie, <code>_afst_cc</code>, that holds only the choice, for 180 days by default (up to 395). Raising the banner's version, for example after adding an ad platform, makes it ask again; so does an expired choice.</li>
+<li><b>Proof of consent:</b> each choice is one record: an anonymous consent id, the time from the server clock, the banner version, accept all, reject all or custom, the choice per category, the country, the language shown, and the container version whose config holds the exact text. Never the IP address, user agent, visitor id or page. Kept 12 months; a visitor finds their consent id in the settings layer, and your agent looks up their history with <code>GET /v1/containers/:id/consent/records?consent_id=...</code>.</li>
+<li><b>Languages:</b> English text is built in. Your agent adds up to 30 languages, picked by the page's <code>lang</code> and then the browser's languages.</li>
+<li><b>Size:</b> the banner script is about 3.4 KB gzipped and loads only for visitors who have to see it.</li>
+</ul>
+<p>Already have a consent platform? Keep it: the container follows any platform that calls <code>gtag('consent', 'update', ...)</code>, and with <code>consent.tcf</code> it follows an IAB TCF v2 platform. Validation warns if you turn on both.</p>
+
+<h2 id="gaps">What it doesn't do</h2>
+<p>From the tags source as of 7 November 2026. These are the reasons to pick a full consent platform instead:</p>
+<ul>
+<li><b>No cookie scan or cookie list.</b> It doesn't crawl the site for cookies, classify them or generate a cookie declaration. The tags scan reads up to 6 pages' HTML and reports the tags, tools and consent platforms it finds; it doesn't run the pages or list the cookies they set. Your privacy policy has to list them, and your agent can draft that list from a real browser, but nothing keeps it up to date.</li>
+<li><b>No blocking outside the container.</b> Only tags that run through the container wait for consent, plus Google's own tags through Consent Mode, AgentFirstStack replay and the analytics tracker. A pixel hard-coded in the page, a plugin, a chat widget or a video embed keeps running until it's moved into the container or gated by your own code.</li>
+<li><b>Not an IAB TCF consent platform.</b> It doesn't create a TC string or show the TCF vendor list. It can follow a TCF platform you run, but then that platform shows the banner.</li>
+<li><b>Not Google-certified.</b> It isn't in Google's CMP Partner Program or its list of certified CMPs, so it doesn't meet Google's requirement for publishers serving personalized ads in the EEA, the UK or Switzerland.</li>
+<li><b>Categories, not vendors.</b> Visitors choose analytics, advertising and personalization; they can't allow one vendor and refuse another in the same category.</li>
+<li><b>Other vendors' cookies.</b> Withdrawal removes the container's own cookies. Cookies another vendor already set stay until they expire or that vendor clears them.</li>
+<li><b>No translations for you.</b> Only English is built in, and nothing is translated automatically; have the texts your agent writes checked.</li>
+<li><b>No opt-out templates.</b> Visitors outside the asked regions start with the defaults, with no "Do not sell or share" link or US-state templates. Browsers that send Global Privacy Control or Do Not Track get no tags at all by default.</li>
+<li><b>Websites only.</b> There's no app SDK.</li>
+</ul>
+
+<h2 id="cmps">CookieYes and Cookiebot</h2>
+<p><b>CookieYes</b> is a consent management platform ("Part of Mozilor Technologies", per its <a href="https://www.cookieyes.com/llms.txt">llms.txt</a>) with banners, cookie scanning and consent logs. Its plans, per domain, with local taxes added (<a href="https://www.cookieyes.com/pricing/">cookieyes.com/pricing</a>, as of 7 Nov 2026):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Plan</th><th>Monthly / annual</th><th>Pageviews a month</th><th>Pages per scan</th><th>Adds</th></tr></thead>
+<tbody>
+<tr><th scope="row">Free</th><td>$0</td><td>5,000</td><td>100 (5 scans a month)</td><td>One free plan per account</td></tr>
+<tr><th scope="row">Basic</th><td>$10 / $100</td><td>100,000, then $0.30 per 1,000</td><td>600</td><td>Multilingual and auto-translated banner</td></tr>
+<tr><th scope="row">Pro</th><td>$25 / $250</td><td>300,000, then $0.30 per 1,000</td><td>4,000</td><td>Monthly scheduled scan, geo-targeting, IAB TCF v2.4, Global Privacy Control</td></tr>
+<tr><th scope="row">Ultimate</th><td>$55 / $550</td><td>Unlimited</td><td>8,000</td><td>Weekly scheduled scan, scan behind login, no CookieYes branding</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every CookieYes plan lists cookie auto-blocking, a consent log, Google Consent Mode v2, and both "Google Certified CMP" and "IAB TCF Certified CMP". Prices are also shown in euros (€9, €23, €50 a month) and pounds.</p>
+<p><b>Cookiebot</b> is the consent platform of Usercentrics ("Cookiebot is a trademark of Usercentrics A/S"). Cookiebot Core is priced by the number of subpages on each domain, and subdomains count as separate domains (<a href="https://www.cookiebot.com/en/pricing/">cookiebot.com/en/pricing</a>, as of 7 Nov 2026, in euros excluding VAT):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Plan</th><th>A month, per domain</th><th>Subpages</th></tr></thead>
+<tbody>
+<tr><th scope="row">Free</th><td>€0</td><td>Up to 50, one domain</td></tr>
+<tr><th scope="row">Premium Lite</th><td>€7</td><td>Fewer than 50, one domain</td></tr>
+<tr><th scope="row">Premium Small</th><td>€15</td><td>Fewer than 350, on accounts with four or more domains</td></tr>
+<tr><th scope="row">Premium Medium</th><td>€30</td><td>Fewer than 3,500 (also smaller sites on accounts with one to three domains)</td></tr>
+<tr><th scope="row">Premium Large</th><td>€50</td><td>Fewer than 7,000</td></tr>
+<tr><th scope="row">Premium XLarge</th><td>€90</td><td>7,000 or more</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Free plan has an initial cookie scan, manual blocking, one language and consent that expires after up to a month. Premium adds monthly automated scans (daily for €99 a month more), automatic blocking, 47+ languages, geotargeting, IAB TCF 2.4, CSV export of consents and consent that lasts up to 12 months; consent records are kept up to 12 months on both. The same page lists US dollar prices of $10 to $120. Its larger product, Usercentrics Advanced, is priced on request.</p>
+<p>Both appear in Google's <a href="https://support.google.com/adsense/answer/13554116">list of certified CMPs</a> (CookieYes CMP with TCF CMP ID 401, Cookiebot CMP with 134) and as Gold partners in Google's <a href="https://cmppartnerprogram.withgoogle.com/">CMP Partner Program</a>.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>CookieYes</th><th>Cookiebot</th><th>AgentFirstStack banner</th></tr></thead>
+<tbody>
+<tr><th scope="row">Price</th><td>Free to 5,000 pageviews a month; $10 to $55 a month per domain</td><td>Free for one domain up to 50 subpages; €7 to €90 a month per domain</td><td>Free hosted service with fair-use limits; open source</td></tr>
+<tr><th scope="row">Priced by</th><td>Pageviews and pages per scan</td><td>Subpages per domain</td><td>Not priced</td></tr>
+<tr><th scope="row">Cookie scanning</th><td>5 scans a month on Free, unlimited on paid plans, 100 to 8,000 pages a scan</td><td>Initial scan on Free; monthly automated scans on Premium</td><td>None; the tags scan finds tags and tools, not cookies</td></tr>
+<tr><th scope="row">Automatic blocking</th><td>On every plan</td><td>Manual on Free; manual and automatic on Premium</td><td>Only what runs through the container, Google tags via Consent Mode, and AgentFirstStack replay and analytics</td></tr>
+<tr><th scope="row">Consent records</th><td>Consent log on every plan</td><td>Up to 12 months; CSV export on Premium</td><td>12 months, over the API, by consent id; no IP address</td></tr>
+<tr><th scope="row">Google Consent Mode v2</th><td>Every plan</td><td>Every plan, on by default</td><td>Yes, basic or advanced</td></tr>
+<tr><th scope="row">IAB TCF</th><td>TCF v2.4 on Pro and Ultimate</td><td>TCF 2.4 on Premium</td><td>No; can follow a TCF platform you run</td></tr>
+<tr><th scope="row">Google-certified CMP</th><td>Yes</td><td>Yes</td><td>No</td></tr>
+<tr><th scope="row">Languages</th><td>Multilingual and auto-translated from Basic</td><td>One on Free; 47+ with auto-translation on Premium</td><td>English built in; your agent adds up to 30</td></tr>
+<tr><th scope="row">Who is asked</th><td>Geo-targeting on Pro and Ultimate</td><td>Geotargeting on Premium</td><td>EEA, UK, Switzerland and unknown countries, or everyone</td></tr>
+<tr><th scope="row">Global Privacy Control</th><td>Pro and Ultimate</td><td>Every plan</td><td>GPC and Do Not Track browsers get no tags by default</td></tr>
+<tr><th scope="row">Setup</th><td>An account, then the banner script on the site</td><td>An account, then "Paste the code into your site header"</td><td>One block in the tag container's draft; your agent previews and publishes it</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When you still need a consent platform</h2>
+<h3>Use CookieYes or Cookiebot if</h3>
+<ul>
+<li>You show Google ads on your site through AdSense, Ad Manager or AdMob to visitors in the EEA, the UK or Switzerland and want personalized ads: Google requires a certified CMP with TCF.</li>
+<li>Your ad partners read IAB TCF consent strings.</li>
+<li>Much of what sets cookies is outside a tag manager (CMS plugins, embeds, widgets, hard-coded pixels) and you want it blocked automatically from a scan rather than moved.</li>
+<li>You want a cookie declaration that a scheduled scan keeps up to date, or consent reports and exports for a legal team in a dashboard.</li>
+<li>You need many languages translated for you, per-law templates such as US state opt-outs, cross-domain consent sharing, or consent in mobile apps.</li>
+</ul>
+<h3>Use the AgentFirstStack banner if</h3>
+<ul>
+<li>Your trackers run through a tag manager you can move them into, and you want the banner, the tags and Consent Mode v2 in one place, for free.</li>
+<li>An agent should set it up, test it in a preview and read consent rates and records over an API.</li>
+<li>You want refusing to look exactly like accepting, without configuring it.</li>
+<li>You want consent records that hold no IP address or visitor id, and code you can read or self-host.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Does my website need a cookie consent banner?</h3>
+<p>If it stores or reads anything on visitors' devices that isn't strictly necessary, and it has visitors in the EU or the UK, the ePrivacy rules and the UK's PECR generally require their consent first, and a banner is the usual way to ask. In the UK, the ICO says advertising can't rely on any exception, while some limited analytics now can. This isn't legal advice: check the rules that apply to your site with a lawyer or your data protection authority's guidance.</p>
+<h3>What is Google Consent Mode v2?</h3>
+<p>Consent Mode is how a site tells Google's tags what a visitor agreed to. Version 2, introduced in November 2023, added <code>ad_user_data</code> and <code>ad_personalization</code> to <code>ad_storage</code> and <code>analytics_storage</code>. It doesn't show a banner: a banner or consent platform collects the choice and sends it through Consent Mode. Google says advertisers must collect consent from EEA users and share consent signals with Google to keep measurement, ad personalization and remarketing features.</p>
+<h3>Do I need a Google-certified consent management platform?</h3>
+<p>If you're a publisher using AdSense, Ad Manager or AdMob and serve personalized ads to users in the EEA, the UK or Switzerland, yes: Google requires a certified CMP integrated with the IAB TCF. For an advertiser sending Consent Mode signals from its own site, Google's developer docs allow a consent banner or other custom consent solution as well as a CMP.</p>
+<h3>Does the AgentFirstStack banner scan or block cookies automatically?</h3>
+<p>No. It holds the tags in its tag container until the visitor chooses, sends Google Consent Mode updates, and tells AgentFirstStack replay and analytics. It doesn't crawl the site for cookies or generate a cookie list, and scripts loaded outside the container keep running. Move them into the container, or use a consent platform such as CookieYes or Cookiebot, which scan and block automatically.</p>
+<h3>What do CookieYes and Cookiebot cost?</h3>
+<p>As of 7 November 2026, CookieYes is free up to 5,000 pageviews a month, then $10, $25 or $55 a month per domain ($100, $250 or $550 a year). Cookiebot is free for one domain up to 50 subpages, and Premium costs €7 to €90 a month per domain depending on the number of subpages. The AgentFirstStack banner is free, within the hosted service's fair-use limits.</p>
+<h3>Does a banner make my site compliant?</h3>
+<p>Not on its own, whichever you use. Compliance also depends on what the site actually loads, the text you show, the third parties you name, your privacy policy and how you use the data. A banner is the tool that asks and records; the decisions are yours.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with CookieYes, Usercentrics (Cookiebot), Google or IAB Europe.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/tag-manager"><span class="svc svc-tags">Tags</span><b>Tag manager</b><span>The container the banner is part of.</span></a></li>
+        <li><a class="card" href="/cookiebot-alternative"><span class="svc svc-tags">Tags</span><b>Cookiebot alternative</b><span>A free banner in your tag manager, and when Cookiebot fits.</span></a></li>
+        <li><a class="card" href="/conversion-tracking"><span class="svc svc-tags">Tags</span><b>Conversion tracking</b><span>Conversions that respect each visitor's choice.</span></a></li>
+        <li><a class="card" href="/session-replay"><span class="svc svc-replay">Replay</span><b>Session replay</b><span>Recorded only after consent where the law asks.</span></a></li>
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics</b><span>Cookieless by default.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#rules">What a banner has to do</a></li><li><a href="#consent-mode">Consent Mode v2</a></li><li><a href="#banner">How our banner works</a></li><li><a href="#gaps">What it doesn't do</a></li><li><a href="#cmps">CookieYes and Cookiebot</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When you need a consent platform</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

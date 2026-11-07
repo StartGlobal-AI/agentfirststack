@@ -199,7 +199,7 @@ Tell me what you set up and imported, how you verified it, and give me the claim
 <li><b>Beyond pageviews:</b> server events from your backend, revenue from Stripe (or Polar, Paddle and LemonSqueezy by webhook), AI crawler visits reported by your server, imports from GA4, Plausible and other tools, scheduled email reports and alerts, Core Web Vitals and scroll depth.</li>
 <li><b>Replay and tags on the same key.</b> Session replay with heatmaps, and a tag manager with server-side conversion APIs, are separate services in the same project, free on the hosted version.</li>
 </ul>
-<p>Like any hosted script, ours can be blocked: the default snippet loads from <code>analytics.agentfirststack.com</code>. Serve it through a path on your own domain (<code>/_a/*</code>) with the proxy configs from <code>GET /v1/sites/:id/install</code>; there's no custom-domain option yet.</p>
+<p>Like any hosted script, ours can be blocked: the default snippet loads from <code>analytics.agentfirststack.com</code>. Serve it from your own domain: a first-party domain (one CNAME, such as <code>edge.example.com</code>, from <code>POST https://agentfirststack.com/v1/first-party-domains</code>) or a path on your own domain (<code>/_a/*</code>) with the proxy configs from <code>GET /v1/sites/:id/install</code>.</p>
 
 <h2 id="comparison">Side by side</h2>
 <div class="table-wrap">

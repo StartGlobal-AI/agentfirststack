@@ -94,5 +94,137 @@
     "title": "Fair-use limits on the hosted service",
     "kicker": "Free at any size within them: sites, containers, inboxes and recorded sessions per project.",
     "service": "all"
+  },
+  {
+    "slug": "analytics",
+    "title": "Web analytics your AI agent sets up",
+    "kicker": "Cookieless analytics with goals, revenue, MRR, AI search and page speed, set up and tested by your agent.",
+    "service": "analytics"
+  },
+  {
+    "slug": "revenue-analytics",
+    "title": "Revenue analytics and MRR your AI agent sets up",
+    "kicker": "Payments from Stripe, Paddle, Polar and LemonSqueezy joined to the visit that brought them, with MRR by channel and campaign.",
+    "service": "analytics"
+  },
+  {
+    "slug": "tag-manager",
+    "title": "Tag manager your AI agent sets up and tests",
+    "kicker": "Pixels, click and form events, versions and a consent banner, tested before they go live.",
+    "service": "tags"
+  },
+  {
+    "slug": "conversion-tracking",
+    "title": "Conversion tracking your AI agent sets up and tests",
+    "kicker": "Browser and server conversions to nine ad platforms, one event id each.",
+    "service": "tags"
+  },
+  {
+    "slug": "session-replay",
+    "title": "Session replay your AI agent sets up",
+    "kicker": "Masked in the browser and read as transcripts: rage clicks, heatmaps, surveys and errors over REST and MCP.",
+    "service": "replay"
+  },
+  {
+    "slug": "page-speed",
+    "title": "Core Web Vitals from real visitors",
+    "kicker": "LCP, INP and CLS at p75 by page, device, country and browser, set up by your agent.",
+    "service": "analytics"
+  },
+  {
+    "slug": "ai-search",
+    "title": "AI search analytics your AI agent sets up",
+    "kicker": "Which AI crawlers read which pages, which assistants send visitors, and what to change.",
+    "service": "analytics"
+  },
+  {
+    "slug": "email-inboxes",
+    "title": "Email inboxes your AI agent creates itself",
+    "kicker": "One request makes an inbox; your agent gets the code, replies, and forwards the mail to you.",
+    "service": "mail"
+  },
+  {
+    "slug": "google-analytics-alternative",
+    "title": "Google Analytics alternative: cookieless, set up by an agent",
+    "kicker": "GA4 takes a property, a data stream, the tag and consent setup; your agent does it alone and brings GA4's history over.",
+    "service": "analytics"
+  },
+  {
+    "slug": "plausible-alternative",
+    "title": "Plausible alternative: cookieless analytics an agent sets up",
+    "kicker": "Same cookieless counting, free, with MRR, replay and a tag manager your agent sets up over REST and MCP.",
+    "service": "analytics"
+  },
+  {
+    "slug": "datafast-alternative",
+    "title": "DataFast alternative: revenue analytics an agent sets up",
+    "kicker": "Revenue-first analytics with MRR by campaign, free and open source, set up by your agent.",
+    "service": "analytics"
+  },
+  {
+    "slug": "fathom-alternative",
+    "title": "Fathom Analytics alternative: analytics an agent sets up",
+    "kicker": "Cookieless like Fathom, plus revenue, MRR and an API your agent can set up alone. Free and open source.",
+    "service": "analytics"
+  },
+  {
+    "slug": "cookie-consent-banner",
+    "title": "Cookie consent banner and Consent Mode v2",
+    "kicker": "What a banner has to do, and how CookieYes, Cookiebot and ours compare.",
+    "service": "tags"
+  },
+  {
+    "slug": "cookiebot-alternative",
+    "title": "Cookiebot alternative: a free banner in your tag manager",
+    "kicker": "A free consent banner in your tag manager, and when Cookiebot still fits.",
+    "service": "tags"
+  },
+  {
+    "slug": "conversions-api-gateway",
+    "title": "Meta Conversions API Gateway alternative",
+    "kicker": "Meta and eight more ad platforms server-side, with no server to host.",
+    "service": "tags"
+  },
+  {
+    "slug": "server-side-gtm",
+    "title": "Server-side GTM: hosting, costs and an alternative",
+    "kicker": "What a GTM server container costs to run, and the same result without one.",
+    "service": "tags"
+  },
+  {
+    "slug": "microsoft-clarity-alternative",
+    "title": "Microsoft Clarity alternative: replay your AI agent reads",
+    "kicker": "Clarity is free at any traffic. AgentFirstStack Replay is masked by default and read as text by your agent.",
+    "service": "replay"
+  },
+  {
+    "slug": "fullstory-alternative",
+    "title": "Fullstory alternative: open-source replay for AI agents",
+    "kicker": "Fullstory is enterprise experience analytics. AgentFirstStack Replay is free replay your agent sets up and reads.",
+    "service": "replay"
+  },
+  {
+    "slug": "ai-visibility-tracker",
+    "title": "AI visibility trackers vs AI search analytics",
+    "kicker": "Trackers count brand mentions in AI answers; AgentFirstStack measures crawlers and visitors.",
+    "service": "analytics"
+  },
+  {
+    "slug": "vercel-speed-insights-alternative",
+    "title": "Vercel Speed Insights alternative",
+    "kicker": "Every Core Web Vital from real visitors, free, on any host.",
+    "service": "analytics"
+  },
+  {
+    "slug": "pagespeed-insights-alternative",
+    "title": "PageSpeed Insights alternative",
+    "kicker": "Core Web Vitals from your own visitors on every page, next to Google's field data.",
+    "service": "analytics"
+  },
+  {
+    "slug": "mailinator-alternative",
+    "title": "Mailinator alternative: private inboxes for AI agents",
+    "kicker": "Inboxes only your project can read, codes from the sender you name, and replies.",
+    "service": "mail"
   }
 ]

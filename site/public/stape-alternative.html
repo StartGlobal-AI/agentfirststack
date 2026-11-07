@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stape alternative: server-side conversion APIs without hosting sGTM</title>
-<meta name="description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.">
+<title>Stape alternative: server-side conversions, no sGTM to host</title>
+<meta name="description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container to host, and an AI agent sets it up.">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <link rel="canonical" href="https://agentfirststack.com/stape-alternative">
 <link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
 <meta property="og:site_name" content="AgentFirstStack">
 <meta property="og:locale" content="en_US">
 <meta property="og:type" content="article">
-<meta property="og:title" content="Stape alternative: server-side conversion APIs without hosting sGTM">
-<meta property="og:description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.">
+<meta property="og:title" content="Stape alternative: server-side conversions, no sGTM to host">
+<meta property="og:description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container to host, and an AI agent sets it up.">
 <meta property="og:url" content="https://agentfirststack.com/stape-alternative">
 <meta property="og:image" content="https://agentfirststack.com/og/stape-alternative.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Stape alternative: server-side conversion APIs without hosting sGTM">
+<meta property="og:image:alt" content="Stape alternative: server-side conversions, no sGTM to host">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Stape alternative: server-side conversion APIs without hosting sGTM">
-<meta name="twitter:description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.">
+<meta name="twitter:title" content="Stape alternative: server-side conversions, no sGTM to host">
+<meta name="twitter:description" content="Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container to host, and an AI agent sets it up.">
 <meta name="twitter:image" content="https://agentfirststack.com/og/stape-alternative.png">
 <meta name="theme-color" content="#FFFFFF">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -50,12 +50,12 @@
     {
       "@type": "TechArticle",
       "@id": "https://agentfirststack.com/stape-alternative#article",
-      "headline": "Stape alternative: server-side conversion APIs without hosting sGTM",
-      "description": "Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container, and an agent sets it up. Where each fits, with Stape's pricing.",
+      "headline": "Stape alternative: server-side conversions, no sGTM to host",
+      "description": "Stape hosts server-side GTM. AgentFirstStack Tags calls the conversion APIs itself, with no server container to host, and an AI agent sets it up.",
       "url": "https://agentfirststack.com/stape-alternative",
       "image": "https://agentfirststack.com/og/stape-alternative.png",
       "datePublished": "2026-11-06",
-      "dateModified": "2026-11-06",
+      "dateModified": "2026-11-07",
       "inLanguage": "en",
       "author": { "@id": "https://agentfirststack.com/#org" },
       "publisher": { "@id": "https://agentfirststack.com/#org" },
@@ -87,7 +87,7 @@
           "name": "Can AgentFirstStack serve tracking from my own domain like Stape's custom domain?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Not with a custom domain or CNAME yet; that's being built. Today the first-party route is a path proxy: your site forwards a path such as /_a/* to the service with the site's proxy key, using the configs from the install endpoints. Without it, the snippet loads from agentfirststack.com subdomains, which ad blockers can block."
+            "text": "Yes. Add a first-party domain: POST https://agentfirststack.com/v1/first-party-domains with a subdomain such as edge.example.com, then the one CNAME it returns, to fp.agentfirststack.com. That subdomain then serves tags at /_t/*, analytics at /_a/* and replay at /_r/*, with no server code. Where DNS can't change, a path proxy on your own server does the same, using the configs from the install endpoints. Without either, the snippet loads from agentfirststack.com subdomains, which ad blockers can block."
           }
         },
         {
@@ -103,7 +103,7 @@
           "name": "What does Stape cost?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "As of 6 November 2026, Stape's sGTM hosting is free up to 10K requests a month, then $17 a month billed annually ($20 monthly) for 500K, $83 ($100) for 5M and $167 ($200) for 20M, with custom plans above that. AgentFirstStack's hosted service is free with fair-use limits."
+            "text": "As of 7 November 2026, Stape's sGTM hosting is free up to 10K requests a month, then $17 a month billed annually ($20 monthly) for 500K, $83 ($100) for 5M and $167 ($200) for 20M, with custom plans above that. AgentFirstStack's hosted service is free with fair-use limits."
           }
         },
         {
@@ -147,8 +147,8 @@
     <article class="prose">
       <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Stape alternative</span></nav>
       <h1>Stape alternative: server-side conversion APIs without hosting server-side GTM</h1>
-      <p class="lede">Stape hosts server-side Google Tag Manager: you build a server container in GTM and Stape runs it, free up to 10,000 requests a month and from $17 a month on paid plans (as of 6 November 2026). AgentFirstStack Tags gets conversions to the ad platforms without a GTM server container: one snippet on the site, and the service itself calls the conversion APIs of GA4, Meta, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap and X, with the browser and server copies sharing one event id. An agent can set it up from nothing. Stape is the better choice if your team works in GTM, needs its template gallery, or needs a custom tracking domain, which we don't offer yet.</p>
-      <p class="meta">Updated <time datetime="2026-11-06">6 November 2026</time></p>
+      <p class="lede">Stape hosts server-side Google Tag Manager: you build a server container in GTM and Stape runs it, free up to 10,000 requests a month and from $17 a month on paid plans (as of 7 November 2026). AgentFirstStack Tags gets conversions to the ad platforms without a GTM server container: one snippet on the site, served from a subdomain of your own with one CNAME, and the service itself calls the conversion APIs of GA4, Meta, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap and X, with the browser and server copies sharing one event id. An AI agent can set it up from nothing. Stape is the better choice if your team works in GTM or needs its template gallery.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
 
       <h2 id="prompt">Set it up with one prompt</h2>
 <p>Paste this into your coding agent. It looks at what the site runs first, so an existing GTM or Stape setup isn't overwritten blind.</p>
@@ -160,7 +160,7 @@
 
 2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
 
-3. Create a tags container for the production domain. Serve it through a first-party proxy on our own domain (the configs from GET /v1/containers/:id/install?proxy=1; keep the proxy key server-side), put the proxied snippet in the head of every page, deploy, and run scan.
+3. Create a tags container for the production domain. Serve it from our own domain: a first-party domain (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain such as edge.&lt;our domain&gt;; add the one CNAME it returns if you can change our DNS, otherwise give me the record), or meanwhile the path proxy from GET /v1/containers/:id/install?proxy=1 with its proxy key kept server-side. Put the snippet in the head of every page, deploy, and run scan.
 
 4. If the site loads a Google Tag Manager web container or sends to a server-side GTM endpoint (Stape or another host), tell me what it fires before you change anything. Import the web container (draft/import with format "gtm", dry run first) and list what didn't map.
 
@@ -175,9 +175,9 @@ Tell me what you set up, what each test returned, what's waiting on me, and give
       </div>
 
 <h2 id="stape">What Stape is</h2>
-<p><a href="https://stape.io/">Stape</a> sells two things: Server GTM Hosting, "From $17/month", and Dedicated Gateways, "From $8/month" (<a href="https://stape.io/">stape.io</a>, as of 6 Nov 2026). The hosting runs your server-side GTM container; Google's own docs say a server container runs on a server you control, such as your own Google Cloud project (<a href="https://developers.google.com/tag-platform/tag-manager/server-side/intro">server-side tagging intro</a>), and Stape is that server, managed for you.</p>
+<p><a href="https://stape.io/">Stape</a> sells two things: Server GTM Hosting, "From $17/month", and Dedicated Gateways, "From $8/month" (<a href="https://stape.io/">stape.io</a>, as of 7 Nov 2026). The hosting runs your server-side GTM container; Google's own docs say a server container runs on a server you control, such as your own Google Cloud project (<a href="https://developers.google.com/tag-platform/tag-manager/server-side/intro">server-side tagging intro</a>), and Stape is that server, managed for you.</p>
 <p>Setting it up is mostly in GTM. Stape's guide: "Select Admin, then in the container column, choose +", "choose Server, and click Create", then "Select Manually provision tagging server, then copy your container configuration", and paste it into Stape's Container configuration field (<a href="https://stape.io/helpdesk/documentation/configure-sgtm-container">Configure the sGTM container</a>, as of 6 Nov 2026). The tags in that server container are GTM templates, many of them published by Stape; its <a href="https://stape.io/solutions/category/gtm-templates">template gallery</a> includes Meta (Facebook CAPI), TikTok, LinkedIn, Snapchat, Reddit and Google Ads tags, and affiliate and email tools such as Awin, Impact, Klaviyo and Mailchimp (as of 6 Nov 2026).</p>
-<p>Stape's plans for sGTM hosting (<a href="https://stape.io/price">stape.io/price</a>, as of 6 Nov 2026):</p>
+<p>Stape's plans for sGTM hosting (<a href="https://stape.io/price">stape.io/price</a>, as of 7 Nov 2026):</p>
 <div class="table-wrap">
 <table>
 <thead><tr><th>Plan</th><th>Price (billed annually / monthly)</th><th>Requests</th><th>Logs</th></tr></thead>
@@ -219,9 +219,11 @@ Tell me what you set up, what each test returned, what's waiting on me, and give
 <p>Plus AgentFirstStack analytics and signed webhooks. Microsoft Advertising is browser-only for now (its UET tag); server-side for it isn't built. The <a href="/guides/server-side-conversion-tracking">server-side conversion guide</a> explains dedup per platform, and there are deeper guides for <a href="/guides/google-ads-conversion-tracking">Google Ads</a> and the <a href="/guides/meta-conversions-api">Meta Conversions API</a>.</p>
 
 <h2 id="first-party">First-party serving and ad blockers</h2>
-<p>This is where Stape is ahead today. Stape lets you add a custom domain so the tagging server answers on a subdomain of your own site: "Use a custom tagging server URL, also called a custom domain, to set first-party cookies", on the same root domain, such as <code>ss.example.com</code> (<a href="https://stape.io/helpdesk/documentation/add-custom-domain-in-stape">Add a custom domain</a>, as of 6 Nov 2026). AgentFirstStack doesn't offer a custom domain or CNAME yet; it's being built.</p>
-<p>What we have now is a path proxy. Your site forwards a path on its own domain to the service: <code>/_a/*</code> for analytics, a prefix of your choice for tags and replay. The configs (a Cloudflare Worker route, Next.js, Vercel, Netlify, nginx) come from <code>GET /v1/sites/:id/install</code> for analytics and <code>GET /v1/containers/:id/install?proxy=1</code> for tags, and send the site's <code>x-afs-proxy-key</code> so the service can trust the visitor's IP and location. We recommend it on every install.</p>
-<p>Without the proxy, the default snippets load from <code>analytics.agentfirststack.com</code> and <code>tags.agentfirststack.com</code>, and ad blockers' filter lists block hosts like those. "Server-side" in AgentFirstStack means enrichment on our edge and conversions sent from our servers to the platforms; the browser's hit to us can still be blocked unless it's proxied. Backend-reported conversions can't be.</p>
+<p>Both serve from your own domain. Stape's guide says to "Use a custom tagging server URL, also called a custom domain" so the tagging server can set first-party cookies, on the same root domain, such as <code>ss.example.com</code>, or on the same origin as the site, sharing its domain and path (<a href="https://stape.io/helpdesk/documentation/add-custom-domain-in-stape">Add a custom domain</a>, as of 7 Nov 2026). It asks for CNAME records by default, or A and AAAA records.</p>
+<p>AgentFirstStack does it with a first-party domain. <code>POST https://agentfirststack.com/v1/first-party-domains</code> with <code>{"hostname":"edge.example.com"}</code> (MCP <code>afs_add_first_party_domain</code>) returns one DNS record, a CNAME to <code>fp.agentfirststack.com</code>. Minutes after the record is live, its status turns <code>active</code>, and that subdomain serves tags at <code>/_t/*</code>, analytics at <code>/_a/*</code> and replay at <code>/_r/*</code> for the whole project, with no server code; our edge passes on each visitor's IP and location. The container's snippet becomes <code>https://edge.example.com/_t/c/&lt;container&gt;.js</code>. Your agent adds the record itself if it can change your DNS; otherwise that one record is what it hands you. Pick a neutral name such as edge or go: filter lists target names like track, tag and collect.</p>
+<p>Where DNS can't change, the path proxy does the same from your own server. Your site forwards a path on its own domain to the service: <code>/_a/*</code> for analytics, a prefix of your choice for tags and replay. The configs (a Cloudflare Worker route, Next.js, Vercel, Netlify, nginx) come from <code>GET /v1/sites/:id/install</code> for analytics and <code>GET /v1/containers/:id/install?proxy=1</code> for tags, and send the site's <code>x-afs-proxy-key</code> so the service can trust the visitor's IP and location. We recommend one of the two on every install.</p>
+<p>One difference remains. Stape's custom domain lets the tagging server set first-party cookies. AgentFirstStack sets its visitor and click id cookies from the server only through the path proxy, where the page and the collector share one host; through a first-party domain, the container's script sets them.</p>
+<p>Without either, the default snippets load from <code>analytics.agentfirststack.com</code> and <code>tags.agentfirststack.com</code>, and ad blockers' filter lists block hosts like those. "Server-side" in AgentFirstStack means enrichment on our edge and conversions sent from our servers to the platforms; the browser's hit to us can still be blocked unless it comes through your own domain. Backend-reported conversions can't be.</p>
 
 <h2 id="comparison">Side by side</h2>
 <div class="table-wrap">
@@ -233,7 +235,7 @@ Tell me what you set up, what each test returned, what's waiting on me, and give
 <tr><th scope="row">Platforms</th><td>Any GTM server template: Stape's gallery and the community's</td><td>GA4, Meta, Google Ads, TikTok, LinkedIn, Pinterest, Reddit, Snap, X, analytics, webhooks</td></tr>
 <tr><th scope="row">Browser and server dedup</th><td>Your web and server tags have to carry the same event id; you set that up in GTM</td><td>One <code>event_id</code> per conversion, used by the pixel and the API</td></tr>
 <tr><th scope="row">Testing</th><td>GTM's preview mode; Stape logs from the Pro plan</td><td>Each platform's test mode, and a test call that returns its answer; test traffic never sent as a real conversion</td></tr>
-<tr><th scope="row">Custom domain (first-party)</th><td>Yes: a subdomain of your site, such as <code>ss.example.com</code></td><td>Not yet: a path proxy on your domain instead</td></tr>
+<tr><th scope="row">Custom domain (first-party)</th><td>Yes: a subdomain of your site, such as <code>ss.example.com</code>, or the same origin</td><td>Yes: a first-party domain (one CNAME, such as <code>edge.example.com</code>) or a path proxy; cookies are set from the server only through the path proxy</td></tr>
 <tr><th scope="row">Delivery log</th><td>3 days (Pro), 10 days (Business)</td><td>7 days, with each platform's answer</td></tr>
 <tr><th scope="row">Agent access</th><td>REST API and MCP for an existing account; GTM through its MCP server</td><td>Signup, setup, test and publish over REST and MCP</td></tr>
 <tr><th scope="row">Price</th><td>Free to 10K requests, then from $17 a month</td><td>Free hosted service with fair-use limits (10 containers, 5 destinations each)</td></tr>
@@ -247,7 +249,7 @@ Tell me what you set up, what each test returned, what's waiting on me, and give
 <ul>
 <li>Your team builds tracking in Google Tag Manager and wants server-side to work the same way.</li>
 <li>You need a platform or template AgentFirstStack doesn't have: affiliate networks such as Awin, Impact and Rakuten, email tools such as Klaviyo and Mailchimp, and the rest of the GTM template gallery.</li>
-<li>You want the tagging server on your own subdomain today.</li>
+<li>You want the tagging server to set first-party cookies from your own subdomain.</li>
 <li>You need what Stape's Custom plan lists: a BAA for HIPAA compliance, single sign-on, a dedicated IP or a private cluster.</li>
 </ul>
 <h3>Use AgentFirstStack Tags if</h3>
@@ -265,11 +267,11 @@ Tell me what you set up, what each test returned, what's waiting on me, and give
 <h3>Is AgentFirstStack a server-side GTM host like Stape?</h3>
 <p>No. It doesn't run GTM server containers. It's a tag manager whose service calls the ad platforms' conversion APIs itself: you define a conversion once, and it goes out as the browser pixel and server-side with the same event id.</p>
 <h3>Can AgentFirstStack serve tracking from my own domain like Stape's custom domain?</h3>
-<p>Not with a custom domain or CNAME yet; that's being built. Today the first-party route is a path proxy: your site forwards a path such as <code>/_a/*</code> to the service with the site's proxy key, using the configs from the install endpoints. Without it, the snippet loads from agentfirststack.com subdomains, which ad blockers can block.</p>
+<p>Yes. Add a first-party domain: <code>POST https://agentfirststack.com/v1/first-party-domains</code> with a subdomain such as <code>edge.example.com</code>, then the one CNAME it returns, to <code>fp.agentfirststack.com</code>. That subdomain then serves tags at <code>/_t/*</code>, analytics at <code>/_a/*</code> and replay at <code>/_r/*</code>, with no server code. Where DNS can't change, a path proxy on your own server does the same, using the configs from the install endpoints. Without either, the snippet loads from agentfirststack.com subdomains, which ad blockers can block.</p>
 <h3>Can I import my server-side GTM container?</h3>
 <p>Only the web container. <code>draft/import</code> maps a web GTM container's tags, triggers and variables; server-container clients aren't imported. You recreate the server side as destinations, which takes each platform's credentials.</p>
 <h3>What does Stape cost?</h3>
-<p>As of 6 November 2026, Stape's sGTM hosting is free up to 10K requests a month, then $17 a month billed annually ($20 monthly) for 500K, $83 ($100) for 5M and $167 ($200) for 20M, with custom plans above that (<a href="https://stape.io/price">stape.io/price</a>). AgentFirstStack's hosted service is free with fair-use limits.</p>
+<p>As of 7 November 2026, Stape's sGTM hosting is free up to 10K requests a month, then $17 a month billed annually ($20 monthly) for 500K, $83 ($100) for 5M and $167 ($200) for 20M, with custom plans above that (<a href="https://stape.io/price">stape.io/price</a>). AgentFirstStack's hosted service is free with fair-use limits.</p>
 <h3>Does Stape have an API or MCP server?</h3>
 <p>Yes. Stape has a REST API and an MCP server for managing a Stape account with a Stape API key, and it maintains a separate MCP server for editing Google Tag Manager with Google sign-in. A person creates the Stape account and the GTM server container first.</p>
 

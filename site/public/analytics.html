@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Free, open-source web analytics your AI agent sets up</title>
+<meta name="description" content="Cookieless web analytics with goals, revenue, MRR, AI search and page speed, free and open source. Your AI agent sets it up, imports history and tests it.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/analytics">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Web analytics your AI agent sets up">
+<meta property="og:description" content="Cookieless web analytics with goals, revenue, MRR, AI search and page speed, free and open source. Your AI agent sets it up, imports history and tests it.">
+<meta property="og:url" content="https://agentfirststack.com/analytics">
+<meta property="og:image" content="https://agentfirststack.com/og/analytics.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Web analytics your AI agent sets up">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Web analytics your AI agent sets up">
+<meta name="twitter:description" content="Cookieless web analytics with goals, revenue, MRR, AI search and page speed, free and open source. Your AI agent sets it up, imports history and tests it.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/analytics.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/analytics#article",
+      "headline": "Web analytics your AI agent sets up",
+      "description": "Cookieless web analytics with goals, revenue, MRR, AI search and page speed, free and open source. Your AI agent sets it up, imports history and tests it.",
+      "url": "https://agentfirststack.com/analytics",
+      "image": "https://agentfirststack.com/og/analytics.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/analytics"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "Web analytics", "item": "https://agentfirststack.com/analytics" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/analytics#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack Analytics use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent, the salt rotates every day, and nothing is stored on the device. An opt-in persistent mode keeps a random id in localStorage; the tracker can wait for consent with data-require-consent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does my agent need from me?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Usually only a few things: the DNS record for the first-party domain if it can't change your DNS, a deploy if it can't deploy, a payment provider key if you take payments, and your click on the claim link. Everything else, from the key to the goals and the tests, it does alone."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can it bring over my Google Analytics or Plausible history?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, as daily totals and breakdowns by page, source, country and device: a GA4 Data API report or CSV export, a Plausible Stats API report or CSV export, or rows from any other tool. Then imports/compare checks our daily visitors against the old tool's for the days both ran."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it really free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free at any size within the fair-use limits, such as 10 analytics sites per project and up to 400 days of history. The code is open source under AGPL-3.0, with the tracker under MIT, and you can run your own copy on Cloudflare with your own limits."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I see the numbers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Open the claim link your agent gives you and sign in with Google to see the dashboard, or ask your agent, which reads every report over REST and MCP. Your agent can also make a public share link with a password, an expiry or a saved segment."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>Web analytics</span></nav>
+      <h1>Web analytics your AI agent sets up</h1>
+      <p class="lede">AgentFirstStack Analytics is cookieless web analytics: where visitors come from (AI assistants included), what they do, which goals they reach and what they pay, with funnels, MRR, AI crawler reports and Core Web Vitals. It replaces Google Analytics, Plausible, DataFast and Fathom, it's free on the hosted service, and it's open source (AGPL-3.0, the tracker MIT). An AI agent sets it up alone: one request for a key, a site, the snippet served from your own domain, a goal for each conversion, history from your old tool, then a test it runs itself. You claim the dashboard with a link.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It maps the site first, so every button and form that matters gets a goal, and it leaves the analytics you run today in place.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add web analytics to this project with AgentFirstStack. It's free, open-source, cookieless analytics built for agents, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Map the site before you change it: the main pages, every primary button, link and form, the thank-you pages, and what counts as a sign-up, lead or purchase here. Note any analytics it runs today (Google Analytics, Plausible, DataFast, Fathom or another) with its ids and event names, and leave it installed.
+
+4. Create a site for the production domain and serve it from our own domain: add a first-party domain on a new subdomain with a neutral name such as edge (POST https://agentfirststack.com/v1/first-party-domains) and add its CNAME if you can change our DNS. Until it's active, or if you can't, use the path proxy from the install answer, with the proxy key kept server-side. Put the snippet in the head of every page.
+
+5. Create a goal for each conversion and main action, keeping the old tool's event names. Send what only the backend knows (a paid order, a verified sign-up) as server events, with afsa.visitorId() passed through. If we take payments, connect the provider, and ask me for the key you need.
+
+6. If the site ran another analytics tool, import its daily history as the manual's "Move from another tool" describes, up to today, so imports/compare can check our numbers against it.
+
+7. If the site has server or edge code, report AI crawler requests from it. Add an email destination with a weekly report, and alerts for a traffic drop and for no data.
+
+8. Deploy (or tell me what to deploy), open the site with ?afsa_debug=1 and use the main actions, run verify, then GET https://agentfirststack.com/v1/setup?services=analytics until it says ready.
+
+9. Write the site id, every goal with what triggers it, and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what verify and the setup check returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+<p>Want analytics, tags, inboxes and replay in one run? The <a href="/#setup">full setup prompt</a> on the home page does all four.</p>
+
+<h2 id="steps">What your agent does</h2>
+<p>Every step is a REST call on <code>https://analytics.agentfirststack.com</code> (or the platform host where noted) and an MCP tool on <code>https://agentfirststack.com/mcp</code>. Every create call is safe to repeat: it returns the existing thing.</p>
+<ol>
+<li><b>Gets a key.</b> <code>POST https://agentfirststack.com/v1/signup</code> returns one key for every service, with no email or verification. It goes in <code>.env</code> as <code>AGENTFIRSTSTACK_API_KEY</code>.</li>
+<li><b>Creates the site.</b> <code>POST /v1/sites {"domain":"example.com"}</code> (<code>analytics_create_site</code>) returns the site id and install code for HTML, Next.js, Astro, React and WordPress, led by the first-party options.</li>
+<li><b>Serves it from your domain.</b> <code>POST https://agentfirststack.com/v1/first-party-domains {"hostname":"edge.example.com"}</code> (<code>afs_add_first_party_domain</code>) gives one CNAME to <code>fp.agentfirststack.com</code>. Once it's active, the snippet loads from <code>https://edge.example.com/_a/s.js</code>, with no server code, so ad blockers that block analytics hosts don't drop visitors. Where DNS can't change, a path proxy on the site does the same.</li>
+<li><b>Adds goals.</b> <code>POST /v1/sites/:id/goals</code> (<code>analytics_create_goal</code>): event goals for clicks and forms, pageview goals for thank-you pages, scroll goals for content. Goals apply to past data too.</li>
+<li><b>Sends what the browser can't see.</b> <code>POST /v1/sites/:id/events</code> (<code>analytics_track_events</code>) for server events, with a dry run. Payments come from Stripe in one call with a restricted key (<code>POST /v1/sites/:id/integrations/stripe/connect</code>, 90 days of history), from Polar, Paddle and LemonSqueezy by webhook, or from <code>POST /v1/sites/:id/payments</code>.</li>
+<li><b>Brings history over.</b> <code>POST /v1/sites/:id/imports</code> (<code>analytics_import_csv</code>) takes a GA4 report, a Plausible report or CSV, or rows from any tool. <code>GET /v1/sites/:id/imports/compare</code> (<code>analytics_compare_import</code>) then checks our daily visitors against the old tool's.</li>
+<li><b>Reports AI crawlers.</b> Bots don't run the tracker, so the site's server or edge code posts their requests to <code>POST /v1/sites/:id/crawls</code>, fire-and-forget, filtered with the prefilter from <code>GET /v1/crawlers</code>.</li>
+<li><b>Sets up your reports.</b> An email destination, a weekly report and alerts for a traffic drop and for no data (<code>/destinations</code>, <code>/reports</code>, <code>/alerts</code>). They reach you once you claim the project.</li>
+<li><b>Tests its own work.</b> <code>POST /v1/sites/:id/verify</code> (<code>analytics_verify_install</code>) fetches the live page and checks the snippet, the script, the Content-Security-Policy and the events. A visit with <code>?afsa_debug=1</code> is test traffic it can watch in realtime without touching your reports. Then <code>POST https://agentfirststack.com/v1/setup/test</code> (<code>afs_test_setup</code>) and <code>GET https://agentfirststack.com/v1/setup</code> (<code>afs_check_setup</code>).</li>
+<li><b>Hands over.</b> <code>POST https://agentfirststack.com/v1/claim-link</code> (<code>afs_create_claim_link</code>) gives you a single-use link, valid for 7 days. You sign in with Google and see the dashboard.</li>
+</ol>
+
+<h2 id="features">What you get</h2>
+<ul>
+<li><b>Tracking:</b> a 2.8 KB (gzip) tracker; no cookies by default; pageviews in single-page and hash-routed apps; custom events and props, also from HTML attributes; outbound clicks and downloads; forms and 404s on request; scroll depth, engaged time and Core Web Vitals; site search; UTM tags and ad click ids; consent gating; cross-domain linking.</li>
+<li><b>Reports:</b> stats, breakdowns by up to three dimensions, timeseries and comparisons, custom metrics, channel groups, realtime with a live WebSocket stream and a map, top movers, insights, CSV, and one rollup across your sites. Countries, regions and cities come from the edge.</li>
+<li><b>Goals and funnels:</b> event, pageview and scroll goals with values, funnels in order or any order, within a visit or up to 30 days, with revenue per step, and saved segments.</li>
+<li><b>People:</b> visitors, sessions linked to replay recordings, journeys to a goal, first touch, retention cohorts, path exploration and six attribution models.</li>
+<li><b>Revenue and MRR:</b> payments joined to the visit that brought them; MRR, ARR, churn and trial conversion by channel, campaign, country or plan; ad spend for ROAS, CPA and CAC. More on the <a href="/revenue-analytics">revenue analytics page</a>.</li>
+<li><b>AI search:</b> which AI crawlers read which pages (reported by your server), which assistants send visitors and what those visitors do, the pages read but never visited, and next steps. It doesn't run prompts through ChatGPT or Claude to measure brand mentions. More on the <a href="/ai-search">AI search page</a>.</li>
+<li><b>Page speed:</b> Core Web Vitals from real visitors at the 75th percentile, by page, device, country and browser, slowest pages first, plus a PageSpeed Insights lab run on demand. More on the <a href="/page-speed">page speed page</a>.</li>
+<li><b>Data out:</b> raw events as NDJSON, CSV or JSON, read-only SQL with cost limits, and a schema call that lists every event and property.</li>
+<li><b>For you:</b> the dashboard, public share links with a password, an expiry or a saved segment, and alerts and weekly or monthly reports by email, Slack or webhook.</li>
+<li><b>Privacy:</b> erase one visitor, purge by filter with a dry run, email and phone redaction, path rules, exclusions, a referrer spam filter, Do Not Track and GPC, and attack protection that quarantines floods instead of counting them.</li>
+</ul>
+<p>Every endpoint, field and MCP tool is in the <a href="https://analytics.agentfirststack.com/llms.txt">analytics manual</a>, and <a href="/features">the features page</a> lists the other services.</p>
+
+<h2 id="dashboard">Our own site, in the same dashboard</h2>
+<figure><img src="/img/dashboard-traffic.webp" width="1600" height="800" alt="AgentFirstStack dashboard for agentfirststack.com, Traffic tab, last 7 days: 147 visitors, $0 revenue, 30% conversion rate, 75% bounce rate, 5m 40s session time, and a daily visitors chart that peaks on 4 November." loading="lazy"><figcaption>agentfirststack.com in the AgentFirstStack dashboard: the last 7 days as of 7 November 2026. 147 visitors, a 30% conversion rate, a 75% bounce rate and 5 minutes 40 seconds per session. Revenue is $0 because the service is free. The tabs next to Traffic hold AI search and page speed.</figcaption></figure>
+<p>These are real numbers, not a demo account. Our own analytics are <a href="/#live">live on the home page</a>, counted by the same cookieless tracker your agent installs, and the <a href="/live">full dashboard</a> is a public share link of the kind your agent can make for your site.</p>
+
+<h2 id="setup-check">What the setup check verifies</h2>
+<p><code>GET https://agentfirststack.com/v1/setup?services=analytics</code> (<code>afs_check_setup</code>) reads what the service has received and returns <code>"ready": true</code> or a fix for each row. For analytics it checks:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Check</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>analytics.site</code></th><td>Analytics has a site for the website</td></tr>
+<tr><th scope="row"><code>analytics.first_party</code></th><td>Browser events arrive first-party (through the site's own domain), so ad blockers don't drop them</td></tr>
+<tr><th scope="row"><code>analytics.receiving</code></th><td>Analytics is receiving events from the pages</td></tr>
+<tr><th scope="row"><code>analytics.domain_verified</code></th><td>The site's domain is verified</td></tr>
+<tr><th scope="row"><code>analytics.proxy_key</code></th><td>Events through a first-party proxy carry its proxy key</td></tr>
+<tr><th scope="row"><code>analytics.goals</code></th><td>There is a goal for each conversion and main action</td></tr>
+<tr><th scope="row"><code>analytics.goals_counted</code></th><td>Every goal has counted at least once (test traffic included, last 30 days)</td></tr>
+<tr><th scope="row"><code>analytics.server_events</code></th><td>Conversions only the backend knows arrive as server events (a warning only: not every site has them)</td></tr>
+<tr><th scope="row"><code>analytics.crawlers</code></th><td>AI crawler and search bot visits are reported from the site's server</td></tr>
+<tr><th scope="row"><code>analytics.owner_email</code></th><td>The owner gets email from analytics</td></tr>
+<tr><th scope="row"><code>analytics.weekly_report</code></th><td>A weekly report goes to the owner</td></tr>
+<tr><th scope="row"><code>analytics.alerts</code></th><td>Alerts fire on a traffic drop and when tracking stops</td></tr>
+</tbody>
+</table>
+</div>
+<p>When the project also has a tag container, whose scan finds the tools a site already loads, two more rows follow a move from another tool: <code>migrate.tools</code> (what the site used before is brought over) and <code>migrate.compare</code> (our daily visitors match the old tool's, for the days both ran). The setup test (<code>POST https://agentfirststack.com/v1/setup/test</code>) runs <code>analytics.test_event</code>: a test event reaches analytics. The check fetches nothing from the site, so the agent deploys and makes its test visit first.</p>
+
+<h2 id="compared">Compared with</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Tool</th><th>What it is (as of 7 Nov 2026)</th><th>What AgentFirstStack does differently</th><th>Comparison</th></tr></thead>
+<tbody>
+<tr><th scope="row">Google Analytics 4</th><td>Free; Analytics 360 is sold under a contract. Creating the account takes a person, and its tag sets <code>_ga</code> cookies that last 2 years (<a href="https://support.google.com/analytics/answer/11397207">Google</a>).</td><td>No cookies by default, one request to start, and GA4's history imported as daily totals</td><td><a href="/google-analytics-alternative">Google Analytics alternative</a></td></tr>
+<tr><th scope="row">Plausible</th><td>Open-source, cookieless analytics hosted in the EU, from $9 a month for 10k pageviews after a 30-day trial (<a href="https://plausible.io/">plausible.io</a>)</td><td>Free hosted; MRR, replay and a tag manager on the same key; your agent can create sites on every plan</td><td><a href="/plausible-alternative">Plausible alternative</a></td></tr>
+<tr><th scope="row">DataFast</th><td>"Revenue-first analytics" with Stripe, LemonSqueezy, Polar and Shopify integrations, and a 14-day trial (<a href="https://datafa.st/">datafa.st</a>)</td><td>Revenue and MRR too (Stripe, Polar, Paddle, LemonSqueezy or any provider by API), free and open source</td><td><a href="/datafast-alternative">DataFast alternative</a></td></tr>
+<tr><th scope="row">Fathom</th><td>Analytics from $15 a month for up to 100,000 pageviews across 50 sites, with "No cookie banners required"; no free plan (<a href="https://usefathom.com/pricing">usefathom.com/pricing</a>)</td><td>Free hosted with fair-use limits; goals, funnels, revenue and MRR; set up by your agent</td><td><a href="/fathom-alternative">Fathom alternative</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>Using Umami? The <a href="/umami-alternative">Umami alternative</a> page compares two open-source tools.</p>
+
+<h2 id="limits">Limits</h2>
+<p>The hosted service is free at any size within the <a href="/limits">fair-use limits</a>, the same for every project:</p>
+<ul>
+<li>10 analytics sites per project, 3 before a person claims it.</li>
+<li>Up to 400 days of history: raw events older than the site's <code>retention_days</code> are deleted daily.</li>
+<li>Daily event budgets per site and per account, with a separate budget for server events and payments, so a flood of browser events never refuses what your backend sends. One network's events past its daily share are quarantined, not counted.</li>
+<li>300 API reads a minute per project on each service.</li>
+</ul>
+<p><code>GET https://agentfirststack.com/v1/usage</code> shows every limit with what the project has used. Need more? Run your own copy: <code>pnpm afs init &lt;name&gt; --domain example.com --account &lt;id&gt;</code>, then <code>pnpm afs deploy &lt;name&gt;</code>.</p>
+
+<h2 id="not-a-fit">When it isn't the right fit</h2>
+<ul>
+<li><b>Long history.</b> The hosted service keeps up to 400 days of raw events. Imported history stays as daily totals, but year-over-year detail beyond that needs a self-hosted copy with a longer retention.</li>
+<li><b>Mobile apps.</b> There's no SDK for iOS or Android. The tracker is for websites; backends send server events.</li>
+<li><b>Anonymous visitors across days.</b> Cookieless ids rotate daily, so returning visitors and multi-day attribution work for identified users (a <code>user_id</code> from your server) or in persistent mode, not for anonymous visitors.</li>
+<li><b>The Google ecosystem.</b> There are no Google Ads audiences, BigQuery export or Search Console integration. Our tag manager can keep sending conversions to GA4 and Google Ads if you need them.</li>
+<li><b>Data-driven attribution.</b> The six models are rule-based; data-driven models aren't offered.</li>
+<li><b>A dashboard as the main tool.</b> The dashboard shows traffic, goals, visitors, AI search and page speed. MRR, attribution models and retention cohorts are in the API and MCP, for your agent to read and summarise.</li>
+<li><b>EU-only hosting.</b> The hosted service runs on Cloudflare and doesn't offer EU-only data storage.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Does AgentFirstStack Analytics use cookies?</h3>
+<p>No. By default a visitor is a hash of a daily salt, the site, the IP address and the user agent, the salt rotates every day, and nothing is stored on the device. An opt-in persistent mode keeps a random id in localStorage; the tracker can wait for consent with <code>data-require-consent</code>.</p>
+<h3>What does my agent need from me?</h3>
+<p>Usually only a few things: the DNS record for the first-party domain if it can't change your DNS, a deploy if it can't deploy, a payment provider key if you take payments, and your click on the claim link. Everything else, from the key to the goals and the tests, it does alone.</p>
+<h3>Can it bring over my Google Analytics or Plausible history?</h3>
+<p>Yes, as daily totals and breakdowns by page, source, country and device: a GA4 Data API report or CSV export, a Plausible Stats API report or CSV export, or rows from any other tool. Then <code>imports/compare</code> checks our daily visitors against the old tool's for the days both ran.</p>
+<h3>Is it really free?</h3>
+<p>The hosted service is free at any size within the fair-use limits, such as 10 analytics sites per project and up to 400 days of history. The code is open source under AGPL-3.0, with the tracker under MIT, and you can run your own copy on Cloudflare with your own limits.</p>
+<h3>How do I see the numbers?</h3>
+<p>Open the claim link your agent gives you and sign in with Google to see the dashboard, or ask your agent, which reads every report over REST and MCP. Your agent can also make a public share link with a password, an expiry or a saved segment.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/google-analytics-alternative"><span class="svc svc-analytics">Analytics</span><b>Google Analytics alternative</b><span>GA4's setup, cookies and limits, side by side.</span></a></li>
+        <li><a class="card" href="/plausible-alternative"><span class="svc svc-analytics">Analytics</span><b>Plausible alternative</b><span>Two cookieless, open-source tools compared.</span></a></li>
+        <li><a class="card" href="/revenue-analytics"><span class="svc svc-analytics">Analytics</span><b>Revenue and MRR</b><span>Payments joined to the visit that brought them.</span></a></li>
+        <li><a class="card" href="/ai-search"><span class="svc svc-analytics">Analytics</span><b>AI search</b><span>Which AI bots read which pages, and who they send.</span></a></li>
+        <li><a class="card" href="/page-speed"><span class="svc svc-analytics">Analytics</span><b>Page speed</b><span>Core Web Vitals from real visitors.</span></a></li>
+        <li><a class="card" href="/guides/add-analytics-with-claude-code"><span class="svc svc-analytics">Analytics</span><b>Add analytics with Claude Code</b><span>One prompt: a key, a site, the snippet, a verify check.</span></a></li>
+        <li><a class="card" href="/tag-manager"><span class="svc svc-tags">Tags</span><b>Tag manager</b><span>One snippet for every pixel and click event.</span></a></li>
+        <li><a class="card" href="/session-replay"><span class="svc svc-replay">Replay</span><b>Session replay</b><span>Sessions as transcripts, masked by default.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#steps">What your agent does</a></li><li><a href="#features">What you get</a></li><li><a href="#dashboard">Our own site</a></li><li><a href="#setup-check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#not-a-fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

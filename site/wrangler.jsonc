@@ -30,6 +30,7 @@
       "!/brand/*",
       "!/og/*",
       "!/logos/*",
+      "!/img/*",
       "!/app.js",
       "!/content.js",
       "!/dashboard.js",

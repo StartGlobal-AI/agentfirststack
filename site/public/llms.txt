@@ -728,10 +728,35 @@ curl -s -X POST https://agentfirststack.com/v1/abuse-reports -H 'content-type: a
   `afs_report_abuse`. People use the form at https://agentfirststack.com/report-abuse (`?url=`
   fills it in). Phishing and malware reach the operator at once; the rest within a day.
 
+## Products (for people)
+
+- Web analytics your AI agent sets up: https://agentfirststack.com/analytics
+- Revenue analytics and MRR your AI agent sets up: https://agentfirststack.com/revenue-analytics
+- Tag manager your AI agent sets up and tests: https://agentfirststack.com/tag-manager
+- Conversion tracking your AI agent sets up and tests: https://agentfirststack.com/conversion-tracking
+- Session replay your AI agent sets up and reads: https://agentfirststack.com/session-replay
+- Real user monitoring for Core Web Vitals, set up by your AI agent: https://agentfirststack.com/page-speed
+- AI search analytics your AI agent sets up: https://agentfirststack.com/ai-search
+- Email inboxes your AI agent creates itself: https://agentfirststack.com/email-inboxes
+
 ## Guides and comparisons (for people)
 
 All of them: https://agentfirststack.com/guides
 
+- Google Analytics alternative: cookieless analytics your AI agent sets up: https://agentfirststack.com/google-analytics-alternative
+- Plausible alternative: open-source analytics your AI agent sets up, with MRR and replay: https://agentfirststack.com/plausible-alternative
+- Fathom Analytics alternative: free, open-source analytics your AI agent sets up: https://agentfirststack.com/fathom-alternative
+- DataFast alternative: free, open-source revenue analytics your AI agent sets up: https://agentfirststack.com/datafast-alternative
+- Cookie consent banner: what it has to do, Consent Mode v2, and which one to use: https://agentfirststack.com/cookie-consent-banner
+- Cookiebot alternative: a free consent banner inside your tag manager: https://agentfirststack.com/cookiebot-alternative
+- Server-side GTM: what it is, what it costs to run, and the same result without a server container: https://agentfirststack.com/server-side-gtm
+- Meta Conversions API Gateway alternative: Meta and eight more ad platforms, with no server to host: https://agentfirststack.com/conversions-api-gateway
+- Mailinator alternative: private inboxes your AI agent creates, reads and replies from: https://agentfirststack.com/mailinator-alternative
+- Microsoft Clarity alternative: session replay your AI agent sets up and reads: https://agentfirststack.com/microsoft-clarity-alternative
+- Fullstory alternative: open-source session replay your AI agent sets up and reads: https://agentfirststack.com/fullstory-alternative
+- Vercel Speed Insights alternative: every Core Web Vital from real visitors, free, on any host: https://agentfirststack.com/vercel-speed-insights-alternative
+- PageSpeed Insights alternative: Core Web Vitals from your own visitors, page by page: https://agentfirststack.com/pagespeed-insights-alternative
+- AI visibility trackers vs AI search analytics: two ways to measure LLM visibility: https://agentfirststack.com/ai-visibility-tracker
 - Add analytics with Claude Code: https://agentfirststack.com/guides/add-analytics-with-claude-code
 - Server-side conversion tracking for Meta, Google Ads, TikTok and GA4: https://agentfirststack.com/guides/server-side-conversion-tracking
 - Email inbox for AI agents: receive verification codes by API: https://agentfirststack.com/guides/email-inbox-for-ai-agents

@@ -1047,6 +1047,16 @@ a {
 }
 
 /* product cards: a link to each one's guide */
+/* The product name opens its product page. */
+.card h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+.card h3 a:hover {
+  color: var(--cobalt);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .card-link {
   margin-top: 16px;
   font-size: 14.5px;

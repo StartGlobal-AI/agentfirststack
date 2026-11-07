@@ -274,3 +274,24 @@
     position: static;
   }
 }
+
+/* Screenshots of the real product (our own site's data) on product and comparison pages. */
+.prose figure {
+  margin: 28px 0;
+}
+.prose figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  background: var(--tint);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 18px 40px -28px rgba(10, 26, 92, 0.35);
+}
+.prose figcaption {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2, #4a556e);
+}

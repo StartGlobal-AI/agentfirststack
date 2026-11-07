@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plausible alternative: cookieless analytics an agent sets up</title>
+<meta name="description" content="Plausible is open-source, cookieless analytics from $9 a month. Compare AgentFirstStack: free, set up by an AI agent, with MRR, replay and AI search.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/plausible-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Plausible alternative: cookieless analytics an agent sets up">
+<meta property="og:description" content="Plausible is open-source, cookieless analytics from $9 a month. Compare AgentFirstStack: free, set up by an AI agent, with MRR, replay and AI search.">
+<meta property="og:url" content="https://agentfirststack.com/plausible-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/plausible-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Plausible alternative: cookieless analytics an agent sets up">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Plausible alternative: cookieless analytics an agent sets up">
+<meta name="twitter:description" content="Plausible is open-source, cookieless analytics from $9 a month. Compare AgentFirstStack: free, set up by an AI agent, with MRR, replay and AI search.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/plausible-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/plausible-alternative#article",
+      "headline": "Plausible alternative: open-source analytics your AI agent sets up, with MRR and replay",
+      "description": "Plausible is open-source, cookieless analytics from $9 a month. Compare AgentFirstStack: free, set up by an AI agent, with MRR, replay and AI search.",
+      "url": "https://agentfirststack.com/plausible-alternative",
+      "image": "https://agentfirststack.com/og/plausible-alternative.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/plausible-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Plausible alternative", "item": "https://agentfirststack.com/plausible-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/plausible-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How much does Plausible cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "As of 7 November 2026, Plausible Cloud starts at $9 a month (Starter), $14 (Growth) and $19 (Business) for up to 10k monthly pageviews, rising with traffic to $169, $254 and $339 at 10M. Yearly billing gives 2 months free, and there is a 30-day trial with no credit card. The Community Edition is free to self-host."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do Plausible and AgentFirstStack count visitors the same way?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Almost. Both hash a daily salt with the site, the IP address and the user agent, rotate the salt every day and set no cookies. AgentFirstStack also offers an opt-in persistent mode with an id in localStorage, for sites that want to link visits across days."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can an AI agent set up Plausible?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Once a person has an account, partly. Creating sites and goals by API needs the Sites API, an Enterprise plan feature. The Stats API, a Business plan feature, is read-only, and the MCP server Plausible's docs point to is community-built by the Sentry team and connects with a Stats API key."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I move my Plausible history to AgentFirstStack?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, as daily totals and by page, source, country and device: send a Stats API v2 response as it came, or the CSV files of Plausible's export. Browsers, entry pages and custom events aren't imported. Keep your goal names, run both for a week, and imports/compare checks the daily visitors."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Plausible track MRR?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Revenue goals on the Business plan count purchases sent from the site, and Plausible's docs say to use your billing tool for MRR, churn and refunds. AgentFirstStack computes MRR, ARR, churn and trial conversion from Stripe, Polar, Paddle and LemonSqueezy subscriptions, by the channel that brought each customer."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Plausible alternative</span></nav>
+      <h1>Plausible alternative: open-source analytics your AI agent sets up, with MRR and replay</h1>
+      <p class="lede">Plausible is open-source (AGPL-3.0), cookieless analytics hosted in the EU: Cloud costs from $9 a month for 10k pageviews after a 30-day trial, and the self-hosted Community Edition is free but leaves out funnels, revenue goals and the Sites API (as of 7 November 2026). AgentFirstStack Analytics counts visitors the same way, is free, and an AI agent sets it up over REST and MCP, with MRR, session replay, a tag manager and AI crawler reports. Choose Plausible for a simple dashboard your team reads daily, EU-only hosting, no retention limit or self-hosting on any Docker server.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It keeps Plausible running, uses Plausible's goal names and brings the history over before anything is removed.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add AgentFirstStack Analytics to this project next to Plausible, and bring Plausible's history over. It's free, open-source, cookieless analytics built for agents, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt (especially "Move from another tool") and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Find how Plausible is installed (its script tag, the npm package, a plugin or a proxy) and every event it tracks (plausible('...') calls, class names, revenue goals). Don't remove or change any of it.
+
+4. Create a site for the production domain and serve it from our own domain: a first-party domain on a new subdomain with a neutral name such as edge (POST https://agentfirststack.com/v1/first-party-domains), with its CNAME added if you can change our DNS; until then, or if you can't, the path proxy from the install answer. Put the snippet in the head of every page, next to Plausible.
+
+5. Create a goal for each Plausible goal and each main action on the site, with the same names. If Plausible tracks revenue, connect our payment provider instead (ask me for the key), so renewals and MRR count too.
+
+6. Bring Plausible's history over. If .env has a Plausible Stats API key, query POST https://plausible.io/api/v2/query once per breakdown (time:day alone, then with event:page, visit:source, visit:country and visit:device) and send each answer as it came to POST /v1/sites/:id/imports with source "plausible". Otherwise ask me for the export ZIP (Site Settings > Imports &amp; Exports > Export) and import its CSV files. Include the daily visitors up to today.
+
+7. Deploy (or tell me what to deploy), open the site with ?afsa_debug=1, run verify, then GET https://agentfirststack.com/v1/setup?services=analytics until it says ready.
+
+8. Run GET /v1/sites/:id/imports/compare?source=plausible and tell me what it says. It needs 3 full days with both tools, so tell me how to run it again later.
+
+9. Write the site id, the goals and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what you imported, what compare returned, and give me the claim link. Leave Plausible installed until I say otherwise.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="plausible">What Plausible is</h2>
+<p><a href="https://plausible.io/">Plausible Analytics</a> is web analytics made and hosted in the EU, by an independent team "running since 2018". It shows the main numbers on one page, tracks scroll depth, outbound links, downloads and form completions without code, shows which AI tools send traffic, connects Search Console, and has funnels, user journeys and revenue on its Business plan. It's sold as Plausible Cloud: "Sign up for 30-day free trial. No credit card required." Monthly prices by monthly pageviews, in US dollars (<a href="https://plausible.io/#pricing">plausible.io pricing</a>, as of 7 Nov 2026):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Pageviews a month</th><th>Starter</th><th>Growth</th><th>Business</th></tr></thead>
+<tbody>
+<tr><th scope="row">10k</th><td>$9</td><td>$14</td><td>$19</td></tr>
+<tr><th scope="row">100k</th><td>$19</td><td>$29</td><td>$39</td></tr>
+<tr><th scope="row">200k</th><td>$29</td><td>$44</td><td>$59</td></tr>
+<tr><th scope="row">500k</th><td>$49</td><td>$74</td><td>$99</td></tr>
+<tr><th scope="row">1M</th><td>$69</td><td>$104</td><td>$139</td></tr>
+<tr><th scope="row">2M</th><td>$89</td><td>$134</td><td>$179</td></tr>
+<tr><th scope="row">5M</th><td>$129</td><td>$194</td><td>$259</td></tr>
+<tr><th scope="row">10M</th><td>$169</td><td>$254</td><td>$339</td></tr>
+<tr><th scope="row">Sites, team members</th><td>1 site</td><td>Up to 3, up to 3</td><td>Up to 10, up to 10</td></tr>
+<tr><th scope="row">Added on this plan</th><td>"No retention limit", goals and custom events, GA import, email and Slack reports</td><td>Shared links, embedded dashboards, team management</td><td>Custom properties, Stats API, ecommerce revenue attribution, funnels and user journeys</td></tr>
+</tbody>
+</table>
+</div>
+<p>Yearly billing gives "2 months free". Above 10M pageviews, and for the Sites API, single sign-on, a managed proxy and scheduled raw event exports, there's Enterprise at a custom price.</p>
+
+<h3 id="community-edition">Self-hosting: the Community Edition</h3>
+<p>Plausible Community Edition is "the free, self-hosted, AGPL-licensed release" of the same code. Its differences from Cloud (<a href="https://plausible.io/self-hosted-web-analytics">Plausible CE</a>, as of 7 Nov 2026):</p>
+<ul>
+<li>Funnels, user journeys, ecommerce revenue goals, SSO and the Sites API "are not available".</li>
+<li>It's "a long term release published twice per year", and "Self-hosting is community supported only."</li>
+<li>Bot filtering is basic (user agent and referrer spam), where Cloud also excludes about 32K data center IP ranges.</li>
+<li>It runs on any server you choose, with Docker and Docker Compose; the CPU must support SSE 4.2 or NEON for ClickHouse, and "At least 2 GB of RAM is recommended" (<a href="https://github.com/plausible/community-edition">community-edition README</a>, which installs v3.2.1).</li>
+</ul>
+
+<h3 id="tracking">What Plausible tracks, and how it counts</h3>
+<p>Plausible's data policy lists page URLs, referral sources and campaigns, browser, OS and device type, country, region and city, scroll depth and engagement time, and custom events, properties and revenue when you set them up. Unique visitors come from "hash(daily_salt + website_domain + ip_address + user_agent)", and "The salt is rotated and deleted every 24 hours." It uses no cookies or local storage to identify visitors, and "Visitor data does not leave the EU" (<a href="https://plausible.io/data-policy">Data policy</a>, as of 7 Nov 2026). Plausible's own pages say this means "No need for cookie banners or GDPR consent".</p>
+<p>AgentFirstStack's default is the same idea: a SHA-256 hash of a daily salt, the site, the IP address and the user agent, with the salt rotated daily and nothing stored on the device. On your own traffic, <code>imports/compare</code> shows how close the two counts are, and its note lists the usual causes of a gap.</p>
+
+<h3 id="apis">Plausible's APIs and MCP</h3>
+<ul>
+<li><b>Stats API:</b> "Stats API is a Business plan feature." It's "a read-only HTTP interface for viewing historical and real-time stats" at <code>POST https://plausible.io/api/v2/query</code>, with "a rate limit of 600 requests per hour by default" (<a href="https://plausible.io/docs/stats-api">Stats API</a>, as of 7 Nov 2026).</li>
+<li><b>Sites API:</b> "Sites API is an Enterprise plan feature." It creates and deletes sites and manages goals, custom properties, shared links and guests (<a href="https://plausible.io/docs/sites-api">Sites API</a>).</li>
+<li><b>Events API:</b> sends pageviews and events from servers and apps without the script (<a href="https://plausible.io/docs/data-access">Accessing your data</a>).</li>
+<li><b>MCP:</b> the server Plausible's docs point to was "built by the Sentry team", is described as community-built rather than an official integration, and "requires a Stats API key to connect" (<a href="https://plausible.io/docs/data-access">Accessing your data</a>). Our <a href="/google-analytics-mcp#plausible-mcp">Google Analytics MCP page</a> has a short note on it.</li>
+</ul>
+<p>So an agent can read a Plausible site on the Business plan and create one on Enterprise, after a person has signed up.</p>
+
+<h2 id="agentfirststack">What AgentFirstStack adds</h2>
+<ul>
+<li><b>Agent setup on every plan.</b> <code>POST https://agentfirststack.com/v1/signup</code> returns a key with no email. The agent creates the site, goals, funnels, alerts and reports, imports the history and runs <code>verify</code> and the setup check, over REST or MCP. Read-only keys see only the read tools. You claim the project with a link and your Google sign-in.</li>
+<li><b>Revenue and MRR.</b> Plausible's docs say "Use your billing tool for MRR, churn and refunds", and that Plausible revenue will be lower than your billing tool's (<a href="https://plausible.io/docs/ecommerce-revenue-tracking">Revenue tracking</a>). AgentFirstStack takes payments and subscriptions from Stripe (one call with a restricted key, 90 days of history), Polar, Paddle and LemonSqueezy, links each to the visit that brought it, keeps renewals on the original source, and reports MRR, ARR, churn and trial conversion by channel, campaign, country or plan. See <a href="/revenue-analytics">revenue analytics</a>.</li>
+<li><b>Session replay and a tag manager.</b> Neither is in Plausible's plans. On the same key: <a href="/session-replay">replay</a>, masked in the browser and read as transcripts, and a <a href="/tag-manager">tag manager</a> that sends conversions to GA4, Google Ads, Meta, TikTok and others from the browser and the server.</li>
+<li><b>AI search.</b> Plausible shows which AI tools send traffic. AgentFirstStack also counts which AI crawlers read which pages, reported by your server, and lists the pages they read that no AI visitor lands on. It doesn't track brand mentions in AI answers. See <a href="/ai-search">AI search</a>.</li>
+<li><b>Page speed.</b> Core Web Vitals from real visitors by page, device, country and browser; the Stats API's metrics don't include them. See <a href="/page-speed">page speed</a>.</li>
+<li><b>First-party serving on the free plan.</b> Plausible says visitors with strict blockers are missed, "typically between 5% and 25% depending on your audience", without a proxy; you set one up yourself, or get the managed proxy (a CNAME) on Enterprise (<a href="https://plausible.io/docs/proxy/introduction">Proxy</a>). Our first-party domain is one CNAME on any plan: <code>POST https://agentfirststack.com/v1/first-party-domains</code> serves analytics, tags and replay from a subdomain of your site, with no server code.</li>
+</ul>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Plausible</th><th>AgentFirstStack Analytics</th></tr></thead>
+<tbody>
+<tr><th scope="row">License</th><td>AGPL-3.0</td><td>AGPL-3.0; the tracker MIT</td></tr>
+<tr><th scope="row">Hosted price</th><td>From $9 a month for 10k pageviews; 30-day trial</td><td>Free with fair-use limits (10 sites per project)</td></tr>
+<tr><th scope="row">Self-hosting</th><td>Community Edition on Docker with ClickHouse; twice-yearly releases; no funnels, journeys, revenue goals, SSO or Sites API</td><td>Cloudflare Workers Paid and a domain on Cloudflare; the same code as the hosted service</td></tr>
+<tr><th scope="row">Counting visitors</th><td>Daily-salted hash of domain, IP and user agent; no cookies</td><td>Daily-salted hash of site, IP and user agent; no cookies; opt-in persistent mode</td></tr>
+<tr><th scope="row">Where data lives</th><td>EU; Cloud on servers in Germany</td><td>Cloudflare; no EU-only option</td></tr>
+<tr><th scope="row">History</th><td>"No retention limit"</td><td>Up to 400 days of raw events hosted; imported history as daily totals</td></tr>
+<tr><th scope="row">Funnels and journeys</th><td>Business plan</td><td>Included</td></tr>
+<tr><th scope="row">Revenue</th><td>Revenue goals from the site, Business plan</td><td>Payments and subscriptions from the billing provider, with MRR and churn</td></tr>
+<tr><th scope="row">API</th><td>Stats API (Business, read-only, 600 an hour); Sites API (Enterprise); Events API</td><td>REST, read and write, on every project; 300 reads a minute per service</td></tr>
+<tr><th scope="row">MCP</th><td>Community-built by Sentry, with a Stats API key</td><td>Ours, reads and writes, on the same key</td></tr>
+<tr><th scope="row">Ad blockers</th><td>Your own proxy; managed proxy on Enterprise</td><td>A first-party domain (one CNAME) or a path proxy, on any plan</td></tr>
+<tr><th scope="row">Search Console</th><td>Connected in the dashboard</td><td>No integration</td></tr>
+<tr><th scope="row">Replay and tags</th><td>Not in its plans</td><td>Separate services on the same key, free hosted</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use Plausible if</h3>
+<ul>
+<li>People on your team will read the dashboard every day, and you want a simple one, from a team that has run it since 2018.</li>
+<li>Your visitor data has to stay in the EU.</li>
+<li>You want history with no retention limit, or Search Console queries next to your traffic.</li>
+<li>You want to self-host on your own server with Docker, not on Cloudflare.</li>
+<li>Plausible's bot filtering on Cloud, which excludes data center IP ranges by default, matters for your traffic.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>An agent should set up analytics from nothing and keep it current, with API and MCP writes on the free plan.</li>
+<li>You sell subscriptions and want MRR, churn and trial conversion by the channel that brought each customer.</li>
+<li>You want session replay, a tag manager with server-side conversion APIs, or an inbox for the agent, on the same key.</li>
+<li>You want first-party serving without an Enterprise plan.</li>
+</ul>
+
+<h2 id="moving">Moving from Plausible</h2>
+<ol>
+<li><b>Keep Plausible installed</b> and add our snippet next to it.</li>
+<li><b>Same goal names.</b> Your agent creates a goal for each Plausible goal with the same name, so reports line up.</li>
+<li><b>History.</b> A Stats API v2 response goes to <code>POST /v1/sites/:id/imports</code> as it came: dimension <code>time:day</code> plus at most one of <code>event:page</code>, <code>visit:source</code>, <code>visit:country</code> or <code>visit:device</code>, with <code>visitors</code> and optionally <code>visits</code>, <code>pageviews</code>, <code>bounce_rate</code> and <code>visit_duration</code>. Or the CSV files of Plausible's export: <code>imported_visitors</code>, <code>imported_pages</code>, <code>imported_sources</code>, <code>imported_locations</code> (summed per country) and <code>imported_devices</code>.</li>
+<li><b>What doesn't come over:</b> the browser, entry page and custom event files, custom properties and revenue. Imported days count in reports with <code>imported=true</code> only before our first live event, and filtered reports leave them out.</li>
+<li><b>Check the numbers.</b> Import Plausible's daily visitors for the days since our tracker went live too. <code>GET /v1/sites/:id/imports/compare?source=plausible</code> compares the complete days both ran (3 at least) and answers <code>close</code> (within 0.75 to 1.25), <code>lower</code> or <code>higher</code>, with a note on the usual causes.</li>
+<li><b>Remove Plausible when you decide,</b> once compare says close and you've said so.</li>
+</ol>
+
+<h2 id="faq">FAQ</h2>
+<h3>How much does Plausible cost?</h3>
+<p>As of 7 November 2026, Plausible Cloud starts at $9 a month (Starter), $14 (Growth) and $19 (Business) for up to 10k monthly pageviews, rising with traffic to $169, $254 and $339 at 10M. Yearly billing gives 2 months free, and there is a 30-day trial with no credit card. The Community Edition is free to self-host.</p>
+<h3>Do Plausible and AgentFirstStack count visitors the same way?</h3>
+<p>Almost. Both hash a daily salt with the site, the IP address and the user agent, rotate the salt every day and set no cookies. AgentFirstStack also offers an opt-in persistent mode with an id in localStorage, for sites that want to link visits across days.</p>
+<h3>Can an AI agent set up Plausible?</h3>
+<p>Once a person has an account, partly. Creating sites and goals by API needs the Sites API, an Enterprise plan feature. The Stats API, a Business plan feature, is read-only, and the MCP server Plausible's docs point to is community-built by the Sentry team and connects with a Stats API key.</p>
+<h3>Can I move my Plausible history to AgentFirstStack?</h3>
+<p>Yes, as daily totals and by page, source, country and device: send a Stats API v2 response as it came, or the CSV files of Plausible's export. Browsers, entry pages and custom events aren't imported. Keep your goal names, run both for a week, and <code>imports/compare</code> checks the daily visitors.</p>
+<h3>Does Plausible track MRR?</h3>
+<p>No. Revenue goals on the Business plan count purchases sent from the site, and Plausible's docs say to use your billing tool for MRR, churn and refunds. AgentFirstStack computes MRR, ARR, churn and trial conversion from Stripe, Polar, Paddle and LemonSqueezy subscriptions, by the channel that brought each customer.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Plausible Analytics or Sentry.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics</b><span>What your agent sets up, and what you get.</span></a></li>
+        <li><a class="card" href="/google-analytics-alternative"><span class="svc svc-analytics">Analytics</span><b>Google Analytics alternative</b><span>GA4's setup, cookies and limits, side by side.</span></a></li>
+        <li><a class="card" href="/revenue-analytics"><span class="svc svc-analytics">Analytics</span><b>Revenue and MRR</b><span>Payments joined to the visit that brought them.</span></a></li>
+        <li><a class="card" href="/umami-alternative"><span class="svc svc-analytics">Analytics</span><b>Umami alternative</b><span>Two open-source analytics tools, compared.</span></a></li>
+        <li><a class="card" href="/fathom-alternative"><span class="svc svc-analytics">Analytics</span><b>Fathom alternative</b><span>Cookieless analytics, compared.</span></a></li>
+        <li><a class="card" href="/session-replay"><span class="svc svc-replay">Replay</span><b>Session replay</b><span>Sessions as transcripts, masked by default.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#plausible">What Plausible is</a></li><li><a href="#community-edition">Self-hosting</a></li><li><a href="#tracking">What Plausible tracks</a></li><li><a href="#apis">Plausible's APIs and MCP</a></li><li><a href="#agentfirststack">What AgentFirstStack adds</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from Plausible</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

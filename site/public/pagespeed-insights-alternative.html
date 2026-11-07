@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PageSpeed Insights alternative: real-visitor Core Web Vitals</title>
+<meta name="description" content="PageSpeed Insights shows Google's field data only for pages with enough Chrome traffic. AgentFirstStack measures Core Web Vitals from your own visitors.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/pagespeed-insights-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="PageSpeed Insights alternative: real-visitor Core Web Vitals">
+<meta property="og:description" content="PageSpeed Insights shows Google's field data only for pages with enough Chrome traffic. AgentFirstStack measures Core Web Vitals from your own visitors.">
+<meta property="og:url" content="https://agentfirststack.com/pagespeed-insights-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/pagespeed-insights-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="PageSpeed Insights alternative: real-visitor Core Web Vitals">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PageSpeed Insights alternative: real-visitor Core Web Vitals">
+<meta name="twitter:description" content="PageSpeed Insights shows Google's field data only for pages with enough Chrome traffic. AgentFirstStack measures Core Web Vitals from your own visitors.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/pagespeed-insights-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/pagespeed-insights-alternative#article",
+      "headline": "PageSpeed Insights alternative: Core Web Vitals from your own visitors, page by page",
+      "description": "PageSpeed Insights shows Google's field data only for pages with enough Chrome traffic. AgentFirstStack measures Core Web Vitals from your own visitors.",
+      "url": "https://agentfirststack.com/pagespeed-insights-alternative",
+      "image": "https://agentfirststack.com/og/pagespeed-insights-alternative.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/pagespeed-insights-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "PageSpeed Insights alternative", "item": "https://agentfirststack.com/pagespeed-insights-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/pagespeed-insights-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is PageSpeed Insights free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. pagespeed.web.dev is a URL field and an Analyze button, with no sign-in and no price. Google also offers a PageSpeed Insights API for running it from code."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does PageSpeed Insights show no field data for my page?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Its field data comes from the Chrome UX Report, which includes only pages that are publicly discoverable and sufficiently popular, with a minimum number of visitors Google doesn't disclose. A page that is new or has too few samples falls back to the whole origin's data, or shows none. Real-visitor monitoring on the page measures it from its first visits; under 30 page loads, AgentFirstStack marks the p75 as rough."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack replace Lighthouse?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Its lab run calls PageSpeed Insights, which runs Lighthouse, for the performance category only, and returns the score, the lab metrics and the 6 biggest opportunities. For the accessibility, best practices and SEO audits, and every audit in full, use PageSpeed Insights or Lighthouse itself."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will my numbers match PageSpeed Insights' field data?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not exactly. Both report the 75th percentile with Google's thresholds, but they measure different visitors over different windows: the Chrome UX Report counts eligible Chrome users on desktop and Android over 28 days, AgentFirstStack every visitor whose browser reports the metrics, over the period you choose. The Core Web Vitals assessment PageSpeed Insights shows is the Chrome UX Report's."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Google removing field data from the PageSpeed Insights API?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Google's API guide says it plans to discontinue including Chrome UX Report data in the API, and recommends the CrUX API or the CrUX History API instead. It gives no date. The PageSpeed Insights website isn't named in that note. AgentFirstStack's lab run reads Google's field data from that API's answer, so when it goes, that part comes back null; real-visitor numbers don't depend on it."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>PageSpeed Insights alternative</span></nav>
+      <h1>PageSpeed Insights alternative: Core Web Vitals from your own visitors, page by page</h1>
+      <p class="lede">Google PageSpeed Insights is free: give it a URL and it runs a Lighthouse lab test and shows Chrome UX Report field data, eligible Chrome users over 28 days, if the page or its origin has enough of them. AgentFirstStack measures LCP, INP and CLS in your own visitors' browsers on every page with its tracker, low-traffic and signed-in pages included, and an AI agent sets it up; it runs PageSpeed Insights for you too. For a quick check of one public page, or Lighthouse's accessibility and SEO audits, PageSpeed Insights alone is the better tool.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It starts with a lab run, which works today, and adds the real-visitor numbers that arrive as people visit.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Measure this site's Core Web Vitals on every page, from real visitors, with AgentFirstStack Analytics. It's free, open-source analytics built for agents, its tracker reports LCP, INP and CLS for each page load, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt (the "Page speed" section).
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Use the analytics site in AGENTFIRSTSTACK.md, or create one for the production domain. Serve the tracker from our own domain: a first-party domain (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain; add the CNAME if you can change our DNS, otherwise give me the record) or, meanwhile, the path proxy from GET /v1/sites/:id/install. Put the tracker in the head of every page, signed-in pages included.
+
+4. Deploy, open a few pages in a normal browser, and run verify.
+
+5. Run a lab test with GET /v1/sites/:id/web-vitals/lab?strategy=mobile on the homepage and our main landing pages. For each, show me the lab numbers, the top opportunities, Google's field data (google_field: say whether it is for the URL or only the origin) and ours.
+
+6. Read GET /v1/sites/:id/web-vitals?breakdown=page and breakdown=device. If a metric has fewer than 30 page loads, say so and tell me when to look again. List the pages that fail, with the fix you'd make first, and ask me before you change code.
+
+7. Add a web_vitals alert for LCP on mobile to an email destination for me, write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what verify and the lab tests returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="psi">What PageSpeed Insights is</h2>
+<p>"PSI provides both lab and field data about a page" (<a href="https://developers.google.com/speed/docs/insights/v5/about">About PageSpeed Insights</a>, as of 7 Nov 2026). The two answer different questions:</p>
+<ul>
+<li><b>Lab data</b> is a Lighthouse run "in a simulated environment for the Performance, Accessibility, Best Practices, and SEO categories". For mobile it simulates "a mid-tier device (Moto G4)" on a mobile network; for desktop, an emulated desktop on a wired connection. A performance score of 90 or more is good, 50 to 89 needs improvement, under 50 is poor.</li>
+<li><b>Field data</b> comes from the Chrome User Experience Report (CrUX), over the previous 28 days, as the 75th percentile of each metric. A page passes the Core Web Vitals assessment when all three are good. When a page has too little data, PSI falls back to the whole origin, and without enough for that either, it shows no field data.</li>
+</ul>
+<p>Who and what CrUX includes (<a href="https://developer.chrome.com/docs/crux/methodology">CrUX methodology</a>, as of 7 Nov 2026):</p>
+<ul>
+<li><b>Users:</b> Chrome users who turned on usage statistic reporting and sync their browser history without a sync passphrase, on desktop Chrome (Windows, macOS, ChromeOS, Linux) and Android. Not included: "Chrome on iOS", "Android apps using WebView" and "Other Chromium browsers (for example Microsoft Edge)".</li>
+<li><b>Pages:</b> "A page must be publicly discoverable": a 200 response, no noindex. And sufficiently popular, with "a minimum number of visitors"; "An exact number is not disclosed". Pages and origins under it aren't in the dataset.</li>
+</ul>
+<p>The tool itself, <a href="https://pagespeed.web.dev/">pagespeed.web.dev</a>, is a URL field and an Analyze button, with no sign-in or price. There's also an API. Its guide says Google plans to "discontinue including real-world data from the Chrome User Experience Report" in the API, and recommends the CrUX API or the CrUX History API instead (<a href="https://developers.google.com/speed/docs/insights/v5/get-started">Get started with the PSI API</a>, as of 7 Nov 2026, no date given).</p>
+
+<h2 id="rum">What your own visitors' data adds</h2>
+<p>CrUX is Google's sample of Chrome users on popular public pages. Measuring in your own visitors' browsers fills the gaps it leaves:</p>
+<ul>
+<li><b>Every page, not only popular ones.</b> New pages, low-traffic pages, campaign landing pages, and pages CrUX can't include at all: signed-in app screens, checkout steps and noindex pages. A page with few page loads gets a rough p75, and AgentFirstStack says so below 30.</li>
+<li><b>Your visitors, not only eligible Chrome users.</b> Edge and other Chromium browsers report all three metrics; other browsers report what their performance APIs support. You see which browsers each number rests on.</li>
+<li><b>Segments per page.</b> Each page by device, country and browser, filters such as <code>device==mobile</code> or <code>page==/checkout*</code>, and the previous period next to this one.</li>
+<li><b>Current numbers.</b> Any period from the last 24 hours up, so you can read the days since a deploy instead of waiting for a 28-day window to roll over.</li>
+<li><b>Alerts.</b> A <code>web_vitals</code> alert tells you when a metric's p75 slips over Google's good limit.</li>
+</ul>
+<p>What it doesn't change: the Core Web Vitals assessment PageSpeed Insights shows comes from CrUX, so a page can pass for your visitors and still fail there, or the other way round.</p>
+
+<h2 id="agentfirststack">How AgentFirstStack does it</h2>
+<p>Page speed is part of AgentFirstStack Analytics. The tracker records each full page load's LCP, INP and CLS and sends them on the beacon it sends when the visitor leaves the page; single-page-app navigations carry none. Your agent reads them with <code>GET /v1/sites/:id/web-vitals</code> (MCP <code>analytics_get_web_vitals</code>): p75 by Google's method and thresholds, the share of good, needs improvement and poor page loads, sample counts, an assessment, the slowest pages and what usually fixes each failing metric. INP is the slowest interaction, counting interactions over 40 ms, so the dashboard says to read it as an upper bound.</p>
+<p>For the lab side it calls PageSpeed Insights itself. <code>GET /v1/sites/:id/web-vitals/lab?url=&amp;strategy=mobile</code> (MCP <code>analytics_get_web_vitals_lab</code>) runs Lighthouse's performance category on one https page of the site and returns:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>What's in it</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>lab</code></th><td>Performance score, LCP, CLS, Total Blocking Time (the lab stand-in for INP), FCP, Speed Index, server response time</td></tr>
+<tr><th scope="row"><code>opportunities</code></th><td>Up to 6 audits with estimated savings, biggest first</td></tr>
+<tr><th scope="row"><code>google_field</code></th><td>CrUX p75 for the URL, or the origin, last 28 days; null without data</td></tr>
+<tr><th scope="row"><code>real_visitors</code></th><td>AgentFirstStack's own p75 for the same path, last 30 days</td></tr>
+<tr><th scope="row"><code>next_steps</code></th><td>What to fix first, and how to check it after the fix</td></tr>
+</tbody>
+</table>
+</div>
+<p>It needs a full-access key, takes 10 to 45 seconds, and is limited to a few runs a minute per account and per domain. It's keyless on Google's shared quota, which can run out for a while (<code>503 upstream_rate_limited</code>). The <code>google_field</code> part comes from the PSI API's answer, so it depends on Google keeping CrUX data there. The <a href="/page-speed">page speed overview</a> covers the method in full.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>PageSpeed Insights</th><th>AgentFirstStack Page speed</th></tr></thead>
+<tbody>
+<tr><th scope="row">What it is</th><td>A Lighthouse lab test plus Chrome UX Report field data</td><td>Real-visitor monitoring of LCP, INP and CLS, plus a PageSpeed Insights run on request</td></tr>
+<tr><th scope="row">Who is measured</th><td>Eligible Chrome users on desktop and Android</td><td>Every visitor whose browser reports the metrics</td></tr>
+<tr><th scope="row">Which pages</th><td>Public, indexable, popular enough; else the origin; else none</td><td>Every page with the tracker, signed-in pages included</td></tr>
+<tr><th scope="row">Window</th><td>The previous 28 days</td><td>Any period; 400 days kept on the hosted service</td></tr>
+<tr><th scope="row">Segments</th><td>URL or origin; mobile or desktop</td><td>Page, device, country, browser; filters and period comparisons</td></tr>
+<tr><th scope="row">Lab audits</th><td>Performance, accessibility, best practices and SEO, every audit</td><td>Performance only, with the 6 biggest opportunities</td></tr>
+<tr><th scope="row">URLs you can test</th><td>Any public URL</td><td>Https pages on the site's own domain and subdomains</td></tr>
+<tr><th scope="row">Setup</th><td>None: paste a URL</td><td>A tracker on every page; your agent sets it up</td></tr>
+<tr><th scope="row">Agent access</th><td>The PageSpeed Insights API</td><td>REST and MCP, with the same key as analytics, tags, mail and replay</td></tr>
+<tr><th scope="row">Price</th><td>Free, no sign-in</td><td>Free hosted service with <a href="/limits">fair-use limits</a></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use PageSpeed Insights if</h3>
+<ul>
+<li>You want a quick, free check of one public page, yours or anyone's, without installing anything.</li>
+<li>You want to see what Google's own field data says about a page.</li>
+<li>You need Lighthouse's accessibility, best practices or SEO audits, or every performance audit in full.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>PageSpeed Insights shows no field data for the pages you care about, or only the origin's.</li>
+<li>You need numbers for signed-in pages, checkout steps or campaign landing pages, by device, country and browser.</li>
+<li>You want to see a fix land soon after the deploy, and be told when a metric slips.</li>
+<li>Your agent should find the slowest pages, run the lab test on them and propose fixes, over REST and MCP.</li>
+</ul>
+<p>Most sites are best served by both: PageSpeed Insights for Google's view and the full Lighthouse report, real-visitor data for every page in between.</p>
+
+<h2 id="moving">Moving from PageSpeed Insights</h2>
+<p>There's nothing to move: PageSpeed Insights keeps no data for you, and CrUX history stays in Google's own tools. Keep using it. The lab run puts PageSpeed Insights' lab numbers, Google's field data and your real-visitor numbers in one answer, so your agent can see where they disagree.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is PageSpeed Insights free?</h3>
+<p>Yes. pagespeed.web.dev is a URL field and an Analyze button, with no sign-in and no price. Google also offers a PageSpeed Insights API for running it from code.</p>
+<h3>Why does PageSpeed Insights show no field data for my page?</h3>
+<p>Its field data comes from the Chrome UX Report, which includes only pages that are publicly discoverable and sufficiently popular, with a minimum number of visitors Google doesn't disclose. A page that is new or has too few samples falls back to the whole origin's data, or shows none. Real-visitor monitoring on the page measures it from its first visits; under 30 page loads, AgentFirstStack marks the p75 as rough.</p>
+<h3>Does AgentFirstStack replace Lighthouse?</h3>
+<p>No. Its lab run calls PageSpeed Insights, which runs Lighthouse, for the performance category only, and returns the score, the lab metrics and the 6 biggest opportunities. For the accessibility, best practices and SEO audits, and every audit in full, use PageSpeed Insights or Lighthouse itself.</p>
+<h3>Will my numbers match PageSpeed Insights' field data?</h3>
+<p>Not exactly. Both report the 75th percentile with Google's thresholds, but they measure different visitors over different windows: the Chrome UX Report counts eligible Chrome users on desktop and Android over 28 days, AgentFirstStack every visitor whose browser reports the metrics, over the period you choose. The Core Web Vitals assessment PageSpeed Insights shows is the Chrome UX Report's.</p>
+<h3>Is Google removing field data from the PageSpeed Insights API?</h3>
+<p>Google's API guide says it plans to discontinue including Chrome UX Report data in the API, and recommends the CrUX API or the CrUX History API instead. It gives no date. The PageSpeed Insights website isn't named in that note. AgentFirstStack's lab run reads Google's field data from that API's answer, so when it goes, that part comes back null; real-visitor numbers don't depend on it.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/page-speed"><span class="svc svc-analytics">Analytics</span><b>Page speed</b><span>Real user monitoring for Core Web Vitals.</span></a></li>
+        <li><a class="card" href="/vercel-speed-insights-alternative"><span class="svc svc-analytics">Analytics</span><b>Vercel Speed Insights alternative</b><span>Every Core Web Vital, free, on any host.</span></a></li>
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics your AI agent sets up</b><span>Visits, sources, goals and revenue on the same tracker.</span></a></li>
+        <li><a class="card" href="/ai-search"><span class="svc svc-analytics">Analytics</span><b>AI search</b><span>Which AI crawlers read your pages, and who they send.</span></a></li>
+        <li><a class="card" href="/agent-first-analytics"><span class="svc svc-analytics">Analytics</span><b>Agent-first analytics</b><span>What it is, and what to ask of any tool.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#psi">What PageSpeed Insights is</a></li><li><a href="#rum">What your own visitors' data adds</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from PageSpeed Insights</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

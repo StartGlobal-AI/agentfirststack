@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tag manager your AI agent sets up · AgentFirstStack</title>
+<meta name="description" content="Free, open-source tag manager an AI agent sets up and tests: pixels, click and form events, versions and rollback, GTM import and a consent banner.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/tag-manager">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Tag manager your AI agent sets up and tests">
+<meta property="og:description" content="Free, open-source tag manager an AI agent sets up and tests: pixels, click and form events, versions and rollback, GTM import and a consent banner.">
+<meta property="og:url" content="https://agentfirststack.com/tag-manager">
+<meta property="og:image" content="https://agentfirststack.com/og/tag-manager.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Tag manager your AI agent sets up and tests">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Tag manager your AI agent sets up and tests">
+<meta name="twitter:description" content="Free, open-source tag manager an AI agent sets up and tests: pixels, click and form events, versions and rollback, GTM import and a consent banner.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/tag-manager.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/tag-manager#article",
+      "headline": "Tag manager your AI agent sets up and tests",
+      "description": "Free, open-source tag manager an AI agent sets up and tests: pixels, click and form events, versions and rollback, GTM import and a consent banner.",
+      "url": "https://agentfirststack.com/tag-manager",
+      "image": "https://agentfirststack.com/og/tag-manager.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/tag-manager"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "Tag manager", "item": "https://agentfirststack.com/tag-manager" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/tag-manager#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can AgentFirstStack Tags replace Google Tag Manager?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For a website, yes: it has a container, tags, triggers, variables, a GTM-compatible dataLayer, preview, versions and rollback, and it imports a GTM web container from its export or the Tag Manager API. It doesn't run GTM's community templates, server containers, Floodlight or Universal Analytics, and there's no visual editor: your agent makes changes over the API or MCP."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I keep Google Tag Manager and use only part of it?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The container pushes the Google Consent Mode default before any Google tag, even with no Google tag in its own config, so a GTM container loaded after it sees the visitor's consent state. So you can keep GTM and use the container only for the consent banner or for server-side conversions. Don't fire the same pixel from both, or it counts twice."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it include a cookie consent banner?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. One config block turns on a banner that asks visitors from the EU, UK and Switzerland, holds the container's tags by category, sends Google Consent Mode v2 updates, tells session replay, and keeps 12 months of consent records. It doesn't scan the site for cookies, block scripts loaded outside the container, or act as an IAB TCF consent platform."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does my agent test a change before visitors see it?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Edits go into a draft. Your agent validates it, reads the diff against the live version, and opens a preview link that serves the draft on the real site with a log of which tags fired and why others didn't. Preview is test traffic: ad pixels don't fire in the browser and server-side conversions go to each platform's test mode. Only then does it publish."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The hosted service is free within fair-use limits: 10 tag containers per project and 5 conversion APIs per container. The code is AGPL-3.0, the browser runtime is MIT, and you can self-host it on your own Cloudflare account."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What if a published version breaks something?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Your agent rolls back with POST /v1/containers/:id/rollback and a version number: the live pointer moves to that version and the draft stays as it was. Browsers pick up the change within a few minutes, because the script is cached for 60 seconds at the edge and 5 minutes in the browser."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>Tag manager</span></nav>
+      <h1>Tag manager your AI agent sets up and tests</h1>
+      <p class="lede">AgentFirstStack Tags is a tag manager an AI agent sets up and tests for you: one snippet, then pixels, click and form events, triggers, variables, versions with preview and rollback, and a consent banner with Google Consent Mode v2, all over an API and MCP. It's free and open source, and replaces Google Tag Manager (also free, but edited by people in its interface) and, on simple sites, a consent plugin such as CookieYes or Cookiebot. Keep GTM if your marketing team edits tags by hand or relies on its template gallery, and use a full consent platform if you show Google ads as a publisher or need IAB TCF. Your agent scans the site first, can import a GTM container, and checks every tag in a preview before it publishes.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It maps the site and reads what's already there before it changes anything, so an existing GTM container or consent banner isn't overwritten blind.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up a tag manager for this project with AgentFirstStack Tags. It's a free, open-source tag manager built for agents (tags, triggers, variables, versions, a consent banner and server-side conversions), and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Map the site: its main pages, every main button, link and form, and what counts as a sign-up, lead or purchase here. Create a tags container for the production domain and serve it from the site's own domain: a first-party domain (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain such as edge.&lt;domain&gt;; add its one CNAME if you can change the DNS, otherwise give me the record) or, until then, the path proxy from GET /v1/containers/:id/install?proxy=1 with the proxy key kept server-side. Put the snippet first in the head of every page, deploy, and run scan.
+
+4. If the site loads Google Tag Manager, tell me what it fires before you change anything, then import it (draft/import with format "gtm", dry run first) and list what didn't map.
+
+5. Run setup with analytics as a platform, plus the ad platforms this business uses, and one event per main action (a click, a form submit or a thank-you page), named in snake_case. Ask me only for the IDs and tokens setup reports as missing.
+
+6. If the site has visitors from the EU, UK or Switzerland, fires ad pixels and has no consent banner of its own, turn on the container's consent banner with our privacy policy URL and add a "Cookie settings" link to the footer. If it already has a consent platform, keep it and tell me which one.
+
+7. Turn on report_tag_fires, validate, open a preview on the main pages and read its log. If you imported GTM, ask me before you publish, then publish and remove GTM's snippet in the same change, or its tags fire twice.
+
+8. Run the setup test, do its browser plan in a real browser, and run the setup check until the tags rows pass.
+
+9. Write the container id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, which event fires on which element, what the preview log and the tests showed, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+<p>This is the tags part of the full setup. For analytics, tags, an inbox and replay together, use the <a href="/#setup">full setup prompt</a>.</p>
+
+<h2 id="steps">What your agent does</h2>
+<ol>
+<li><b>Gets a key</b> with <code>POST https://agentfirststack.com/v1/signup</code>, or reuses the one in <code>.env</code>. One key works for every service.</li>
+<li><b>Creates the container</b> with <code>POST https://tags.agentfirststack.com/v1/containers {"domain":"example.com"}</code> (MCP <code>tags_create_container</code>) and puts its snippet first in the <code>&lt;head&gt;</code>, so the consent state is set before any other tag loads.</li>
+<li><b>Serves it first-party.</b> A first-party domain (<code>POST /v1/first-party-domains {"hostname":"edge.example.com"}</code>, one CNAME to <code>fp.agentfirststack.com</code>, no server code) serves the container at <code>https://edge.example.com/_t/c/&lt;container_id&gt;.js</code>, next to analytics at <code>/_a</code> and replay at <code>/_r</code>. Where the DNS can't change, a path proxy forwards <code>/_t/*</code> with the container's proxy key. Ad blockers block the third-party host, so the direct snippet is the last resort.</li>
+<li><b>Scans the site</b> with <code>POST /v1/containers/:id/scan</code> (MCP <code>tags_scan_site</code>): the GTM containers, GA4 and Google Ads tags and ad pixels already on the pages, other analytics and replay tools, consent platforms such as Cookiebot, CookieYes or OneTrust, the CMS, every form and main button or link with a CSS selector, likely thank-you pages, and a suggested config. It reads the homepage plus up to 5 paths a call, and the container keeps what it found as <code>last_scan</code>.</li>
+<li><b>Imports Google Tag Manager</b> if the site has it: <code>POST /v1/containers/:id/draft/import</code> with <code>format: "gtm"</code> and the export file or the Tag Manager API's lists, dry run first. The report lists what mapped, what was adapted with a note, and what didn't map, with the reason and what to use instead.</li>
+<li><b>Adds an event for each main action</b> with <code>POST /v1/containers/:id/setup</code> (MCP <code>tags_setup_conversion_tracking</code>): each one says how it happens on the site (a click selector, a form selector, a thank-you path or a dataLayer event), and setup writes the triggers, tags and variables into the draft and lists the IDs still missing. Single items can be edited one at a time with <code>PUT /v1/containers/:id/draft/:kind/:key</code>.</li>
+<li><b>Turns on consent</b> where it's needed: the built-in banner, or the site's own consent platform connected to the container.</li>
+<li><b>Checks, previews, publishes.</b> <code>POST /draft/validate</code> returns errors and warnings with hints, <code>GET /diff</code> says in plain words what publishing will change, and <code>POST /preview</code> returns a link that serves the draft on the real site. The preview log says why each tag fired or didn't, for example <code>page_path "/pricing" fails starts_with "/thank-you"</code> or <code>waits for consent: ad_storage</code>. Then <code>POST /publish</code>, and <code>POST /rollback {"version": n}</code> if anything goes wrong.</li>
+<li><b>Tests and hands over.</b> The setup test verifies the container on the live homepage and sends a test event through it, the browser plan clicks each main action as test traffic, the setup check confirms the rows below, and a claim link (<code>POST /v1/claim-link</code>) lets you see the project in a dashboard with Google sign-in.</li>
+</ol>
+<pre><code>T=https://tags.agentfirststack.com
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"
+J="content-type: application/json"
+
+curl -s -X POST $T/v1/containers -H "$H" -H "$J" -d '{"domain":"example.com"}'
+# snippet first in &lt;head&gt;, deploy, then:
+curl -s -X POST $T/v1/containers/$C/scan -H "$H"
+curl -s -X POST $T/v1/containers/$C/setup -H "$H" -H "$J" -d @setup.json
+curl -s "$T/v1/containers/$C/diff" -H "$H"
+curl -s -X POST $T/v1/containers/$C/preview -H "$H"
+curl -s "$T/v1/containers/$C/preview/$TOKEN/log" -H "$H"
+curl -s -X POST $T/v1/containers/$C/publish -H "$H" -H "$J" -d '{"note":"main actions"}'</code></pre>
+
+<h2 id="events">The click and form events your agent adds</h2>
+<p>The scan returns each form with its selector and fields, and each main button or link with its label, kind (signup, purchase, contact, booking, download, outbound and so on) and a selector for a click trigger. Your agent turns the ones that matter into events, named in snake_case and sent to analytics, where each gets a goal:</p>
+<pre><code>{
+  "platforms": { "analytics": { "site_id": "site_..." } },
+  "conversions": [
+    { "name": "sign_up_click",  "when": { "click_selector": "a[href^='/signup']" } },
+    { "name": "contact_submit", "kind": "contact", "when": { "form_selector": "form#contact" },
+      "email": { "selector": "input[type=email]" } },
+    { "name": "copy_prompt",    "when": { "click_selector": "button[data-copy-from]" } }
+  ],
+  "consent": "banner"
+}</code></pre>
+<p>Form triggers can wait for the site's own validation, so a submit the page rejected doesn't count, and link clicks can be held up to 2 seconds while the tags' scripts load. Purchases and sign-ups also go to the ad platforms, browser and server with one event id: that part is on the <a href="/conversion-tracking">conversion tracking</a> page.</p>
+
+<h2 id="features">What you get</h2>
+<ul>
+<li><b>Workflow:</b> a draft edited whole or one item at a time, guarded by revision so two edits never overwrite each other; diffs between any two versions; validation with a hint for each issue; preview links with a log of every tag decision; saved versions, publishing a saved version, and rollback; environments, a named snippet pinned to one version for a staging site.</li>
+<li><b>Triggers:</b> page view, DOM ready, window loaded, init, consent initialization, history changes in single-page apps, clicks and link clicks, form submits, dataLayer events (exact name or regex), element visibility, scroll depth, timers, JavaScript errors, YouTube and HTML5 video, and trigger groups, with conditions such as equals, contains, starts with, regex, CSS selector match and number comparisons, and their negations.</li>
+<li><b>Variables:</b> data layer keys, URL parts and query parameters, cookies, an element's text, value or attribute, JavaScript globals, constants, lookup and regex tables, formatting, and built-ins for the page, clicks, forms, scrolling, visibility, history, errors and video.</li>
+<li><b>Tags:</b> GA4, Google Ads, Meta, TikTok, LinkedIn, Microsoft UET, Reddit, X, Pinterest, Snap, AgentFirstStack analytics, image pixels, and custom HTML and JavaScript, with priority, scheduling, sequencing (a setup tag first), once per page, live-only and consent types per tag.</li>
+<li><b>Custom code checks:</b> custom HTML and JavaScript publish only on a verified domain in a claimed project, and code that looks like a crypto miner, a card skimmer, an obfuscated eval chain or a known malicious host is refused.</li>
+<li><b>Conversions:</b> one event id shared by the browser pixel and the server-side copy for GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap, X, analytics and webhooks, plus events your backend sends (<a href="/conversion-tracking">conversion tracking</a>).</li>
+<li><b>Consent:</b> the built-in banner, Google Consent Mode v2 (basic or advanced), defaults by region, and the choices of an existing consent platform followed when it calls <code>gtag('consent', 'update', ...)</code> or runs IAB TCF v2. Browsers that send Global Privacy Control or Do Not Track get no tags at all by default.</li>
+<li><b>Monitoring:</b> an event and delivery log, tag-fire counts (fired, waiting for consent, failed, never fired), the pages that actually load the container, and attack protection that keeps floods of fake hits away from your ad platforms.</li>
+<li><b>Browser API:</b> a GTM-compatible <code>dataLayer.push</code> (objects deep-merge, <code>eventCallback</code> is honoured), <code>afst()</code> for events, consent and identity, and <code>?afst_debug=1</code> to log every decision in the console.</li>
+</ul>
+
+<h2 id="consent">Consent banner and Consent Mode v2</h2>
+<p>One block in the draft turns on a consent banner. From then on the container's tags, Google Consent Mode v2, session replay and the analytics tracker (when it stores a visitor id) follow each visitor's choice:</p>
+<pre><code>curl -s -X PATCH $T/v1/containers/$C/draft -H "$H" -H "$J" \
+  -d '{"consent_banner":{"enabled":true,"privacy_url":"https://example.com/privacy"}}'</code></pre>
+<ul>
+<li>It asks visitors from the EU, Iceland, Liechtenstein, Norway, the UK and Switzerland, and visitors whose country is unknown (<code>regions: "all"</code> asks everyone). Until they choose, every category is denied.</li>
+<li>"Reject all" looks exactly like "Accept all", the settings layer has one unticked box per category, and a "Cookie settings" link or a floating button reopens it so the choice can be changed.</li>
+<li>Each tag waits for its consent type (ad pixels for <code>ad_storage</code>, GA4 for <code>analytics_storage</code>) and fires the moment the choice grants it. The Consent Mode default is pushed before any Google tag, and every choice sends an update.</li>
+<li>Each choice is kept for 12 months as a consent record: an anonymous consent id, the time, the banner version, the choice per category, the country and the container version that held the text. Never the IP address or the visitor id.</li>
+</ul>
+<p>It isn't a full consent platform: it doesn't scan the site for cookies, doesn't block scripts loaded outside the container, and isn't an IAB TCF or Google-certified consent platform. The <a href="/cookie-consent-banner">cookie consent banner guide</a> covers what a banner has to do and when you still need one of those, and the <a href="/cookiebot-alternative">Cookiebot alternative</a> page compares the two directly.</p>
+
+<h2 id="setup-check">What the setup check verifies</h2>
+<p><code>GET https://agentfirststack.com/v1/setup</code> (MCP <code>afs_check_setup</code>) lists these rows for tags, per website, from what the service has seen:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Check</th><th>Title</th><th>Passes when</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>tags.container</code></th><td>There is a tag container for the website</td><td>A container exists for the domain</td></tr>
+<tr><th scope="row"><code>tags.installed</code></th><td>The container snippet is on the pages</td><td>The snippet was found on the homepage, or browsers have sent hits</td></tr>
+<tr><th scope="row"><code>tags.domain_verified</code></th><td>The container's domain is verified</td><td>Verify found the snippet on the homepage, or the DNS TXT record; custom HTML and JavaScript can't be published until then</td></tr>
+<tr><th scope="row"><code>tags.published</code></th><td>A version is published</td><td>A version is live; until then browsers load an empty container</td></tr>
+<tr><th scope="row"><code>tags.events</code></th><td>There is an event for each main action</td><td>The live version has events; the detail names them</td></tr>
+<tr><th scope="row"><code>tags.to_analytics</code></th><td>The events reach analytics</td><td>Events are sent to analytics</td></tr>
+<tr><th scope="row"><code>tags.goals_for_events</code></th><td>Each event sent to analytics has a goal there</td><td>Every event name sent to analytics has an event goal, so it counts as a conversion</td></tr>
+<tr><th scope="row"><code>tags.firing</code></th><td>Every tag fires, and none fails</td><td><code>report_tag_fires</code> is on, and in the last 7 days every enabled tag fired at least once and none failed</td></tr>
+<tr><th scope="row"><code>tags.destinations</code></th><td>Conversions reach every ad platform</td><td>Shown when there are server-side destinations: none has failing deliveries</td></tr>
+<tr><th scope="row"><code>tags.consent_banner</code></th><td>Visitors from the EU, UK and Switzerland are asked before ad pixels fire</td><td>Shown when the live version has ad pixels: the banner is on, an IAB TCF platform decides, or the pixels wait for consent there; a warning otherwise</td></tr>
+<tr><th scope="row"><code>migrate.tools</code></th><td>What the site used before (other analytics and tag tools) is brought over</td><td>A GTM container the last scan found has been imported, and other analytics tools' history brought into analytics</td></tr>
+</tbody>
+</table>
+</div>
+<p>The setup test (<code>POST /v1/setup/test</code>) also verifies the container on the live homepage, sends one test event through the tag manager to analytics and each conversion to each ad platform in its test mode, and returns a browser plan that clicks each main action. <code>afs_check_test_visit</code> then confirms each expected event arrived and that none went to an ad platform as a real conversion.</p>
+
+<h2 id="compared">Compared with</h2>
+<p>Facts about other products as of 7 November 2026, from their own pages.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Tool</th><th>What it is and costs</th><th>Consent</th><th>Comparison</th></tr></thead>
+<tbody>
+<tr><th scope="row">Google Tag Manager</th><td>Free: "Manage all your tags without editing code - for free", with vendor tag templates, a Community Template Gallery, preview and debug tools, and workspaces with granular access controls (<a href="https://marketingplatform.google.com/about/tag-manager/">Tag Manager</a>)</td><td>Built-in and additional consent checks per tag; no banner of its own: Google recommends a consent management platform (<a href="https://support.google.com/tagmanager/answer/10718549">consent mode support</a>)</td><td><a href="/google-tag-manager-mcp">Google Tag Manager MCP compared</a></td></tr>
+<tr><th scope="row">CookieYes</th><td>A consent management platform: free up to 5,000 pageviews a month, then $10, $25 or $55 a month per domain (<a href="https://www.cookieyes.com/pricing/">pricing</a>)</td><td>Cookie scans, auto-blocking and a consent log on every plan; Google-certified and IAB TCF-certified, with TCF v2.4 on Pro and Ultimate</td><td><a href="/cookie-consent-banner">Cookie consent banner guide</a></td></tr>
+<tr><th scope="row">Cookiebot (Usercentrics)</th><td>A consent management platform: free for one domain up to 50 subpages, Premium from €7 to €90 a month per domain by site size (<a href="https://www.cookiebot.com/en/pricing/">pricing</a>)</td><td>Cookie scans, automatic blocking on Premium, consent records up to 12 months, IAB TCF 2.4 on Premium; a Gold Google CMP partner</td><td><a href="/cookiebot-alternative">Cookiebot alternative</a></td></tr>
+<tr><th scope="row">AgentFirstStack Tags</th><td>Free hosted service with fair-use limits; AGPL-3.0, browser runtime MIT; set up by an agent over REST and MCP</td><td>Built-in banner for the container's tags, Consent Mode v2, replay and analytics; 12 months of consent records; no cookie scan, no blocking outside the container, not a TCF platform</td><td>This page</td></tr>
+</tbody>
+</table>
+</div>
+<p>Server-side GTM and its hosts are compared on the <a href="/server-side-gtm">server-side GTM</a> and <a href="/stape-alternative">Stape alternative</a> pages.</p>
+
+<h2 id="limits">Limits</h2>
+<p>On the hosted service (the lower number applies until a person claims the project):</p>
+<ul>
+<li>10 tag containers per project (3).</li>
+<li>5 conversion APIs per container.</li>
+<li>The newest 10 versions per container are kept; the live version and versions an environment is pinned to are never deleted.</li>
+<li>Event and delivery log 7 days, preview log 48 hours (500 entries a link), tag-fire stats and page coverage 30 days, consent records 12 months.</li>
+<li>A GTM import up to 2 MB; a scan reads up to 6 pages a call.</li>
+<li>Custom HTML and JavaScript only in a claimed project on a verified domain.</li>
+</ul>
+<p>Every cap, with what the project has used: <code>GET /v1/usage</code> (MCP <code>tags_get_usage</code>). The full list is on <a href="/limits">fair-use limits</a>. Need more? Self-host it: <code>pnpm afs init &lt;name&gt; --domain example.com --account &lt;id&gt;</code>, then <code>pnpm afs deploy &lt;name&gt;</code> on your own Cloudflare account.</p>
+
+<h2 id="not-a-fit">When it isn't the right fit</h2>
+<ul>
+<li><b>A marketing team that edits tags by hand.</b> There's no visual tag editor: changes go through your agent, over the API or MCP. Google Tag Manager's interface, workspaces and access controls are built for that team.</li>
+<li><b>Community templates.</b> Tags supports the tag types listed above plus custom HTML and JavaScript. A vendor that only ships a GTM template needs its snippet as custom code, or GTM.</li>
+<li><b>What the import leaves out.</b> Universal Analytics, Floodlight, AMP and Firebase containers, server-container clients and unknown templates aren't imported. Microsoft Advertising is browser-only: its server-side conversions aren't built.</li>
+<li><b>Mobile apps.</b> It runs on websites only.</li>
+<li><b>A full consent platform.</b> The banner doesn't scan for cookies, block scripts outside the container, produce an IAB TCF consent string or carry Google's CMP certification. Publishers showing personalized Google ads in the EEA, UK or Switzerland need a Google-certified CMP; so do sites whose ad partners need TCF.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Can AgentFirstStack Tags replace Google Tag Manager?</h3>
+<p>For a website, yes: it has a container, tags, triggers, variables, a GTM-compatible dataLayer, preview, versions and rollback, and it imports a GTM web container from its export or the Tag Manager API. It doesn't run GTM's community templates, server containers, Floodlight or Universal Analytics, and there's no visual editor: your agent makes changes over the API or MCP.</p>
+<h3>Can I keep Google Tag Manager and use only part of it?</h3>
+<p>Yes. The container pushes the Google Consent Mode default before any Google tag, even with no Google tag in its own config, so a GTM container loaded after it sees the visitor's consent state. So you can keep GTM and use the container only for the consent banner or for server-side conversions. Don't fire the same pixel from both, or it counts twice.</p>
+<h3>Does it include a cookie consent banner?</h3>
+<p>Yes. One config block turns on a banner that asks visitors from the EU, UK and Switzerland, holds the container's tags by category, sends Google Consent Mode v2 updates, tells session replay, and keeps 12 months of consent records. It doesn't scan the site for cookies, block scripts loaded outside the container, or act as an IAB TCF consent platform.</p>
+<h3>How does my agent test a change before visitors see it?</h3>
+<p>Edits go into a draft. Your agent validates it, reads the diff against the live version, and opens a preview link that serves the draft on the real site with a log of which tags fired and why others didn't. Preview is test traffic: ad pixels don't fire in the browser and server-side conversions go to each platform's test mode. Only then does it publish.</p>
+<h3>Is it free?</h3>
+<p>Yes. The hosted service is free within fair-use limits: 10 tag containers per project and 5 conversion APIs per container. The code is AGPL-3.0, the browser runtime is MIT, and you can self-host it on your own Cloudflare account.</p>
+<h3>What if a published version breaks something?</h3>
+<p>Your agent rolls back with <code>POST /v1/containers/:id/rollback</code> and a version number: the live pointer moves to that version and the draft stays as it was. Browsers pick up the change within a few minutes, because the script is cached for 60 seconds at the edge and 5 minutes in the browser.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, CookieYes or Usercentrics (Cookiebot).</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/conversion-tracking"><span class="svc svc-tags">Tags</span><b>Conversion tracking</b><span>Browser and server, one event id, counted once.</span></a></li>
+        <li><a class="card" href="/cookie-consent-banner"><span class="svc svc-tags">Tags</span><b>Cookie consent banner</b><span>What a banner has to do, and how the options compare.</span></a></li>
+        <li><a class="card" href="/cookiebot-alternative"><span class="svc svc-tags">Tags</span><b>Cookiebot alternative</b><span>A free banner in your tag manager, and when Cookiebot fits.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/server-side-gtm"><span class="svc svc-tags">Tags</span><b>Server-side GTM</b><span>Conversion APIs with or without a server container.</span></a></li>
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics</b><span>Where the events your agent adds are counted.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#steps">What your agent does</a></li><li><a href="#events">Click and form events</a></li><li><a href="#features">What you get</a></li><li><a href="#consent">Consent banner and Consent Mode v2</a></li><li><a href="#setup-check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#not-a-fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

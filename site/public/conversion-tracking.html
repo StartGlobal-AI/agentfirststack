@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversion tracking your AI agent sets up and tests</title>
+<meta name="description" content="Browser and server-side conversions to GA4, Google Ads, Meta, TikTok, LinkedIn and four more, one event id each. Free, open source, set up by your agent.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/conversion-tracking">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Conversion tracking your AI agent sets up and tests">
+<meta property="og:description" content="Browser and server-side conversions to GA4, Google Ads, Meta, TikTok, LinkedIn and four more, one event id each. Free, open source, set up by your agent.">
+<meta property="og:url" content="https://agentfirststack.com/conversion-tracking">
+<meta property="og:image" content="https://agentfirststack.com/og/conversion-tracking.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Conversion tracking your AI agent sets up and tests">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Conversion tracking your AI agent sets up and tests">
+<meta name="twitter:description" content="Browser and server-side conversions to GA4, Google Ads, Meta, TikTok, LinkedIn and four more, one event id each. Free, open source, set up by your agent.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/conversion-tracking.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/conversion-tracking#article",
+      "headline": "Conversion tracking your AI agent sets up and tests",
+      "description": "Browser and server-side conversions to GA4, Google Ads, Meta, TikTok, LinkedIn and four more, one event id each. Free, open source, set up by your agent.",
+      "url": "https://agentfirststack.com/conversion-tracking",
+      "image": "https://agentfirststack.com/og/conversion-tracking.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/conversion-tracking"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "Conversion tracking", "item": "https://agentfirststack.com/conversion-tracking" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/conversion-tracking#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Do I still need the browser pixels?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The container fires them for you. Each conversion goes out as the browser pixel and as a server-side call with the same event id, so a platform that receives both counts it once. The server copy reaches the platform when an ad blocker stops its pixel, and your backend can report conversions the browser never sees."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does each platform count a conversion only once?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The runtime creates one event_id per conversion and uses it as Meta's eventID, TikTok's event_id, Reddit's conversionId, X's conversion_id, Pinterest's and LinkedIn's event_id and Snap's client_dedup_id; the server copy reuses it. GA4 doesn't deduplicate by id, so the service skips GA4's server copy when the browser tag already sent it. A conversion your backend reports needs the browser's id: read afst('get','event_id') on the page and send it as event_id."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which platforms can be tested without recording a real conversion?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "GA4 (validation server), Google Ads (validateOnly), Meta and TikTok (a test event code), Reddit (a test id), Pinterest (test=true) and Snap (its validate endpoint). LinkedIn and X have no test mode, so test traffic is never sent to them; check their first real deliveries in the event log."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can my backend report conversions the browser doesn't see?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. POST /v1/containers/:id/events takes up to 100 events per request. Pass the visitor_id the browser had (afst('get','visitor_id')) through your checkout or sign-up, and the event is joined to that visitor's stored ad click ids, so a purchase reported days later still credits the click. They go server to server, so no browser can block them."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work when visitors use ad blockers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Serve it from your own domain. A first-party domain is one CNAME from a subdomain such as edge.example.com to fp.agentfirststack.com; the container then loads from /_t/ on it, with no server code. A path proxy on your own server does the same where DNS can't change. Without either, the snippet loads from tags.agentfirststack.com, which ad blockers can block. Backend events can't be blocked."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The hosted service is free within fair-use limits: 10 tag containers per project and 5 conversion APIs per container. The code is AGPL-3.0 (the browser runtime is MIT), and you can self-host it on your own Cloudflare account."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>Conversion tracking</span></nav>
+      <h1>Conversion tracking your AI agent sets up and tests</h1>
+      <p class="lede">AgentFirstStack conversion tracking sends each conversion from the browser and from our servers to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap and X, with one event id, so each platform counts it once. It replaces server-side GTM, Stape and Meta's Conversions API Gateway: there's no server container to build or host. It's part of AgentFirstStack Tags, free and open source. An AI agent sets it up, tests each platform in its own test mode and reads what each one answered. If your team builds tracking in Google Tag Manager and needs its template gallery, <a href="/server-side-gtm">server-side GTM</a> fits better.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It finds out what counts as a conversion here before it changes anything, and asks you only for the ad platform IDs and tokens it can't look up.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up conversion tracking for this project with AgentFirstStack Tags, in the browser and server-side. It's a free, open-source tag manager built for agents that calls the ad platforms' conversion APIs itself, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Work out what this business counts as a conversion (sign-ups, leads, purchases), which of them only the backend knows (a paid order, a qualified lead), and which ad platforms it uses. Create a tags container for the production domain, run scan, and tell me which pixels, tag managers or server-side tracking the site has today before you change anything.
+
+4. Serve the container from our own domain: a first-party domain (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain such as edge.&lt;our domain&gt;; add the one CNAME it returns if you can change our DNS, otherwise give me the record), or meanwhile the path proxy from GET /v1/containers/:id/install?proxy=1 with its proxy key kept server-side. Put the snippet in the head of every page.
+
+5. Run setup with those conversions, the platforms this business uses, and analytics. If you have tools for the ad platforms, use them to find the IDs; otherwise ask me for exactly the IDs and tokens setup reports as missing, and where I find each. Never invent them.
+
+6. Send the backend-only conversions with POST /v1/containers/:id/events, with the visitor_id and, when the browser also tracks the conversion, its afst('get','event_id'), so each platform counts it once.
+
+7. Validate, test every destination and show me each platform's answer, open a preview and read its log, then publish and deploy. Run the setup test (POST https://agentfirststack.com/v1/setup/test) and its browser plan, then the setup check (GET https://agentfirststack.com/v1/setup) until it's ready. Leave any existing pixels or server-side setup in place until I say so.
+
+8. Write the container id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what each test returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="steps">What your agent does</h2>
+<p>Every step is a REST call on <code>https://tags.agentfirststack.com</code> (or <code>https://agentfirststack.com</code> for the project-wide ones) and an MCP tool on <code>https://agentfirststack.com/mcp</code>.</p>
+<ol>
+<li><b>Gets a key</b> with <code>POST /v1/signup</code>, or reuses the one in <code>.env</code>.</li>
+<li><b>Creates a container</b> for the domain: <code>POST /v1/containers</code> (<code>tags_create_container</code>).</li>
+<li><b>Looks at the site:</b> <code>POST /v1/containers/:id/scan</code> (<code>tags_scan_site</code>) lists the GTM containers, GA4, Google Ads, Meta, TikTok, LinkedIn and other pixels already there, the forms, buttons and thank-you pages. A GTM web container comes over with <code>draft/import</code> (<code>tags_import_draft</code>), dry run first.</li>
+<li><b>Serves it first-party:</b> <code>POST /v1/first-party-domains {"hostname":"edge.example.com"}</code> (<code>afs_add_first_party_domain</code>) returns one record, <code>CNAME edge.example.com -&gt; fp.agentfirststack.com</code>. Once it's active, the snippet is <code>https://edge.example.com/_t/c/&lt;container&gt;.js</code>. Where DNS can't change, the path proxy configs come from <code>GET /v1/containers/:id/install?proxy=1</code>.</li>
+<li><b>Describes the conversions</b> in plain terms: <code>POST /v1/containers/:id/setup</code> (<code>tags_setup_conversion_tracking</code>) with the platforms and conversions (a dataLayer event, a thank-you page, a form). It writes and validates the draft, adds the destinations, and lists every ID and token still missing.</li>
+<li><b>Tests each platform:</b> <code>POST /v1/containers/:id/destinations/:did/test</code> (<code>tags_test_destination</code>) sends a test event in that platform's test mode and returns the platform's own answer.</li>
+<li><b>Previews and publishes:</b> <code>POST /v1/containers/:id/preview</code> and its log (<code>tags_create_preview</code>, <code>tags_get_preview_log</code>) show which tags fired on a page and why others didn't; <code>POST /v1/containers/:id/publish</code> (<code>tags_publish</code>) makes it live, with versions to roll back to.</li>
+<li><b>Wires the backend</b> for conversions only it knows: <code>POST /v1/containers/:id/events</code> (<code>tags_send_server_events</code>).</li>
+<li><b>Checks it end to end:</b> the setup test (<code>afs_test_setup</code>), a browser visit from its plan (<code>afs_check_test_visit</code>), the setup check (<code>afs_check_setup</code>), and later the delivery log, <code>GET /v1/containers/:id/events</code> (<code>tags_get_event_log</code>).</li>
+<li><b>Hands over</b> a claim link (<code>POST /v1/claim-link</code>) so you can sign in with Google and see the containers, deliveries and versions in a dashboard.</li>
+</ol>
+
+<h2 id="features">What you get</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Platform</th><th>Server-side API</th><th>Test mode</th></tr></thead>
+<tbody>
+<tr><th scope="row">GA4</th><td>Measurement Protocol</td><td>Validation server</td></tr>
+<tr><th scope="row">Google Ads</th><td>Data Manager API (or Google Ads API): click conversions with the gclid, gbraid or wbraid, plus hashed email and phone</td><td><code>validateOnly</code></td></tr>
+<tr><th scope="row">Meta</th><td>Conversions API</td><td>Your <code>test_event_code</code></td></tr>
+<tr><th scope="row">TikTok</th><td>Events API</td><td>Your <code>test_event_code</code></td></tr>
+<tr><th scope="row">LinkedIn</th><td>Conversions API</td><td>None: test traffic is skipped</td></tr>
+<tr><th scope="row">Pinterest</th><td>Conversions API</td><td><code>?test=true</code></td></tr>
+<tr><th scope="row">Reddit</th><td>Conversions API</td><td>Your <code>test_id</code></td></tr>
+<tr><th scope="row">Snap</th><td>Conversions API</td><td><code>/events/validate</code></td></tr>
+<tr><th scope="row">X</th><td>Ads API conversions</td><td>None: test traffic is skipped</td></tr>
+<tr><th scope="row">AgentFirstStack analytics</td><td>Events API</td><td><code>debug: true</code>, kept out of reports</td></tr>
+<tr><th scope="row">Webhook</th><td>Your HTTPS endpoint, signed with HMAC-SHA256</td><td><code>"test": true</code> in the payload</td></tr>
+</tbody>
+</table>
+</div>
+<p>Microsoft Advertising is browser-only: the UET tag fires, but server-side delivery to it isn't built.</p>
+<ul>
+<li><b>One event id per conversion.</b> The runtime creates it and uses it as Meta's <code>eventID</code>, TikTok's <code>event_id</code>, Reddit's <code>conversionId</code>, X's <code>conversion_id</code>, Pinterest's and LinkedIn's <code>event_id</code> and Snap's <code>client_dedup_id</code>, and the server copy reuses it. GA4 and analytics don't deduplicate by id, so their server copy is skipped when the browser tag already sent it. LinkedIn deduplicates only when its destination maps each Insight Tag conversion to its Conversions API rule (<code>conversion_rules</code>).</li>
+<li><b>Click ids.</b> gclid, gbraid, wbraid, dclid, fbclid, msclkid, ttclid, li_fat_id, twclid, rdt_cid, epik and ScCid are captured on landing (when consent allows) and used for 90 days, with <code>_fbp</code>, <code>_fbc</code>, <code>_ttp</code> and the other platforms' own cookies.</li>
+<li><b>Backend events.</b> <code>POST /v1/containers/:id/events</code> takes up to 100 events per request. Sent with the browser's <code>visitor_id</code>, they're joined to that visitor and go out with the stored click ids, IP and user agent that conversion APIs match on; a <code>user_id</code>, email or phone your backend linked to a visitor earlier joins too. Backend events are the source of truth: deduplicated only against earlier backend events (same <code>event_id</code>, or the same name and <code>order_id</code>).</li>
+<li><b>Customer data, hashed.</b> Emails, phones and names are normalised per platform and SHA-256 hashed in the browser before anything is sent; your backend's are hashed before they leave the service.</li>
+<li><b>Routing rules.</b> Per destination: which conversions it gets, conditions (only the US, only a value above 0), which parameters go out or stay back, page URLs without query strings, and lookup tables, for example to send margin per SKU as the value instead of revenue.</li>
+<li><b>The delivery log.</b> <code>GET /v1/containers/:id/events</code> shows, for 7 days, every conversion with each destination's status, HTTP status and the platform's answer, and the reason when one was skipped (no consent, no click id, test traffic with no test mode). Failed calls are retried (6 attempts over about 16 minutes), and a destination that keeps failing pauses for an hour, or until a test passes.</li>
+<li><b>Consent.</b> Google Consent Mode v2, IAB TCF v2, or the container's own <a href="/cookie-consent-banner">consent banner</a> decide which tags fire; tags waiting for consent fire once it's granted.</li>
+<li><b>Junk traffic.</b> Container ids are public, so anyone can post hits. A network's daily share and an attack mode for sudden spikes set suspicious hits aside, and their conversions never reach an ad platform. Conversions your backend sends with the key always flow.</li>
+</ul>
+
+<h2 id="setup-check">What the setup check verifies</h2>
+<p><code>GET https://agentfirststack.com/v1/setup</code> (<code>afs_check_setup</code>) reads what the services have received and reports each item as ok, missing, failing or a warning, with the call that fixes it. For conversion tracking:</p>
+<ul>
+<li><code>tags.container</code>: there is a tag container for the website.</li>
+<li><code>tags.installed</code>: the container snippet is on the pages.</li>
+<li><code>tags.domain_verified</code>: the container's domain is verified, which custom HTML and JavaScript tags need.</li>
+<li><code>tags.published</code>: a version is published.</li>
+<li><code>tags.events</code>: there is an event for each main action.</li>
+<li><code>tags.to_analytics</code> and <code>tags.goals_for_events</code>: the events reach analytics, and each has a goal there.</li>
+<li><code>tags.firing</code>: every tag fires, and none fails (with tag-fire reporting on).</li>
+<li><code>tags.destinations</code>: conversions reach every ad platform; it fails while a destination has failed deliveries.</li>
+<li><code>tags.consent_banner</code>: visitors from the EU, UK and Switzerland are asked before ad pixels fire.</li>
+</ul>
+<p>The setup test (<code>POST /v1/setup/test</code>) goes further and sends each conversion to each ad platform in its test mode, one result per destination.</p>
+
+<h2 id="compared">Compared with</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Tool</th><th>What it is</th><th>The difference</th></tr></thead>
+<tbody>
+<tr><th scope="row"><a href="/server-side-gtm">Server-side GTM</a></th><td>A GTM server container you run on a server you control; Google puts each Cloud Run server at about $45 a month (<a href="https://developers.google.com/tag-platform/tag-manager/server-side/cloud-run-setup-guide">Cloud Run setup guide</a>, as of 7 Nov 2026)</td><td>No server container to build, host or update: the service calls the APIs</td></tr>
+<tr><th scope="row"><a href="/stape-alternative">Stape</a></th><td>Hosting for server-side GTM, free up to 10K requests a month, then from $17 a month (<a href="https://stape.io/price">stape.io/price</a>, as of 7 Nov 2026)</td><td>Set up and tested over an API by your agent, instead of built in GTM</td></tr>
+<tr><th scope="row"><a href="/conversions-api-gateway">Meta Conversions API Gateway</a></th><td>Meta's gateway for Meta Pixel events, run in your AWS or Google Cloud account or by a partner (<a href="https://developers.facebook.com/documentation/ads-commerce/gateway-products/conversions-api-gateway">Meta's docs</a>, as of 7 Nov 2026)</td><td>Nine ad platforms, and nothing to host</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="limits">Limits</h2>
+<ul>
+<li>10 tag containers per project (3 until a person claims it), and 5 conversion APIs per container.</li>
+<li>Delivery log: 7 days. Click ids: used for 90 days. Visitors: kept 180 days after they were last seen, for backend joins.</li>
+<li>Backend events: up to 100 per request. Daily budgets for browser events, backend events and deliveries apply per container and account; <code>GET /v1/usage</code> shows each with what's used.</li>
+</ul>
+<p>Every limit, with the ones for analytics, mail and replay: <a href="/limits">fair-use limits</a>.</p>
+
+<h2 id="not-a-fit">When it isn't the right fit</h2>
+<ul>
+<li><b>A platform we don't send server-side.</b> Microsoft Advertising is browser-only, and there are no destinations for affiliate networks or email tools. GTM's server templates cover those; a signed webhook can forward conversions to your own code.</li>
+<li><b>A visual editor for people.</b> There's no tag editor in the dashboard: changes are API or MCP calls your agent makes. The dashboard shows containers, deliveries and versions.</li>
+<li><b>Testing LinkedIn and X before going live.</b> They have no test mode, so test traffic is never sent to them; the first real conversions are the test, in the delivery log.</li>
+<li><b>Cookies set from the server on a subdomain.</b> Through a first-party domain, the container's own cookies are set by its script in the page. They're set from the server too only through the path proxy, where the page and the collector share one host.</li>
+<li><b>Your own AWS or Google Cloud account.</b> Self-hosting runs on Cloudflare Workers, not on AWS or Google Cloud.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>Do I still need the browser pixels?</h3>
+<p>The container fires them for you. Each conversion goes out as the browser pixel and as a server-side call with the same event id, so a platform that receives both counts it once. The server copy reaches the platform when an ad blocker stops its pixel, and your backend can report conversions the browser never sees.</p>
+<h3>How does each platform count a conversion only once?</h3>
+<p>The runtime creates one <code>event_id</code> per conversion and uses it as Meta's <code>eventID</code>, TikTok's <code>event_id</code>, Reddit's <code>conversionId</code>, X's <code>conversion_id</code>, Pinterest's and LinkedIn's <code>event_id</code> and Snap's <code>client_dedup_id</code>; the server copy reuses it. GA4 doesn't deduplicate by id, so the service skips GA4's server copy when the browser tag already sent it. A conversion your backend reports needs the browser's id: read <code>afst('get','event_id')</code> on the page and send it as <code>event_id</code>.</p>
+<h3>Which platforms can be tested without recording a real conversion?</h3>
+<p>GA4 (validation server), Google Ads (<code>validateOnly</code>), Meta and TikTok (a test event code), Reddit (a test id), Pinterest (<code>test=true</code>) and Snap (its validate endpoint). LinkedIn and X have no test mode, so test traffic is never sent to them; check their first real deliveries in the event log.</p>
+<h3>Can my backend report conversions the browser doesn't see?</h3>
+<p>Yes. <code>POST /v1/containers/:id/events</code> takes up to 100 events per request. Pass the <code>visitor_id</code> the browser had (<code>afst('get','visitor_id')</code>) through your checkout or sign-up, and the event is joined to that visitor's stored ad click ids, so a purchase reported days later still credits the click. They go server to server, so no browser can block them.</p>
+<h3>Does it work when visitors use ad blockers?</h3>
+<p>Serve it from your own domain. A first-party domain is one CNAME from a subdomain such as <code>edge.example.com</code> to <code>fp.agentfirststack.com</code>; the container then loads from <code>/_t/</code> on it, with no server code. A path proxy on your own server does the same where DNS can't change. Without either, the snippet loads from <code>tags.agentfirststack.com</code>, which ad blockers can block. Backend events can't be blocked.</p>
+<h3>What does it cost?</h3>
+<p>The hosted service is free within fair-use limits: 10 tag containers per project and 5 conversion APIs per container. The code is AGPL-3.0 (the browser runtime is MIT), and you can self-host it on your own Cloudflare account.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, Meta, Stape or the other platforms named here.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/guides/server-side-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Server-side conversion tracking</b><span>How each platform counts a conversion once.</span></a></li>
+        <li><a class="card" href="/guides/google-ads-conversion-tracking"><span class="svc svc-tags">Tags</span><b>Google Ads conversion tracking</b><span>Browser tag and server upload, tested before it counts.</span></a></li>
+        <li><a class="card" href="/guides/meta-conversions-api"><span class="svc svc-tags">Tags</span><b>Meta Conversions API</b><span>Pixel and server, deduplicated by event id.</span></a></li>
+        <li><a class="card" href="/server-side-gtm"><span class="svc svc-tags">Tags</span><b>Server-side GTM</b><span>What it is, what it costs to run, and the same result without it.</span></a></li>
+        <li><a class="card" href="/stape-alternative"><span class="svc svc-tags">Tags</span><b>Stape alternative</b><span>Conversion APIs without hosting a GTM server container.</span></a></li>
+        <li><a class="card" href="/conversions-api-gateway"><span class="svc svc-tags">Tags</span><b>Conversions API Gateway alternative</b><span>Meta and eight more platforms, nothing to host.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#steps">What your agent does</a></li><li><a href="#features">What you get</a></li><li><a href="#setup-check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#not-a-fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

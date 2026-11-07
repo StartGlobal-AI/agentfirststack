@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vercel Speed Insights alternative: all Core Web Vitals, free</title>
+<meta name="description" content="Vercel Speed Insights is free as one score; Core Web Vitals need Plus at $10 a project a month. AgentFirstStack measures LCP, INP and CLS free on any host.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/vercel-speed-insights-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Vercel Speed Insights alternative: all Core Web Vitals, free">
+<meta property="og:description" content="Vercel Speed Insights is free as one score; Core Web Vitals need Plus at $10 a project a month. AgentFirstStack measures LCP, INP and CLS free on any host.">
+<meta property="og:url" content="https://agentfirststack.com/vercel-speed-insights-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/vercel-speed-insights-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Vercel Speed Insights alternative: all Core Web Vitals, free">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Vercel Speed Insights alternative: all Core Web Vitals, free">
+<meta name="twitter:description" content="Vercel Speed Insights is free as one score; Core Web Vitals need Plus at $10 a project a month. AgentFirstStack measures LCP, INP and CLS free on any host.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/vercel-speed-insights-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/vercel-speed-insights-alternative#article",
+      "headline": "Vercel Speed Insights alternative: every Core Web Vital from real visitors, free, on any host",
+      "description": "Vercel Speed Insights is free as one score; Core Web Vitals need Plus at $10 a project a month. AgentFirstStack measures LCP, INP and CLS free on any host.",
+      "url": "https://agentfirststack.com/vercel-speed-insights-alternative",
+      "image": "https://agentfirststack.com/og/vercel-speed-insights-alternative.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/vercel-speed-insights-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Vercel Speed Insights alternative", "item": "https://agentfirststack.com/vercel-speed-insights-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/vercel-speed-insights-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Vercel Speed Insights free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Partly. As of 7 November 2026 the free tier is on every plan and shows the Real Experience Score only, from 10,000 events per team over a rolling 30 days; at that limit Vercel pauses collection for at least 14 days. LCP, INP, CLS, FCP and TTFB on their own need Speed Insights Plus: $10 a project a month plus $0.65 per 10,000 events on Pro, and included on Enterprise."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use Vercel Speed Insights on a site that isn't hosted on Vercel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It's built for Vercel projects: the quickstart needs a Vercel account and project, and the deployment serves the script and the collection routes. Its endpoint and scriptSrc options point at a Vercel deployment too. For a site hosted elsewhere, use a tool that loads from any host; the AgentFirstStack tracker works on any site that can load a script."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is a data point in Vercel Speed Insights?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "One measurement of one Web Vital during a visit. Vercel's docs say up to 6 can be tracked per visit, 3 to 6 on average, collected on hard navigations only. Usage is counted in events, and on Plus every event is billed."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack show FCP and TTFB like Vercel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not from real visitors: it collects LCP, INP and CLS, the three Core Web Vitals. A lab run through PageSpeed Insights adds FCP, Speed Index and server response time for one page. It also has no p90 to p99 and no element selectors, which Vercel has."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I run both while I compare?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Each measures with its own script, so keep Speed Insights installed and compare the same pages, devices and days. Remove the SpeedInsights component only when you've decided, and nothing of its history moves over."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Vercel Speed Insights alternative</span></nav>
+      <h1>Vercel Speed Insights alternative: every Core Web Vital from real visitors, free, on any host</h1>
+      <p class="lede">Vercel Speed Insights is real user monitoring for apps deployed on Vercel. Its free tier shows only the Real Experience Score, from 10,000 events a team per rolling 30 days; the individual Core Web Vitals need Speed Insights Plus, $10 a project a month plus $0.65 per 10,000 events on Pro (as of 7 November 2026). AgentFirstStack measures LCP, INP and CLS from real visitors on any host, by page, device, country and browser, free with fair-use limits, and an AI agent sets it up. Stay with Vercel if your app lives there and you want FCP, TTFB, element selectors and p90 to p99 next to your deployments.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It leaves Speed Insights in place, so you can compare the two on the same pages before you decide anything.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add real-visitor Core Web Vitals to this project with AgentFirstStack Analytics. It's free, open-source analytics built for agents, it measures LCP, INP and CLS on any host, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt (the "Page speed" section).
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production environment variables.
+
+3. Use the analytics site in AGENTFIRSTSTACK.md, or create one for the production domain. Serve the tracker from our own domain: a first-party domain (POST https://agentfirststack.com/v1/first-party-domains with a neutral subdomain; add the CNAME if you can change our DNS, otherwise give me the record) or, meanwhile, the path proxy for this framework from GET /v1/sites/:id/install (vercel.json or Next.js proxy.ts). In Next.js, put the tracker in the root layout's head as a plain script tag, not next/script.
+
+4. If the project uses @vercel/speed-insights, leave it installed and tell me whether this project is on the free tier or Speed Insights Plus.
+
+5. Deploy, open a few pages in a normal browser, and run verify.
+
+6. Run a lab test on the homepage with GET /v1/sites/:id/web-vitals/lab?strategy=mobile. Then read GET /v1/sites/:id/web-vitals?breakdown=page and breakdown=device; if there are fewer than 30 page loads yet, say so and give me the calls to compare with Speed Insights later, page by page and for mobile and desktop.
+
+7. Add a web_vitals alert for LCP on mobile to an email destination for me, write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what verify and the lab test returned, what's waiting on me, and give me the claim link. Don't remove Speed Insights until I say so.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="vercel">What Vercel Speed Insights is</h2>
+<p>Speed Insights is Vercel's view of a site's performance "based on Core Web Vitals", and its Real Experience Score "uses real data points collected from your users' devices" (<a href="https://vercel.com/docs/speed-insights/metrics">Speed Insights metrics</a>, as of 7 Nov 2026). You add the <code>@vercel/speed-insights</code> package and its <code>SpeedInsights</code> component (Next.js, React, Vue, Remix, Astro), the Nuxt module, <code>injectSpeedInsights()</code> (SvelteKit and others) or a script tag, then deploy to Vercel: "Your deployments automatically include routes to collect Speed Insights events", under <code>/_vercel/speed-insights/*</code>. The quickstart's prerequisites are a Vercel account and a Vercel project (<a href="https://vercel.com/docs/speed-insights/quickstart">quickstart</a>, as of 7 Nov 2026).</p>
+<p>Plans, from <a href="https://vercel.com/docs/speed-insights/limits-and-pricing">Limits and pricing for Speed Insights</a> and <a href="https://vercel.com/pricing">vercel.com/pricing</a>, as of 7 Nov 2026:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Speed Insights (free tier)</th><th>Speed Insights Plus</th></tr></thead>
+<tbody>
+<tr><th scope="row">Plans</th><td>Hobby, Pro and Enterprise</td><td>Pro and Enterprise; "Not available" on Hobby</td></tr>
+<tr><th scope="row">Price</th><td>Free</td><td>$10 per project a month plus $0.65 per 10,000 events on Pro; included on Enterprise, events by contract</td></tr>
+<tr><th scope="row">Events</th><td>10,000 over the last 30 days, shared across the team</td><td>None included on Pro: every event is billed</td></tr>
+<tr><th scope="row">At the limit</th><td>Collection pauses for at least 14 days</td><td>No pause; usage is billed</td></tr>
+<tr><th scope="row">Metrics</th><td>Real Experience Score only</td><td>FCP, LCP, INP, CLS and TTFB</td></tr>
+<tr><th scope="row">Breakdowns</th><td>Path and route counts, Great and Needs Improvement entries only</td><td>All, including Poor entries, countries and element selectors</td></tr>
+<tr><th scope="row">Date ranges</th><td>24 hours and 7 days</td><td>Also 30 days on Pro, 90 days on Enterprise</td></tr>
+<tr><th scope="row">Drains</th><td>Not available</td><td>Available</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Pro plan itself is listed at $20 a month (<a href="https://vercel.com/pricing">vercel.com/pricing</a>). The Real Experience Score is a score from 0 to 100: a weighted average of each metric's score, where each metric is placed on a distribution of real sites' results from the HTTP Archive. So the free tier gives you one number, not the p75 values Google assesses.</p>
+<p>A data point is one measurement of one Web Vital during a visit; "up to 6 data points can be potentially tracked per visit", 3 to 6 on average, and only on hard navigations, which in Next.js means "only the first-page view in a session" (<a href="https://vercel.com/docs/speed-insights/metrics">metrics</a>). Each one stores the route, URL, network speed, browser, device type and OS, country, the value and its element attribution (<a href="https://vercel.com/docs/speed-insights/privacy-policy">privacy and compliance</a>). A <code>sampleRate</code> and a <code>beforeSend</code> filter keep the event count down (<a href="https://vercel.com/docs/speed-insights/package">package options</a>). The dashboard shows p75 by default and can add p90, p95 and p99, filters preview and production deployments apart, and maps countries with Plus (<a href="https://vercel.com/docs/speed-insights">overview</a>).</p>
+<p>For agents, Vercel's quickstart carries a prompt that installs the package, adds the component and deploys with <code>vercel --prod</code>. Plus "provides access to Drains and the Vercel CLI" for performance data outside the dashboard (<a href="https://vercel.com/changelog/speed-insights-free-tier">free tier changelog</a>, 25 August 2026), where <code>vercel metrics vercel.speed_insights.lcp_ms --aggregation p75 --group-by route</code> reads p75 LCP by route (<a href="https://vercel.com/docs/speed-insights/accessing-metrics-with-vercel-cli">Vercel CLI metrics</a>).</p>
+
+<h2 id="agentfirststack">How AgentFirstStack does it</h2>
+<p>Page speed is part of AgentFirstStack Analytics. The same tracker that counts visits records each full page load's LCP, INP and CLS in the visitor's browser and sends them on the beacon it sends when the visitor leaves the page. Nothing depends on where the site is hosted.</p>
+<ul>
+<li><b>On Vercel or anywhere else:</b> serve the tracker from a first-party domain (one CNAME to <code>fp.agentfirststack.com</code>, no server code) or a path proxy; <code>GET /v1/sites/:id/install</code> has the path proxy for <code>vercel.json</code>, Next.js <code>proxy.ts</code>, a Cloudflare Worker route, Netlify and nginx.</li>
+<li><b>Every Core Web Vital, free:</b> <code>GET /v1/sites/:id/web-vitals</code> (MCP <code>analytics_get_web_vitals</code>) returns p75 by Google's method, the share of good, needs improvement and poor page loads, sample counts, an assessment, the slowest pages and next steps, by page, device, country or browser, with filters and period comparisons.</li>
+<li><b>A lab run when it helps:</b> <code>GET /v1/sites/:id/web-vitals/lab</code> runs Google's PageSpeed Insights on one page and returns the lab metrics and biggest opportunities next to Google's field data and ours for the same path.</li>
+<li><b>Alerts:</b> a <code>web_vitals</code> alert when a metric's p75 goes over Google's good limit, by email, Slack or webhook.</li>
+<li><b>History:</b> any period, kept 400 days on the hosted service.</li>
+</ul>
+<p>INP is the slowest interaction on the page, counting interactions over 40 ms, so the dashboard says to read it as an upper bound. The <a href="/page-speed">page speed overview</a> explains the method and what the lab run returns.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Vercel Speed Insights</th><th>AgentFirstStack Page speed</th></tr></thead>
+<tbody>
+<tr><th scope="row">Hosting</th><td>Apps deployed on Vercel</td><td>Any site that can load a script</td></tr>
+<tr><th scope="row">Setup</th><td>The package or script, then a Vercel deployment</td><td><code>POST /v1/signup</code>, a site, the tracker in the head; your agent does it</td></tr>
+<tr><th scope="row">Free metrics</th><td>Real Experience Score</td><td>LCP, INP and CLS</td></tr>
+<tr><th scope="row">Paid metrics</th><td>FCP, LCP, INP, CLS and TTFB with Plus</td><td>No paid tier</td></tr>
+<tr><th scope="row">Percentiles</th><td>p75, p90, p95, p99</td><td>p75, with good, needs improvement and poor shares</td></tr>
+<tr><th scope="row">Breakdowns</th><td>Route, path, device, environment; countries and element selectors with Plus</td><td>Page, device, country, browser; any analytics filter</td></tr>
+<tr><th scope="row">Element attribution</th><td>With Plus</td><td>No</td></tr>
+<tr><th scope="row">Lab tests</th><td>A Virtual Experience Score through integrations such as Checkly</td><td>A PageSpeed Insights run on request</td></tr>
+<tr><th scope="row">Date ranges</th><td>7 days free; 30 days (Pro) or 90 days (Enterprise) with Plus</td><td>Any period; 400 days kept</td></tr>
+<tr><th scope="row">Agent access</th><td>A setup prompt in the quickstart; the Vercel CLI and Drains with Plus</td><td>REST and MCP on every account</td></tr>
+<tr><th scope="row">Price</th><td>Free tier; Plus $10 a project a month plus $0.65 per 10,000 events on Pro</td><td>Free hosted service with fair-use limits</td></tr>
+<tr><th scope="row">Source</th><td>Hosted service; the <code>@vercel/speed-insights</code> package is MIT</td><td>AGPL-3.0, self-hostable on Cloudflare; browser scripts MIT</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use Vercel Speed Insights if</h3>
+<ul>
+<li>Your app is deployed on Vercel and you want performance next to each deployment, previews included.</li>
+<li>You need FCP and TTFB from real visitors, p90 to p99, or element selectors that show which element is slow.</li>
+<li>Routes such as <code>/blog/[slug]</code> should be grouped for you by the framework integration.</li>
+<li>You want the raw data points sent to your own systems through Drains.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>The site isn't on Vercel, or runs across several hosts.</li>
+<li>You want LCP, INP and CLS by page, device, country and browser without paying per project or per event.</li>
+<li>Your agent should set it up, read it, run a lab test on the slowest page and get alerted when a metric slips, over REST and MCP.</li>
+<li>You want page speed in the same place as your analytics, tags and session replay, or open source you can self-host.</li>
+</ul>
+
+<h2 id="moving">Moving from Vercel Speed Insights</h2>
+<p>There's no import for Speed Insights data: AgentFirstStack's imports bring over traffic history (daily visitors, visits and pageviews, by page, source, country or device), not Web Vitals. Run both for a week or two and compare the same pages, devices and days. Expect differences: Vercel groups by route when its framework integration sets one, AgentFirstStack reports paths (a filter such as <code>page==/blog/*</code> groups them), and on the free tier Vercel shows a score rather than p75 values. Remove the <code>SpeedInsights</code> component and the package when you've decided; on the free tier there's nothing to cancel.</p>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is Vercel Speed Insights free?</h3>
+<p>Partly. As of 7 November 2026 the free tier is on every plan and shows the Real Experience Score only, from 10,000 events per team over a rolling 30 days; at that limit Vercel pauses collection for at least 14 days. LCP, INP, CLS, FCP and TTFB on their own need Speed Insights Plus: $10 a project a month plus $0.65 per 10,000 events on Pro, and included on Enterprise.</p>
+<h3>Can I use Vercel Speed Insights on a site that isn't hosted on Vercel?</h3>
+<p>It's built for Vercel projects: the quickstart needs a Vercel account and project, and the deployment serves the script and the collection routes. Its <code>endpoint</code> and <code>scriptSrc</code> options point at a Vercel deployment too. For a site hosted elsewhere, use a tool that loads from any host; the AgentFirstStack tracker works on any site that can load a script.</p>
+<h3>What is a data point in Vercel Speed Insights?</h3>
+<p>One measurement of one Web Vital during a visit. Vercel's docs say up to 6 can be tracked per visit, 3 to 6 on average, collected on hard navigations only. Usage is counted in events, and on Plus every event is billed.</p>
+<h3>Does AgentFirstStack show FCP and TTFB like Vercel?</h3>
+<p>Not from real visitors: it collects LCP, INP and CLS, the three Core Web Vitals. A lab run through PageSpeed Insights adds FCP, Speed Index and server response time for one page. It also has no p90 to p99 and no element selectors, which Vercel has.</p>
+<h3>Can I run both while I compare?</h3>
+<p>Yes. Each measures with its own script, so keep Speed Insights installed and compare the same pages, devices and days. Remove the <code>SpeedInsights</code> component only when you've decided, and nothing of its history moves over.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Vercel.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/page-speed"><span class="svc svc-analytics">Analytics</span><b>Page speed</b><span>Real user monitoring for Core Web Vitals.</span></a></li>
+        <li><a class="card" href="/pagespeed-insights-alternative"><span class="svc svc-analytics">Analytics</span><b>PageSpeed Insights alternative</b><span>Field data from your own visitors, next to Google's.</span></a></li>
+        <li><a class="card" href="/guides/nextjs-analytics"><span class="svc svc-analytics">Analytics</span><b>Next.js analytics in one prompt</b><span>The tracker and the proxy in a Next.js app.</span></a></li>
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics your AI agent sets up</b><span>Visits, sources, goals and revenue on the same tracker.</span></a></li>
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>One prompt, every step, and what's left for you.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#vercel">What Vercel Speed Insights is</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from Speed Insights</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

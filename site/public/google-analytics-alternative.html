@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Analytics alternative: cookieless, set up by an agent</title>
+<meta name="description" content="GA4 is free but needs a property, a data stream, the Google tag and consent setup. Compare it with cookieless analytics an AI agent sets up and tests.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/google-analytics-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Google Analytics alternative: cookieless, set up by an agent">
+<meta property="og:description" content="GA4 is free but needs a property, a data stream, the Google tag and consent setup. Compare it with cookieless analytics an AI agent sets up and tests.">
+<meta property="og:url" content="https://agentfirststack.com/google-analytics-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/google-analytics-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Google Analytics alternative: cookieless, set up by an agent">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Google Analytics alternative: cookieless, set up by an agent">
+<meta name="twitter:description" content="GA4 is free but needs a property, a data stream, the Google tag and consent setup. Compare it with cookieless analytics an AI agent sets up and tests.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/google-analytics-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/google-analytics-alternative#article",
+      "headline": "Google Analytics alternative: cookieless analytics your AI agent sets up",
+      "description": "GA4 is free but needs a property, a data stream, the Google tag and consent setup. Compare it with cookieless analytics an AI agent sets up and tests.",
+      "url": "https://agentfirststack.com/google-analytics-alternative",
+      "image": "https://agentfirststack.com/og/google-analytics-alternative.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/google-analytics-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Google Analytics alternative", "item": "https://agentfirststack.com/google-analytics-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/google-analytics-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Google Analytics 4 free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, the standard version is free of charge. Analytics 360, with higher limits, longer retention and service level agreements, needs a 360 contract with Google or a Google sales partner, and Google doesn't publish its price. AgentFirstStack's hosted analytics is free with fair-use limits."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does GA4 use cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Google's tag sets _ga, used to distinguish users, and _ga_<container-id>, used to persist session state, each for 2 years by default. With Consent Mode and analytics_storage denied it doesn't read or write analytics cookies. AgentFirstStack's tracker sets no cookies by default."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can an AI agent set up Google Analytics by itself?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Partly. With Google OAuth credentials and the analytics.edit scope, the Admin API can create a property, a web data stream and key events. Creating the account returns a ticket whose Terms of Service a person accepts in a browser, and Google's own MCP server is read-only. The tag and consent setup still go into the site's code."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I import my GA4 history into AgentFirstStack?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, as daily totals and breakdowns by page, source, country and device, from a Data API runReport response (also what Google's GA4 MCP server returns) or a report exported as CSV. Events, key event counts, audiences and user-level data aren't imported. imports/compare then checks our daily visitors against GA4's while both run."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How long does each keep my data?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "GA4's retention setting is 2 or 14 months on standard properties, up to 50 months on 360, and it only affects explorations and funnel reports, not standard aggregated reports. AgentFirstStack's hosted service keeps raw events for up to 400 days; imported history is kept as daily totals."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Google Analytics alternative</span></nav>
+      <h1>Google Analytics alternative: cookieless analytics your AI agent sets up</h1>
+      <p class="lede">Google Analytics 4 is free; Analytics 360 is sold under a contract at a price Google doesn't publish (as of 7 November 2026). GA4 takes a property, a web data stream, the Google tag on every page and, where the law asks for consent, a banner wired to Consent Mode: the tag sets <code>_ga</code> cookies for 2 years. AgentFirstStack Analytics is free, open-source and cookieless; an AI agent sets it up alone, tests it and brings GA4's history over. Stay with GA4 for Google Ads audiences, BigQuery export, app streams, long aggregated history or a team trained on it.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It leaves GA4 running, brings its history over and checks our numbers against GA4's before anything is removed.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Add AgentFirstStack Analytics to this project next to Google Analytics, and bring GA4's history over. It's free, open-source, cookieless analytics built for agents, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt (especially "Move from another tool") and https://analytics.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Find how GA4 is installed (gtag.js, Google Tag Manager, a CMS field or a plugin). Write down the measurement id (G-...), every event it sends and which of them are key events. Don't remove or change any of it.
+
+4. Create a site for the production domain and serve it from our own domain: a first-party domain on a new subdomain with a neutral name such as edge (POST https://agentfirststack.com/v1/first-party-domains), with its CNAME added if you can change our DNS; until then, or if you can't, the path proxy from the install answer. Put the snippet in the head of every page, next to GA4.
+
+5. Create a goal for each GA4 key event and each main action on the site, using GA4's event names.
+
+6. Bring GA4's history over. If you have Google's GA4 MCP server or Data API credentials, run one runReport per breakdown (date alone, then date with pagePath, sessionSource, country and deviceCategory), with "limit": 50000, and send each answer as it came to POST /v1/sites/:id/imports with source "ga4". Otherwise tell me exactly which reports to export as CSV and where to save them. Include GA4's daily visitors up to today.
+
+7. Deploy (or tell me what to deploy), open the site with ?afsa_debug=1, run verify, then GET https://agentfirststack.com/v1/setup?services=analytics until it says ready.
+
+8. Run GET /v1/sites/:id/imports/compare?source=ga4 and tell me what it says. It needs 3 full days with both tools, so tell me how to run it again later.
+
+9. Write the site id, the goals and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what you imported, what compare returned, and give me the claim link. Leave GA4 installed until I say otherwise.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="ga4">What Google Analytics 4 is</h2>
+<p>GA4 is Google's web and app analytics. Google describes it as tools "free of charge" (<a href="https://marketingplatform.google.com/about/analytics/">Google Marketing Platform</a>, as of 7 Nov 2026). Analytics 360 raises the limits; upgrading a property needs "a 360 contract", bought from Google or through a Google sales partner, and Google publishes no price (<a href="https://support.google.com/analytics/answer/11202874">Google Analytics 360</a>, as of 7 Nov 2026). Their limits, from that page unless noted:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>GA4 (standard)</th><th>Analytics 360</th></tr></thead>
+<tbody>
+<tr><th scope="row">Price</th><td>Free</td><td>A 360 contract; no published price</td></tr>
+<tr><th scope="row">Key events</th><td>30</td><td>50</td></tr>
+<tr><th scope="row">Event-scoped custom dimensions</th><td>50 per property</td><td>125 per property</td></tr>
+<tr><th scope="row">Data retention</th><td>2 or 14 months</td><td>Up to 50 months</td></tr>
+<tr><th scope="row">Exploration sampling</th><td>Past 10M events per query</td><td>Past 1B events per query</td></tr>
+<tr><th scope="row">Data API quota</th><td>200,000 tokens a day per property</td><td>2M tokens a day</td></tr>
+<tr><th scope="row">BigQuery daily export</th><td>1M events</td><td>Billions of events</td></tr>
+<tr><th scope="row">Daily data ready in, for a normal-size property (<a href="https://support.google.com/analytics/answer/11198161">data freshness</a>)</th><td>12 hours; intraday 2-6 hours</td><td>12 hours; intraday about 1 hour</td></tr>
+<tr><th scope="row">Service level agreement</th><td>Not covered</td><td>GA 360 SLAs</td></tr>
+</tbody>
+</table>
+</div>
+<p>What GA4 does well is the rest of Google: Google Ads, Search Ads 360, Display &amp; Video 360, Search Console and BigQuery link to it, and the same property can measure web and app data streams.</p>
+
+<h3 id="cookies">Cookies and consent</h3>
+<p>Google's tag sets two first-party cookies: <code>_ga</code>, "Used to distinguish users", and <code>_ga_&lt;container-id&gt;</code>, "Used to persist session state", each for 2 years by default (<a href="https://support.google.com/analytics/answer/11397207">GA4 cookie usage</a>, as of 7 Nov 2026). Where visitors have to agree to that first, Consent Mode tells the tag what they chose. In the basic implementation, "Google tags blocked until consent is granted"; in the advanced one the tags load first and "send cookieless pings when cookie consent declined", and with <code>analytics_storage</code> denied GA4 "Will not read or write first-party analytics cookies" (<a href="https://support.google.com/analytics/answer/9976101">Consent mode</a>, as of 7 Nov 2026).</p>
+<p>Google fills the gap with behavioral modeling, but only for a property that "collects at least 1,000 events per day with analytics_storage='denied'" for at least 7 days, and has at least 1,000 daily users who granted it on 7 of the previous 28 days (<a href="https://support.google.com/analytics/answer/11161109">Behavioral modeling</a>, as of 7 Nov 2026). A smaller site gets no modeled data for the visitors who decline.</p>
+
+<h3 id="retention">Data retention, sampling and thresholds</h3>
+<ul>
+<li><b>Retention:</b> event data can be kept 2 or 14 months on standard properties (26, 38 or 50 months on 360), and age, gender and interest data always 2 months. But "The data retention setting only affects explorations and funnel reports"; standard aggregated reports keep their history (<a href="https://support.google.com/analytics/answer/7667196">Data retention</a>, as of 7 Nov 2026).</li>
+<li><b>Sampling:</b> the event-level quota is "10 million events for standard Google Analytics properties" per query, up to 1 billion on 360; past it, results are sampled and the data quality icon shows the share used (<a href="https://support.google.com/analytics/answer/13331292">Data sampling</a>, as of 7 Nov 2026).</li>
+<li><b>Thresholds:</b> "Data thresholds are system defined. You can't adjust them." Data can be withheld when a report includes demographic data, and a search query row when too few users are behind it (<a href="https://support.google.com/analytics/answer/9383630">Data thresholds</a>, as of 7 Nov 2026).</li>
+</ul>
+
+<h3 id="setup">The setup work</h3>
+<p>Google's own steps for a website (<a href="https://support.google.com/analytics/answer/9304153">Set up Analytics for a website</a>, as of 7 Nov 2026):</p>
+<ol>
+<li>Create an Analytics account, and for a new account accept the Analytics Terms of Service and the Data Processing Amendment.</li>
+<li>Create a property: a name, the reporting time zone and currency, the industry and business size.</li>
+<li>Add a web data stream with the site's URL; enhanced measurement collects pageviews and some events.</li>
+<li>Add the Google tag: the <code>G-</code> ID in a CMS field, the gtag.js snippet "immediately after the &lt;head&gt;" on each page, or a tag in Google Tag Manager.</li>
+<li>Wait: "Data collection may take up to 30 minutes to begin." Then check the Realtime report.</li>
+</ol>
+<p>Then the site's own work: marking key events, sending custom events from the code, and wiring a consent banner to Consent Mode where it's needed.</p>
+
+<h3 id="agents">What an agent can do with Google's APIs</h3>
+<p>A lot, once a person has set it up. With Google OAuth credentials and the <code>analytics.edit</code> scope, the Admin API can create a property (<a href="https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties/create">properties.create</a>), a web data stream whose answer carries the measurement ID (<a href="https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties.dataStreams">dataStreams</a>) and key events (<a href="https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties.keyEvents/create">keyEvents.create</a>). The account is the step it can't finish: <a href="https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/accounts/provisionAccountTicket">provisionAccountTicket</a> "Requests a ticket for creating an account", and the account exists once someone accepts the Terms of Service at that ticket's link. Reading goes through the Data API's <code>runReport</code>, within 200,000 tokens a day and 40,000 an hour per standard property (<a href="https://developers.google.com/analytics/devguides/reporting/data/v1/quotas">Data API quotas</a>).</p>
+<p>Google's own MCP server is read-only: it "can't create, modify, or delete" the configuration (<a href="https://developers.google.com/analytics/devguides/MCP">Google Analytics MCP</a>, as of 7 Nov 2026). Our <a href="/google-analytics-mcp">Google Analytics MCP comparison</a> covers what it needs and returns. For server-side events GA4 has the Measurement Protocol, whose stated intent is "to augment automatic collection", not replace it: it needs the tag on the page too (<a href="https://developers.google.com/analytics/devguides/collection/protocol/ga4">Measurement Protocol</a>).</p>
+
+<h2 id="agentfirststack">How AgentFirstStack does it</h2>
+<p>There's no account to create first and no Google Cloud project. The agent does every step over REST or MCP with one key, and each step has a check it runs itself:</p>
+<pre><code>curl -s -X POST https://agentfirststack.com/v1/signup     # -&gt; api_key: one request, no email
+H="Authorization: Bearer $AGENTFIRSTSTACK_API_KEY"; J="content-type: application/json"
+A=https://analytics.agentfirststack.com
+curl -s -X POST $A/v1/sites -H "$H" -H "$J" -d '{"domain":"example.com"}'
+# -&gt; site id and install code; then serve it from the site's own domain (one CNAME):
+curl -s -X POST https://agentfirststack.com/v1/first-party-domains -H "$H" -H "$J" \
+  -d '{"hostname":"edge.example.com"}'
+curl -s -X POST $A/v1/sites/$SITE/goals -H "$H" -H "$J" \
+  -d '{"name":"Signup","type":"event","match":"sign_up"}'
+curl -s -X POST $A/v1/sites/$SITE/verify -H "$H"          # checks the live page, lists fixes
+curl -s https://agentfirststack.com/v1/setup -H "$H"      # "ready": true, or what's missing</code></pre>
+<ul>
+<li><b>No cookies by default.</b> A visitor is a hash of a daily salt, the site, the IP address and the user agent; the salt rotates daily and nothing is stored on the device. The catch: anonymous visitors can't be followed across days, so returning visitors and multi-day attribution need a <code>user_id</code> from your server or the opt-in persistent mode.</li>
+<li><b>Consent where you need it.</b> The tracker can wait for consent (<code>data-require-consent</code>). If the site needs a banner for ad pixels, our tag manager's banner drives Google Consent Mode v2 for any Google tags you keep and keeps a record of each choice; in cookieless mode it doesn't hold back analytics, which stores nothing. Whether a site needs consent for analytics is a question for the law that applies to it.</li>
+<li><b>No sampling or thresholds on counts.</b> Reports read the stored events. The few that cap their input say so: attribution reads the latest 5,000 conversions and answers <code>sampled: true</code> when it hits that.</li>
+<li><b>Live numbers.</b> Realtime reaches a WebSocket stream within a second of each event, and every report reads events as they arrive.</li>
+<li><b>Server events that stand alone.</b> <code>POST /v1/sites/:id/events</code> joins a backend event to the visitor's visit, or records it with <code>visit: false</code> when there's no visit, such as a sign-up over the API.</li>
+<li><b>Beyond pageviews:</b> revenue and MRR from Stripe, Polar, Paddle and LemonSqueezy joined to the visit that brought them, <a href="/ai-search">AI crawlers and AI assistant visits</a>, <a href="/page-speed">Core Web Vitals</a> from real visitors, funnels, journeys, retention and six attribution models. More on the <a href="/analytics">web analytics page</a>.</li>
+</ul>
+<p>The default snippet loads from <code>analytics.agentfirststack.com</code>, which ad blockers block, so the agent serves it from the site's own domain: a first-party domain (one CNAME, no server code) or a path proxy.</p>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Google Analytics 4</th><th>AgentFirstStack Analytics</th></tr></thead>
+<tbody>
+<tr><th scope="row">Price</th><td>Free; Analytics 360 under a contract, price not published</td><td>Free hosted service with fair-use limits; self-hostable</td></tr>
+<tr><th scope="row">Getting started</th><td>An Analytics account (Terms of Service), a property, a web data stream, the Google tag on every page</td><td><code>POST /v1/signup</code>, a site, the snippet; your agent does all of it</td></tr>
+<tr><th scope="row">Agent access</th><td>Admin and Data APIs with Google OAuth; <code>analytics.edit</code> to change settings; Google's MCP server reads only</td><td>REST and MCP on one key, reads and writes</td></tr>
+<tr><th scope="row">Cookies</th><td><code>_ga</code> and <code>_ga_&lt;container-id&gt;</code>, 2 years</td><td>None by default; persistent mode (opt-in) keeps an id in localStorage</td></tr>
+<tr><th scope="row">Consent</th><td>Consent Mode, basic or advanced; modeling needs 1,000 declined events and 1,000 consenting users a day</td><td>Nothing stored on the device by default; <code>data-require-consent</code> to wait; our tag manager's banner for Consent Mode v2</td></tr>
+<tr><th scope="row">Retention</th><td>Explorations and funnels 2 or 14 months (up to 50 on 360); aggregated reports unaffected</td><td>Raw events up to 400 days hosted; imported history as daily totals</td></tr>
+<tr><th scope="row">Sampling and thresholds</th><td>Explorations sampled past 10M events per query; thresholds on demographic and search query data</td><td>None on counts; attribution capped at the latest 5,000 conversions, flagged</td></tr>
+<tr><th scope="row">Freshness</th><td>Realtime in a few minutes; daily data in 12 hours</td><td>Realtime within a second; reports read events as they arrive</td></tr>
+<tr><th scope="row">Server events</th><td>Measurement Protocol, alongside the tag</td><td>Events API, joined to a visit or standing alone</td></tr>
+<tr><th scope="row">Integrations</th><td>Google Ads, Search Ads 360, Display &amp; Video 360, Search Console, BigQuery</td><td>None of those; raw export, read-only SQL, webhooks, Slack and email</td></tr>
+<tr><th scope="row">Apps</th><td>Web and app data streams</td><td>Websites and backends; no mobile SDK</td></tr>
+<tr><th scope="row">Source</th><td>Google's hosted service</td><td>AGPL-3.0; the tracker MIT</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Stay with Google Analytics 4 if</h3>
+<ul>
+<li>You buy Google Ads and use GA4 audiences, conversions or its links to Search Ads 360 and Display &amp; Video 360.</li>
+<li>You export raw events to BigQuery.</li>
+<li>You measure iOS or Android apps in the same property.</li>
+<li>You need aggregated history longer than 400 days, or a 360 contract with an SLA.</li>
+<li>Your team, agency or clients work in GA4 every day.</li>
+</ul>
+<h3>Use AgentFirstStack if</h3>
+<ul>
+<li>An agent should set up analytics from nothing and keep it working, without a person creating accounts, properties or credentials.</li>
+<li>You want analytics that sets no cookies by default and stores nothing on the device.</li>
+<li>You want revenue and MRR by channel, AI crawler and AI assistant reports, and Core Web Vitals in the same place.</li>
+<li>You want it open source, free on the hosted service, or self-hosted on your own Cloudflare account.</li>
+</ul>
+<p>You don't have to pick one today. Run both: <a href="/tag-manager">our tag manager</a> sends conversions to GA4 too (the browser tag and the Measurement Protocol), so GA4 keeps what Google Ads needs while your agent runs the rest.</p>
+
+<h2 id="moving">Moving from GA4</h2>
+<ol>
+<li><b>Keep GA4 installed.</b> Nothing below removes it.</li>
+<li><b>Goals with GA4's names.</b> Your agent finds the events in the code (<code>gtag('event', ...)</code>) or GTM, and creates a goal for each key event with the same name, so old and new reports line up.</li>
+<li><b>History as daily totals.</b> A Data API <code>runReport</code> response, which is also what Google's MCP server's <code>run_report</code> returns, goes to <code>POST /v1/sites/:id/imports</code> as it came: dimension <code>date</code> plus at most one of <code>pagePath</code>, <code>landingPage</code>, <code>sessionSource</code>, <code>country</code> or <code>deviceCategory</code>, and metrics <code>activeUsers</code>, <code>sessions</code>, <code>screenPageViews</code>, <code>bounceRate</code> and <code>averageSessionDuration</code>. A report exported as CSV with Date added works the same way. A report that holds only its first page of rows is refused, so the agent runs it with a higher limit or a shorter range.</li>
+<li><b>What doesn't come over:</b> event and key event counts, user-level data, audiences, explorations and every dimension beyond those four breakdowns. Imported days count in reports with <code>imported=true</code> only before our first live event, and filtered reports leave them out.</li>
+<li><b>Check the numbers.</b> Import GA4's daily visitors for the days since our tracker went live too. <code>GET /v1/sites/:id/imports/compare?source=ga4</code> puts both side by side for the complete days both ran (3 at least) and answers <code>close</code> (within 0.75 to 1.25), <code>lower</code> or <code>higher</code>, with a note on the usual causes: bots filtered differently, consent banners, ad blockers, pages without the snippet, cookieless versus cookie visitors.</li>
+<li><b>GA4 through Google Tag Manager?</b> Our tag manager imports a GTM web container (<code>draft/import</code> with <code>format: "gtm"</code>, dry run first); the <a href="/google-tag-manager-mcp">GTM comparison</a> covers it.</li>
+<li><b>Remove GA4 when you decide.</b> Once compare says close and you say so, your agent takes the tag out, or keeps sending GA4 the conversions Google Ads needs.</li>
+</ol>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is Google Analytics 4 free?</h3>
+<p>Yes, the standard version is free of charge. Analytics 360, with higher limits, longer retention and service level agreements, needs a 360 contract with Google or a Google sales partner, and Google doesn't publish its price. AgentFirstStack's hosted analytics is free with fair-use limits.</p>
+<h3>Does GA4 use cookies?</h3>
+<p>Yes. Google's tag sets <code>_ga</code>, used to distinguish users, and <code>_ga_&lt;container-id&gt;</code>, used to persist session state, each for 2 years by default. With Consent Mode and <code>analytics_storage</code> denied it doesn't read or write analytics cookies. AgentFirstStack's tracker sets no cookies by default.</p>
+<h3>Can an AI agent set up Google Analytics by itself?</h3>
+<p>Partly. With Google OAuth credentials and the <code>analytics.edit</code> scope, the Admin API can create a property, a web data stream and key events. Creating the account returns a ticket whose Terms of Service a person accepts in a browser, and Google's own MCP server is read-only. The tag and consent setup still go into the site's code.</p>
+<h3>Can I import my GA4 history into AgentFirstStack?</h3>
+<p>Yes, as daily totals and breakdowns by page, source, country and device, from a Data API <code>runReport</code> response (also what Google's GA4 MCP server returns) or a report exported as CSV. Events, key event counts, audiences and user-level data aren't imported. <code>imports/compare</code> then checks our daily visitors against GA4's while both run.</p>
+<h3>How long does each keep my data?</h3>
+<p>GA4's retention setting is 2 or 14 months on standard properties, up to 50 months on 360, and it only affects explorations and funnel reports, not standard aggregated reports. AgentFirstStack's hosted service keeps raw events for up to 400 days; imported history is kept as daily totals.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics</b><span>What your agent sets up, and what you get.</span></a></li>
+        <li><a class="card" href="/google-analytics-mcp"><span class="svc svc-analytics">Analytics</span><b>Google Analytics MCP compared</b><span>Read GA4, or let the agent create the analytics.</span></a></li>
+        <li><a class="card" href="/plausible-alternative"><span class="svc svc-analytics">Analytics</span><b>Plausible alternative</b><span>Two cookieless, open-source tools compared.</span></a></li>
+        <li><a class="card" href="/cookie-consent-banner"><span class="svc svc-tags">Tags</span><b>Cookie consent banner</b><span>A banner that drives Consent Mode v2.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/add-analytics-with-ai-agent"><span class="svc svc-analytics">Analytics</span><b>Add analytics with an AI agent</b><span>One prompt, every step, and what's left for you.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#ga4">What Google Analytics 4 is</a></li><li><a href="#cookies">Cookies and consent</a></li><li><a href="#retention">Retention, sampling, thresholds</a></li><li><a href="#setup">The setup work</a></li><li><a href="#agents">What an agent can do with Google's APIs</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from GA4</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

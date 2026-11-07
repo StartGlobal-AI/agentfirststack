@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI search analytics your AI agent sets up · AgentFirstStack</title>
+<meta name="description" content="Which AI crawlers read which pages, which AI assistants send visitors and how they convert, and what to change. Free, open source, set up by your agent.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/ai-search">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="AI search analytics your AI agent sets up">
+<meta property="og:description" content="Which AI crawlers read which pages, which AI assistants send visitors and how they convert, and what to change. Free, open source, set up by your agent.">
+<meta property="og:url" content="https://agentfirststack.com/ai-search">
+<meta property="og:image" content="https://agentfirststack.com/og/ai-search.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AI search analytics your AI agent sets up">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI search analytics your AI agent sets up">
+<meta name="twitter:description" content="Which AI crawlers read which pages, which AI assistants send visitors and how they convert, and what to change. Free, open source, set up by your agent.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/ai-search.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/ai-search#article",
+      "headline": "AI search analytics your AI agent sets up",
+      "description": "Which AI crawlers read which pages, which AI assistants send visitors and how they convert, and what to change. Free, open source, set up by your agent.",
+      "url": "https://agentfirststack.com/ai-search",
+      "image": "https://agentfirststack.com/og/ai-search.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/ai-search"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Products", "item": "https://agentfirststack.com/#services" },
+        { "@type": "ListItem", "position": 3, "name": "AI search", "item": "https://agentfirststack.com/ai-search" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/ai-search#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is AI search analytics?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Measuring what AI assistants do with your site: which AI crawlers read which pages, which assistants such as ChatGPT, Perplexity, Claude, Gemini and Copilot send visitors, and what those visitors do once they arrive. AgentFirstStack puts both halves in one report, next to your other channels, with next steps."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack show what ChatGPT says about my brand?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It doesn't run prompts through ChatGPT, Perplexity or other assistants, so it can't tell you how often answers mention or cite you, or how you compare with competitors there. AI visibility trackers such as Profound, Peec AI, Otterly and Semrush's AI Visibility Toolkit do that. AgentFirstStack measures your own site: what the bots read and what the visitors do."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does my server have to report AI crawlers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Bots don't run JavaScript, so a browser tracker never sees them. A few lines in your server or edge middleware send each request whose user agent matches the prefilter from GET /v1/crawlers to POST /v1/sites/:id/crawls, without waiting for the answer. Human requests never leave your server."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work on a static site?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Half of it. Visitors from AI assistants and how they convert work on any site with the tracker. Crawler data needs server or edge code to report bot requests, so a site on GitHub Pages or a plain bucket gets no crawler numbers. If the site is behind Cloudflare, Cloudflare's AI Crawl Control shows AI crawler activity without code."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which visits count as coming from AI assistants?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Visits whose referrer or utm_source is an assistant: chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com, DeepSeek, Meta AI, Grok, Mistral, You.com, Phind, Poe and others. The number is a floor: assistants that open links without a referrer arrive as Direct, and clicks from Google's AI Overviews and AI Mode count as Google organic search."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack block AI crawlers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It counts them and reads your robots.txt, but it doesn't change robots.txt or block anything. If you want to block a crawler, do it in robots.txt or in your CDN or firewall. The report treats blocking training bots as your choice and only flags search and answer bots that robots.txt keeps out."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/#services">Products</a><span aria-hidden="true">/</span><span>AI search</span></nav>
+      <h1>AI search analytics your AI agent sets up</h1>
+      <p class="lede">AgentFirstStack AI search shows what AI assistants do with your site: which AI crawlers read which pages, which assistants (ChatGPT, Perplexity, Claude, Gemini, Copilot and others) send you visitors, how those visitors convert next to your other channels, and what to change next. It's part of AgentFirstStack's web analytics, and it replaces digging through server logs for GPTBot and hand-building GA4 channel groups. It's free and open source, and your agent sets it up and tests it. It doesn't run prompts through chatbots to count brand mentions: AI visibility trackers do that.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>The crawler half needs a few lines in your server or edge code, so paste this into your agent in the site's repo. If the site already runs AgentFirstStack analytics, it adds only what's missing.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Set up AI search analytics for this project with AgentFirstStack. It's free, open-source web analytics built for agents that also shows which AI crawlers read the site and which AI assistants send visitors, and you can do the setup yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and https://analytics.agentfirststack.com/llms.txt, in particular its "AI crawlers" and "AI search" sections.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. If there's no analytics site for the production domain yet, create one, serve the tracker from our own domain (a first-party domain, or the path proxy, as the manual describes), deploy, and run verify so the domain is verified.
+
+4. Make sure there's a goal for each sign-up, purchase or lead that matters here, so visitors from AI assistants can be compared with the other channels.
+
+5. If the site has server or edge code (Workers, Next.js middleware, Express, Rails, Django), report bot requests from it: for each request whose user agent matches the prefilter from GET /v1/crawlers, POST /v1/sites/:id/crawls with user_agent, path and status, without waiting for the answer. Keep the key server-side. If the site is static hosting with no server code, tell me and skip this step.
+
+6. Deploy, request one page with the user agent "afs-test-bot/1.0" (it counts as an unknown bot, not as an AI crawler), and check that GET /v1/sites/:id/crawlers?category=other shows it. Then run the setup check (GET https://agentfirststack.com/v1/setup) and fix what it reports.
+
+7. Read GET /v1/sites/:id/ai-search?period=30d and tell me its summary and next_steps. Don't change robots.txt, llms.txt or the CDN's bot settings without asking me.
+
+8. Write the site id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what you set up, what the crawler test and the AI search report returned, what's waiting on me, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="agent">What your agent does</h2>
+<ol>
+<li><b>Gets a key</b> with <code>POST https://agentfirststack.com/v1/signup</code>: one request, no form, no email. The key goes in <code>.env</code> as <code>AGENTFIRSTSTACK_API_KEY</code> and works on every service.</li>
+<li><b>Creates the analytics site</b> (<code>POST /v1/sites</code>), serves the tracker from the site's own domain through a first-party domain or the path proxy, and runs <code>POST /v1/sites/:id/verify</code>, which also verifies the domain. The robots.txt check below only runs for a verified domain.</li>
+<li><b>Adds goals</b> for sign-ups, purchases and leads (<code>POST /v1/sites/:id/goals</code>). Without goals there's nothing to compare: with them, the report shows whether visitors from AI assistants convert better or worse than your other channels, and with payments connected, what they spend.</li>
+<li><b>Reports bot requests from your server.</b> Bots don't run JavaScript, so the tracker never sees them. Your agent adds a few lines to the server or edge middleware (the manual has them for Cloudflare Workers, Next.js and Express): when a request's user agent matches the prefilter regex from <code>GET /v1/crawlers</code>, it sends <code>{user_agent, path, status}</code> to <code>POST /v1/sites/:id/crawls</code> (MCP <code>record_crawls</code>) and doesn't wait for the answer. Human requests never leave your server and pages aren't slowed down. Busy sites batch up to 100 hits a call.</li>
+<li><b>Tests it</b> with a request from a made-up bot user agent, read back from <code>GET /v1/sites/:id/crawlers</code> (MCP <code>get_crawlers</code>), and runs the setup check.</li>
+<li><b>Reads the report</b>, <code>GET /v1/sites/:id/ai-search</code> (MCP <code>get_ai_search</code>), and works through its <code>next_steps</code> with you.</li>
+</ol>
+
+<h2 id="features">What you get</h2>
+<h3>AI crawlers, by what they do</h3>
+<p>Each reported request is classified by its user agent against a list we maintain from each operator's crawler documentation (<code>GET /v1/crawlers</code> returns it, no key needed). Hits are counted per day, bot, page and status class, and never as visitors.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Kind</th><th>What they do</th><th>Examples</th></tr></thead>
+<tbody>
+<tr><th scope="row">AI answers</th><td>Fetch a page while answering someone</td><td>ChatGPT-User, Claude-User, Perplexity-User, MistralAI-User, DuckAssistBot, Meta-ExternalFetcher</td></tr>
+<tr><th scope="row">AI search</th><td>Index pages to cite in answers</td><td>OAI-SearchBot, Claude-SearchBot, PerplexityBot, Amazonbot, YouBot</td></tr>
+<tr><th scope="row">AI training</th><td>Collect text to train models; they send no visitors</td><td>GPTBot, ClaudeBot, CCBot, Bytespider, Meta-ExternalAgent, Applebot-Extended</td></tr>
+<tr><th scope="row">Search engines</th><td>Index pages for search results; Gemini and Copilot answer from Google's and Bing's indexes</td><td>Googlebot, bingbot, Applebot, DuckDuckBot</td></tr>
+</tbody>
+</table>
+</div>
+<p>SEO tools (AhrefsBot, SemrushBot) and link previews (Slackbot, Twitterbot) are counted too, apart from the rest. The AI search report's totals cover the three AI kinds; search engines show in <code>GET /v1/sites/:id/crawlers</code> and in the gap check below.</p>
+
+<h3>The pages they read, and the files that guide them</h3>
+<ul>
+<li><b>Bots:</b> each one with its operator, kind, hits, pages, errors, robots.txt reads, when it was last seen, and the change from the previous period.</li>
+<li><b>Pages:</b> the pages AI bots read most, which operators read each, and how many reads got a 4xx or 5xx answer.</li>
+<li><b>Files:</b> what AI bots asked for of <code>/robots.txt</code>, <code>/llms.txt</code>, <code>/llms-full.txt</code> and <code>/sitemap.xml</code>, and whether they got it or an error.</li>
+</ul>
+
+<h3>Visitors from AI assistants, and how they convert</h3>
+<ul>
+<li><b>Who sent them:</b> visits whose referrer or <code>utm_source</code> is an assistant (chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com, DeepSeek, Meta AI, Grok, Mistral, You.com, Phind, Poe and others) form the AI Assistants channel, with visitors, conversions and revenue per assistant.</li>
+<li><b>Where they land:</b> the entry pages of those visits, with the same numbers.</li>
+<li><b>Next to your other channels:</b> visitors, engagement, bounce rate, conversions, conversion rate, revenue and revenue per visitor for AI assistants and for everything else, and the lift (AI assistants' value divided by the others'). Until both sides have 30 visitors, the report marks the comparison as not enough data, because rates are noisy below that.</li>
+<li><b>A floor, not a total:</b> assistants that open links without a referrer arrive as Direct, and clicks from Google's AI Overviews and AI Mode come from google.com, so they count as organic search.</li>
+</ul>
+
+<h3>Where reading and visiting don't meet</h3>
+<p>Once your server reports crawls, the report lines the two halves up. <code>crawled_not_referred</code> lists pages AI crawlers read that no visitor from an assistant landed on. <code>referred_not_crawled</code> lists an assistant's landing pages that none of its vendor's crawlers fetched in the period or the 30 days before (OpenAI's for ChatGPT, Anthropic's for Claude, Googlebot for Gemini, bingbot for Copilot): those it probably knows from a search index. Assistants it can't check, because none of their crawlers is on the list, are named with the reason.</p>
+
+<h3>Next steps, and the robots.txt check</h3>
+<p>Every report ends with up to six <code>next_steps</code> in plain sentences, worked out from the numbers: report crawler hits if the server doesn't yet; robots.txt that keeps out a search or answer bot; AI crawler page requests failing (10% or more answered 4xx or 5xx, once AI crawlers made 20 or more requests); <code>/llms.txt</code> requested but missing; no visitors from AI assistants yet, with what assistants tend to cite; goals to create; and pages bots read that send no one.</p>
+<p>For a verified domain, the report fetches the site's own robots.txt (over https, cached for an hour) and reads it the way crawlers do, following RFC 9309: the group that names the bot or else <code>*</code>, the longest matching rule wins. When an AI search or answer bot read robots.txt and then no page, the next step says whether your robots.txt disallows it, and names the bots to allow if you want to be cited: OAI-SearchBot, ChatGPT-User, PerplexityBot, Perplexity-User, Claude-SearchBot and Claude-User. Blocking training bots such as GPTBot, ClaudeBot and CCBot is treated as a separate choice and isn't flagged. If no search or answer bot fetched any page, it says to check robots.txt and whether a CDN or firewall setting blocks or challenges them.</p>
+<p>The same report is in the dashboard, with a copyable prompt that asks your agent to work through the next steps. It compares with the previous period by default, or the same period a year before.</p>
+
+<figure><img src="/img/dashboard-ai-search.webp" width="1600" height="1310" alt="The AI search view in the AgentFirstStack dashboard for agentfirststack.com: 41 pages read by AI bots, 83 reads by 8 bots, no visitors from AI assistants, the pages bots read most, reads by bot kind, robots.txt, llms.txt and sitemap reads, and two next steps." loading="lazy"><figcaption>Our own site, agentfirststack.com, in the dashboard: the last 30 days as of 7 November 2026. AI bots read 41 pages, 83 reads by 8 bots; robots.txt was read 21 times and llms.txt 4 times. No visitors from AI assistants yet: it's a new site, and the next steps say what to work on.</figcaption></figure>
+
+<h2 id="check">What the setup check verifies</h2>
+<p>The setup check (<code>GET https://agentfirststack.com/v1/setup</code>, MCP <code>afs_check_setup</code>) has one row for this, "AI crawlers", with the check <code>analytics.crawlers</code>: "AI crawler and search bot visits are reported from the site's server". It passes when the site reported bot requests in the last 7 days, and lists them by kind (AI answers, AI search, AI training, search engines, SEO tools, link previews, other bots). With none, it's a warning, not a failure: the setup can still be ready, because a site on static hosting has no server to report from.</p>
+<p>The rest of the report depends on the analytics checks: <code>analytics.site</code> (analytics has a site for the website), <code>analytics.receiving</code> (it's receiving events from the pages), <code>analytics.domain_verified</code> (the domain is verified, which the robots.txt check needs), <code>analytics.first_party</code> (browser events arrive through the site's own domain, so ad blockers don't drop them) and <code>analytics.goals</code> (there's a goal for each conversion and main action).</p>
+
+<h2 id="compared">Compared with</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Instead of</th><th>What it shows</th><th>What it leaves to you</th><th>More</th></tr></thead>
+<tbody>
+<tr><th scope="row">AI crawler log digging</th><td>Every request, if your host keeps logs and you search them for GPTBot, ClaudeBot or PerplexityBot</td><td>Keeping a list of user agents current, telling training bots from search and answer bots, and joining crawls to the visits and conversions they lead to</td><td><a href="https://analytics.agentfirststack.com/llms.txt">The "AI crawlers" section of the manual</a></td></tr>
+<tr><th scope="row">GA4 AI channel groups</th><td>Visits from AI assistants: GA4's default channel group now has an "AI Assistant" channel; before it, you built a custom channel group with a regex</td><td>Crawlers: GA4 drops known bots and doesn't show how many it dropped</td><td><a href="/google-analytics-alternative">Google Analytics alternative</a></td></tr>
+<tr><th scope="row">AI visibility trackers</th><td>How often answers mention and cite your brand, for the prompts you pay to track</td><td>Not replaced: AgentFirstStack doesn't run prompts. The two are complementary</td><td><a href="/ai-visibility-tracker">AI visibility trackers vs AI search analytics</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>On GA4: Google's help page on custom channel groups gives an "Example: AI assistants" with a regex and the step to "reorder your channel list" so the channel sits above Referral (<a href="https://support.google.com/analytics/answer/13051316?hl=en">Custom channel groups</a>, as of 7 Nov 2026). Its default channel group page now lists "AI Assistant" for "sources like ChatGPT, Gemini, Deepseek, Copilot, or Grok", excluding AI Overviews and AI Mode (<a href="https://support.google.com/analytics/answer/9756891?hl=en">Default channel group</a>, as of 7 Nov 2026); Search Engine Journal reported the change on 14 May 2026 (<a href="https://www.searchenginejournal.com/google-analytics-adds-ai-assistant-as-default-channel-group/574974/">report</a>). On bots, Google says "you cannot disable known bot traffic exclusion or see how much" was excluded (<a href="https://support.google.com/analytics/answer/9888366?hl=en">Known bot-traffic exclusion</a>, as of 7 Nov 2026).</p>
+
+<h2 id="limits">Limits</h2>
+<ul>
+<li><b>Crawler hits:</b> up to 100 per call, each from the last 2 days. On the hosted service, 20,000 hits per site a day and 50,000 per account (5,000 each before a person claims the project). Past that, the day's further hits aren't counted, and the call answers <code>429 daily_limit</code>. <code>GET /v1/usage</code> shows what's used.</li>
+<li><b>What's kept:</b> daily counts per bot, page (query string dropped) and status class, not individual requests.</li>
+<li><b>Sites:</b> 10 analytics sites per project, 3 before it's claimed.</li>
+</ul>
+<p>All the fair-use limits are on the <a href="/limits">limits page</a>. Self-hosted, you set them yourself.</p>
+
+<h2 id="fit">When it isn't the right fit</h2>
+<ul>
+<li><b>You want to know what ChatGPT or Perplexity says about you.</b> Brand mentions, citations, sentiment and share of voice against competitors come from running prompts, which we don't do. Use an <a href="/ai-visibility-tracker">AI visibility tracker</a>, alongside this if you like.</li>
+<li><b>Your site has no server or edge code.</b> On GitHub Pages or a plain bucket there's nothing to report crawls from, so you get the visitor half only. If the site is behind Cloudflare, its AI Crawl Control is "Available on all plans", shows which AI services access your content and can block them (<a href="https://developers.cloudflare.com/ai-crawl-control/">Cloudflare docs</a>, as of 7 Nov 2026).</li>
+<li><b>You need verified crawlers.</b> We classify by user agent, which a bot declares itself, so a spoofed GPTBot counts as GPTBot. There's no IP or reverse-DNS verification.</li>
+<li><b>You need AI Overviews and AI Mode apart from organic search.</b> Those clicks come from google.com, and we can't tell them apart; GA4's AI Assistant channel excludes them too.</li>
+<li><b>You need a raw crawler log.</b> We keep daily counts, not each request with its timestamp and IP.</li>
+</ul>
+
+<h2 id="faq">FAQ</h2>
+<h3>What is AI search analytics?</h3>
+<p>Measuring what AI assistants do with your site: which AI crawlers read which pages, which assistants such as ChatGPT, Perplexity, Claude, Gemini and Copilot send visitors, and what those visitors do once they arrive. AgentFirstStack puts both halves in one report, next to your other channels, with next steps.</p>
+<h3>Does AgentFirstStack show what ChatGPT says about my brand?</h3>
+<p>No. It doesn't run prompts through ChatGPT, Perplexity or other assistants, so it can't tell you how often answers mention or cite you, or how you compare with competitors there. AI visibility trackers such as Profound, Peec AI, Otterly and Semrush's AI Visibility Toolkit do that. AgentFirstStack measures your own site: what the bots read and what the visitors do.</p>
+<h3>Why does my server have to report AI crawlers?</h3>
+<p>Bots don't run JavaScript, so a browser tracker never sees them. A few lines in your server or edge middleware send each request whose user agent matches the prefilter from <code>GET /v1/crawlers</code> to <code>POST /v1/sites/:id/crawls</code>, without waiting for the answer. Human requests never leave your server.</p>
+<h3>Does it work on a static site?</h3>
+<p>Half of it. Visitors from AI assistants and how they convert work on any site with the tracker. Crawler data needs server or edge code to report bot requests, so a site on GitHub Pages or a plain bucket gets no crawler numbers. If the site is behind Cloudflare, Cloudflare's AI Crawl Control shows AI crawler activity without code.</p>
+<h3>Which visits count as coming from AI assistants?</h3>
+<p>Visits whose referrer or <code>utm_source</code> is an assistant: chatgpt.com, perplexity.ai, claude.ai, gemini.google.com, copilot.microsoft.com, DeepSeek, Meta AI, Grok, Mistral, You.com, Phind, Poe and others. The number is a floor: assistants that open links without a referrer arrive as Direct, and clicks from Google's AI Overviews and AI Mode count as Google organic search.</p>
+<h3>Does AgentFirstStack block AI crawlers?</h3>
+<p>No. It counts them and reads your robots.txt, but it doesn't change robots.txt or block anything. If you want to block a crawler, do it in robots.txt or in your CDN or firewall. The report treats blocking training bots as your choice and only flags search and answer bots that robots.txt keeps out.</p>
+
+<p class="meta">Product names belong to their owners. AgentFirstStack isn't affiliated with Google, Cloudflare, OpenAI, Anthropic, Perplexity, Microsoft or the makers of the trackers named here.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/ai-visibility-tracker"><span class="svc svc-analytics">Analytics</span><b>AI visibility trackers vs AI search analytics</b><span>What each measures, and when you want both.</span></a></li>
+        <li><a class="card" href="/analytics"><span class="svc svc-analytics">Analytics</span><b>Web analytics</b><span>The analytics AI search is part of.</span></a></li>
+        <li><a class="card" href="/google-analytics-alternative"><span class="svc svc-analytics">Analytics</span><b>Google Analytics alternative</b><span>Where GA4 fits, and where it doesn't.</span></a></li>
+        <li><a class="card" href="/page-speed"><span class="svc svc-analytics">Analytics</span><b>Page speed</b><span>Core Web Vitals from real visitors.</span></a></li>
+        <li><a class="card" href="/agent-first-analytics"><span class="svc svc-analytics">Analytics</span><b>Agent-first analytics</b><span>What it is, and what to ask of any tool.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#agent">What your agent does</a></li><li><a href="#features">What you get</a></li><li><a href="#check">What the setup check verifies</a></li><li><a href="#compared">Compared with</a></li><li><a href="#limits">Limits</a></li><li><a href="#fit">When it isn't the right fit</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

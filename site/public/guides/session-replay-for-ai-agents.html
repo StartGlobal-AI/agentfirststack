@@ -103,7 +103,7 @@
           "name": "Can a person watch a recording?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. create_replay_link returns a player URL for one session that expires after 7 days by default. Share links need a verified domain."
+            "text": "Yes. create_replay_link returns a player URL for one session that expires after a day by default (up to 30 days with expires_in). Share links need a verified domain."
           }
         }
       ]
@@ -168,7 +168,7 @@
 </div>
 
 <h2 id="what">What gets recorded</h2>
-<p>The recorder captures changes to the page (with <a href="https://github.com/rrweb-io/rrweb">rrweb</a>), not video. A 2 KB loader decides whether a tab is recorded and loads the recorder, about 29 KB gzipped, after the page's load event. From the events, the server derives signals for each session:</p>
+<p>The recorder captures changes to the page (with <a href="https://github.com/rrweb-io/rrweb">rrweb</a>), not video. A loader of about 1.7 KB gzipped decides whether a tab is recorded and loads the recorder, about 32 KB gzipped, after the page's load event. From the events, the server derives signals for each session:</p>
 <ul>
 <li><b>Rage click</b>: three or more clicks within a second on one element.</li>
 <li><b>Dead click</b>: nothing changes within a second of a click.</li>
@@ -257,7 +257,7 @@ curl -s "$R/v1/sites/$RSITE/summary?page=/checkout*&amp;period=7d" -H "$H"</code
 <h3>Does it record passwords or what visitors type?</h3>
 <p>No. Typed values are masked in every mode, and password, payment-card and one-time-code fields can never be unmasked. All other text is masked too unless you unmask specific UI elements.</p>
 <h3>Can a person watch a recording?</h3>
-<p>Yes. <code>create_replay_link</code> returns a player URL for one session that expires after 7 days by default. Share links need a verified domain.</p>
+<p>Yes. <code>create_replay_link</code> returns a player URL for one session that expires after a day by default (up to 30 days with <code>expires_in</code>). Share links need a verified domain.</p>
 
       <h2 id="related">Related</h2>
       <ul class="cards">

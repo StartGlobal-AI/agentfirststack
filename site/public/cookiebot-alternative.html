@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cookiebot alternative: a free banner in your tag manager</title>
+<meta name="description" content="Cookiebot scans and blocks cookies, from €7 a month per domain. AgentFirstStack's free banner holds your tag manager's tags. When to pick which.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="canonical" href="https://agentfirststack.com/cookiebot-alternative">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="Manual for agents">
+<meta property="og:site_name" content="AgentFirstStack">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cookiebot alternative: a free consent banner inside your tag manager">
+<meta property="og:description" content="Cookiebot scans and blocks cookies, from €7 a month per domain. AgentFirstStack's free banner holds your tag manager's tags. When to pick which.">
+<meta property="og:url" content="https://agentfirststack.com/cookiebot-alternative">
+<meta property="og:image" content="https://agentfirststack.com/og/cookiebot-alternative.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cookiebot alternative: a free consent banner inside your tag manager">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cookiebot alternative: a free consent banner inside your tag manager">
+<meta name="twitter:description" content="Cookiebot scans and blocks cookies, from €7 a month per domain. AgentFirstStack's free banner holds your tag manager's tags. When to pick which.">
+<meta name="twitter:image" content="https://agentfirststack.com/og/cookiebot-alternative.png">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/content.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentfirststack.com/#org",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "logo": "https://agentfirststack.com/brand/logo-512.png",
+      "sameAs": ["https://github.com/StartGlobal-AI/agentfirststack"],
+      "parentOrganization": { "@type": "Organization", "name": "StartGlobal", "url": "https://startglobal.co" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://agentfirststack.com/#website",
+      "name": "AgentFirstStack",
+      "url": "https://agentfirststack.com/",
+      "publisher": { "@id": "https://agentfirststack.com/#org" }
+    },
+    {
+      "@type": "TechArticle",
+      "@id": "https://agentfirststack.com/cookiebot-alternative#article",
+      "headline": "Cookiebot alternative: a free consent banner inside your tag manager",
+      "description": "Cookiebot scans and blocks cookies, from €7 a month per domain. AgentFirstStack's free banner holds your tag manager's tags. When to pick which.",
+      "url": "https://agentfirststack.com/cookiebot-alternative",
+      "image": "https://agentfirststack.com/og/cookiebot-alternative.png",
+      "datePublished": "2026-11-07",
+      "dateModified": "2026-11-07",
+      "inLanguage": "en",
+      "author": { "@id": "https://agentfirststack.com/#org" },
+      "publisher": { "@id": "https://agentfirststack.com/#org" },
+      "isPartOf": { "@id": "https://agentfirststack.com/#website" },
+      "mainEntityOfPage": "https://agentfirststack.com/cookiebot-alternative"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "AgentFirstStack", "item": "https://agentfirststack.com/" },
+        { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://agentfirststack.com/guides" },
+        { "@type": "ListItem", "position": 3, "name": "Cookiebot alternative", "item": "https://agentfirststack.com/cookiebot-alternative" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://agentfirststack.com/cookiebot-alternative#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is there a free alternative to Cookiebot?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Cookiebot itself is free for one domain up to 50 subpages, with an initial scan, manual blocking, one language and consent that expires after up to a month. AgentFirstStack's consent banner is free at any size within the hosted service's fair-use limits and open source, but it's part of a tag manager: it controls the tags in that container, not every script on the site."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does AgentFirstStack scan for cookies like Cookiebot?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Cookiebot's scanner crawls the site for cookies and trackers and categorizes them. AgentFirstStack's tags scan reads up to 6 pages' HTML and reports the tags, tools and consent platforms on them, but doesn't list cookies or generate a cookie declaration, and its banner doesn't block scripts loaded outside its container."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I keep Cookiebot and still use AgentFirstStack Tags?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Cookiebot has Google Consent Mode v2 on by default, and the AgentFirstStack container follows any consent platform that calls gtag('consent', 'update', ...), so its tags wait for the choice made in Cookiebot's banner. With consent.tcf it follows an IAB TCF v2 platform instead. Leave the AgentFirstStack banner off, so visitors see one banner."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is the AgentFirstStack banner Google-certified or IAB TCF registered?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No to both. Cookiebot is on Google's list of certified CMPs (TCF CMP ID 134) and is a Gold partner in Google's CMP Partner Program. Publishers serving personalized Google ads in the EEA, the UK or Switzerland need a certified CMP, so they should keep Cookiebot or another certified platform."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does Cookiebot cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "As of 7 November 2026, Cookiebot Core is free for one domain up to 50 subpages. Premium is €7 a month for one domain under 50 subpages, then €15, €30, €50 or €90 a month per domain by the number of subpages, excluding VAT, and daily scans cost €99 a month more. Subdomains count as separate domains."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will visitors have to choose again if I switch?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The AgentFirstStack banner keeps its own choice cookie and doesn't read Cookiebot's, so visitors who already chose are asked once more. Cookiebot's consent records can't be imported either: export them before you cancel."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>window.afsa=window.afsa||function(){(afsa.q=afsa.q||[]).push(arguments)}</script>
+<script defer src="/_a/s.js" data-site="site_6hmh1a6dbbn8mdfp"></script>
+<script async src="/_t/c/ctr_6znmv02cawfa9pb9.js"></script>
+<script defer src="/content.js"></script>
+</head>
+<body>
+
+<header class="nav is-scrolled">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AgentFirstStack home">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="2" fill="#5B8CFF"/><rect x="13" y="2" width="9" height="9" rx="2" fill="#9CC2FF"/><rect x="2" y="13" width="9" height="9" rx="2" fill="#1A3FD6"/><rect x="13" y="13" width="9" height="9" rx="2" fill="#2F6BFF"/></svg>
+      <span>AgentFirstStack</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="/guides">Guides</a>
+      <a href="/#services">Products</a>
+      <a href="/llms.txt">Manual</a>
+      <a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a>
+      <a href="/signin">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  <div class="wrap page-inner">
+    <article class="prose">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="/">AgentFirstStack</a><span aria-hidden="true">/</span><a href="/guides">Guides</a><span aria-hidden="true">/</span><span>Cookiebot alternative</span></nav>
+      <h1>Cookiebot alternative: a free consent banner inside your tag manager</h1>
+      <p class="lede">Cookiebot, from Usercentrics, is a consent platform that scans your site for cookies, blocks them until visitors agree and keeps consent records: free for one domain up to 50 subpages, then €7 to €90 a month per domain (as of 7 November 2026). AgentFirstStack Tags has a free consent banner built into its tag manager, which an AI agent turns on with one config change: it holds the container's tags until each visitor chooses, drives Google Consent Mode v2 and keeps 12 months of consent records. It doesn't scan for cookies, block scripts outside the container or support IAB TCF, so keep Cookiebot if you show Google ads as a publisher, need TCF, or have trackers you can't move into a tag manager.</p>
+      <p class="meta">Updated <time datetime="2026-11-07">7 November 2026</time></p>
+
+      <h2 id="prompt">Set it up with one prompt</h2>
+<p>Paste this into your coding agent. It finds out how Cookiebot is used first, and stops if the site is one that should keep it.</p>
+<div class="prompt">
+        <span class="prompt-label">Paste this into Claude Code, Cursor or Codex</span>
+        <p class="prompt-text" id="prompt-1">Replace Cookiebot on this project with the consent banner in AgentFirstStack Tags, if it fits. It's a free, open-source tag manager with a built-in consent banner that drives Google Consent Mode v2, and you can set it up yourself: there is no signup form.
+
+1. Read https://agentfirststack.com/llms.txt and the "Consent banner" section of https://tags.agentfirststack.com/llms.txt.
+
+2. If this project's .env already has AGENTFIRSTSTACK_API_KEY, use it and read AGENTFIRSTSTACK.md. Otherwise get a key: curl -X POST https://agentfirststack.com/v1/signup, and save api_key in .env as AGENTFIRSTSTACK_API_KEY and in the production secrets.
+
+3. Before you change anything, tell me how Cookiebot is used here: which scripts, pixels and embeds it holds back (in the code, and through its automatic blocking if that's on), whether IAB TCF is on, and whether the site shows Google ads through AdSense or Ad Manager. If TCF is on or the site shows Google ads, stop there: Cookiebot stays, and you can connect it to a tags container instead, because the container follows Google Consent Mode updates.
+
+4. Otherwise, use the project's tags container, or create one for the production domain with its snippet first in the head of every page. Move every tracker Cookiebot holds back into the container as a tag with the matching consent type, and list anything you can't move.
+
+5. Turn on the consent banner in the draft with our privacy policy URL, only the categories we use, and the languages the Cookiebot banner showed. Add a "Cookie settings" link with data-afst-consent-open to the footer.
+
+6. Open a preview with &amp;afst_consent=open in a real browser, test Reject all and Accept all, validate, and show me what each did. Publish and remove Cookiebot's script in the same change, and only when I say so, so visitors never see two banners.
+
+7. Remind me to export Cookiebot's consent records before I cancel: they can't be imported.
+
+8. Write the container id and the env var name (never the key) in AGENTFIRSTSTACK.md, and create a claim link for me with POST https://agentfirststack.com/v1/claim-link.
+
+Tell me what moved into the container, what still loads outside it, what each test showed, and give me the claim link.</p>
+        <button class="btn btn-primary" type="button" data-copy-from="prompt-1" hidden>Copy prompt</button>
+      </div>
+
+<h2 id="cookiebot">What Cookiebot is</h2>
+<p>Cookiebot is a consent management platform: "Cookiebot is a trademark of Usercentrics A/S", a Danish company (<a href="https://www.cookiebot.com/en/pricing/">cookiebot.com</a>, as of 7 Nov 2026). Its scanner finds the cookies and trackers on your pages and categorizes them; the pricing page says "Every month our scanner crawls your website to identify new cookies and trackers". The banner holds trackers back until the visitor agrees (by manual markup on Free, and automatically too on Premium), keeps a record of each choice, and shows a cookie declaration. Setup is an account, a banner, and "Paste the code into your site header".</p>
+<p>Cookiebot Core is priced per domain by the number of subpages, and "Plans automatically upgrade depending on your website's number of subpages". Subdomains are billed as separate domains. Prices in euros, excluding VAT (<a href="https://www.cookiebot.com/en/pricing/">cookiebot.com/en/pricing</a>, as of 7 Nov 2026):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Plan</th><th>A month, per domain</th><th>Subpages</th></tr></thead>
+<tbody>
+<tr><th scope="row">Free</th><td>€0</td><td>Up to 50, one domain</td></tr>
+<tr><th scope="row">Premium Lite</th><td>€7</td><td>Fewer than 50, one domain</td></tr>
+<tr><th scope="row">Premium Small</th><td>€15</td><td>Fewer than 350, on accounts with four or more domains</td></tr>
+<tr><th scope="row">Premium Medium</th><td>€30</td><td>Fewer than 3,500 (also smaller sites on accounts with one to three domains)</td></tr>
+<tr><th scope="row">Premium Large</th><td>€50</td><td>Fewer than 7,000</td></tr>
+<tr><th scope="row">Premium XLarge</th><td>€90</td><td>7,000 or more</td></tr>
+</tbody>
+</table>
+</div>
+<p>The same page shows US dollar prices of $10, $20, $43, $70 and $120, a 14-day trial of Premium, and Usercentrics Advanced for multi-brand and enterprise setups, priced on request. What the two Core tiers include, from its comparison table:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Free</th><th>Premium</th></tr></thead>
+<tbody>
+<tr><th scope="row">Cookie scans</th><td>Initial scan</td><td>Automated: monthly, or daily for €99 a month more</td></tr>
+<tr><th scope="row">Blocking cookies and trackers</th><td>Manual</td><td>Manual and automatic</td></tr>
+<tr><th scope="row">Consent records</th><td>Up to 12 months</td><td>Up to 12 months, with CSV export</td></tr>
+<tr><th scope="row">Consent lasts</th><td>Up to 1 month</td><td>Up to 12 months</td></tr>
+<tr><th scope="row">Languages</th><td>1</td><td>47+, with auto-translation</td></tr>
+<tr><th scope="row">Geotargeting</th><td>No</td><td>Yes</td></tr>
+<tr><th scope="row">IAB TCF 2.4</th><td>No</td><td>Yes</td></tr>
+<tr><th scope="row">Google Consent Mode, Microsoft UET Consent Mode, Amazon Consent Signal, Global Privacy Control</th><td>Yes</td><td>Yes</td></tr>
+</tbody>
+</table>
+</div>
+<p>Cookiebot CMP is on Google's <a href="https://support.google.com/adsense/answer/13554116">list of certified CMPs</a> with TCF CMP ID 134 (web), and "cookiebotusercentrics" is a Gold partner in Google's <a href="https://cmppartnerprogram.withgoogle.com/">CMP Partner Program</a>. Usercentrics also sells app and CTV consent platforms.</p>
+
+<h2 id="agentfirststack">How AgentFirstStack does it</h2>
+<p>The banner is part of <a href="/tag-manager">AgentFirstStack Tags</a>. Instead of finding cookies and blocking them, it starts from the other end: the trackers run as tags in one container, and each tag waits for its consent type. Your agent turns it on in the container's draft, previews it, and publishes:</p>
+<pre><code>T=https://tags.agentfirststack.com
+curl -s -X PATCH $T/v1/containers/$C/draft -H "$H" -H 'content-type: application/json' \
+  -d '{"consent_banner":{"enabled":true,"privacy_url":"https://example.com/privacy","languages":{"de":{"accept":"Alle akzeptieren","reject":"Alle ablehnen"}}}}'
+curl -s -X POST $T/v1/containers/$C/preview -H "$H"     # open preview_url with &amp;afst_consent=open
+curl -s -X POST $T/v1/containers/$C/publish -H "$H"
+curl -sI "$T/c/$C.js" | grep -i x-afs-consent-banner     # "ask" for a visitor who must choose
+curl -s "$T/v1/containers/$C/consent?since=30d" -H "$H"  # accept, reject and custom rates</code></pre>
+<ul>
+<li><b>Who is asked:</b> visitors from the EU, Iceland, Liechtenstein, Norway, the UK and Switzerland, and visitors whose country is unknown, start with every category denied until they choose. Everyone else starts with the container's defaults and can still open the banner. <code>regions: "all"</code> asks everyone.</li>
+<li><b>The banner:</b> "Reject all" styled exactly like "Accept all" on the first layer, "Customize" for one unticked box per category (analytics, advertising, personalization), and "Necessary" always on. These defaults can't be turned off. Closing it without a choice changes nothing.</li>
+<li><b>What follows the choice:</b> the container's tags (ad pixels wait for <code>ad_storage</code>, GA4 for <code>analytics_storage</code>), Google Consent Mode v2 default and updates (also seen by a GTM container loaded after the snippet), AgentFirstStack session replay, and the analytics tracker when it keeps a visitor id. An <code>afst_consent</code> dataLayer event lets the site's own code react.</li>
+<li><b>Withdrawal:</b> a "Cookie settings" link or an optional floating button reopens the settings; turning a category off stops its tags, updates Consent Mode, and deletes the container's own identity and click-id cookies.</li>
+<li><b>Records:</b> one per choice, kept 12 months, with an anonymous consent id, time, banner version, choice per category, country, language and the container version that held the text. No IP address, user agent or visitor id.</li>
+<li><b>The choice cookie:</b> <code>_afst_cc</code>, kept 180 days by default and up to 395. Raising the banner's version asks again.</li>
+</ul>
+<p>The <a href="/cookie-consent-banner">cookie consent banner guide</a> has the rules a banner is measured against, with the sources, and how this one maps to each.</p>
+
+<h2 id="gaps">What it doesn't do that Cookiebot does</h2>
+<ul>
+<li><b>Cookie scanning and a cookie declaration.</b> Nothing crawls the site for cookies or keeps a cookie list current. The tags scan reads up to 6 pages' HTML for tags, tools and consent platforms; your privacy policy has to list the cookies and third parties.</li>
+<li><b>Automatic blocking.</b> Scripts outside the container (hard-coded pixels, plugins, chat widgets, video embeds) keep running until they're moved into the container or gated by your own code.</li>
+<li><b>IAB TCF and Google certification.</b> It doesn't create a TCF consent string, and it isn't a Google-certified CMP or CMP partner.</li>
+<li><b>Vendor-level choices.</b> Visitors choose by category, not by vendor.</li>
+<li><b>Translations.</b> Only English is built in; your agent writes the other languages, up to 30, and nothing is translated automatically.</li>
+<li><b>Other vendors' cookies on withdrawal.</b> Only the container's own cookies are removed.</li>
+<li><b>Apps and opt-out templates.</b> Websites only, and no US-state opt-out templates. Browsers that send Global Privacy Control or Do Not Track get no tags at all by default.</li>
+</ul>
+
+<h2 id="comparison">Side by side</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th></th><th>Cookiebot (Core)</th><th>AgentFirstStack banner</th></tr></thead>
+<tbody>
+<tr><th scope="row">What it is</th><td>A consent management platform for the whole site</td><td>A consent banner inside a tag manager</td></tr>
+<tr><th scope="row">Price</th><td>Free for one domain up to 50 subpages; Premium €7 to €90 a month per domain; daily scans €99 a month more</td><td>Free hosted service with fair-use limits</td></tr>
+<tr><th scope="row">Finding trackers</th><td>Scans for cookies and trackers: once on Free, monthly on Premium</td><td>Trackers are the tags you put in the container</td></tr>
+<tr><th scope="row">Blocking</th><td>Manual on Free; manual and automatic on Premium</td><td>The container's tags, Google tags via Consent Mode, AgentFirstStack replay and analytics</td></tr>
+<tr><th scope="row">Cookie declaration</th><td>Default on Free, customizable on Premium</td><td>None; your privacy policy</td></tr>
+<tr><th scope="row">Consent records</th><td>Up to 12 months; CSV export on Premium</td><td>12 months, over the API by consent id; no IP address</td></tr>
+<tr><th scope="row">How long consent lasts</th><td>Up to 1 month on Free; up to 12 months on Premium</td><td>180 days by default, up to 395</td></tr>
+<tr><th scope="row">Google Consent Mode v2</th><td>Yes, on by default</td><td>Yes, basic or advanced</td></tr>
+<tr><th scope="row">IAB TCF</th><td>TCF 2.4 on Premium</td><td>No; can follow a TCF platform you run</td></tr>
+<tr><th scope="row">Google-certified CMP</th><td>Yes (TCF CMP ID 134), Gold CMP partner</td><td>No</td></tr>
+<tr><th scope="row">Languages</th><td>1 on Free; 47+ with auto-translation on Premium</td><td>English, plus up to 30 your agent writes</td></tr>
+<tr><th scope="row">Who is asked</th><td>Geotargeting on Premium</td><td>EEA, UK, Switzerland and unknown countries, or everyone</td></tr>
+<tr><th scope="row">Setup</th><td>An account, then the banner code in the site header</td><td>One block in the container's draft; your agent previews, tests and publishes it</td></tr>
+<tr><th scope="row">Source</th><td>Proprietary</td><td>AGPL-3.0; browser runtime MIT; self-hostable on Cloudflare</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="choose">When to choose which</h2>
+<h3>Use Cookiebot if</h3>
+<ul>
+<li>You show Google ads through AdSense, Ad Manager or AdMob to visitors in the EEA, the UK or Switzerland and want personalized ads: Google requires a certified CMP integrated with the TCF.</li>
+<li>Your ad partners need an IAB TCF consent string.</li>
+<li>Many trackers load outside any tag manager (CMS plugins, embeds, widgets) and you want them found by a scan and blocked automatically.</li>
+<li>You want a cookie declaration kept current by monthly scans, consent exports for a legal team, 47+ translated languages, or consent in apps and on CTV.</li>
+</ul>
+<h3>Use the AgentFirstStack banner if</h3>
+<ul>
+<li>Your trackers run, or can run, as tags in one container, and you want the banner, the tags and Consent Mode v2 in one place for free.</li>
+<li>You'd rather not pay by subpage count or per subdomain.</li>
+<li>An agent should set it up, check it in a preview, and read accept and reject rates and consent records over an API.</li>
+<li>You want consent records without IP addresses, and open source you can read or self-host.</li>
+</ul>
+
+<h2 id="moving">Moving from Cookiebot</h2>
+<p>There's no Cookiebot import. What the tools do:</p>
+<ol>
+<li><b>Find it.</b> The tags scan (<code>POST /v1/containers/:id/scan</code>) reports Cookiebot under the consent platforms it detects, along with the tags and pixels on the pages.</li>
+<li><b>Or keep it.</b> If Cookiebot has to stay, the container follows its Google Consent Mode updates (any platform that calls <code>gtag('consent', 'update', ...)</code>), or its TCF signals with <code>consent.tcf: true</code>. Leave the AgentFirstStack banner off.</li>
+<li><b>Move the trackers.</b> Every script Cookiebot holds back becomes a tag in the container with a consent type: <code>ad_storage</code> for ad pixels, <code>analytics_storage</code> for analytics, and so on. A GTM container can come over with <code>draft/import</code>.</li>
+<li><b>Switch in one change.</b> Preview the banner, then publish and remove Cookiebot's script in the same deploy, so visitors never see two banners.</li>
+<li><b>Expect one more question.</b> The new banner doesn't read Cookiebot's stored choice, so visitors who already chose are asked again. Export Cookiebot's consent records (CSV export is on Premium) before you cancel, because they can't be imported.</li>
+</ol>
+
+<h2 id="faq">FAQ</h2>
+<h3>Is there a free alternative to Cookiebot?</h3>
+<p>Cookiebot itself is free for one domain up to 50 subpages, with an initial scan, manual blocking, one language and consent that expires after up to a month. AgentFirstStack's consent banner is free at any size within the hosted service's fair-use limits and open source, but it's part of a tag manager: it controls the tags in that container, not every script on the site.</p>
+<h3>Does AgentFirstStack scan for cookies like Cookiebot?</h3>
+<p>No. Cookiebot's scanner crawls the site for cookies and trackers and categorizes them. AgentFirstStack's tags scan reads up to 6 pages' HTML and reports the tags, tools and consent platforms on them, but doesn't list cookies or generate a cookie declaration, and its banner doesn't block scripts loaded outside its container.</p>
+<h3>Can I keep Cookiebot and still use AgentFirstStack Tags?</h3>
+<p>Yes. Cookiebot has Google Consent Mode v2 on by default, and the AgentFirstStack container follows any consent platform that calls <code>gtag('consent', 'update', ...)</code>, so its tags wait for the choice made in Cookiebot's banner. With <code>consent.tcf</code> it follows an IAB TCF v2 platform instead. Leave the AgentFirstStack banner off, so visitors see one banner.</p>
+<h3>Is the AgentFirstStack banner Google-certified or IAB TCF registered?</h3>
+<p>No to both. Cookiebot is on Google's list of certified CMPs (TCF CMP ID 134) and is a Gold partner in Google's CMP Partner Program. Publishers serving personalized Google ads in the EEA, the UK or Switzerland need a certified CMP, so they should keep Cookiebot or another certified platform.</p>
+<h3>What does Cookiebot cost?</h3>
+<p>As of 7 November 2026, Cookiebot Core is free for one domain up to 50 subpages. Premium is €7 a month for one domain under 50 subpages, then €15, €30, €50 or €90 a month per domain by the number of subpages, excluding VAT, and daily scans cost €99 a month more. Subdomains count as separate domains (<a href="https://www.cookiebot.com/en/pricing/">pricing</a>).</p>
+<h3>Will visitors have to choose again if I switch?</h3>
+<p>Yes. The AgentFirstStack banner keeps its own choice cookie and doesn't read Cookiebot's, so visitors who already chose are asked once more. Cookiebot's consent records can't be imported either: export them before you cancel.</p>
+
+<p class="meta">This page compares products; it isn't legal advice. Product names belong to their owners. AgentFirstStack isn't affiliated with Cookiebot or Usercentrics.</p>
+
+      <h2 id="related">Related</h2>
+      <ul class="cards">
+        <li><a class="card" href="/cookie-consent-banner"><span class="svc svc-tags">Tags</span><b>Cookie consent banner</b><span>What a banner has to do, and how CookieYes, Cookiebot and ours compare.</span></a></li>
+        <li><a class="card" href="/tag-manager"><span class="svc svc-tags">Tags</span><b>Tag manager</b><span>The container the banner is part of.</span></a></li>
+        <li><a class="card" href="/conversion-tracking"><span class="svc svc-tags">Tags</span><b>Conversion tracking</b><span>Conversions that respect each visitor's choice.</span></a></li>
+        <li><a class="card" href="/google-tag-manager-mcp"><span class="svc svc-tags">Tags</span><b>Google Tag Manager MCP compared</b><span>Edit GTM, or let the agent run the tag manager.</span></a></li>
+        <li><a class="card" href="/session-replay"><span class="svc svc-replay">Replay</span><b>Session replay</b><span>Recorded only after consent where the law asks.</span></a></li>
+        <li><a class="card" href="/mcp"><span class="svc">All services</span><b>One MCP server for every service</b><span>Analytics, tags, mail and replay tools on one key.</span></a></li>
+      </ul>
+    </article>
+
+    <aside class="aside" aria-label="On this page">
+      <div>
+        <h2>On this page</h2>
+        <ul><li><a href="#prompt">Set it up with one prompt</a></li><li><a href="#cookiebot">What Cookiebot is</a></li><li><a href="#agentfirststack">How AgentFirstStack does it</a></li><li><a href="#gaps">What it doesn't do</a></li><li><a href="#comparison">Side by side</a></li><li><a href="#choose">When to choose which</a></li><li><a href="#moving">Moving from Cookiebot</a></li><li><a href="#faq">FAQ</a></li><li><a href="#related">Related</a></li></ul>
+      </div>
+      <div>
+        <h2>Set it up</h2>
+        <a class="btn btn-primary" href="/#setup">Get the setup prompt</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>Made by <a href="https://startglobal.co">StartGlobal</a>. Open source under <a href="https://github.com/StartGlobal-AI/agentfirststack/blob/main/LICENSING.md">AGPL-3.0</a>.</p>
+    <p class="footer-links"><a href="/guides">Guides</a><a href="/llms.txt">Manual</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a><a href="https://github.com/StartGlobal-AI/agentfirststack">GitHub</a><a href="mailto:security@agentfirststack.com">Security</a></p>
+  </div>
+</footer>
+</body>
+</html>

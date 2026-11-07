@@ -28,12 +28,12 @@ from your own domain, and open source (AGPL-3.0; the browser scripts are MIT).
 |---|---|---|---|
 | Web analytics | Countries, regions and cities from the edge; pages, sources and campaigns including AI assistants; goals, revenue, MRR, funnels, realtime; server-side events; no cookies | Google Analytics, Plausible, DataFast, Fathom | https://analytics.agentfirststack.com/llms.txt |
 | Revenue and MRR | Payments from Stripe, Paddle, Polar and LemonSqueezy joined to the visit that brought them; MRR, ARR, churn and trial conversion by channel, campaign, country or plan (part of Analytics) | ChartMogul, Baremetrics, ProfitWell | https://analytics.agentfirststack.com/llms.txt |
-| Tag manager | One snippet for every pixel and click event; triggers, variables, preview, versions and rollback; consent banner and Consent Mode v2 | Google Tag Manager, Cookiebot, CookieYes | https://tags.agentfirststack.com/llms.txt |
+| Tag manager | One snippet for every pixel and click event; triggers, variables, preview, versions and rollback; consent banner and Consent Mode v2 | Google Tag Manager, consent banner plugins | https://tags.agentfirststack.com/llms.txt |
 | Conversion tracking | Conversions sent from the browser and your server to GA4, Google Ads, Meta, TikTok, LinkedIn and more with one event id, so each counts it once; click IDs kept (part of Tags) | Server-side GTM, Stape, Meta CAPI Gateway | https://tags.agentfirststack.com/llms.txt |
 | Email inboxes | Inboxes in one request; verification codes and links extracted; read, reply, send; your own domain; webhooks | A Gmail account per project, AgentMail, Mailinator | https://mail.agentfirststack.com/llms.txt |
-| Session replay | Session recordings masked in the browser by default; sessions as readable transcripts; rage, dead and error clicks; heatmaps and JS errors as data | Hotjar, Microsoft Clarity, FullStory | https://replay.agentfirststack.com/llms.txt |
+| Session replay | Session recordings masked in the browser by default; sessions as readable transcripts; rage, dead and error clicks; heatmaps and JS errors as data | Hotjar, Microsoft Clarity, Fullstory | https://replay.agentfirststack.com/llms.txt |
 | Page speed | Core Web Vitals from real visitors, by page, device, country and browser, slowest pages first (part of Analytics) | PageSpeed Insights, Vercel Speed Insights, SpeedCurve | https://analytics.agentfirststack.com/llms.txt |
-| AI search | Which AI bots read which pages, which assistants send visitors, and what to change so they cite you (part of Analytics) | AI crawler log digging, AI visibility trackers | https://analytics.agentfirststack.com/llms.txt |
+| AI search | Which AI bots read which pages, which assistants send visitors, and what to change so they cite you (part of Analytics) | AI crawler log digging, log file analyzers | https://analytics.agentfirststack.com/llms.txt |
 
 ## What each service includes
 
@@ -74,7 +74,7 @@ All of it over REST and MCP, with the same key.
 
 - **Inboxes:** Instant inboxes on our domain or yours, plus-address tags, labels, usage limits you can read.
 - **Waiting:** Wait for an email and get the verification code or link back, from authenticated senders only.
-- **Reading:** Threads, search, raw email, attachments and their text, calendar invites, replies without the quoted history.
+- **Reading:** Threads, search, raw email, attachments (and their text, on deployments with Workers AI), calendar invites, replies without the quoted history.
 - **Sending:** Send, reply and forward, safe to retry, scheduled sending, delivery status per recipient.
 - **Safety:** Inboxes on the shared domain reply only to people who wrote first; allow and block lists.
 - **Domains:** Custom domains with DNS checks, send-only domains, a zone file to import.
@@ -139,10 +139,35 @@ When you're done, show me the setup check's table of what's set up and the test 
 - Hosted: free at any size within the fair-use limits: https://agentfirststack.com/limits
 - Self-host: `pnpm afs init <name> --domain example.com --account <id>` then `pnpm afs deploy <name>`.
 
+## Products (for people)
+
+- Web analytics your AI agent sets up: https://agentfirststack.com/analytics
+- Revenue analytics and MRR your AI agent sets up: https://agentfirststack.com/revenue-analytics
+- Tag manager your AI agent sets up and tests: https://agentfirststack.com/tag-manager
+- Conversion tracking your AI agent sets up and tests: https://agentfirststack.com/conversion-tracking
+- Session replay your AI agent sets up and reads: https://agentfirststack.com/session-replay
+- Real user monitoring for Core Web Vitals, set up by your AI agent: https://agentfirststack.com/page-speed
+- AI search analytics your AI agent sets up: https://agentfirststack.com/ai-search
+- Email inboxes your AI agent creates itself: https://agentfirststack.com/email-inboxes
+
 ## Guides and comparisons (for people)
 
 All of them: https://agentfirststack.com/guides
 
+- Google Analytics alternative: cookieless analytics your AI agent sets up: https://agentfirststack.com/google-analytics-alternative
+- Plausible alternative: open-source analytics your AI agent sets up, with MRR and replay: https://agentfirststack.com/plausible-alternative
+- Fathom Analytics alternative: free, open-source analytics your AI agent sets up: https://agentfirststack.com/fathom-alternative
+- DataFast alternative: free, open-source revenue analytics your AI agent sets up: https://agentfirststack.com/datafast-alternative
+- Cookie consent banner: what it has to do, Consent Mode v2, and which one to use: https://agentfirststack.com/cookie-consent-banner
+- Cookiebot alternative: a free consent banner inside your tag manager: https://agentfirststack.com/cookiebot-alternative
+- Server-side GTM: what it is, what it costs to run, and the same result without a server container: https://agentfirststack.com/server-side-gtm
+- Meta Conversions API Gateway alternative: Meta and eight more ad platforms, with no server to host: https://agentfirststack.com/conversions-api-gateway
+- Mailinator alternative: private inboxes your AI agent creates, reads and replies from: https://agentfirststack.com/mailinator-alternative
+- Microsoft Clarity alternative: session replay your AI agent sets up and reads: https://agentfirststack.com/microsoft-clarity-alternative
+- Fullstory alternative: open-source session replay your AI agent sets up and reads: https://agentfirststack.com/fullstory-alternative
+- Vercel Speed Insights alternative: every Core Web Vital from real visitors, free, on any host: https://agentfirststack.com/vercel-speed-insights-alternative
+- PageSpeed Insights alternative: Core Web Vitals from your own visitors, page by page: https://agentfirststack.com/pagespeed-insights-alternative
+- AI visibility trackers vs AI search analytics: two ways to measure LLM visibility: https://agentfirststack.com/ai-visibility-tracker
 - Add analytics with Claude Code: https://agentfirststack.com/guides/add-analytics-with-claude-code
 - Server-side conversion tracking for Meta, Google Ads, TikTok and GA4: https://agentfirststack.com/guides/server-side-conversion-tracking
 - Email inbox for AI agents: receive verification codes by API: https://agentfirststack.com/guides/email-inbox-for-ai-agents
