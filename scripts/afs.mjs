@@ -564,9 +564,19 @@ async function cmdCheck(name) {
   if (site.json?.site?.id) await call(`${base("analytics")}/v1/sites/${site.json.site.id}`, { method: "DELETE", headers: H });
   if (ctr.json?.container?.id) await call(`${base("tags")}/v1/containers/${ctr.json.container.id}`, { method: "DELETE", headers: H });
   if (inbox.json?.inbox?.id) await call(`${base("mail")}/v1/inboxes/${inbox.json.inbox.id}`, { method: "DELETE", headers: H });
+  // Then the check's own project: deleted (its key stops at once) and erased by the purge after
+  // the restore days, so check runs don't pile up as projects. Revoking the key is the fallback.
   const me = await call(`${base("site")}/v1/me`, { headers: H });
-  if (me.json?.key?.id) await call(`${base("site")}/v1/keys/${me.json.key.id}`, { method: "DELETE", headers: H });
-  step("cleaned up and revoked the check key", true);
+  const acct = me.json?.account?.id;
+  const gone = acct
+    ? await call(`${base("site")}/v1/me`, { method: "DELETE", headers: H, body: JSON.stringify({ confirm: acct }) })
+    : { status: 0 };
+  if (gone.status !== 200 && me.json?.key?.id) await call(`${base("site")}/v1/keys/${me.json.key.id}`, { method: "DELETE", headers: H });
+  step(
+    "cleaned up and deleted the check's project",
+    gone.status === 200,
+    gone.status === 200 ? acct : `HTTP ${gone.status}; revoked the key instead`,
+  );
   // The zone's security rules run before the Workers; compare them with what the profile expects.
   if (profile.zone_rules && process.env.CLOUDFLARE_WAF_TOKEN) {
     const z = await zoneRulesDrift(profile, process.env.CLOUDFLARE_WAF_TOKEN);
