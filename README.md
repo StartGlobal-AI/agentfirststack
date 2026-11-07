@@ -11,6 +11,8 @@
 
 <p align="center">
   <a href="https://agentfirststack.com">agentfirststack.com</a> ·
+  <a href="https://agentfirststack.com/live">Live demo</a> ·
+  <a href="https://agentfirststack.com/features">Features</a> ·
   <a href="https://agentfirststack.com/llms.txt">Manual</a> ·
   <a href="docs/self-hosting.md">Self-host</a> ·
   <a href="docs/architecture.md">Architecture</a>
@@ -33,6 +35,8 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 - **Everything is an API call and an MCP tool.** Nothing is hidden behind a settings page.
 - **The manual is a text file.** Each service serves `/llms.txt` with every endpoint, tool and field.
 - **Every step can be verified.** The agent checks its own work instead of guessing.
+- **Served from your own domain.** Analytics, tags and replay load from a first-party domain (one
+  CNAME, no server code) or a path proxy, so ad blockers don't drop your visitors.
 - **Humans optional.** When it's done, the agent hands its person a claim link. They sign in with
   Google to see the project's analytics, tags, replay and mail in a dashboard, manage keys and
   teammates, connect Claude or ChatGPT over OAuth, and delete the project. We email them about
@@ -44,9 +48,9 @@ AgentFirstStack is that infrastructure, rebuilt so an agent can do the whole job
 
 | | What it does | Instead of |
 |---|---|---|
-| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime (a live stream within a second); revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits; alerts and weekly reports; history imported from GA4, Plausible or any other tool, with a check that the numbers match; server-side events; read-only SQL | Google Analytics, Plausible |
-| **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap or X with one event id, so each platform counts it once. Scan (it also finds the tools a site uses now), import a GTM container, validate, preview, test and publish | Google Tag Manager, server-side GTM |
-| **[Mail](mail/README.md)** | Inboxes in one request. `wait_for_email` returns the moment a message arrives, with verification codes and links already extracted. Read, reply, send, custom domains, webhooks, and forwarding to the project's people (each email or a daily digest) | A Gmail account per project, AgentMail |
+| **[Analytics](analytics/README.md)** | Cookieless web analytics. Country, region and city from Cloudflare's edge; channels including AI assistants; UTM and ad click ids; goals, funnels, paths, attribution, realtime (a live stream within a second); revenue, subscriptions and MRR from Stripe, Polar, Paddle or LemonSqueezy; ad spend and ROAS; ecommerce items; AI crawler visits and an AI search report (which AI bots read which pages, which assistants send visitors, what to change); Core Web Vitals from real visitors; alerts and weekly reports; history imported from GA4, Plausible or any other tool, with a check that the numbers match; server-side events; read-only SQL | Google Analytics, Plausible |
+| **[Tags](tags/README.md)** | A tag manager and server-side conversion router. Define a conversion once; the browser pixel and the server both send it to GA4, Google Ads, Meta, TikTok, LinkedIn, Pinterest, Reddit, Snap or X with one event id, so each platform counts it once. A consent banner asks visitors from the EU, UK and Switzerland before ad pixels fire. Scan (it also finds the tools a site uses now), import a GTM container, validate, preview, test and publish | Google Tag Manager, server-side GTM |
+| **[Mail](mail/README.md)** | Inboxes in one request, on agentfirstinbox.com or your own domain. `wait_for_email` returns the moment a message arrives, with verification codes and links already extracted. Read, reply, send, custom domains, webhooks, and forwarding to the project's people (each email or a daily digest) | A Gmail account per project, AgentMail |
 | **[Replay](replay/README.md)** | Session recordings masked in the browser by default. Sessions come back as readable transcripts; rage, dead and error clicks, heatmaps and JS errors as data; a share link opens a player for people | Hotjar, Microsoft Clarity |
 
 ## Quick start

@@ -82,6 +82,23 @@ export const SETUP_CATALOG: CatalogItem[] = [
       "serving analytics, tags and replay from the site's own domain (a first-party domain: one CNAME, no server code; or the path proxy), so ad blockers don't drop visitors",
     checks: ["analytics.first_party"],
   },
+  {
+    version: 6,
+    label: "asking visitors from the EU, UK and Switzerland before ad pixels fire (the tag container's consent banner, or the site's own)",
+    checks: ["tags.consent_banner"],
+  },
+  {
+    version: 6,
+    label:
+      "a first-party path proxy that sends its proxy key, so analytics and replay see each visitor's own network instead of the proxy's",
+    checks: ["analytics.proxy_key", "replay.proxy_key"],
+  },
+  {
+    version: 6,
+    label:
+      "verifying the tag container's domain too, like analytics and replay (POST /v1/containers/:id/verify), so custom HTML and JavaScript tags can be published",
+    checks: ["tags.domain_verified"],
+  },
 ];
 
 export const CATALOG_VERSION = Math.max(...SETUP_CATALOG.map((i) => i.version));

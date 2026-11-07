@@ -13,7 +13,11 @@ agentfirststack.com, so this path is exercised on every release.
   on the apex (`anything@yourdomain`) unless you set a separate `mail_domain`. Optional extra
   zones: a [user-content domain](#a-user-content-domain-optional) for share pages and a
   [second shared inbox domain](#a-second-shared-inbox-domain-optional).
-- Node 22 or newer, pnpm 10 (`corepack enable`), and `wrangler login` done once.
+- Node 22 or newer, pnpm 10 (`corepack enable`), and `wrangler login` done once, or better a
+  Cloudflare API token in `CLOUDFLARE_API_TOKEN` (the "Edit Cloudflare Workers" template plus D1
+  Edit, Queues Edit, and SSL and Certificates Edit and Zone Read on your zones). The OAuth login
+  expires hourly and its refresh token works once, so several wrangler commands running at the
+  same time (log tails, a check during a deploy) can leave it logged out; a token doesn't expire.
 
 ## Deploy in four commands
 

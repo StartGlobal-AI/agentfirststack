@@ -10,10 +10,15 @@ How to run and maintain a deployment, including the hosted one at agentfirststac
 3. `pnpm afs deploy hosted`. This applies D1 migrations, then deploys in dependency order: site
    first (it owns the identity database), then analytics, tags, mail and replay.
 4. `pnpm afs check hosted`. The live check signs up, uses the key on every service, lists the MCP
-   tools and deletes everything it created. Don't call a release done until this passes.
+   tools and deletes everything it created, its own project last (erased by the nightly purge).
+   Don't call a release done until this passes.
 5. Tag the commit: `git tag v0.x.y && git push --tags`.
 
 To deploy one service: `pnpm afs deploy hosted mail`.
+
+Deploy with a Cloudflare API token in `CLOUDFLARE_API_TOKEN` (the operator keeps it in the repo's
+`.env`; see docs/self-hosting.md for its permissions), not the wrangler OAuth login: the login's
+refresh token works once, and wrangler commands running side by side log each other out.
 
 ### Rolling back
 
