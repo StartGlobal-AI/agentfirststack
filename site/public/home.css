@@ -170,7 +170,7 @@ a {
   list-style: none;
 }
 .pills li {
-  padding: 5px 12px;
+  display: flex;
   border-radius: 999px;
   font-size: 13.5px;
   font-weight: 550;
@@ -979,10 +979,15 @@ a {
 }
 
 /* hero pills are links to their proof */
+/* The link fills the pill, so the label and icon centre in it, not on a text baseline. */
 .pills a {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  line-height: 1;
+  border-radius: inherit;
   color: inherit;
   text-decoration: none;
 }
