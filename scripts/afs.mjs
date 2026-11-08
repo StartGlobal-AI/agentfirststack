@@ -373,6 +373,7 @@ async function cmdDeploy(name, apps, opts) {
       }
       if (!m.ok) die(`Migrations for ${app} ${db.binding} failed.`);
     }
+    if (app === "site") keepFirstPartyRoutes(cfg);
     if (!wrangler(app, ["deploy", "-c", DEPLOY_FILE]).ok) die(`wrangler deploy failed for ${app}.`);
     if (secrets && !opts["skip-secrets"]) {
       const appSecrets = secretsFor(secrets, app);
@@ -390,10 +391,55 @@ async function cmdDeploy(name, apps, opts) {
 }
 
 /**
- * After a site deploy: put back the first-party domains' Worker routes. `wrangler deploy` replaces
- * the site Worker's routes with the config's list, which removes the `<hostname>/*` routes the
- * site makes at runtime (src/first-party-domains.ts), and those domains answer 522 until they're
- * back. The site's hourly cron repairs them too; this makes the gap seconds instead of an hour.
+ * Before a site deploy: add every first-party domain's route (`<hostname>/*` on the SaaS zone) to
+ * the site's deploy config. `wrangler deploy` replaces the Worker's routes with the config's list
+ * (one PUT of the whole list), and these routes are made at runtime (src/first-party-domains.ts),
+ * so a config without them deletes them and the domains answer 522. Listed here, the PUT keeps
+ * them and there is no gap. A domain added while the deploy runs is put back right after it
+ * (repairFirstPartyRoutes below), and by the site's hourly cron.
+ */
+function keepFirstPartyRoutes(cfg) {
+  const zoneId = cfg.vars?.CF_SAAS_ZONE_ID;
+  if (!zoneId) return; // no first-party domains on this deployment
+  const sql = "SELECT hostname FROM first_party_domains WHERE status != 'failed' ORDER BY hostname";
+  const r = spawnSync("pnpm", ["exec", "wrangler", "d1", "execute", "DB", "--remote", "-c", DEPLOY_FILE, "--json", "--command", sql], {
+    cwd: join(ROOT, "site"),
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+    input: "",
+    encoding: "utf8",
+  });
+  let hostnames = null;
+  try {
+    const out = r.stdout ?? "";
+    hostnames = JSON.parse(out.slice(out.indexOf("[")))[0].results.map((x) => String(x.hostname));
+  } catch {
+    /* below */
+  }
+  if (r.status !== 0 || !hostnames) {
+    log("! Couldn't read the first-party domains: the deploy drops their routes and the step after it puts them back (a few seconds of 522).");
+    return;
+  }
+  const HOST = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+  const routes = cfg.routes ?? [];
+  const have = new Set(routes.map((x) => (typeof x === "string" ? x : x.pattern)));
+  let added = 0;
+  for (const h of hostnames) {
+    const pattern = `${h}/*`;
+    if (!HOST.test(h) || have.has(pattern)) continue;
+    routes.push({ pattern, zone_id: zoneId });
+    have.add(pattern);
+    added++;
+  }
+  if (!added) return;
+  cfg.routes = routes;
+  writeFileSync(join(ROOT, "site", DEPLOY_FILE), `${JSON.stringify(cfg, null, 2)}\n`);
+  log(`  keeping ${added} first-party domain route${added === 1 ? "" : "s"} in the deploy`);
+}
+
+/**
+ * After a site deploy: put back any first-party route the deploy didn't keep (a domain added while
+ * it ran, or keepFirstPartyRoutes couldn't read the list), and store the routes' new ids.
  */
 async function repairFirstPartyRoutes(name, profile, secrets) {
   const token = secrets?.ADMIN_TOKEN;

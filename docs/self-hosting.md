@@ -252,10 +252,13 @@ a 404.
 
 **Deploys remove those routes.** `wrangler deploy` replaces the site Worker's routes with the list in
 its config (one `PUT` of the whole list), and the per-hostname routes are made at runtime, so every
-site deploy drops them and the domains answer 522. `pnpm afs deploy <profile> site` puts them back
-right after the deploy (`POST /v1/admin/first-party-domains/repair` with `ADMIN_TOKEN`, which says
-what it restored), the site's hourly cron does the same, and a project's setup check repairs its own
-domains and says so in `analytics.first_party`. If you deploy the site another way, call the repair
+site deploy that doesn't list them drops them and the domains answer 522. `pnpm afs deploy <profile>
+site` lists them: just before the deploy it reads the domains from the identity database and adds
+each one's route (`<hostname>/*` on the SaaS zone) to the site's deploy config, so the `PUT` keeps
+them and there's no gap. Right after, it puts back anything still missing, such as a domain added
+while the deploy ran (`POST /v1/admin/first-party-domains/repair` with `ADMIN_TOKEN`, which says
+what it restored). The site's hourly cron repairs them too, and a project's setup check repairs its
+own and says so in `analytics.first_party`. If you deploy the site another way, call the repair
 endpoint afterwards.
 
 ## A user-content domain (optional)
