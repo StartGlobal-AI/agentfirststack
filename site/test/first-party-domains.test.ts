@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { forgetHost } from "../src/first-party-domains";
+import { forgetHost, repairFirstPartyRoutes } from "../src/first-party-domains";
+import { firstPartyCheck } from "../src/setup-check";
 import { E, call, fixtures, signup, testEnv } from "./helpers";
 
 /** Cloudflare's API for one SaaS zone, in memory: custom hostnames and Worker routes. */
@@ -17,7 +18,7 @@ function mockCloudflare() {
     const u = new URL(req.url);
     if (u.hostname !== "api.cloudflare.com") throw new Error(`unexpected fetch ${req.url}`);
     const path = u.pathname.replace("/client/v4/zones/zone_test", "");
-    const body = req.method === "POST" ? await req.json() : null;
+    const body = req.method === "POST" || req.method === "PUT" ? await req.json() : null;
     calls.push({ method: req.method, path: `${path}${u.search}`, body, auth: req.headers.get("authorization") });
     if (path === "/custom_hostnames" && req.method === "POST") {
       const b = body as { hostname: string; ssl: Record<string, unknown> };
@@ -60,6 +61,13 @@ function mockCloudflare() {
     if (route && req.method === "DELETE") {
       if (!routes.delete(route[1]!)) return fail(404, 10007, "Route not found.");
       return ok({ id: route[1] });
+    }
+    if (route && req.method === "PUT") {
+      const had = routes.get(route[1]!);
+      if (!had) return fail(404, 10007, "Route not found.");
+      const r = { ...had, ...(body as { pattern: string; script: string }) };
+      routes.set(r.id, r);
+      return ok(r);
     }
     return fail(400, 7003, `No route for ${req.method} ${path}`);
   });
@@ -355,5 +363,97 @@ describe("the edge on a first-party domain", () => {
     expect((await call("GET", `https://${hostname}/robots.txt`, { env })).text).toContain("Disallow: /");
     // A host that isn't a first-party domain is the platform as usual.
     expect((await call("GET", "https://other-host.example/v1/me", { env, key: p.key })).status).toBe(200);
+  });
+});
+
+describe("first-party routes after a site deploy (wrangler deploy replaces the Worker's routes)", () => {
+  let cf: ReturnType<typeof mockCloudflare>;
+  beforeEach(() => {
+    cf = mockCloudflare();
+  });
+  afterEach(() => vi.restoreAllMocks());
+  const ADMIN = "admin-token-for-route-tests";
+  const env = testEnv({ ...SAAS, ADMIN_TOKEN: ADMIN });
+  const routeOf = async (hostname: string) =>
+    (await E.DB.prepare("SELECT route_id FROM first_party_domains WHERE hostname = ?").bind(hostname).first<{ route_id: string }>())
+      ?.route_id;
+
+  it("puts back the routes a deploy removed, fixes one pointing elsewhere, and leaves working ones alone", async () => {
+    const p = await project();
+    const hostname = `edge.${p.domain}`;
+    expect((await call("POST", "/v1/first-party-domains", { env, key: p.key, json: { hostname } })).status).toBe(201);
+    const first = await routeOf(hostname);
+    expect(cf.routes.get(first!)?.pattern).toBe(`${hostname}/*`);
+
+    // A deploy: wrangler's PUT of the config's routes leaves none of ours.
+    cf.routes.clear();
+    const r = await repairFirstPartyRoutes(env);
+    expect(r!.restored).toContain(hostname);
+    expect(r!.failed).toEqual([]);
+    const back = await routeOf(hostname);
+    expect(back).not.toBe(first);
+    expect(cf.routes.get(back!)).toMatchObject({ pattern: `${hostname}/*`, script: "afs-site" });
+
+    // Nothing missing: one read, no writes.
+    const before = cf.calls.length;
+    const again = await repairFirstPartyRoutes(env);
+    expect(again!.restored).not.toContain(hostname);
+    expect(cf.calls.slice(before).filter((c) => c.method !== "GET")).toEqual([]);
+
+    // A route on the pattern that points at another Worker is pointed back at ours.
+    cf.routes.get(back!)!.script = "someone-else";
+    expect((await repairFirstPartyRoutes(env))!.restored).toContain(hostname);
+    expect(cf.routes.get(back!)?.script).toBe("afs-site");
+  });
+
+  it("says which routes it couldn't put back, and answers the operator's repair call", async () => {
+    const p = await project();
+    const hostname = `edge.${p.domain}`;
+    await call("POST", "/v1/first-party-domains", { env, key: p.key, json: { hostname } });
+    cf.routes.clear();
+    cf.state.failRoutes = true;
+    const r = await repairFirstPartyRoutes(env, { accountId: p.accountId });
+    expect(r).toMatchObject({ domains: 1, restored: [] });
+    expect(r!.failed[0]).toMatchObject({ hostname });
+    cf.state.failRoutes = false;
+
+    expect((await call("POST", "/v1/admin/first-party-domains/repair", { env, key: p.key })).status).toBe(401);
+    const admin = await call("POST", "/v1/admin/first-party-domains/repair", { env, headers: { authorization: `Bearer ${ADMIN}` } });
+    expect(admin.status).toBe(200);
+    expect(admin.json.configured).toBe(true);
+    expect(admin.json.restored).toContain(hostname);
+    // Without Cloudflare for SaaS there is nothing to repair.
+    const off = await call("POST", "/v1/admin/first-party-domains/repair", {
+      env: testEnv({ ADMIN_TOKEN: ADMIN }),
+      headers: { authorization: `Bearer ${ADMIN}` },
+    });
+    expect(off.json).toMatchObject({ configured: false, domains: 0 });
+  });
+
+  it("the setup check says a missing route was AgentFirstStack's fault, fixed or not", () => {
+    const data = {
+      collection_last_7d: { direct: 0, proxy: 0, edge: 12, edge_hosts: ["edge.shop.example"], last_first_party_at: 1 },
+    } as never;
+    const x = { S: "https://afs.test", A: "https://analytics.afs.test", firstParty: [] };
+    const fixed = firstPartyCheck("shop.example", "site_x", data, {
+      ...x,
+      firstPartyRoutes: { domains: 1, restored: ["edge.shop.example"], failed: [] },
+    });
+    expect(fixed).toMatchObject({ id: "analytics.first_party", status: "warning" });
+    expect(fixed!.detail).toContain("answering 522");
+    expect(fixed!.detail).toContain("AgentFirstStack's side");
+    const still = firstPartyCheck("shop.example", "site_x", data, {
+      ...x,
+      firstPartyRoutes: { domains: 1, restored: [], failed: [{ hostname: "edge.shop.example", error: "HTTP 500" }] },
+    });
+    expect(still).toMatchObject({ status: "failing" });
+    expect(still!.fix).toContain("https://analytics.afs.test/s.js");
+    // Another site's domain isn't this site's problem; with nothing repaired the check is as before.
+    expect(
+      firstPartyCheck("shop.example", "site_x", data, {
+        ...x,
+        firstPartyRoutes: { domains: 1, restored: ["edge.other.example"], failed: [] },
+      }),
+    ).toMatchObject({ status: "ok" });
   });
 });

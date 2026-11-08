@@ -20,7 +20,7 @@ import { servePage, withAssetHeaders } from "./static-pages";
 import { firstParty, firstPartyEdge } from "./first-party";
 import { userContentSite } from "./user-content";
 import { liveDemo } from "./live-demo";
-import { firstPartyDomainsApi } from "./first-party-domains";
+import { firstPartyDomainsApi, repairFirstPartyRoutes } from "./first-party-domains";
 import { emailOperatorDigest } from "./operator-digest";
 import { redirect } from "./session";
 import { setupApi } from "./setup-check";
@@ -241,6 +241,13 @@ export default {
           .then(async (n) => ({ ...n, ...(await deliverDue(env, base)) }))
           .then((n) => console.log(JSON.stringify({ event: "cron.email", ...n })))
           .catch((e) => console.error("cron.email failed", e)),
+      );
+      // First-party domains' Worker routes: a site deploy made without `pnpm afs deploy` (which
+      // repairs them at once) removes them, and the domains answer 522 until this puts them back.
+      ctx.waitUntil(
+        repairFirstPartyRoutes(env)
+          .then((n) => console.log(JSON.stringify({ event: "cron.first_party_routes", ...(n ?? { configured: false }) })))
+          .catch((e) => console.error("cron.first_party_routes failed", e)),
       );
       return;
     }

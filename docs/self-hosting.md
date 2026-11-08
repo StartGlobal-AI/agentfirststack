@@ -250,6 +250,14 @@ both when the hostname is removed or its project is erased. The site Worker forw
 and geo and `INTERNAL_TOKEN` (so it must be set on every Worker); anything else on such a host is
 a 404.
 
+**Deploys remove those routes.** `wrangler deploy` replaces the site Worker's routes with the list in
+its config (one `PUT` of the whole list), and the per-hostname routes are made at runtime, so every
+site deploy drops them and the domains answer 522. `pnpm afs deploy <profile> site` puts them back
+right after the deploy (`POST /v1/admin/first-party-domains/repair` with `ADMIN_TOKEN`, which says
+what it restored), the site's hourly cron does the same, and a project's setup check repairs its own
+domains and says so in `analytics.first_party`. If you deploy the site another way, call the repair
+endpoint afterwards.
+
 ## A user-content domain (optional)
 
 Replay's share player and analytics' public dashboards show content your customers control

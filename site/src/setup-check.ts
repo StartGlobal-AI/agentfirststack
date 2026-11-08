@@ -1,7 +1,7 @@
 import { type AuthContext, badRequest, requireAuth, tooManyRequests } from "@afs/shared";
 import { Hono } from "hono";
 import type { Bindings, SiteEnv } from "./env";
-import { type DomainRow, storedDomains } from "./first-party-domains";
+import { type DomainRow, type RouteRepair, repairFirstPartyRoutes, storedDomains } from "./first-party-domains";
 import { siteBase } from "./google";
 import { readSetupState, recordSetupCheck } from "./notices";
 import { AGENTS_MD_BLOCK } from "./setup-catalog";
@@ -522,8 +522,11 @@ export async function setupReport(
       );
   }
   const firstParty = has.analytics ? await storedDomains(env, accountId) : null;
+  // A first-party domain without its Worker route answers 522 (a site deploy removes the routes;
+  // the deploy and the hourly cron put them back): put this project's back now, and say so.
+  const firstPartyRoutes = firstParty?.length ? await repairFirstPartyRoutes(env, { accountId }).catch(() => null) : null;
   const perDomain = await Promise.all(
-    domains.map((domain) => domainChecks(domain, { resources, read, has, A, T, R, S: opts.base, firstParty })),
+    domains.map((domain) => domainChecks(domain, { resources, read, has, A, T, R, S: opts.base, firstParty, firstPartyRoutes })),
   );
   for (const list of perDomain) checks.push(...list);
 
@@ -680,6 +683,8 @@ interface Ctx {
   S: string;
   /** the project's first-party domains as stored (null: unreadable) */
   firstParty: DomainRow[] | null;
+  /** this check's repair of those domains' Worker routes (null: none to repair, or not configured) */
+  firstPartyRoutes?: RouteRepair | null;
 }
 
 async function domainChecks(domain: string, x: Ctx): Promise<SetupCheck[]> {
@@ -910,8 +915,30 @@ export function firstPartyCheck(
   domain: string,
   siteId: string,
   data: AnalyticsSite["data"] | undefined,
-  x: Pick<Ctx, "S" | "A" | "firstParty">,
+  x: Pick<Ctx, "S" | "A" | "firstParty" | "firstPartyRoutes">,
 ): Omit<SetupCheck, "step" | "service" | "domain"> | null {
+  // A first-party domain of this site whose Worker route was missing answered 522: our side, not
+  // the site's. Said before anything else, since the events below don't show it.
+  const site = domain.replace(/^www\./, "");
+  const ours = (h: string) => h.endsWith(`.${site}`);
+  const broken = x.firstPartyRoutes?.failed.find((f) => ours(f.hostname));
+  if (broken)
+    return {
+      id: "analytics.first_party",
+      status: "failing",
+      title: FP_TITLE,
+      detail: `${broken.hostname} answers 522: its route to AgentFirstStack's edge is missing, and putting it back failed (${broken.error}). This is on AgentFirstStack's side, not the site's: events sent through it are lost until it's back.`,
+      fix: `Nothing to change on the site. Run this check again in a few minutes (each run retries, and so does an hourly job); if it still fails, open an issue at https://github.com/StartGlobal-AI/agentfirststack/issues. To keep counting meanwhile, swap the snippets back to ${x.A}/s.js`,
+    };
+  const restored = x.firstPartyRoutes?.restored.find(ours);
+  if (restored)
+    return {
+      id: "analytics.first_party",
+      status: "warning",
+      title: FP_TITLE,
+      detail: `${restored} was answering 522 until this check: its route to AgentFirstStack's edge was missing (a problem on AgentFirstStack's side, now fixed). It serves again; events sent through it while it was down weren't recorded.`,
+      fix: `Nothing to change on the site. Open a page once and run this check again: it passes when events arrive through ${restored}`,
+    };
   const c = data?.collection_last_7d;
   if (!c || !(c.direct + c.proxy + c.edge)) return null;
   const firstParty = c.proxy + c.edge;

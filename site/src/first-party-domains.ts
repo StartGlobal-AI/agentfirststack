@@ -167,6 +167,67 @@ async function createRoute(cfg: SaasConfig, hostname: string): Promise<CfRoute> 
   throw cfFailed(`route ${pattern} to the Worker`, r);
 }
 
+/** What repairFirstPartyRoutes found: how many domains it looked at, and which routes it put back. */
+export interface RouteRepair {
+  domains: number;
+  /** hostnames whose route was missing (or pointed elsewhere) and is back */
+  restored: string[];
+  /** hostnames whose route is still missing: Cloudflare refused or didn't answer */
+  failed: { hostname: string; error: string }[];
+}
+
+/**
+ * Put back every first-party domain's Worker route that is missing. `wrangler deploy` replaces the
+ * site Worker's routes with the list in its config (a PUT of the whole list), and these
+ * `<hostname>/*` routes are made at runtime, so every deploy of the site removes them; without its
+ * route a first-party domain answers 522 and its events are lost. So this runs right after each
+ * site deploy (`pnpm afs deploy`, through POST /v1/admin/first-party-domains/repair), every hour
+ * (the cron), and for one project in its setup check. One read of the zone's routes, then a create
+ * only for what's missing. Domains that failed (their custom hostname is gone) are left alone.
+ */
+export async function repairFirstPartyRoutes(env: Bindings, opts: { accountId?: string } = {}): Promise<RouteRepair | null> {
+  const cfg = saasConfig(env);
+  if (!cfg) return null;
+  const stmt = opts.accountId
+    ? env.DB.prepare("SELECT hostname, account_id, route_id FROM first_party_domains WHERE status != 'failed' AND account_id = ?").bind(
+        opts.accountId,
+      )
+    : env.DB.prepare("SELECT hostname, account_id, route_id FROM first_party_domains WHERE status != 'failed'");
+  const { results } = await stmt.all<Pick<DomainRow, "hostname" | "account_id" | "route_id">>();
+  const out: RouteRepair = { domains: results.length, restored: [], failed: [] };
+  if (!results.length) return out;
+  const listed = await cf<CfRoute[]>(cfg, "GET", zonePath(cfg, "/workers/routes"));
+  if (!listed.ok || !listed.result) {
+    const error = cfMessage(listed);
+    out.failed = results.map((r) => ({ hostname: r.hostname, error: `couldn't list the routes: ${error}` }));
+    return out;
+  }
+  const byPattern = new Map(listed.result.map((r) => [r.pattern, r]));
+  for (const row of results) {
+    const pattern = `${row.hostname}/*`;
+    const have = byPattern.get(pattern);
+    let routeId: string | null = null;
+    if (have && have.script === cfg.worker) routeId = have.id;
+    else {
+      const r = have
+        ? await cf<CfRoute>(cfg, "PUT", zonePath(cfg, `/workers/routes/${encodeURIComponent(have.id)}`), { pattern, script: cfg.worker })
+        : await cf<CfRoute>(cfg, "POST", zonePath(cfg, "/workers/routes"), { pattern, script: cfg.worker });
+      if (!r.ok || !r.result) {
+        out.failed.push({ hostname: row.hostname, error: cfMessage(r) });
+        continue;
+      }
+      routeId = r.result.id;
+      out.restored.push(row.hostname);
+    }
+    if (routeId !== row.route_id)
+      await env.DB.prepare("UPDATE first_party_domains SET route_id = ? WHERE hostname = ? AND account_id = ?")
+        .bind(routeId, row.hostname, row.account_id)
+        .run();
+  }
+  if (out.restored.length || out.failed.length) console.log(JSON.stringify({ event: "first_party.routes_repaired", ...out }));
+  return out;
+}
+
 /** DELETE that treats "already gone" as done. */
 async function cfDelete(cfg: SaasConfig, path: string, what: string): Promise<void> {
   const r = await cf<unknown>(cfg, "DELETE", zonePath(cfg, path));

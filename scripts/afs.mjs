@@ -345,7 +345,7 @@ function cmdConfig(name) {
   writeConfigs(profile);
 }
 
-function cmdDeploy(name, apps, opts) {
+async function cmdDeploy(name, apps, opts) {
   const profile = loadProfile(name);
   const secrets = loadSecrets(name);
   if (!secrets && !opts["skip-secrets"])
@@ -384,8 +384,45 @@ function cmdDeploy(name, apps, opts) {
         if (!s.ok) die(`Setting secrets for ${app} failed.`);
       }
     }
+    if (app === "site") await repairFirstPartyRoutes(name, profile, secrets);
   }
   log(`\n✔ Deployed ${order.join(", ")}. Check it: pnpm afs check ${name}`);
+}
+
+/**
+ * After a site deploy: put back the first-party domains' Worker routes. `wrangler deploy` replaces
+ * the site Worker's routes with the config's list, which removes the `<hostname>/*` routes the
+ * site makes at runtime (src/first-party-domains.ts), and those domains answer 522 until they're
+ * back. The site's hourly cron repairs them too; this makes the gap seconds instead of an hour.
+ */
+async function repairFirstPartyRoutes(name, profile, secrets) {
+  const token = secrets?.ADMIN_TOKEN;
+  if (!token) {
+    log(`! deploy/${name}.secrets.json has no ADMIN_TOKEN: first-party domains' routes come back with the site's hourly cron.`);
+    return;
+  }
+  let json = null;
+  for (let attempt = 0; attempt < 3 && !json; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const res = await fetch(`https://${profile.domain}/v1/admin/first-party-domains/repair`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      });
+      if (res.ok) json = await res.json();
+    } catch {
+      /* the new version may still be rolling out: try again */
+    }
+  }
+  if (!json) {
+    log("! Couldn't repair the first-party domains' routes; the site's hourly cron will. Or: POST /v1/admin/first-party-domains/repair.");
+    return;
+  }
+  if (!json.configured || !json.domains) return;
+  const fixed = json.restored.length ? `, put back ${json.restored.length}: ${json.restored.join(", ")}` : "";
+  log(`  first-party domains: ${json.domains} routed${fixed}`);
+  for (const f of json.failed) log(`! ${f.hostname}: its route is still missing (${f.error}); the hourly cron retries.`);
 }
 
 async function cf(token, method, path, body) {
@@ -861,7 +898,7 @@ if (isMain) {
       cmdConfig(name);
       break;
     case "deploy":
-      cmdDeploy(name, rest, opts);
+      await cmdDeploy(name, rest, opts);
       break;
     case "email":
       await cmdEmail(name);

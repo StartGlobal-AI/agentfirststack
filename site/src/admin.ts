@@ -8,6 +8,7 @@ import { emailEnabled, waitUntilOf } from "./email";
 import { emailSuspension, emailWelcome } from "./email-messages";
 import { siteBase } from "./google";
 import { restoreProject } from "./project-deletion";
+import { repairFirstPartyRoutes } from "./first-party-domains";
 import { accountPauses, activePauses, capabilityOf, liftCapability, pauseCapability } from "./pauses";
 import { listAbuseReports, reviewAbuseReport } from "./abuse-reports";
 
@@ -216,6 +217,13 @@ adminApi.post("/v1/admin/digest", async (c) => {
   const digest = await buildDigest(c.env, now);
   const email = await emailOperatorDigest(c.env, siteBase(c), now, { manual: true });
   return c.json({ digest, email });
+});
+
+// First-party domains' Worker routes, put back where missing: `wrangler deploy` of the site replaces
+// its routes with the config's, which removes them (pnpm afs deploy calls this right after).
+adminApi.post("/v1/admin/first-party-domains/repair", async (c) => {
+  const r = await repairFirstPartyRoutes(c.env);
+  return c.json(r ? { configured: true, ...r } : { configured: false, domains: 0, restored: [], failed: [] });
 });
 
 // A deleted project's restore window: the operator can undo a deletion its agent made (an
