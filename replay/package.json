@@ -20,13 +20,13 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.5.1",
-    "@rrweb/record": "^2.2.0",
-    "@rrweb/types": "^2.2.0",
+    "@cloudflare/vitest-plugin": "^1.6.0",
+    "@rrweb/record": "^2.2.1",
+    "@rrweb/types": "^2.2.1",
     "esbuild": "^0.28.2",
-    "rrweb-player": "^2.2.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.0",
+    "rrweb-player": "^2.2.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
     "wrangler": "^4.156.2"
   }
 }
