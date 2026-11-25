@@ -16,7 +16,7 @@
     "@afs/shared": "workspace:*",
     "hono": "^4.13.16",
     "zod": "^4.6.7",
-    "postal-mime": "^4.2.0",
+    "postal-mime": "^4.2.1",
     "mimetext": "^3.0.28"
   },
   "devDependencies": {
